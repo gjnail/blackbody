@@ -1,0 +1,325 @@
+"""Render / export dialog and the render progress window."""
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from PySide6.QtCore import QSettings, QStandardPaths, Qt, QUrl
+from PySide6.QtGui import QDesktopServices, QPixmap
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QFileDialog, QFormLayout, QFrame,
+                               QGridLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar,
+                               QPushButton, QSpinBox, QVBoxLayout, QWidget)
+
+from ..io.video import available_profiles
+from ..render.job import Output
+from . import theme
+
+COMP_PROFILES = ['prores422hq', 'h264', 'h265', 'dnxhr_hq', 'prores4444']
+
+
+def default_folder():
+    return QSettings().value('export/folder', str(Path(QStandardPaths.writableLocation(QStandardPaths.MoviesLocation) or Path.home()) / 'Blackbody'))
+
+
+class ExportDialog(QDialog):
+    def __init__(self, doc, parent=None):
+        super().__init__(parent)
+        self.doc = doc
+        sc = doc.scene
+        self.setWindowTitle('Render')
+        self.setMinimumWidth(620)
+        s = QSettings()
+        v = QVBoxLayout(self)
+        v.setSpacing(10)
+        profiles = available_profiles()
+
+        # outputs --------------------------------------------------------------------------------
+        box = QGroupBox('Outputs')
+        g = QGridLayout(box)
+        g.setColumnStretch(1, 1)
+        r = 0
+
+        def row(check, *widgets):
+            nonlocal r
+            g.addWidget(check, r, 0)
+            h = QHBoxLayout()
+            h.setSpacing(6)
+            for w in widgets:
+                h.addWidget(w)
+            h.addStretch(1)
+            g.addLayout(h, r, 1)
+            r += 1
+
+        self.exr = QCheckBox('Fire element · OpenEXR sequence')
+        self.exr.setToolTip('Scene-linear, premultiplied RGBA with emission, glow, heat and depth layers. For Nuke, After Effects, Fusion, Resolve.')
+        self.exr_comp = QComboBox()
+        for k, label in (('zip', 'ZIP (lossless)'), ('piz', 'PIZ (lossless)'), ('dwaa', 'DWAA (small)'), ('zips', 'ZIPS'), ('none', 'None')):
+            self.exr_comp.addItem(label, k)
+        self.exr_float = QCheckBox('32-bit float')
+        self.exr_layers = QCheckBox('AOV layers')
+        self.exr_layers.setChecked(True)
+        self.exr_layers.setToolTip('emission, glow, heat (for distortion) and depth layers in the same file, plus light (fire light on the ground and colliders), holdout and scorch mattes')
+        row(self.exr, self.exr_comp, self.exr_float, self.exr_layers)
+
+        self.png = QCheckBox('Fire element · PNG sequence')
+        self.png.setToolTip('RGBA with alpha, for editors and motion graphics.')
+        self.png_bits = QComboBox()
+        self.png_bits.addItem('16-bit', 16)
+        self.png_bits.addItem('8-bit', 8)
+        self.png_alpha = QComboBox()
+        self.png_alpha.addItem('Premultiplied alpha', 'premultiplied')
+        self.png_alpha.addItem('Straight alpha', 'straight')
+        row(self.png, self.png_bits, self.png_alpha)
+
+        self.mov = QCheckBox('Fire element · ProRes 4444 with alpha')
+        self.mov.setToolTip('One file with alpha. Premiere, Final Cut, Resolve and After Effects read it directly.')
+        self.mov_alpha = QComboBox()
+        self.mov_alpha.addItem('Premultiplied alpha', 'premultiplied')
+        self.mov_alpha.addItem('Straight alpha', 'straight')
+        self.mov.setEnabled('prores4444' in profiles)
+        row(self.mov, self.mov_alpha)
+
+        self.comp = QCheckBox('Composite over the footage')
+        self.comp.setToolTip('The finished shot: fire, haze, glow and light cast baked into your footage.')
+        self.comp_profile = QComboBox()
+        for k in COMP_PROFILES:
+            if k in profiles:
+                self.comp_profile.addItem(profiles[k].label, k)
+        self.comp_audio = QCheckBox('Keep audio')
+        self.comp_audio.setChecked(True)
+        row(self.comp, self.comp_profile, self.comp_audio)
+
+        self.vdb = QCheckBox('Volume · OpenVDB sequence')
+        self.vdb.setToolTip('density, temperature, flame, fuel and vel grids for Blender, Houdini, Maya, Unreal…')
+        row(self.vdb, QLabel('density · temperature · flame · fuel · vel'))
+        v.addWidget(box)
+
+        # where -----------------------------------------------------------------------------------------
+        where = QGroupBox('Where')
+        f = QFormLayout(where)
+        folder_row = QHBoxLayout()
+        self.folder = QLineEdit(default_folder())
+        browse = QPushButton('Browse…')
+        browse.clicked.connect(self._browse)
+        folder_row.addWidget(self.folder, 1)
+        folder_row.addWidget(browse)
+        f.addRow('Folder', folder_row)
+        self.name = QLineEdit((sc.name or 'fire').replace(' ', '_').lower())
+        f.addRow('Name', self.name)
+        self.preview_paths = QLabel()
+        self.preview_paths.setObjectName('hint')
+        self.preview_paths.setWordWrap(True)
+        f.addRow('', self.preview_paths)
+        v.addWidget(where)
+
+        # frames & quality ----------------------------------------------------------------------------------
+        q = QGroupBox('Frames and quality')
+        f2 = QFormLayout(q)
+        rng = QHBoxLayout()
+        self.first = QSpinBox()
+        self.last = QSpinBox()
+        for sp in (self.first, self.last):
+            sp.setRange(-100000, 100000)
+        self.first.setValue(sc.start)
+        self.last.setValue(sc.end)
+        rng.addWidget(self.first)
+        rng.addWidget(QLabel('to'))
+        rng.addWidget(self.last)
+        rng.addStretch(1)
+        f2.addRow('Frames', rng)
+        size = QHBoxLayout()
+        self.w = QSpinBox()
+        self.h = QSpinBox()
+        for sp in (self.w, self.h):
+            sp.setRange(64, 8192)
+        W, H = sc.output_size()
+        self.w.setValue(W)
+        self.h.setValue(H)
+        size.addWidget(self.w)
+        size.addWidget(QLabel('×'))
+        size.addWidget(self.h)
+        size.addStretch(1)
+        f2.addRow('Size', size)
+        self.samples = QSpinBox()
+        self.samples.setRange(1, 64)
+        self.samples.setValue(int(sc.data['render']['aa_samples']))
+        f2.addRow('Samples per pixel', self.samples)
+        self.res_scale = QDoubleSpinBox()
+        self.res_scale.setRange(0.25, 3.0)
+        self.res_scale.setSingleStep(0.25)
+        self.res_scale.setValue(float(sc.data['render']['final_scale']))
+        self.res_scale.setSuffix(' ×')
+        dims, hcell, _ = sc.sim_layout(final=True)
+        self.res_label = QLabel()
+        self.res_label.setObjectName('hint')
+        rs = QHBoxLayout()
+        rs.addWidget(self.res_scale)
+        rs.addWidget(self.res_label)
+        rs.addStretch(1)
+        f2.addRow('Simulation resolution', rs)
+        self.mblur = QCheckBox('Motion blur')
+        self.mblur.setChecked(bool(sc.data['render']['motion_blur']))
+        f2.addRow('', self.mblur)
+        v.addWidget(q)
+        self.res_scale.valueChanged.connect(self._update_labels)
+
+        # buttons ----------------------------------------------------------------------------------------------
+        b = QHBoxLayout()
+        b.addStretch(1)
+        cancel = QPushButton('Cancel')
+        cancel.clicked.connect(self.reject)
+        self.go = QPushButton('Render')
+        self.go.setObjectName('primary')
+        self.go.setDefault(True)
+        self.go.clicked.connect(self._accept)
+        b.addWidget(cancel)
+        b.addWidget(self.go)
+        v.addLayout(b)
+
+        # restore choices
+        self.exr.setChecked(s.value('export/exr', True, type=bool))
+        self.png.setChecked(s.value('export/png', False, type=bool))
+        self.mov.setChecked(s.value('export/mov', False, type=bool) and self.mov.isEnabled())
+        self.comp.setChecked(s.value('export/comp', bool(sc.footage), type=bool))
+        self.vdb.setChecked(s.value('export/vdb', False, type=bool))
+        i = self.comp_profile.findData(s.value('export/comp_profile', 'prores422hq'))
+        self.comp_profile.setCurrentIndex(max(0, i))
+        for w in (self.exr, self.png, self.mov, self.comp, self.vdb, self.folder, self.name):
+            (w.toggled if isinstance(w, QCheckBox) else w.textChanged).connect(self._update_labels)
+        self.comp_profile.currentIndexChanged.connect(self._update_labels)
+        self._update_labels()
+
+    def _browse(self):
+        d = QFileDialog.getExistingDirectory(self, 'Render folder', self.folder.text())
+        if d:
+            self.folder.setText(d)
+
+    def _update_labels(self, *_):
+        sc = self.doc.scene.copy()
+        sc.data['render']['final_scale'] = self.res_scale.value()
+        dims, h, _ = sc.sim_layout(final=True)
+        mem = dims[0] * dims[1] * dims[2] * 88 / 1e9
+        self.res_label.setText(f'{dims[0]}×{dims[1]}×{dims[2]} voxels · {h * 1000:.1f} mm · about {mem:.1f} GB of GPU memory')
+        paths = [o.path for o in self.outputs()]
+        self.preview_paths.setText('\n'.join(paths) if paths else 'Choose at least one output.')
+        self.go.setEnabled(bool(paths))
+
+    def outputs(self):
+        folder = Path(self.folder.text() or '.')
+        name = self.name.text().strip() or 'fire'
+        out = []
+        if self.exr.isChecked():
+            layers = ('emission', 'glow', 'heat', 'depth', 'surface') if self.exr_layers.isChecked() else ()
+            out.append(Output('exr', str(folder / name / f'{name}.####.exr'), 'element', layers=layers,
+                              compression=self.exr_comp.currentData(), half=not self.exr_float.isChecked()))
+        if self.png.isChecked():
+            out.append(Output('png', str(folder / f'{name}_png' / f'{name}.####.png'), 'element', bits=self.png_bits.currentData(),
+                              alpha_mode=self.png_alpha.currentData()))
+        if self.mov.isChecked():
+            out.append(Output('video', str(folder / f'{name}_alpha.mov'), 'element', 'prores4444', alpha_mode=self.mov_alpha.currentData()))
+        if self.comp.isChecked() and self.comp_profile.count():
+            prof = self.comp_profile.currentData()
+            ext = {'h264': '.mp4', 'h265': '.mp4'}.get(prof, '.mov')
+            out.append(Output('video', str(folder / f'{name}_comp{ext}'), 'composite', prof, audio=self.comp_audio.isChecked()))
+        if self.vdb.isChecked():
+            out.append(Output('vdb', str(folder / f'{name}_vdb' / f'{name}.####.vdb')))
+        return out
+
+    def _accept(self):
+        s = QSettings()
+        s.setValue('export/folder', self.folder.text())
+        for k, w in (('exr', self.exr), ('png', self.png), ('mov', self.mov), ('comp', self.comp), ('vdb', self.vdb)):
+            s.setValue(f'export/{k}', w.isChecked())
+        s.setValue('export/comp_profile', self.comp_profile.currentData())
+        if self.last.value() < self.first.value():
+            QMessageBox.warning(self, 'Render', 'The last frame comes before the first frame.')
+            return
+        self.accept()
+
+    def spec(self):
+        sc = self.doc.scene.copy()
+        sc.data['render']['width'], sc.data['render']['height'] = self.w.value(), self.h.value()
+        sc.data['render']['final_scale'] = self.res_scale.value()
+        return {'scene': sc, 'outputs': self.outputs(), 'frames': (self.first.value(), self.last.value()),
+                'samples': self.samples.value(), 'motion_blur': self.mblur.isChecked()}
+
+
+class RenderProgress(QDialog):
+    def __init__(self, worker, spec, parent=None):
+        super().__init__(parent)
+        self.worker = worker
+        self.spec = spec
+        self.setWindowTitle('Rendering')
+        self.setMinimumWidth(560)
+        self.setModal(True)
+        v = QVBoxLayout(self)
+        self.preview = QLabel()
+        self.preview.setAlignment(Qt.AlignCenter)
+        self.preview.setMinimumHeight(280)
+        self.preview.setStyleSheet(f'background: {theme.VIEWER}; border: 1px solid {theme.LINE};')
+        v.addWidget(self.preview)
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 1000)
+        v.addWidget(self.bar)
+        self.text = QLabel('Starting…')
+        self.text.setObjectName('hint')
+        v.addWidget(self.text)
+        b = QHBoxLayout()
+        b.addStretch(1)
+        self.open_btn = QPushButton('Open folder')
+        self.open_btn.setVisible(False)
+        self.open_btn.clicked.connect(self._open_folder)
+        self.cancel = QPushButton('Cancel')
+        self.cancel.clicked.connect(self._cancel)
+        b.addWidget(self.open_btn)
+        b.addWidget(self.cancel)
+        v.addLayout(b)
+        self.t0 = time.perf_counter()
+        self.done = False
+        worker.jobProgress.connect(self._progress)
+        worker.jobDone.connect(self._done)
+
+    def _progress(self, frac, text, img):
+        self.bar.setValue(int(frac * 1000))
+        el = time.perf_counter() - self.t0
+        eta = el / frac - el if frac > 0.02 else 0
+        self.text.setText(f'{text} · {el:.0f} s elapsed' + (f' · about {eta:.0f} s left' if eta > 0 else ''))
+        if img is not None:
+            pm = QPixmap.fromImage(img).scaled(self.preview.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self.preview.setPixmap(pm)
+
+    def _done(self, written, cancelled, err):
+        self.done = True
+        self.written = written
+        el = time.perf_counter() - self.t0
+        if err:
+            self.text.setText('Render failed: ' + err.splitlines()[0])
+            self.text.setToolTip(err)
+        elif cancelled:
+            self.text.setText(f'Cancelled after {el:.0f} s. Files written so far are kept.')
+        else:
+            self.bar.setValue(1000)
+            self.text.setText(f'Done in {el:.0f} s · {len(written)} files written.')
+        self.cancel.setText('Close')
+        self.open_btn.setVisible(bool(written))
+
+    def _cancel(self):
+        if self.done:
+            self.accept()
+        else:
+            self.worker.cancel_job()
+            self.cancel.setEnabled(False)
+            self.text.setText('Stopping after the current frame…')
+
+    def _open_folder(self):
+        first = Path(self.written[0]) if self.written else None
+        if first:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(first.parent)))
+
+    def closeEvent(self, e):
+        if not self.done:
+            self.worker.cancel_job()
+        super().closeEvent(e)

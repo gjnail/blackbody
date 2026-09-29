@@ -1,0 +1,547 @@
+"""GPU context and compute helpers on top of wgpu (WebGPU on Vulkan, Direct3D 12 or Metal).
+
+Every simulation and render pass is a compute kernel. A kernel's resources live in bind group 0
+and its parameters in bind group 1, a dynamic-offset window into a per-submission uniform arena,
+so one command buffer can carry hundreds of dispatches that each see their own parameters.
+"""
+from __future__ import annotations
+
+import logging
+import math
+import os
+import re
+from pathlib import Path
+
+import numpy as np
+import wgpu
+
+log = logging.getLogger('blackbody.gpu')
+
+TU = wgpu.TextureUsage
+BU = wgpu.BufferUsage
+SS = wgpu.ShaderStage
+
+WGSL_DIR = Path(__file__).with_name('wgsl')
+
+# format -> (numpy dtype, channels, bytes per texel)
+FORMATS = {
+    'rgba32float': (np.float32, 4, 16),
+    'rgba16float': (np.float16, 4, 8),
+    'rg32float': (np.float32, 2, 8),
+    'rg16float': (np.float16, 2, 4),
+    'r32float': (np.float32, 1, 4),
+    'r16float': (np.float16, 1, 2),
+    'rgba8unorm': (np.uint8, 4, 4),
+    'r32uint': (np.uint32, 1, 4),
+}
+
+DEFAULT_USAGE = TU.TEXTURE_BINDING | TU.STORAGE_BINDING | TU.COPY_SRC | TU.COPY_DST
+
+
+class GPUUnavailable(RuntimeError):
+    """No usable GPU adapter was found."""
+
+
+def ceil_div(a, b):
+    return -(-int(a) // int(b))
+
+
+def groups_1d(n, size=64):
+    """Workgroup counts for n invocations of a 1D kernel, spilling into y past WebGPU's 65535 per
+    dimension (the kernel recovers its index as x + y * num_workgroups.x * size)."""
+    g = max(ceil_div(n, size), 1)
+    return (min(g, 65535), ceil_div(g, 65535), 1)
+
+
+class Texture:
+    """A texture, its default view and its shape. `size` is (w, h, d); 2D textures have d == 1."""
+
+    __slots__ = ('tex', 'view', 'size', 'format', 'dim', 'label', '_gpu')
+
+    def __init__(self, gpu, size, fmt, dim='3d', usage=DEFAULT_USAGE, label=''):
+        w, h, d = (int(size[0]), int(size[1]), int(size[2]) if len(size) > 2 else 1)
+        self._gpu = gpu
+        self.size = (w, h, d)
+        self.format = fmt
+        self.dim = dim
+        self.label = label
+        self.tex = gpu.device.create_texture(size=(w, h, d), dimension=dim, format=fmt, usage=usage, label=label)
+        self.view = self.tex.create_view()
+
+    @property
+    def nbytes(self):
+        w, h, d = self.size
+        return w * h * d * FORMATS[self.format][2]
+
+    def destroy(self):
+        try:
+            self.tex.destroy()
+        except Exception:  # already destroyed or device lost
+            pass
+
+    def __repr__(self):
+        return f'<Texture {self.label} {self.size} {self.format}>'
+
+
+class Buffer:
+    __slots__ = ('buf', 'size', 'label')
+
+    def __init__(self, gpu, size, usage=BU.STORAGE | BU.COPY_DST | BU.COPY_SRC, label=''):
+        self.size = int(size)
+        self.label = label
+        self.buf = gpu.device.create_buffer(size=self.size, usage=usage, label=label)
+
+    def destroy(self):
+        try:
+            self.buf.destroy()
+        except Exception:
+            pass
+
+
+class Uniforms:
+    """Builds a kernel's parameter block. Every field is a vec4 (16 bytes), matching the WGSL
+    structs, which are written with vec4 members only so no padding rules can bite."""
+
+    __slots__ = ('data',)
+
+    def __init__(self):
+        self.data = []
+
+    def v4(self, x=0.0, y=0.0, z=0.0, w=0.0):
+        self.data.extend((float(x), float(y), float(z), float(w)))
+        return self
+
+    def v3(self, v, w=0.0):
+        return self.v4(v[0], v[1], v[2], w)
+
+    def m4(self, m):
+        """A 4x4 matrix given row-major in numpy; WGSL mat4x4 is column-major."""
+        self.data.extend(np.asarray(m, np.float32).T.reshape(-1).tolist())
+        return self
+
+    def raw(self, values):
+        vals = [float(v) for v in values]
+        assert len(vals) % 4 == 0, 'uniform block must be vec4 aligned'
+        self.data.extend(vals)
+        return self
+
+    def tobytes(self):
+        return np.asarray(self.data, np.float32).tobytes()
+
+
+class UniformArena:
+    """One large uniform buffer per submission; each dispatch gets a 256-byte aligned window."""
+
+    ALIGN = 256
+    WINDOW = 8192  # the largest parameter block a kernel may use
+
+    def __init__(self, device, size=8 << 20):
+        self.device = device
+        self.size = size
+        self.buf = device.create_buffer(size=size, usage=BU.UNIFORM | BU.COPY_DST, label='uniform-arena')
+        self.cpu = bytearray(size)
+        self.off = 0
+        vis = SS.COMPUTE | SS.VERTEX | SS.FRAGMENT
+        self.layout = device.create_bind_group_layout(entries=[{
+            'binding': 0, 'visibility': vis,
+            'buffer': {'type': 'uniform', 'has_dynamic_offset': True, 'min_binding_size': 0}}])
+        self.group = device.create_bind_group(layout=self.layout, entries=[
+            {'binding': 0, 'resource': {'buffer': self.buf, 'offset': 0, 'size': self.WINDOW}}])
+
+    def fits(self, n):
+        return self.off + max(n, 16) + self.WINDOW <= self.size
+
+    def push(self, data: bytes):
+        n = len(data)
+        if n > self.WINDOW:
+            raise ValueError(f'uniform block of {n} bytes exceeds the {self.WINDOW} byte window')
+        off = self.off
+        self.cpu[off:off + n] = data
+        self.off = off + ceil_div(max(n, 16), self.ALIGN) * self.ALIGN
+        return off
+
+    def flush(self, queue):
+        if self.off:
+            queue.write_buffer(self.buf, 0, memoryview(self.cpu)[:self.off])
+        self.off = 0
+
+
+# ---------------------------------------------------------------------------------------------
+# Shader sources
+# ---------------------------------------------------------------------------------------------
+
+_INCLUDE = re.compile(r'^\s*//!include\s+([\w./-]+)\s*$', re.M)
+
+
+def load_wgsl(name, defines=None, _seen=None):
+    """Read a WGSL file, expanding `//!include file.wgsl` lines (each file at most once).
+    String defines replace `${NAME}` tokens (texel formats, which WGSL constants cannot express);
+    numeric and boolean defines become `const NAME = value;` declarations."""
+    seen = set() if _seen is None else _seen
+
+    def expand(fname):
+        if fname in seen:
+            return ''
+        seen.add(fname)
+        text = (WGSL_DIR / fname).read_text(encoding='utf-8')
+        return _INCLUDE.sub(lambda m: expand(m.group(1)), text)
+
+    body = expand(name)
+    head = ''
+    for k, v in (defines or {}).items():
+        if isinstance(v, str):
+            body = body.replace('${' + k + '}', v)
+        elif isinstance(v, bool):
+            head += f'const {k}: bool = {"true" if v else "false"};\n'
+        elif isinstance(v, int):
+            head += f'const {k}: i32 = {v};\n'
+        else:
+            head += f'const {k}: f32 = {float(v)!r};\n'
+    return head + body
+
+
+# ---------------------------------------------------------------------------------------------
+# Kernels
+# ---------------------------------------------------------------------------------------------
+
+def _layout_entry(i, spec):
+    """Binding spec strings:
+    tex3d / tex2d            sampled float texture (filterable)
+    utex3d / utex2d          sampled unfilterable-float texture (textureLoad only)
+    st3d:FMT:ACC / st2d:...  storage texture, ACC in w, r, rw
+    smp / smpn               filtering / non-filtering sampler
+    buf / rbuf               read-write / read-only storage buffer
+    """
+    vis = SS.COMPUTE
+    kind, *rest = spec.split(':')
+    e = {'binding': i, 'visibility': vis}
+    if kind in ('tex3d', 'tex2d', 'utex3d', 'utex2d'):
+        dim = '3d' if kind.endswith('3d') else '2d'
+        e['texture'] = {'sample_type': 'unfilterable-float' if kind.startswith('u') else 'float',
+                        'view_dimension': dim, 'multisampled': False}
+    elif kind in ('st3d', 'st2d'):
+        fmt, acc = rest
+        e['storage_texture'] = {'access': {'w': 'write-only', 'r': 'read-only', 'rw': 'read-write'}[acc],
+                                'format': fmt, 'view_dimension': '3d' if kind == 'st3d' else '2d'}
+    elif kind == 'smp':
+        e['sampler'] = {'type': 'filtering'}
+    elif kind == 'smpn':
+        e['sampler'] = {'type': 'non-filtering'}
+    elif kind == 'buf':
+        e['buffer'] = {'type': 'storage'}
+    elif kind == 'rbuf':
+        e['buffer'] = {'type': 'read-only-storage'}
+    else:
+        raise ValueError(f'unknown binding spec {spec!r}')
+    return e
+
+
+class Kernel:
+    """A compute pipeline with an explicit layout: group 0 = resources, group 1 = parameters."""
+
+    def __init__(self, gpu, source_file, bindings, entry='main', defines=None, workgroup=(8, 8, 4), label=None):
+        self.gpu = gpu
+        self.label = label or f'{source_file}:{entry}'
+        self.bindings = list(bindings)
+        self.workgroup = workgroup
+        code = load_wgsl(source_file, defines)
+        dev = gpu.device
+        try:
+            module = dev.create_shader_module(code=code, label=self.label)
+        except Exception as ex:  # surface the WGSL error with the kernel name
+            raise RuntimeError(f'WGSL compile failed in {self.label}:\n{ex}') from None
+        self.layout0 = dev.create_bind_group_layout(entries=[_layout_entry(i, s) for i, s in enumerate(self.bindings)])
+        layout = dev.create_pipeline_layout(bind_group_layouts=[self.layout0, gpu.arena.layout])
+        self.pipe = dev.create_compute_pipeline(layout=layout, compute={'module': module, 'entry_point': entry}, label=self.label)
+        self._groups = {}
+
+    def bind(self, resources):
+        key = tuple(id(r) for r in resources)
+        g = self._groups.get(key)
+        if g is not None:
+            return g
+        if len(resources) != len(self.bindings):
+            raise ValueError(f'{self.label}: expected {len(self.bindings)} resources, got {len(resources)}')
+        entries = []
+        for i, (spec, r) in enumerate(zip(self.bindings, resources)):
+            if isinstance(r, Texture):
+                res = r.view
+            elif isinstance(r, Buffer):
+                res = {'buffer': r.buf, 'offset': 0, 'size': r.size}
+            else:
+                res = r  # sampler, view or raw binding
+            entries.append({'binding': i, 'resource': res})
+        g = self.gpu.device.create_bind_group(layout=self.layout0, entries=entries, label=self.label)
+        if len(self._groups) > 64:  # textures get reallocated when a domain is resized
+            self._groups.clear()
+        self._groups[key] = (g, tuple(resources))  # keep the resources alive while cached
+        return self._groups[key]
+
+    def groups_for(self, size):
+        wx, wy, wz = self.workgroup
+        return (ceil_div(size[0], wx), ceil_div(size[1], wy), ceil_div(size[2] if len(size) > 2 else 1, wz))
+
+
+class Batch:
+    """Records dispatches into one command buffer. Use as a context manager; it submits on exit."""
+
+    def __init__(self, gpu):
+        self.gpu = gpu
+        self.enc = gpu.device.create_command_encoder()
+        self.cp = None
+        self.count = 0
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, et, ev, tb):
+        if et is None:
+            self.submit()
+        else:
+            self._end_pass()
+            self.gpu.arena.off = 0
+
+    def _end_pass(self):
+        if self.cp is not None:
+            self.cp.end()
+            self.cp = None
+
+    def run(self, kernel: Kernel, resources, uniforms, size=None, groups=None):
+        """Dispatch `kernel` over `size` threads (or explicit workgroup counts)."""
+        data = uniforms.tobytes() if isinstance(uniforms, Uniforms) else (uniforms or b'\0' * 16)
+        arena = self.gpu.arena
+        if not arena.fits(len(data)):
+            self.submit(restart=True)
+        off = arena.push(data)
+        if self.cp is None:
+            self.cp = self.enc.begin_compute_pass()
+        g, _ = kernel.bind(resources)
+        self.cp.set_pipeline(kernel.pipe)
+        self.cp.set_bind_group(0, g)
+        self.cp.set_bind_group(1, arena.group, [off])
+        wg = groups or kernel.groups_for(size)
+        if min(wg) > 0:
+            self.cp.dispatch_workgroups(*wg)
+        self.count += 1
+
+    def run_indirect(self, kernel: Kernel, resources, uniforms, args: 'Buffer', offset=0):
+        """Dispatch `kernel` with workgroup counts read from `args` on the GPU (three u32 at `offset`),
+        for work whose size is only known on the GPU (live particle counts)."""
+        data = uniforms.tobytes() if isinstance(uniforms, Uniforms) else (uniforms or b'\0' * 16)
+        arena = self.gpu.arena
+        if not arena.fits(len(data)):
+            self.submit(restart=True)
+        off = arena.push(data)
+        if self.cp is None:
+            self.cp = self.enc.begin_compute_pass()
+        g, _ = kernel.bind(resources)
+        self.cp.set_pipeline(kernel.pipe)
+        self.cp.set_bind_group(0, g)
+        self.cp.set_bind_group(1, arena.group, [off])
+        self.cp.dispatch_workgroups_indirect(args.buf, offset)
+        self.count += 1
+
+    def clear_buffer(self, buf: 'Buffer', offset=0, size=None):
+        self._end_pass()
+        self.enc.clear_buffer(buf.buf, offset, size)
+
+    def run_program(self, prog: 'Program'):
+        """Replay a pre-bound sequence of dispatches (see Program)."""
+        if self.cp is None:
+            self.cp = self.enc.begin_compute_pass()
+        cp = self.cp
+        group = prog.group
+        last = None
+        for pipe, g0, off, wg in prog.items:
+            if pipe is not last:
+                cp.set_pipeline(pipe)
+                last = pipe
+            cp.set_bind_group(0, g0)
+            cp.set_bind_group(1, group, [off])
+            cp.dispatch_workgroups(*wg)
+        self.count += len(prog.items)
+
+    def render_pass(self, **desc):
+        """Close the compute pass and open a render pass; the caller must call .end() on it."""
+        self._end_pass()
+        return self.enc.begin_render_pass(**desc)
+
+    def uniform_offset(self, uniforms):
+        data = uniforms.tobytes() if isinstance(uniforms, Uniforms) else uniforms
+        if not self.gpu.arena.fits(len(data)):
+            self.submit(restart=True)
+        return self.gpu.arena.push(data)
+
+    def copy_texture(self, src: Texture, dst: Texture, size=None, src_origin=(0, 0, 0), dst_origin=(0, 0, 0)):
+        self._end_pass()
+        self.enc.copy_texture_to_texture({'texture': src.tex, 'origin': src_origin, 'mip_level': 0},
+                                         {'texture': dst.tex, 'origin': dst_origin, 'mip_level': 0},
+                                         size or src.size)
+
+    def submit(self, restart=False):
+        self._end_pass()
+        self.gpu.arena.flush(self.gpu.queue)
+        self.gpu.queue.submit([self.enc.finish()])
+        if restart:
+            self.enc = self.gpu.device.create_command_encoder()
+
+
+class Program:
+    """A fixed sequence of dispatches whose resources and parameters never change (an iterative
+    solver's inner loop). Everything is bound once and the parameter blocks live in their own
+    uniform buffer, so replaying it costs only the raw dispatch calls.
+
+    ops: (kernel, resources, uniforms, size) or (kernel, resources, uniforms, None, groups)."""
+
+    def __init__(self, gpu, ops):
+        self.gpu = gpu
+        blocks, self.items, self._keep = [], [], []
+        off = 0
+        for op in ops:
+            kernel, resources, uniforms, size = op[:4]
+            groups = op[4] if len(op) > 4 else None
+            data = uniforms.tobytes() if isinstance(uniforms, Uniforms) else (uniforms or b'\0' * 16)
+            g0, keep = kernel.bind(resources)
+            self._keep.append(keep)
+            wg = groups or kernel.groups_for(size)
+            if min(wg) <= 0:
+                continue
+            blocks.append((off, data))
+            self.items.append((kernel.pipe, g0, off, tuple(wg)))
+            off += ceil_div(max(len(data), 16), UniformArena.ALIGN) * UniformArena.ALIGN
+        size = off + UniformArena.WINDOW
+        cpu = bytearray(size)
+        for o, d in blocks:
+            cpu[o:o + len(d)] = d
+        dev = gpu.device
+        self.buf = dev.create_buffer(size=size, usage=BU.UNIFORM | BU.COPY_DST, label='program-uniforms')
+        gpu.queue.write_buffer(self.buf, 0, cpu)
+        self.group = dev.create_bind_group(layout=gpu.arena.layout, entries=[
+            {'binding': 0, 'resource': {'buffer': self.buf, 'offset': 0, 'size': UniformArena.WINDOW}}])
+
+    def __len__(self):
+        return len(self.items)
+
+    def destroy(self):
+        try:
+            self.buf.destroy()
+        except Exception:
+            pass
+
+
+class GPU:
+    """Owns the adapter, device, samplers and the kernel cache."""
+
+    def __init__(self, adapter_name=None, backend=None, power='high-performance'):
+        self.adapter = self._pick_adapter(adapter_name, backend, power)
+        info = self.adapter.info
+        self.name = info.get('device', 'GPU')
+        self.backend = info.get('backend_type', '')
+        feats = set(self.adapter.features)
+        want = [f for f in ('float32-filterable', 'timestamp-query') if f in feats]
+        self.float32_filterable = 'float32-filterable' in feats
+        alim = self.adapter.limits
+        # counts: ask for what the kernels need; sizes: take whatever the adapter offers
+        wanted = {'max-storage-textures-per-shader-stage': 8, 'max-sampled-textures-per-shader-stage': 16,
+                  'max-storage-buffers-per-shader-stage': 8, 'max-storage-buffer-binding-size': None,
+                  'max-buffer-size': None, 'max-texture-dimension-2d': None, 'max-texture-dimension-3d': None,
+                  'max-compute-workgroup-storage-size': None}
+        limits = {}
+        for k, v in wanted.items():
+            if k in alim:
+                limits[k] = int(alim[k]) if v is None else min(int(alim[k]), v)
+        self.device = self.adapter.request_device_sync(required_features=want, required_limits=limits, label='blackbody')
+        self.queue = self.device.queue
+        self.limits = dict(self.device.limits)
+        self.arena = UniformArena(self.device)
+        d = self.device
+        self.linear = d.create_sampler(mag_filter='linear', min_filter='linear', mipmap_filter='nearest',
+                                       address_mode_u='clamp-to-edge', address_mode_v='clamp-to-edge', address_mode_w='clamp-to-edge')
+        self.nearest = d.create_sampler(mag_filter='nearest', min_filter='nearest',
+                                        address_mode_u='clamp-to-edge', address_mode_v='clamp-to-edge', address_mode_w='clamp-to-edge')
+        self.repeat = d.create_sampler(mag_filter='linear', min_filter='linear', mipmap_filter='nearest',
+                                       address_mode_u='repeat', address_mode_v='repeat', address_mode_w='repeat')
+        self._kernels = {}
+        self.vel_format = 'rgba32float' if self.float32_filterable else 'rgba16float'
+        log.info('GPU: %s (%s)', self.name, self.backend)
+
+    @staticmethod
+    def adapters():
+        out = []
+        for a in wgpu.gpu.enumerate_adapters_sync():
+            i = a.info
+            out.append({'name': i.get('device', '?'), 'backend': i.get('backend_type', '?'), 'type': i.get('adapter_type', '?')})
+        return out
+
+    @staticmethod
+    def _pick_adapter(name, backend, power):
+        name = name or os.environ.get('BLACKBODY_GPU')
+        backend = backend or os.environ.get('BLACKBODY_BACKEND')
+        if name or backend:
+            for a in wgpu.gpu.enumerate_adapters_sync():
+                i = a.info
+                if name and name.lower() not in i.get('device', '').lower():
+                    continue
+                if backend and backend.lower() != i.get('backend_type', '').lower():
+                    continue
+                if i.get('adapter_type') == 'CPU':
+                    continue
+                return a
+            log.warning('No adapter matched name=%r backend=%r; using the default', name, backend)
+        a = wgpu.gpu.request_adapter_sync(power_preference=power)
+        if a is None:
+            raise GPUUnavailable('No GPU adapter found. Blackbody needs a GPU with Vulkan, Direct3D 12 or Metal.')
+        return a
+
+    # -- resources ----------------------------------------------------------------------------
+
+    def texture3d(self, size, fmt, label='', usage=DEFAULT_USAGE):
+        return Texture(self, size, fmt, '3d', usage, label)
+
+    def texture2d(self, w, h, fmt, label='', usage=DEFAULT_USAGE):
+        return Texture(self, (w, h, 1), fmt, '2d', usage, label)
+
+    def buffer(self, size, label='', usage=BU.STORAGE | BU.COPY_DST | BU.COPY_SRC):
+        return Buffer(self, size, usage, label)
+
+    def kernel(self, source_file, bindings, entry='main', defines=None, workgroup=(8, 8, 4)):
+        key = (source_file, entry, tuple(bindings), tuple(sorted((defines or {}).items())), workgroup)
+        k = self._kernels.get(key)
+        if k is None:
+            k = Kernel(self, source_file, bindings, entry, defines, workgroup)
+            self._kernels[key] = k
+        return k
+
+    def batch(self):
+        return Batch(self)
+
+    # -- transfers ----------------------------------------------------------------------------
+
+    def upload(self, tex: Texture, array):
+        dtype, ch, bpt = FORMATS[tex.format]
+        a = np.ascontiguousarray(array, dtype=dtype)
+        w, h, d = tex.size
+        self.queue.write_texture({'texture': tex.tex, 'origin': (0, 0, 0), 'mip_level': 0}, a,
+                                 {'offset': 0, 'bytes_per_row': w * bpt, 'rows_per_image': h}, (w, h, d))
+
+    def read(self, tex: Texture, origin=(0, 0, 0), size=None):
+        """Read a texture (or a box of it) back as (d, h, w, c) for 3D or (h, w, c) for 2D."""
+        dtype, ch, bpt = FORMATS[tex.format]
+        w, h, d = size or tex.size
+        data = self.queue.read_texture({'texture': tex.tex, 'origin': origin, 'mip_level': 0},
+                                       {'offset': 0, 'bytes_per_row': w * bpt, 'rows_per_image': h}, (w, h, d))
+        arr = np.frombuffer(data, dtype=dtype).reshape(d, h, w, ch)
+        return arr[0] if tex.dim == '2d' else arr
+
+    def read_buffer(self, buf: Buffer, size=None, offset=0):
+        return self.queue.read_buffer(buf.buf, offset, size)
+
+    def write_buffer(self, buf: Buffer, data, offset=0):
+        self.queue.write_buffer(buf.buf, offset, np.ascontiguousarray(data))
+
+    def sync(self):
+        """Block until the GPU has finished everything submitted so far."""
+        tmp = getattr(self, '_sync_buf', None)
+        if tmp is None:
+            tmp = self._sync_buf = self.device.create_buffer(size=16, usage=BU.COPY_DST | BU.COPY_SRC)
+        self.queue.read_buffer(tmp, 0, 4)
