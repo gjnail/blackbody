@@ -205,7 +205,10 @@ fn solid_d(p: vec3<f32>) -> f32 {
   if (cnt == 0) { return 1.0e6; }
   let w = U.org.xyz + p * U.n.w;
   var d = 1.0e9;
-  for (var i = 0; i < cnt; i++) { d = min(d, col_sdf(U.col[i], w)); }
+  for (var i = 0; i < cnt; i++) {
+    if (U.col[i].y.w < 0.5) { continue; }  // a helper, not in the shot: invisible
+    d = min(d, col_sdf(U.col[i], w));
+  }
   return d / U.n.w;
 }
 

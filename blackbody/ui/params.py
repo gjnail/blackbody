@@ -113,6 +113,17 @@ class ColorButton(QPushButton):
             self.changed.emit((_lin(c.redF()), _lin(c.greenF()), _lin(c.blueF())))
 
 
+def pick_image_file(parent, current=''):
+    """Ask for an environment panorama (HDR, EXR or an ordinary image); returns its path or ''."""
+    start = QSettings().value('ui/hdri_dir', '', type=str) or current
+    path, _ = QFileDialog.getOpenFileName(parent, 'Choose an environment image', current or start,
+                                          'Panoramas (*.hdr *.exr *.png *.jpg *.jpeg *.tif *.tiff);;All files (*)')
+    if path:
+        from pathlib import Path
+        QSettings().setValue('ui/hdri_dir', str(Path(path).parent))
+    return path
+
+
 def pick_mesh_file(parent, current=''):
     """Ask for an OBJ or STL mesh; returns its path or ''."""
     start = QSettings().value('ui/mesh_dir', '', type=str)
@@ -259,7 +270,8 @@ class ParamRow(QWidget):
         return self.line
 
     def _browse(self):
-        path = pick_mesh_file(self, self.line.text())
+        pick = pick_image_file if self.spec.key == 'environment' else pick_mesh_file
+        path = pick(self, self.line.text())
         if path:
             self._commit(path, merge=False)
 

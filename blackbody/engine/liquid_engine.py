@@ -14,6 +14,7 @@ import numpy as np
 from . import camera as cam
 from .gpu import Uniforms
 from .liquid import LiquidSolver
+from .liquid_float import Floats
 from .liquid_render import LiquidRenderer, LiquidView
 from .renderer import INPUT_TRANSFORMS
 
@@ -34,6 +35,8 @@ class LiquidEngine:
     liquid_r = None
     kind = 'fire'
     _rwet = None
+    _floats = None
+    _floats_ready = False
 
     def _liq(self):
         if self.liquid is None:
@@ -72,6 +75,8 @@ class LiquidEngine:
 
     def _reset_liquid(self):
         self._filled = set()
+        self._floats = None
+        self._floats_ready = False
         if self.liquid is not None and self.liquid.dims is not None:
             self.liquid.reset()
 
@@ -87,24 +92,49 @@ class LiquidEngine:
         # surface tension can demand more substeps than the domain allows: stability comes first
         hi = min(40, max(d['substeps_max'], L.capillary_substeps(fdt)))
         n = L.substeps_for(fdt, cfl=d['cfl'], lo=d['substeps_min'], hi=hi)
-        moving = scene.colliders_animated()
+        if not self._floats_ready:
+            self._floats = Floats.from_scene(scene, frame - 1, self.solver.meshes)
+            self._floats_ready = True
+        floats = self._floats
+        moving = scene.colliders_animated() or bool(floats)
         filled = getattr(self, '_filled', None)
         if filled is None:
             filled = self._filled = set()
         with self.gpu.batch() as b:
+            if floats:
+                L.clear_float(b)
             for i in range(n):
                 fs = frame - 1 + (i + 0.5) / n
                 srcs = scene.sources_gpu(fs, filled)
-                cols = scene.colliders_gpu(fs) if moving else None
+                ov = floats.overrides(fdt * (i + 0.5) / n) if floats else None
+                cols = scene.colliders_gpu(fs, ov) if moving else None
                 L.step(b, fdt / n, prm, srcs, cols)
+                if floats:
+                    L.float_forces(b, floats.regions(scene), i, fdt / n)
             L.pack(b)
         L.measure()
+        if floats:
+            floats.step(L.read_float(len(floats.bodies), n), fdt, n, L.h, prm.rho, L.origin, L.dims,
+                        ground=bool(d['ground']), walls=not d['open_sides'])
         self.sim_frame = frame
         self.last_substeps = n
         self.last_step_ms = (time.perf_counter() - t0) * 1000.0
 
     def _snapshot_liquid(self):
-        return {'liq': self.liquid.read_packed(), 'wet': self.liquid.read_wet(), 'ww': self.liquid.read_ww_packed()}
+        entry = {'liq': self.liquid.read_packed(), 'wet': self.liquid.read_wet(), 'ww': self.liquid.read_ww_packed()}
+        if self._floats:
+            entry['floats'] = self._floats.state()
+        return entry
+
+    def floating_overrides(self, frame):
+        """Where the liquid has moved the floating colliders by `frame` (None if it has none or the
+        frame is neither live nor cached)."""
+        if self.sim_frame == frame and self._floats:
+            return self._floats.overrides()
+        entry = self.cache.get(frame) if self.cache is not None else None
+        if entry is not None and entry.get('floats'):
+            return Floats.overrides_from(entry['floats'])
+        return None
 
     def _liquid_view(self, scene, frame):
         L = self.liquid
@@ -112,7 +142,7 @@ class LiquidEngine:
         d = scene.data['domain']
         q = scene.data['liquid']
         bounds = (bool(d['open_sides']), bool(d['open_top']), not d['ground'])
-        extra = dict(colliders=tuple(scene.colliders_gpu(frame)), meshes=self.solver.meshes,
+        extra = dict(colliders=tuple(scene.colliders_gpu(frame, self.floating_overrides(frame))), meshes=self.solver.meshes,
                      level=q['water_level'] if d['open_sides'] else 0.0, level_blend=q['level_absorb'])
         if self.sim_frame == frame:
             return LiquidView(L.packed, L.packed_count, L.WET, L.dims, L.h, L.origin, ppc, L.wpacked, L.ww_count, bounds,

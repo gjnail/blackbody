@@ -51,6 +51,9 @@ LIQUID_WORDING = {
                                            'spreading as it flies.'),
     ('emitter', 'inherit'): ('Motion inheritance', 'How much a moving source (keyframed position) throws its liquid along '
                                                    'with it.'),
+    ('collider', 'holdout'): ('In the shot', 'The object is in your footage: it hides the liquid behind it (or shows as a '
+                                             'grey stand-in). Turn off for helper colliders that are not in the shot: they '
+                                             'still hold the liquid but are never drawn.'),
     ('camera', 'fire_position'): ('Effect position', None),
     ('camera', 'fire_yaw'): ('Effect rotation', None),
 }
@@ -67,8 +70,21 @@ def worded(section, params, kind):
     return out
 
 
+BOTH_SECTION_ORDER = ['combustion', 'motion', 'liquid', 'domain', 'shading', 'water', 'lighting', 'embers', 'spread',
+                      'camera', 'composite', 'render']
+
+
 def section_order(kind):
+    if kind == 'both':
+        return BOTH_SECTION_ORDER
     return LIQUID_SECTION_ORDER if kind == 'liquid' else SECTION_ORDER
+
+
+def emitter_kind(scene_kind, emitter):
+    """What an emitter is for: in a fire-and-liquid scene, each one emits one or the other."""
+    if scene_kind == 'both':
+        return 'liquid' if emitter.get('emits') == 'liquid' else 'fire'
+    return scene_kind
 
 
 def section_hint(sec, kind):
@@ -282,7 +298,7 @@ class Properties(QWidget):
         if self.panel is None:
             return
         self.panel.refresh(path)
-        if path and path[-1] in ('mode', 'shape', 'kind', 'liquid_mode'):
+        if path and path[-1] in ('mode', 'shape', 'kind', 'liquid_mode', 'emits'):
             QTimer.singleShot(0, self.rebuild)  # not inside the editor's own signal
 
     def rebuild(self):
@@ -295,18 +311,20 @@ class Properties(QWidget):
             i = sel[1]
             e = sc.emitters[i]
             self.title.setText(e['name'])
-            if kind == 'liquid':
+            ekind = emitter_kind(kind, e)
+            if ekind == 'liquid':
                 self.hint.setText(f'{SHAPE_NAMES.get(e["shape"], e["shape"])} source · pours liquid into the simulation.')
             else:
                 self.hint.setText(f'{SHAPE_NAMES.get(e["shape"], e["shape"])} emitter · releases fuel, heat and smoke into the simulation.')
             header = self._emitter_header(i)
-            params = [p for p in EMITTER_PARAMS if p.key not in ('name', 'enabled') and applies('emitter', p.key, kind)]
+            params = [p for p in EMITTER_PARAMS if p.key not in ('name', 'enabled')
+                      and (applies('emitter', p.key, ekind) or (kind == 'both' and p.key == 'emits'))]
             hide = {'end'} if e['shape'] != 'capsule' else {'yaw'}
             if e['shape'] != 'mesh':
                 hide |= {'mesh', 'thickness'}
-            if kind == 'liquid' and e['liquid_mode'] == 'fill':
+            if ekind == 'liquid' and e['liquid_mode'] == 'fill':
                 hide |= {'flow', 'vel_blend', 'stop'}
-            params = worded('emitter', [p for p in params if p.key not in hide], kind)
+            params = worded('emitter', [p for p in params if p.key not in hide], ekind)
             self.panel = ParamPanel(self.doc, lambda k, i=i: ('emitter', i, k), params, header=header)
         elif sel[0] == 'collider' and sel[1] < len(sc.colliders):
             i = sel[1]
@@ -318,6 +336,7 @@ class Properties(QWidget):
             params = [p for p in COLLIDER_PARAMS if p.key not in ('name',) and applies('collider', p.key, kind)]
             if sc.colliders[i]['shape'] != 'mesh':
                 params = [p for p in params if p.key != 'mesh']
+            params = worded('collider', params, kind)
             self.panel = ParamPanel(self.doc, lambda k, i=i: ('collider', i, k), params)
         else:
             sec = sel[1] if sel[0] == 'section' else section_order(kind)[0]

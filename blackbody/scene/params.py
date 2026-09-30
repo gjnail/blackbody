@@ -402,7 +402,7 @@ COLLIDER_PARAMS = [
     V('opening_at', 'Opening at', (0.0, 0.0, 0.0), -20.0, 20.0, 'm', anim=True, decimals=3, tip='Centre of the opening, measured from the collider\'s centre in its own frame (it turns with the collider).', group='Walls and openings'),
     B('holdout', 'Hides fire', True, tip='The object blocks the view of fire behind it, as the real object in your footage would. Turn off for helper colliders that are not in the shot.', group='Rendering'),
     B('burnable', 'Burnable', False, tip='With Spreading fire on, this object catches where hot gas touches it and fire spreads across its surface: a curtain, furniture, a wooden wall. It can move while it burns.', group='Burning'),
-    B('floating', 'Floats', False, tip='The liquid moves it: it floats, bobs, drifts and tumbles. Its keyframes set only where it starts.', group='Liquid'),
+    B('floating', 'Floats', False, tip='The liquid moves it: it floats or sinks, bobs, drifts with the flow and turns. It stays upright (it turns only about the vertical). Its keyframes set only where it starts.', group='Liquid'),
     F('density', 'Density', 600.0, 20.0, 8000.0, 'kg/m³', 0, tip='Mass per volume of a floating object. Below the liquid\'s density it floats: pine 500, oak 750, ice 920, plastic 950; above it sinks: stone 2600, steel 7800.', group='Liquid', log=True),
 ]
 

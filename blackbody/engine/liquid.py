@@ -282,6 +282,8 @@ class LiquidSolver:
         k['wet'] = g.kernel('liq_wet.wgsl', ['utex3d', 'st2d:r32float:rw'], workgroup=(8, 8, 1))
         k['sdf'] = g.kernel('sdf.wgsl', ['utex3d', 'st3d:r32float:w'])
         k['float'] = g.kernel('liq_float.wgsl', ['utex3d', 'utex3d', 'utex3d', 'utex3d', 'buf'])
+        k['water'] = g.kernel('liq_water.wgsl', ['utex3d', 'st3d:r32float:w'])
+        k['evap'] = g.kernel('liq_evap.wgsl', ['buf', 'buf', 'buf', 'utex3d'], workgroup=P)
         for fmt in ('rgba32float', 'r32float', 'rg32float', 'rgba16float'):
             k['fill_' + fmt] = g.kernel('fill.wgsl', [f'st3d:{fmt}:w'], 'main', {'FMT': fmt})
         # static uniforms
@@ -569,12 +571,27 @@ class LiquidSolver:
             self._smooth(b, lvl, 1)
             self._smooth(b, lvl, 0)
 
+    # -- fire in the same box --------------------------------------------------------------------
+
+    def water_into(self, b: Batch, fire):
+        """Write the liquid's share of each cell into the fire solver's water field."""
+        b.run(self._k['water'], [self.DENS, fire.water], Uniforms().v4(*fire.dims).v4(*self.dims, float(self._prm.ppc)),
+              fire.dims)
+
+    def evaporate(self, b: Batch, fire, boil, rate, dt):
+        """Liquid in fire gas hotter than boiling (fire temperature scale) boils away at up to `rate`
+        (share per second)."""
+        if rate <= 0.0:
+            return
+        u = self._grid(dt).v4(self.capacity, boil, rate, self.steps + 17).v4(*fire.dims)
+        b.run_indirect(self._k['evap'], [self.parts, self.ctr, self.freelist, fire.scal[0]], u, self.args, 0)
+
     # -- floating objects ------------------------------------------------------------------------
 
     def clear_float(self, b: Batch):
         b.clear_buffer(self.fbuf)
 
-    def float_forces(self, b: Batch, bodies, substep):
+    def float_forces(self, b: Batch, bodies, substep, dt):
         """Gather the liquid's push on floating colliders after a step. bodies: (collider index in
         the current collider list, bounding radius in metres), at most MAX_COLLIDERS."""
         h = self.h
@@ -591,7 +608,7 @@ class LiquidSolver:
             size = hi - lo
             if np.any(size <= 0):
                 continue
-            u = self._grid(0.0).v4(*lo, ci).v4(*size, sub * MAX_COLLIDERS + k)
+            u = self._grid(dt).v4(*lo, ci).v4(*size, sub * MAX_COLLIDERS + k).v4(0.5 * self._prm.gravity * dt * h)
             pack_colliders(u, self.colliders, self.meshes)
             b.run(self._k['float'], [self.X, self.TYPE[0], self.vel_tex, self.meshes.atlas, self.fbuf], u, tuple(int(x) for x in size))
 
@@ -609,6 +626,9 @@ class LiquidSolver:
             nv = s[:, 7].sum()
             v = s[:, 4:7].sum(0) / 1024.0 / nv if nv > 0 else np.zeros(3)
             cells = s[:, 11].sum() / nsub
+            if s[:, 10].sum() > 0:
+                # seepage under a body resting on the ground (see liq_float.wgsl)
+                f[1] += s[:, 8].sum() / nsub * (s[:, 9].sum() / 65536.0) / s[:, 10].sum()
             out.append({'force': f, 'moment': tq, 'liquid_vel': v, 'wet': nv > 0, 'cells': cells})
         return out
 

@@ -98,7 +98,12 @@ class LiquidRenderer:
         g = gpu
         self.k_count = g.kernel('liq_surf_count.wgsl', ['rbuf', 'buf'], workgroup=(64, 1, 1))
         self.k_deep = g.kernel('liq_surf_deep.wgsl', ['rbuf', 'buf'])
-        self.k_splat = g.kernel('liq_surf_splat.wgsl', ['rbuf', 'buf', 'rbuf'], workgroup=(64, 1, 1))
+        self.k_splat = g.kernel('liq_surf_splat.wgsl', ['rbuf', 'buf', 'rbuf', 'rbuf'], workgroup=(64, 1, 1))
+        self.k_mom = g.kernel('liq_surf_mom.wgsl', ['rbuf', 'buf'], workgroup=(64, 1, 1))
+        self.k_aniso = g.kernel('liq_surf_aniso.wgsl', ['rbuf', 'buf'], workgroup=(4, 4, 4))
+        self.mom = None
+        self.aniso = None
+        self._blocks = 0
         self.k_resolve = g.kernel('liq_surf_resolve.wgsl', ['rbuf', 'st3d:rgba16float:w', 'st3d:rgba16float:w', 'rbuf'])
         self.k_ww = g.kernel('liq_surf_ww.wgsl', ['rbuf', 'buf'], workgroup=(64, 1, 1))
         self.k_blur = g.kernel('liq_surf_blur.wgsl', ['utex3d', 'st3d:rgba16float:w'])
@@ -212,7 +217,8 @@ class LiquidRenderer:
     def memory_bytes(self, dims, f):
         nf = self.surface_dims(dims, f)
         nodes = nf[0] * nf[1] * nf[2]
-        return nodes * 24 + min(nodes, SLAB_NODES) * ACC_BYTES
+        blocks = int(np.prod([(x + 1) // 2 for x in dims]))
+        return nodes * 24 + min(nodes, SLAB_NODES) * ACC_BYTES + blocks * 72
 
     # -- surface ----------------------------------------------------------------------------------
 
@@ -240,6 +246,21 @@ class LiquidRenderer:
             self.deep = self.gpu.buffer(cells * 4, 'liq-surface-deep')
             self._cells = cells
         reach = max(1, math.ceil(R_cells))
+        # sheets: the local shape of the liquid around each particle block, for ellipsoid kernels
+        nb = tuple((x + 1) // 2 for x in n)
+        blocks = int(np.prod(nb))
+        if blocks != self._blocks:
+            for bf in (self.mom, self.aniso):
+                if bf is not None:
+                    bf.destroy()
+            self.mom = self.gpu.buffer(blocks * 40, 'liq-surface-moments')
+            self.aniso = self.gpu.buffer(blocks * 32, 'liq-surface-aniso')
+            self._blocks = blocks
+        sheets = look.sheets > 0.0 and count > 0
+        if sheets:
+            b.clear_buffer(self.mom)
+            b.run(self.k_mom, [view.packed, self.mom], Uniforms().v4(*n, count), groups=groups_1d(count))
+            b.run(self.k_aniso, [self.mom, self.aniso], Uniforms().v4(*n).v4(min(1.0, look.sheets), 1.8, 1.0, 12.0), nb)
         b.clear_buffer(self.occ)
         if count:
             b.run(self.k_count, [view.packed, self.occ], Uniforms().v4(*n, count), groups=groups_1d(count))
@@ -248,10 +269,10 @@ class LiquidRenderer:
         dst = self._surf[0]
         for z0 in range(0, nf[2], slab):
             z1 = min(nf[2], z0 + slab)
-            u = (Uniforms().v4(*n, count).v4(*nf, r_cells * fx).v4(z0, z1, R_cells * fx, bulk).v4(reach))
+            u = (Uniforms().v4(*n, count).v4(*nf, r_cells * fx).v4(z0, z1, R_cells * fx, bulk).v4(reach, 1.0 if sheets else 0.0))
             b.clear_buffer(self.acc, 0, nf[0] * nf[1] * (z1 - z0) * ACC_BYTES)
             if count:
-                b.run(self.k_splat, [view.packed, self.acc, self.deep], u, groups=groups_1d(count))
+                b.run(self.k_splat, [view.packed, self.acc, self.deep, self.aniso], u, groups=groups_1d(count))
             if view.ww_count and look.whitewater:
                 uw = Uniforms().v4(*n, view.ww_count).v4(*nf, 0).v4(z0, z1, max(1.0, 0.5 * fx))
                 b.run(self.k_ww, [view.ww, self.acc], uw, groups=groups_1d(view.ww_count))

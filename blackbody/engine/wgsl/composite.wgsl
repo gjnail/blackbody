@@ -14,7 +14,8 @@ struct Params {
   view: vec4<f32>,   // view transform (0 standard, 1 AgX, 2 ACES fit, 3 raw), background mode, checker size, depth range (m)
   bg: vec4<f32>,     // background colour (linear) when there is no footage
   tint: vec4<f32>,   // fire colour balance (rgb multipliers), light-cast falloff exponent
-  liq: vec4<f32>,    // x = liquid element (aux.x multiplies the footage: wet ground, shadow; no haze)
+  liq: vec4<f32>,    // x = 1 liquid element (aux.x multiplies the footage: wet ground, shadow; no haze),
+                     //     2 fire and liquid (fire aux, with aux.w the liquid's multiplier on the footage)
   srf: vec4<f32>,    // fire light on surfaces (strength), scorch (strength), _, _
 };
 
@@ -90,7 +91,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let tint = U.tint.rgb;
 
   // heat haze: displace the footage by the gradient of rising noise, scaled by the heat above it
-  let liquid = U.liq.x > 0.5;
+  let liquid = U.liq.x > 0.5 && U.liq.x < 1.5;
+  let both = U.liq.x > 1.5;
   let hf = select(1.0 - exp(-x.x * 1.5), 0.0, liquid);
   var off = vec2<f32>(0.0);
   if (U.haze.x > 0.0 && hf > 1e-3) {
@@ -120,6 +122,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let spill = gw * tint * U.fire.x * U.fire.w;
   var lit = back + back * spill;
   if (liquid) { lit = back * x.x; }
+  if (both) { lit = lit * x.w; }
 
   let fire_rgb = b.rgb * tint * U.fire.x;
   let alpha = clamp(b.a * U.fire.y, 0.0, 1.0);

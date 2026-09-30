@@ -156,7 +156,7 @@ class Renderer:
         self.k_march = g.kernel('raymarch.wgsl', ['tex3d', 'tex3d', 'tex3d', 'tex3d', 'tex3d', 'tex2d', 'smp', 'smp', 'tex3d', 'tex3d',
                                                   'st2d:rgba16float:w', 'st2d:rgba16float:w', 'st2d:rgba16float:w',
                                                   'st2d:rgba16float:w', 'st2d:rgba16float:w', 'rbuf', 'rbuf',
-                                                  'utex3d', 'utex3d', 'rbuf', 'utex3d'],
+                                                  'utex3d', 'utex3d', 'rbuf', 'utex3d', 'utex2d'],
                                 defines=BB_DEFINES, workgroup=(8, 8, 1))
         self.k_lights = g.kernel('lights.wgsl', ['utex3d', 'buf', 'buf'], workgroup=(4, 4, 4))
         self.light_count = g.buffer(16, 'light-count')
@@ -297,7 +297,9 @@ class Renderer:
         b.run(self.k_shadow, [self.E, self.EB, self.gpu.linear, self.L0, self.L1], u, ld)
 
     def march(self, b, solver, camstate: cam.CameraState, fire: cam.FireXform, look: LookParams, size,
-              jitter=(0.0, 0.0), seed=0.0, shutter=0.0, ground=True, time=0.0, max_steps=None, surfaces=None):
+              jitter=(0.0, 0.0), seed=0.0, shutter=0.0, ground=True, time=0.0, max_steps=None, surfaces=None,
+              limit=None):
+        """limit: a texture with a liquid's depth (y, m) and coverage (w) per pixel; the march stops there."""
         from .solver import pack_colliders
         w, h = size
         self._ensure_fire(w, h)
@@ -315,11 +317,13 @@ class Renderer:
              1.0 if (sf.scorch and (sf.burn is not None or sf.burn_obj is not None)) else 0.0)
         u.v4(*sf.grid, sf.cell)
         pack_colliders(u, sf.colliders, sf.meshes)
+        u.v4(1.0 if limit is not None else 0.0)
         b.run(self.k_march, [solver.scal[0], solver.vel[0], self.L0, self.L1, self.noise, self.bb,
                              self.gpu.linear, self.gpu.repeat, self._aux_of(solver), self._chem_of(solver),
                              self.beauty, self.emit, self.aux, self.surf, self.mask, self.lights, self.light_count,
                              sf.burn or self._empty, sf.burn_obj or self._empty, sf.slots or self._no_slots,
-                             sf.meshes.atlas if sf.meshes is not None else self._empty_r32], u, (w, h, 1))
+                             sf.meshes.atlas if sf.meshes is not None else self._empty_r32,
+                             limit if limit is not None else self._black], u, (w, h, 1))
 
     def bloom(self, b, radius=1.0):
         """Downsample the emission pass into a pyramid and fold it back up. Leaves the full bloom in
@@ -361,10 +365,10 @@ class Renderer:
              .v4(VIEW_TRANSFORMS.get(comp.view, 0), 1.0 if comp.bg_checker else 0.0, max(8, h / 60), comp.depth_range)
              .v4(*comp.bg, 0)
              .v4(*comp.tint, 1.0)
-             .v4(1.0 if liquid else 0.0)
+             .v4(2.0 if liquid == 'both' else (1.0 if liquid else 0.0))
              .v4(comp.surface_light, comp.scorch))
         plate = self.plate if has_plate else self._black
-        surf, mask = (self._black, self._black) if liquid else (self.surf, self.mask)
+        surf, mask = (self._black, self._black) if liquid is True else (self.surf, self.mask)
         b.run(self.k_comp, [plate, self.beauty, self.emit, self.aux, self.bloom_tex, self.glow_tex, self.gpu.linear,
                             self.disp, self.lin, surf, mask], u, (w, h, 1))
 

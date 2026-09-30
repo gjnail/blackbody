@@ -18,6 +18,7 @@ import numpy as np
 from . import camera as cam
 from .embers import Embers
 from .gpu import GPU, TU, Uniforms
+from .both_engine import BothEngine
 from .liquid_engine import LiquidEngine
 from .renderer import Renderer, SurfaceInputs
 from .solver import Solver
@@ -86,7 +87,7 @@ def halton(i, b):
     return r
 
 
-class Engine(LiquidEngine):
+class Engine(LiquidEngine, BothEngine):
     def __init__(self, gpu: GPU | None = None, cache_bytes=4 << 30):
         self.gpu = gpu or GPU()
         self.solver = Solver(self.gpu)
@@ -123,6 +124,8 @@ class Engine(LiquidEngine):
         tweaking), and only the cache, now stale, is dropped."""
         if scene.kind == 'liquid':
             return self._prepare_liquid(scene, final, soft)
+        if scene.kind == 'both':
+            return self._prepare_both(scene, final, soft)
         if self.kind != 'fire':
             self.kind = 'fire'
             self.sig = None
@@ -153,6 +156,10 @@ class Engine(LiquidEngine):
             self._reset_liquid()
             self.sim_frame = None
             return
+        if self.kind == 'both':
+            self._reset_both()
+            self.sim_frame = None
+            return
         self.solver.reset()
         self.embers.reset()
         self.sim_frame = None
@@ -174,6 +181,8 @@ class Engine(LiquidEngine):
         """Advance the live simulation to `frame` (exactly one frame after the current one)."""
         if self.kind == 'liquid':
             return self._step_liquid(scene, frame)
+        if self.kind == 'both':
+            return self._step_both(scene, frame)
         t0 = time.perf_counter()
         fps = scene.fps
         fdt = scene.v('domain', 'time_scale', frame) / fps
@@ -203,6 +212,13 @@ class Engine(LiquidEngine):
     def snapshot(self):
         if self.kind == 'liquid':
             return self._snapshot_liquid()
+        if self.kind == 'both':
+            entry = self._snapshot_fire()
+            entry.update(self._snapshot_liquid())
+            return entry
+        return self._snapshot_fire()
+
+    def _snapshot_fire(self):
         s = self.solver
         entry = {'scal': s.read_scalars_fine(), 'time': s.time, 'upres': s.upres}
         if s.burn:
@@ -344,6 +360,9 @@ class Engine(LiquidEngine):
         if self.kind == 'liquid':
             return self._render_liquid(scene, frame, out_size, mode, final, samples, motion_blur, fire_scale, plate,
                                        plate_fit, seed)
+        if self.kind == 'both':
+            return self._render_both(scene, frame, out_size, mode, final, samples, motion_blur, fire_scale, plate,
+                                     plate_fit, seed)
         t0 = time.perf_counter()
         vol, live = self.volume_for(scene, frame)
         if vol is None:
@@ -428,7 +447,7 @@ class Engine(LiquidEngine):
         if self.kind == 'liquid' and self.liquid is not None:
             return self._stats_liquid()
         s = self.solver
-        return {
+        out = {
             'gpu': self.gpu.name, 'backend': self.gpu.backend, 'dims': s.dims, 'voxels': int(np.prod(s.dims)) if s.dims else 0,
             'cell_mm': s.h * 1000 if s.h else 0, 'max_speed': s.max_speed, 'substeps': self.last_substeps,
             'sim_ms': self.last_step_ms, 'render_ms': self.last_render_ms, 'cached': len(self.cache.items),
@@ -436,3 +455,6 @@ class Engine(LiquidEngine):
             'memory_mb': s.memory_bytes() / 1e6 if s.dims else 0,
             'mesh_errors': dict(s.meshes.errors),
         }
+        if self.kind == 'both' and self.liquid is not None:
+            return self._stats_both(out)
+        return out

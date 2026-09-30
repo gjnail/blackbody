@@ -18,6 +18,7 @@ struct Params {
   g: Grid,
   r0: vec4<f32>,   // region corner (cells), body (collider index)
   r1: vec4<f32>,   // region size (cells), output slot
+  k: vec4<f32>,    // hydrostatic change of x over half a cell (g dt h / 2)
   ccnt: vec4<f32>,
   col: array<Collider, MAX_COLLIDERS>,
 };
@@ -55,13 +56,43 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let q = c + d;
     if (!in_grid(q, n)) { continue; }
     if (textureLoad(T, q, 0).x < 0.5 || textureLoad(T, q, 0).x > 1.5) { continue; }
-    let x = textureLoad(X, q, 0).x;
+    // pressure at the face, half a cell up or down from the liquid cell's centre
+    let x = textureLoad(X, q, 0).x + U.k.x * f32(d.y);
     let ff = -vec3<f32>(d) * x;   // pressure pushes into the body
     f += ff;
     let r = vec3<f32>(c) + vec3<f32>(0.5) + 0.5 * vec3<f32>(d) - centre;
     tq += r.z * ff.x - r.x * ff.z;
     vs += mac_vel(vel, vec3<f32>(q) + vec3<f32>(0.5), n);
     nv += 1.0;
+  }
+  // nothing liquid under this cell (the ground, another solid, or the one-cell film of air a body
+  // leaves as it lifts off): water seeps under a real object, so count these cells and the
+  // pressure of the liquid beside them, for the push from below the grid misses
+  let below = c - vec3<i32>(0, 1, 0);
+  var exposed = false;
+  if (below.y < 0) {
+    exposed = U.g.bc.z < 0.5;
+  } else {
+    let tb = textureLoad(T, below, 0).x;
+    exposed = tb < 0.5 || (tb > 1.5 && col_sdf(body, world_of(U.g, vec3<f32>(below) + vec3<f32>(0.5))) >= 0.0);
+  }
+  if (exposed) {
+    add(8u, 1.0, 1.0);
+    for (var layer = 0; layer < 2; layer++) {
+      let base = select(c, below, layer == 1);
+      if (base.y < 0) { continue; }
+      for (var i = 0; i < 6; i++) {
+        if ((i >> 1) == 1) { continue; }
+        var d = vec3<i32>(0);
+        d[i >> 1] = select(-1, 1, (i & 1) == 1);
+        let q = base + d;
+        if (!in_grid(q, n)) { continue; }
+        let tt = textureLoad(T, q, 0).x;
+        if (tt < 0.5 || tt > 1.5) { continue; }
+        add(9u, textureLoad(X, q, 0).x, FX_F);
+        add(10u, 1.0, 1.0);
+      }
+    }
   }
   if (nv == 0.0) { return; }
   add(0u, f.x, FX_F);

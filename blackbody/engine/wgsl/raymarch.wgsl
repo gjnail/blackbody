@@ -38,6 +38,7 @@
 @group(0) @binding(18) var burn_obj: texture_3d<f32>;
 @group(0) @binding(19) var<storage, read> slots: array<BurnSlot>;
 @group(0) @binding(20) var atlas: texture_3d<f32>;
+@group(0) @binding(21) var limit: texture_2d<f32>;                    // liquid in front: y = its depth (m), w = coverage
 
 //!include shade.wgsl
 
@@ -55,6 +56,7 @@ struct Params {
   bgrid: vec4<f32>,      // burnable floor grid dims (simulation grid); w = its cell size (m)
   ccnt: vec4<f32>,
   col: array<Collider, MAX_COLLIDERS>,
+  lim: vec4<f32>,        // x = stop the march at the liquid surface in `limit` (fire and liquid in one box)
 };
 @group(1) @binding(0) var<uniform> U: Params;
 
@@ -174,6 +176,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   textureStore(out_mask, px, mask);
 
   t_out = min(t_out, t_obj);
+  if (U.lim.x > 0.5) {
+    // only the fire in front of the liquid: the liquid layer already shows the fire behind it
+    let lq = textureLoad(limit, px, 0);
+    if (lq.w > 0.5 && lq.y > 0.0) { t_out = min(t_out, lq.y * cells_per_m); }
+  }
   if (t_out <= t_in) {
     textureStore(out_beauty, px, vec4<f32>(0.0));
     textureStore(out_emit, px, vec4<f32>(0.0));
