@@ -4,7 +4,10 @@ The numbers are handbook values for the material against itself or a hard floor:
 - density in kg/m^3;
 - friction is the Coulomb coefficient;
 - bounce is the coefficient of restitution (how much of the speed comes back off a hard floor);
-- strength is the stress, in Pa, at which glued pieces of it come apart (breakable objects).
+- strength is the stress, in Pa, at which glued pieces of it come apart (breakable objects). It is an effective
+  strength, not the handbook one: a joint here feels the force of a whole impact spread over its face, where a real
+  brittle thing breaks at the tiny point it is hit. They are set so that a stone through a window, a vase dropped
+  from a table and a wrecking ball through a wall break as they do, and a touch does not.
 
 Hollow everyday objects (a cardboard box, a plastic crate) use an effective density, their weight over the
 space they take up. The look is used when an object is drawn as a CG object:
@@ -37,27 +40,28 @@ class Material:
     pattern: str = 'plain'   # plain, wood, stone, concrete, brick, metal, glass
     inside: tuple = None     # colour of broken faces (None: the colour)
     ior: float = 1.5         # index of refraction (clear materials)
+    dust: float = 0.0        # how much dust it throws up where it breaks (mortar, plaster, soil: about 1)
 
 
 MATERIALS = {m.key: m for m in (
-    Material('wood', 'Wood (pine)', 550.0, 0.45, 0.35, 4.0e6, (0.45, 0.29, 0.15), 0.65, pattern='wood', inside=(0.62, 0.45, 0.27)),
-    Material('stone', 'Stone (granite)', 2650.0, 0.6, 0.25, 8.0e6, (0.32, 0.31, 0.3), 0.8, pattern='stone', inside=(0.42, 0.41, 0.39)),
-    Material('concrete', 'Concrete', 2400.0, 0.65, 0.2, 3.0e6, (0.42, 0.41, 0.38), 0.9, pattern='concrete', inside=(0.5, 0.48, 0.44)),
-    Material('brick', 'Brick', 1900.0, 0.6, 0.15, 2.0e6, (0.38, 0.13, 0.07), 0.85, pattern='brick', inside=(0.5, 0.2, 0.11)),
-    Material('steel', 'Steel', 7850.0, 0.45, 0.45, 4.0e8, (0.56, 0.57, 0.58), 0.35, metal=1.0, pattern='metal'),
-    Material('aluminium', 'Aluminium', 2700.0, 0.45, 0.45, 9.0e7, (0.91, 0.92, 0.92), 0.3, metal=1.0, pattern='metal'),
-    Material('glass', 'Glass', 2500.0, 0.5, 0.5, 3.0e7, (0.9, 0.95, 0.94), 0.03, clear=0.92, pattern='glass', inside=(0.75, 0.85, 0.82)),
-    Material('ice', 'Ice', 917.0, 0.05, 0.25, 1.0e6, (0.8, 0.9, 0.95), 0.08, clear=0.7, pattern='glass', ior=1.31),
-    Material('plastic', 'Plastic', 950.0, 0.35, 0.5, 2.0e7, (0.75, 0.1, 0.06), 0.4),
-    Material('rubber', 'Rubber', 1100.0, 0.9, 0.8, 1.5e7, (0.04, 0.04, 0.04), 0.7),
-    Material('ceramic', 'Ceramic (pottery)', 2300.0, 0.5, 0.35, 2.0e7, (0.8, 0.77, 0.72), 0.25, inside=(0.66, 0.5, 0.38)),
-    Material('cardboard', 'Cardboard box', 120.0, 0.5, 0.15, 5.0e5, (0.48, 0.33, 0.17), 0.9, inside=(0.58, 0.45, 0.28)),
-    Material('foam', 'Foam', 40.0, 0.7, 0.3, 2.0e5, (0.85, 0.85, 0.8), 0.95),
+    Material('wood', 'Wood (pine)', 550.0, 0.45, 0.35, 2.0e+06, (0.45, 0.29, 0.15), 0.65, pattern='wood', inside=(0.62, 0.45, 0.27), dust=0.15),
+    Material('stone', 'Stone (granite)', 2650.0, 0.6, 0.25, 2.0e+06, (0.32, 0.31, 0.3), 0.8, pattern='stone', inside=(0.42, 0.41, 0.39), dust=0.6),
+    Material('concrete', 'Concrete', 2400.0, 0.65, 0.2, 1.0e+06, (0.42, 0.41, 0.38), 0.9, pattern='concrete', inside=(0.5, 0.48, 0.44), dust=1.0),
+    Material('brick', 'Brick', 1900.0, 0.6, 0.15, 1.5e+06, (0.38, 0.13, 0.07), 0.85, pattern='brick', inside=(0.5, 0.2, 0.11), dust=1.0),
+    Material('steel', 'Steel', 7850.0, 0.45, 0.45, 2.0e+08, (0.56, 0.57, 0.58), 0.35, metal=1.0, pattern='metal'),
+    Material('aluminium', 'Aluminium', 2700.0, 0.45, 0.45, 5.0e+07, (0.91, 0.92, 0.92), 0.3, metal=1.0, pattern='metal'),
+    Material('glass', 'Glass', 2500.0, 0.5, 0.5, 2.0e+06, (0.9, 0.95, 0.94), 0.03, clear=0.92, pattern='glass', inside=(0.75, 0.85, 0.82), dust=0.03),
+    Material('ice', 'Ice', 917.0, 0.05, 0.25, 3.0e+05, (0.8, 0.9, 0.95), 0.08, clear=0.7, pattern='glass', ior=1.31, dust=0.1),
+    Material('plastic', 'Plastic', 950.0, 0.35, 0.5, 3.0e+06, (0.75, 0.1, 0.06), 0.4),
+    Material('rubber', 'Rubber', 1100.0, 0.9, 0.8, 5.0e+06, (0.04, 0.04, 0.04), 0.7),
+    Material('ceramic', 'Ceramic (pottery)', 2300.0, 0.5, 0.35, 3.0e+05, (0.8, 0.77, 0.72), 0.25, inside=(0.66, 0.5, 0.38), dust=0.4),
+    Material('cardboard', 'Cardboard box', 120.0, 0.5, 0.15, 1.0e+05, (0.48, 0.33, 0.17), 0.9, inside=(0.58, 0.45, 0.28), dust=0.3),
+    Material('foam', 'Foam', 40.0, 0.7, 0.3, 5.0e+04, (0.85, 0.85, 0.8), 0.95, dust=0.2),
     # (a car body or a boat hull is a shell: its weight over the space it takes up)
-    Material('painted', 'Painted metal', 300.0, 0.5, 0.4, 4.0e8, (0.32, 0.03, 0.025), 0.25, inside=(0.56, 0.57, 0.58)),
-    Material('plaster', 'Plaster wall', 900.0, 0.6, 0.2, 1.0e6, (0.7, 0.68, 0.64), 0.9, inside=(0.8, 0.79, 0.76)),
-    Material('fabric', 'Fabric (upholstery)', 250.0, 0.8, 0.2, 1.0e6, (0.36, 0.08, 0.06), 0.95),
-    Material('earth', 'Earth (soil)', 1600.0, 0.65, 0.1, 2.0e5, (0.16, 0.12, 0.085), 0.95, pattern='concrete'),
+    Material('painted', 'Painted metal', 300.0, 0.5, 0.4, 2.0e+08, (0.32, 0.03, 0.025), 0.25, inside=(0.56, 0.57, 0.58)),
+    Material('plaster', 'Plaster wall', 900.0, 0.6, 0.2, 3.0e+05, (0.7, 0.68, 0.64), 0.9, inside=(0.8, 0.79, 0.76), dust=1.5),
+    Material('fabric', 'Fabric (upholstery)', 250.0, 0.8, 0.2, 5.0e+05, (0.36, 0.08, 0.06), 0.95),
+    Material('earth', 'Earth (soil)', 1600.0, 0.65, 0.1, 5.0e+04, (0.16, 0.12, 0.085), 0.95, pattern='concrete', dust=2.0),
 )}
 
 OPTIONS = tuple((k, m.label) for k, m in MATERIALS.items())

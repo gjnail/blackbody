@@ -24,6 +24,12 @@ Notable changes to Blackbody. The format follows
 - CG objects in footage: an object's Look (Automatic, CG or In the footage). A CG one goes over the footage lit by
   the shot's light, with its shadows on the real ground, hidden behind the footage's depth pass and matte.
 - Fixed mesh objects hold falling things on their real shape (between the logs of a pile, on stairs).
+- Things that break (Properties › Breaking): objects cut beforehand into chunks, bricks in running bond, glass
+  shards or wood splinters, glued at joints that give way when pulled, sheared or bent past the material's
+  strength. Hollow objects break as shells (a vase, a crate). Standing ones are held by their base or their edges.
+  Hundreds of pieces, drawn on the stage and in footage, hiding the fire and the liquid behind them; the gas and the
+  water flow round them and are pushed by them; dust where they break. Blocks: brick wall, glass pane, concrete
+  pillar, wooden crate, vase. Presets: Ball through a brick wall, Stone through a window, Vase off a table.
 - Make it fall and Drop it at this frame on any object (right-click it, the Fall chip on its page, or Ctrl+K), and
   Stop it falling. Falling things are drawn and picked where the simulation has them in the viewer, tilted as they
   tumble, and outlined in green. In Build, liquid scenes show objects in their materials instead of grey stand-ins.

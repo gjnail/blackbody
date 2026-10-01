@@ -1,6 +1,6 @@
 # Presets
 
-Blackbody comes with 81 presets. Click one in the app's Effects panel to load it into your shot; every one is an ordinary scene you can change and save as your own. On the website the gallery plays a clip of each one that has one: <https://gjnail.github.io/blackbody/presets.html>.
+Blackbody comes with 84 presets. Click one in the app's Effects panel to load it into your shot; every one is an ordinary scene you can change and save as your own. On the website the gallery plays a clip of each one that has one: <https://gjnail.github.io/blackbody/presets.html>.
 
 ## Fire and smoke
 
@@ -46,6 +46,9 @@ Blackbody comes with 81 presets. Click one in the app's Effects panel to load it
 |---|---|---|
 | <img src="../blackbody/assets/presets/crates_in_fire.png" width="200" alt=""> | **Crates into a fire**<br>1 m campfire | Three wooden crates dropped onto a campfire one after another: they land on the burning logs, shove the smoke aside, catch and burn. Burnable objects with Falls on, and Spreading fire. |
 | <img src="../blackbody/assets/presets/tower_knockdown.png" width="200" alt=""> | **Knocking down a tower**<br>1.2 m tower | A bowling ball thrown into a tower of wooden blocks beside a run of dominoes, on the stage in sunlight: the blocks tumble and bounce, the dominoes fall in turn. Objects with Falls on, drawn in their materials. |
+| <img src="../blackbody/assets/presets/wall_smash.png" width="200" alt=""> | **Ball through a brick wall**<br>1.6 m wall | A 260 kg steel ball into a brick wall: it punches through, the mortar gives way brick by brick, the wall above it caves in and the dust rolls out. A breakable box in Bricks. |
+| <img src="../blackbody/assets/presets/window_smash.png" width="200" alt=""> | **Stone through a window**<br>1 m pane | A stone thrown through a pane of window glass held in its frame: it punches a hole, shards break away round it and fall, the rest stays in the frame. A breakable thin box of glass in Shards. |
+| <img src="../blackbody/assets/presets/vase_drop.png" width="200" alt=""> | **Vase off a table**<br>35 cm vase | A pottery vase knocked off the edge of a table: it tips, falls a metre, lands on its rim and shatters across the tiles. A breakable hollow cylinder of Ceramic. |
 
 ## Water
 

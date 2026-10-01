@@ -26,6 +26,7 @@ from .cloud_engine import CloudEngine
 from .liquid_engine import LiquidEngine
 from .renderer import Renderer, SurfaceInputs
 from . import stage as stage_mod
+from .bodyfield import BodyField
 from .solids import Solids, attached
 from .solver import Solver
 
@@ -132,6 +133,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
         self.solids = Solids()     # rigid bodies: objects that fall, tumble and float (MuJoCo)
         self._air_bufs = None
         self._stage = None         # the set drawn in CG (stage.py), made when first needed
+        self._body_fields = {}     # broken pieces in the simulation grids (bodyfield.py), one per grid, made when needed
         self.cache = FrameCache(cache_bytes)
         self.sim_frame = None
         self.sig = None
@@ -297,12 +299,17 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
             self.cloth.place(scene.fabrics_at(frame - 1), look.ambient_k)
         self.cloth.prepare_frame(self.solver)   # (also clears the solver's steam-off-cloth flag without cloth)
         cloth_steps = max(1, int(math.ceil(fdt * STEPS_PER_SECOND / n)))
+        pieces = poses is not None and self._pieces_for(scene, self.solver)
+        dust = self.solids.dust(scene, fdt, n) if (poses is not None and self.solids.sets) else None
         with self.gpu.batch() as b:
             for i in range(n):
                 # emitters and colliders move within the frame, so fast ones leave a continuous trail
                 fs = frame - 1 + (i + 0.5) / n
+                self.solver.pieces_step = (self.body_field, i) if pieces else None
                 carried = poses[i] if poses else None   # (things attached to falling objects go with them)
                 ems = scene.emitters_gpu(fs, substeps=n, moved=attached(scene, 'emitter', carried))
+                if dust:
+                    ems = ems + dust[i]    # (dust where things broke; the scene's own sources come first)
                 cols = scene.colliders_gpu(fs, carried) if moving else None
                 self.solver.step(b, fdt / n, prm, ems, cols)
                 if cloth:
@@ -314,6 +321,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
                     ember_ems = scene.emitters_gpu(fs, embers_only=True, moved=attached(scene, 'emitter', carried))
                     if ember_ems or self.embers.count:
                         self.embers.step(b, self.solver, ep, ember_ems, fdt / n, cam_g, look.smoke_density, look.ambient_k)
+        self.solver.pieces_step = None
         self.solver.measure()
         if d.get('grow'):
             self._grow(scene, prm)
@@ -708,7 +716,9 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
             self.cloth.prepare_light(r.light_dims_for(vol.dims))
 
         footage = plate is not None
-        stage_on = stage_mod.wanted(scene, footage, mode)
+        pieces = self.piece_poses(frame)   # (broken things: drawn, and holding out what is behind them, in every view)
+        stage_on = stage_mod.wanted(scene, footage, mode) or bool(pieces)
+        r.hold_stage = None
 
         with self.gpu.batch() as b:
             r.light(b, vol, look, fire, t, occluder=self.cloth.occlusion if cloth else None,
@@ -721,7 +731,10 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
                 size = r.plate_size if footage else (W, H)
                 stage = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, size,
                                         plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage, vol=vol,
-                                        ground_y=vol.origin[1], frame=frame)
+                                        ground_y=vol.origin[1], frame=frame, pieces=pieces)
+                if self.stage.has_pieces:   # the march stops at the pieces too
+                    r.hold_stage = self.stage.hold
+                    r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])
             if samples == 1:
                 lim = cloth_pass(b, 0, (0.0, 0.0))
                 r.march(b, vol, cs, fire, look, (fw, fh), seed=base_seed, shutter=shutter, ground=ground, time=t,
@@ -757,6 +770,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
             r.defocus(b, comp, cs, fire)
             r.bloom(b, comp.bloom_radius)
             r.composite(b, (W, H), comp, time=t, frame=frame, plate_fit=plate_fit, stage=stage)
+        r.hold_stage = None
         self.last_render_ms = (time.perf_counter() - t0) * 1000.0
         return cs
 
@@ -766,6 +780,23 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
             carried = attached(scene, 'light', self.floating_overrides(frame))
             if carried:
                 look.lamps = scene.lamps(frame, moved=carried)
+
+    def body_field_for(self, grid='gas'):
+        f = self._body_fields.get(grid)
+        if f is None:
+            f = self._body_fields[grid] = BodyField(self.gpu)
+        return f
+
+    @property
+    def body_field(self):
+        return self.body_field_for('gas')
+
+    def _pieces_for(self, scene, solver, grid='gas'):
+        """Upload this frame's broken pieces for a solver's grid; True if there are any."""
+        sub = getattr(self.solids, 'substep_pieces', None)
+        if not self.solids.sets or not sub or not any(sub):
+            return False
+        return self.body_field_for(grid).prepare(scene, sub, solver.dims, solver.h, solver.origin)
 
     @property
     def stage(self):

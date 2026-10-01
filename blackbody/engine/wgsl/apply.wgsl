@@ -13,7 +13,7 @@ struct Params {
   b: vec4<f32>,     // buoyancy (m/s^2 per unit temperature), soot weight (m/s^2 per unit smoke), damping (1/s), vapour lift (m/s^2 per g/m^3)
   b2: vec4<f32>,    // fuel weight (m/s^2 per unit fuel: heavier-than-air vapour hugs the ground), _, _, _
   wind: vec4<f32>,  // wind velocity (m/s), relaxation toward it (1/s)
-  ccnt: vec4<f32>,  // collider count, any collider moving (1/0)
+  ccnt: vec4<f32>,  // collider count, any collider moving (1/0), broken pieces in svel (1/0)
   col: array<Collider, MAX_COLLIDERS>,
   cnt: vec4<f32>,   // emitter count, any swirl (1/0)
   em: array<Emitter, MAX_EMITTERS>,
@@ -28,6 +28,7 @@ const SWIRL_RATE: f32 = 3.0;  // 1/s, how quickly the air takes up an emitter's 
 @group(0) @binding(4) var atlas: texture_3d<f32>;
 @group(0) @binding(5) var aux: texture_3d<f32>;
 @group(0) @binding(6) var dst: texture_storage_3d<${VELFMT}, write>;
+@group(0) @binding(7) var svel: texture_3d<f32>;   // broken pieces' velocity in the cells inside them (w = 1; bodyfield.py)
 @group(1) @binding(0) var<uniform> U: Params;
 
 fn ld(t: texture_3d<f32>, c: vec3<i32>, d: vec3<i32>) -> vec4<f32> {
@@ -95,6 +96,18 @@ fn solid_vel(wp: vec3<f32>, axis: i32) -> f32 {
   return v.z;
 }
 
+// Velocity component `axis` of the solid at the face between cells a and b: a broken piece's, where one of
+// them is inside a piece, else the colliders'.
+fn solid_vel_at(a: vec3<i32>, b: vec3<i32>, d: vec3<i32>, wp: vec3<f32>, axis: i32) -> f32 {
+  if (U.ccnt.z > 0.5) {
+    var pv = vec4<f32>(0.0);
+    if (in_grid(a, d)) { pv = textureLoad(svel, a, 0); }
+    if (pv.w < 0.5 && in_grid(b, d)) { pv = textureLoad(svel, b, 0); }
+    if (pv.w > 0.5) { return select(select(pv.z, pv.y, axis == 1), pv.x, axis == 0); }
+  }
+  return solid_vel(wp, axis);
+}
+
 @compute @workgroup_size(8, 8, 4)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let d = gdim(U.g);
@@ -116,7 +129,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (wall) {
       v.x = 0.0;
     } else if (solid(a, d) || solid(c, d)) {
-      v.x = solid_vel(wp, 0);
+      v.x = solid_vel_at(a, c, d, wp, 0);
     } else {
       v.x += dt * 0.5 * (ld(force, a, d).x + ld(force, c, d).x);
       v.x += (U.wind.x - v.x) * relax;
@@ -139,7 +152,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (wall) {
       v.y = 0.0;
     } else if (solid(a, d) || solid(c, d)) {
-      v.y = solid_vel(wp, 1);
+      v.y = solid_vel_at(a, c, d, wp, 1);
     } else {
       let sa = ld(scal, a, d);
       let sb = ld(scal, c, d);
@@ -165,7 +178,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (wall) {
       v.z = 0.0;
     } else if (solid(a, d) || solid(c, d)) {
-      v.z = solid_vel(wp, 2);
+      v.z = solid_vel_at(a, c, d, wp, 2);
     } else {
       v.z += dt * 0.5 * (ld(force, a, d).z + ld(force, c, d).z);
       v.z += (U.wind.z - v.z) * relax;

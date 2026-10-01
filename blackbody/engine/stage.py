@@ -42,7 +42,7 @@ def drawn(c, footage):
         return CG
     if look == 'footage':
         return IN_FOOTAGE
-    return IN_FOOTAGE if footage and not (c.get('dynamic') or c.get('floating')) else CG
+    return IN_FOOTAGE if footage and not (c.get('dynamic') or c.get('floating') or c.get('breakable')) else CG
 
 
 def looks(scene, footage):
@@ -129,9 +129,13 @@ class Stage:
     def __init__(self, gpu):
         self.gpu = gpu
         self.k = gpu.kernel('stage.wgsl', ['utex3d', 'tex3d', 'tex3d', 'tex3d', 'tex3d', 'smp', 'smp', 'rbuf', 'rbuf',
-                                           'rbuf', 'tex2d', 'tex2d', 'tex2d', 'tex3d', 'st2d:rgba16float:w'],
+                                           'rbuf', 'tex2d', 'tex2d', 'tex2d', 'tex3d', 'st2d:rgba16float:w',
+                                           'rbuf', 'rbuf', 'rbuf', 'rbuf', 'st2d:rgba16float:w'],
                             workgroup=(8, 8, 1))
         self.tex = None
+        self.hold = None           # the holdouts it leaves for the march (pieces' distance, the footage's matte)
+        self.has_pieces = False
+        self._bufs = {}
         self._zero = gpu.buffer(64, 'stage-no-lights')
         self._env = None
         self._env_key = None
@@ -140,9 +144,74 @@ class Stage:
     def _ensure(self, w, h):
         if self.tex is not None and self.tex.size[:2] == (w, h):
             return
-        if self.tex is not None:
-            self.tex.destroy()
+        for t in (self.tex, self.hold):
+            if t is not None:
+                t.destroy()
         self.tex = self.gpu.texture2d(w, h, 'rgba16float', 'stage')
+        self.hold = self.gpu.texture2d(w, h, 'rgba16float', 'stage-holdout')
+
+    def _buffer(self, name, data):
+        """Upload an array into a named storage buffer, grown as needed."""
+        data = np.ascontiguousarray(data)
+        size = max(int(data.nbytes), 16)
+        b = self._bufs.get(name)
+        if b is None or b.size < size:
+            if b is not None:
+                b.destroy()
+            b = self._bufs[name] = self.gpu.buffer(max(size, 1024), f'stage-{name}')
+        if data.nbytes:
+            self.gpu.write_buffer(b, data)
+        return b
+
+    @staticmethod
+    def piece_arrays(scene, pieces, shutter=0.0):
+        """The pieces of broken objects for the shader: (pieces (n, 5, 4), planes (p, 4), grid corner, cell size,
+        grid dims, cells (g, 2) uint32, list uint32), or None. pieces: {collider index: Solids.piece_poses entry}."""
+        from .solids import fractured
+        enabled = [i for i, c in enumerate(scene.colliders) if c['enabled']][:MAX_COLLIDERS]
+        row_of = {ci: r for r, ci in enumerate(enabled)}
+        P, PL, centres, radii = [], [], [], []
+        for ci, pose in (pieces or {}).items():
+            if ci not in row_of or ci >= len(scene.colliders):
+                continue
+            frac = fractured(scene.colliders[ci], pose['size'], float(pose.get('hollow', 0.0)))
+            n = min(len(frac.pieces), len(pose['pos']))
+            for k in range(n):
+                pc = frac.pieces[k]
+                pl = pc.planes.copy()
+                pl[:, 3] -= pl[:, :3] @ pc.centroid
+                pl[pc.inner, :3] *= 2.0              # (a cut face: drawn in the inside colour)
+                rad = float(np.linalg.norm(pc.verts - pc.centroid, axis=1).max())
+                pos = np.asarray(pose['pos'][k], float)
+                vel = np.asarray(pose['vel'][k], float)
+                P.append([[*pos, len(pl)], [*np.asarray(pose['quat'][k], float)], [*vel, sum(len(x) for x in PL)],
+                          [*np.asarray(pose['omega'][k], float), row_of[ci]], [*pc.centroid, rad]])
+                PL.append(pl)
+                centres.append(pos)
+                radii.append(rad + float(np.linalg.norm(vel)) * 0.5 * shutter)
+        if not P:
+            return None
+        P = np.asarray(P, np.float32)
+        PL = np.concatenate(PL).astype(np.float32)
+        c = np.asarray(centres)
+        r = np.asarray(radii)[:, None]
+        lo, hi = (c - r).min(0), (c + r).max(0)
+        ext = float(np.max(hi - lo))
+        cell = max(2.0 * float(np.median(r)), ext / 48.0, 1e-3)
+        dims = np.minimum(np.maximum(np.ceil((hi - lo) / cell).astype(int), 1), 64)
+        cell = max(cell, float(np.max((hi - lo) / dims)))
+        lists = [[] for _ in range(int(np.prod(dims)))]
+        a = np.clip(np.floor((c - r - lo) / cell).astype(int), 0, dims - 1)
+        b = np.clip(np.floor((c + r - lo) / cell).astype(int), 0, dims - 1)
+        for k in range(len(P)):
+            for z in range(a[k, 2], b[k, 2] + 1):
+                for y in range(a[k, 1], b[k, 1] + 1):
+                    for x in range(a[k, 0], b[k, 0] + 1):
+                        lists[x + dims[0] * (y + dims[1] * z)].append(k)
+        counts = np.array([len(L) for L in lists], np.uint32)
+        starts = np.concatenate([[0], np.cumsum(counts)[:-1]]).astype(np.uint32)
+        flat = np.array([k for L in lists for k in L], np.uint32)
+        return P, PL, lo, cell, dims, np.stack([starts, counts], 1), flat
 
     def environment(self, path):
         """Load (or reuse) an HDRI for the sky (fire scenes; the liquid renderer has its own)."""
@@ -194,14 +263,16 @@ class Stage:
         return tuple(centre), float(np.linalg.norm(hi - lo) * 0.5)
 
     def draw(self, b, r, scene, camstate, fire, colliders, meshes, light: StageLight, comp, size, plate_fit=(1.0, 1.0),
-             samples=1, shutter=0.0, footage=False, vol=None, ground_y=0.0, frame=0, objects=True, floor=True):
+             samples=1, shutter=0.0, footage=False, vol=None, ground_y=0.0, frame=0, objects=True, floor=True,
+             pieces=None):
         """Draw the stage into self.tex (size: the plate's, footage or output) and return it.
         r: the Renderer (its footage plate and holdouts, light volume, fire lights and lamp buffer);
         colliders: the objects as the solver has them (ColliderGPU, moving ones where they are this frame);
         vol: the fire's volume when this frame's light volume is lit (Renderer.light), else None;
         ground_y: the ground's height (fire-local m: the bottom of the simulation box);
         objects: draw the CG objects (else they only shade the floor: a liquid scene's grey stand-ins);
-        floor: draw the floor (not under bottomless water)."""
+        floor: draw the floor (not under bottomless water);
+        pieces: the pieces of broken objects, {collider index: Solids.piece_poses entry}."""
         g = self.gpu
         pw, ph = int(size[0]), int(size[1])
         self._ensure(pw, ph)
@@ -275,6 +346,16 @@ class Stage:
              .v4(1.0 if env is not None else 0.0, math.radians(light.env_rotation), light.env_strength, 0.0)
              .v4(r._shaper_lo, r._shaper_hi, 1.0 if r.lut_plate_log else 0.0, r.lut_size)
              .v4(*centre, radius))
+        pa = self.piece_arrays(scene, pieces, shutter) if pieces else None
+        self.has_pieces = pa is not None
+        if pa is not None:
+            P, PL, glo, gcell, gdims, GC, GL = pa
+            u.v4(*glo, gcell).v4(*gdims, len(P))
+            bufs = [self._buffer('pieces', P), self._buffer('planes', PL), self._buffer('cells', GC), self._buffer('list', GL)]
+        else:
+            u.v4().v4()
+            bufs = [self._buffer('pieces', np.zeros(20, np.float32)), self._buffer('planes', np.zeros(4, np.float32)),
+                    self._buffer('cells', np.zeros(2, np.uint32)), self._buffer('list', np.zeros(1, np.uint32))]
         pack_colliders(u, cols, meshes)
         for i in range(MAX_COLLIDERS):
             if i < len(rows):
@@ -292,5 +373,5 @@ class Stage:
                        r.hold if (footage and r.hold is not None and any(r.hold_on)) else black,
                        env if env is not None else black,
                        r.lut_plate if (footage and r.lut_plate is not None) else r._lut_none,
-                       self.tex], u, (pw, ph, 1))
+                       self.tex, *bufs, self.hold], u, (pw, ph, 1))
         return self.tex

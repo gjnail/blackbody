@@ -63,7 +63,9 @@ Curtains, flags and towels are made from real fabrics with their measured weight
 
 <img src="docs/media/gif/tower_knockdown.gif" width="49%" alt="A bowling ball knocking down a tower of wooden blocks beside a falling domino run"> <img src="docs/media/gif/crates_in_fire.gif" width="49%" alt="Wooden crates dropped onto a campfire, catching and burning">
 
-Any object can fall: it tumbles, slides, bounces, stacks and knocks things over, in real materials (wood, stone, brick, steel, glass, rubber and more), and the smoke, the water and the wind push it about. Burning ones keep burning as they tumble, and lights or flames attached to them go along. Without footage they are drawn in CG on a stage, a floor out to the horizon lit by the fire. In your footage they go in with their shadows on the real ground. [The guide](docs/physics.md)
+Any object can fall: it tumbles, slides, bounces, stacks and knocks things over, in real materials (wood, stone, brick, steel, glass, rubber and more), and the smoke, the water and the wind push it about. Things break, too: a brick wall comes apart at the mortar, a window shatters round the stone thrown through it, a vase smashes on the tiles, in a puff of dust. Burning ones keep burning as they tumble, and lights or flames attached to them go along. Without footage they are drawn in CG on a stage, a floor out to the horizon lit by the fire. In your footage they go in with their shadows on the real ground. [The guide](docs/physics.md)
+
+<img src="docs/media/gif/wall_smash.gif" width="49%" alt="A steel ball punching through a brick wall, the bricks above caving in"> <img src="docs/media/gif/window_smash.gif" width="49%" alt="A stone thrown through a window, shards breaking away and falling">
 
 ### Water
 
@@ -141,7 +143,7 @@ The [tutorial](docs/tutorial.md) takes a shot from footage to final render in ab
 |---|---|
 | [Install and first steps](docs/getting-started.md) | Requirements, install, the window, putting an effect in your shot, building your own, layers, animation |
 | [Tutorial: your first shot](docs/tutorial.md) | Footage, placing, matching, tracking, keyframes, rendering |
-| [Presets](docs/presets.md) | All 81 built-in effects |
+| [Presets](docs/presets.md) | All 84 built-in effects |
 | [Fire, smoke and sparks](docs/fire.md) | Puffing, swirl, sparks, colour, steam, spreading fire, rooms, flame fronts, meshes |
 | [Fabric and burning cloth](docs/fabric.md) | Real fabrics, burning through, soaking, dripping and steaming |
 | [Things that fall](docs/physics.md) | Rigid bodies, materials, what pushes them, the CG stage, CG objects in footage |

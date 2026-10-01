@@ -708,6 +708,67 @@ PRESETS = {
                              **({'start_spin': (0.0, 0.0, -160.0), 'start_velocity': (0.34, 0.06, 0.0), 'release': 0.6} if k == 0 else {}))
                         for k in range(9)],
     },
+    'wall_smash': {
+        'name': 'Ball through a brick wall', 'category': 'Things that fall', 'size': '1.6 m wall',
+        'blurb': 'A 260 kg steel ball into a brick wall: it punches through, the mortar gives way brick by brick, the '
+                 'wall above it caves in and the dust rolls out. A breakable box in Bricks.',
+        'render': {'end': 72},
+        'domain': {'size_x': 4.0, 'size_y': 2.4, 'size_z': 3.4, 'resolution': 96, 'preroll': 0.0},
+        'shading': {'smoke_albedo': (0.62, 0.57, 0.5), 'smoke_density': 0.8},
+        'motion': {'buoyancy': 0.5, 'turbulence': 1.5, 'vorticity': 1.0},
+        'composite': {'backdrop': 'stage', 'floor': 'concrete'},
+        'lighting': {'sun_on': True, 'sun_intensity': 3.0, 'sun_elevation': 35.0, 'sun_azimuth': -140.0, 'ambient_intensity': 2.5},
+        'camera': {'distance': 4.6, 'target_y': 0.6, 'pitch': 10, 'yaw': 200, 'focal_mm': 35},
+        'emitters': [],
+        'colliders': [
+            dict(name='Brick wall', shape='box', position=(0.0, 0.6, 0.0), size=(0.8, 0.6, 0.05), material='brick',
+                 breakable=True, fracture='bricks'),
+            dict(name='Steel ball', shape='sphere', position=(0.0, 0.55, -1.4), size=(0.2, 0.2, 0.2), dynamic=True,
+                 material='steel', start_velocity=(0.0, 0.6, 5.0), release=0.25),
+        ],
+    },
+    'window_smash': {
+        'name': 'Stone through a window', 'category': 'Things that fall', 'size': '1 m pane',
+        'blurb': 'A stone thrown through a pane of window glass held in its frame: it punches a hole, shards break away '
+                 'round it and fall, the rest stays in the frame. A breakable thin box of glass in Shards.',
+        'render': {'end': 48},
+        'domain': {'size_x': 2.4, 'size_y': 2.0, 'size_z': 2.4, 'resolution': 48, 'preroll': 0.0},
+        'composite': {'backdrop': 'stage', 'floor': 'tiles'},
+        'lighting': {'sun_on': True, 'sun_intensity': 3.0, 'sun_elevation': 40.0, 'sun_azimuth': -120.0, 'ambient_intensity': 2.5},
+        'camera': {'distance': 2.6, 'target_y': 0.75, 'pitch': 6, 'yaw': 215, 'focal_mm': 35},
+        'emitters': [],
+        'colliders': [
+            dict(name='Glass pane', shape='box', position=(0.0, 0.9, 0.0), size=(0.5, 0.5, 0.004), material='glass',
+                 breakable=True, fracture='shards', pieces=40, held='edges'),
+            dict(name='Frame top', shape='box', position=(0.0, 1.43, 0.0), size=(0.56, 0.03, 0.04), material='wood',
+                 own_colour=True, colour=(0.75, 0.74, 0.7)),
+            dict(name='Frame bottom', shape='box', position=(0.0, 0.37, 0.0), size=(0.56, 0.03, 0.04), material='wood',
+                 own_colour=True, colour=(0.75, 0.74, 0.7)),
+            dict(name='Frame left', shape='box', position=(-0.53, 0.9, 0.0), size=(0.03, 0.5, 0.04), material='wood',
+                 own_colour=True, colour=(0.75, 0.74, 0.7)),
+            dict(name='Frame right', shape='box', position=(0.53, 0.9, 0.0), size=(0.03, 0.5, 0.04), material='wood',
+                 own_colour=True, colour=(0.75, 0.74, 0.7)),
+            dict(name='Stone', shape='sphere', position=(-0.1, 0.95, -1.0), size=(0.045, 0.045, 0.045), dynamic=True,
+                 material='stone', start_velocity=(0.1, 0.4, 9.0), release=0.3),
+        ],
+    },
+    'vase_drop': {
+        'name': 'Vase off a table', 'category': 'Things that fall', 'size': '35 cm vase',
+        'blurb': 'A pottery vase knocked off the edge of a table: it tips, falls a metre, lands on its rim and shatters '
+                 'across the tiles. A breakable hollow cylinder of Ceramic.',
+        'render': {'end': 48},
+        'domain': {'size_x': 2.4, 'size_y': 2.0, 'size_z': 2.4, 'resolution': 48, 'preroll': 0.0},
+        'composite': {'backdrop': 'stage', 'floor': 'tiles'},
+        'lighting': {'sun_on': True, 'sun_intensity': 2.5, 'sun_elevation': 45.0, 'sun_azimuth': -60.0, 'ambient_intensity': 2.5},
+        'camera': {'distance': 2.4, 'target_y': 0.55, 'pitch': 14, 'yaw': 30, 'focal_mm': 35},
+        'emitters': [],
+        'colliders': [
+            dict(name='Table', shape='box', position=(-0.45, 0.375, 0.0), size=(0.4, 0.375, 0.35), material='wood'),
+            dict(name='Vase', shape='cylinder', position=(-0.12, 0.92, 0.0), size=(0.09, 0.17, 0.09), hollow=0.007,
+                 material='ceramic', own_colour=True, colour=(0.12, 0.25, 0.55), dynamic=True, breakable=True, pieces=40,
+                 start_velocity=(0.7, 0.0, 0.0), release=0.3),
+        ],
+    },
     'crates_in_fire': {
         'name': 'Crates into a fire', 'category': 'Things that fall', 'size': '1 m campfire',
         'blurb': 'Three wooden crates dropped onto a campfire one after another: they land on the burning logs, shove '
@@ -756,7 +817,7 @@ ORDER = ['campfire', 'bonfire', 'torch', 'candle', 'gas_ring', 'pool_fire', 'fir
          'vehicle_fire', 'smoke_plume', 'fire_whirl', 'waved_torch', 'hose_douse', 'grass_fire', 'spot_fires', 'hillside_fire',
          'curtain_fire', 'fabric_curtain', 'wet_towels', 'armchair_fire', 'room_fire', 'backdraft', 'flash_fire', 'gas_cloud', 'coloured_flames', 'road_flare',
          'grinder_sparks', 'fireworks', 'car_through_smoke', 'flag_wind', 'kettle_steam', 'steam_vent',
-         'crates_in_fire', 'tower_knockdown']
+         'crates_in_fire', 'tower_knockdown', 'wall_smash', 'window_smash', 'vase_drop']
 
 
 def make(name: str, fps=None, start=None) -> Scene:

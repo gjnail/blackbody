@@ -245,6 +245,27 @@
   "blurb": "A bowling ball thrown into a tower of wooden blocks beside a run of dominoes, on the stage in sunlight: the blocks tumble and bounce, the dominoes fall in turn. Objects with Falls on, drawn in their materials."
  },
  {
+  "key": "wall_smash",
+  "name": "Ball through a brick wall",
+  "category": "Things that fall",
+  "size": "1.6 m wall",
+  "blurb": "A 260 kg steel ball into a brick wall: it punches through, the mortar gives way brick by brick, the wall above it caves in and the dust rolls out. A breakable box in Bricks."
+ },
+ {
+  "key": "window_smash",
+  "name": "Stone through a window",
+  "category": "Things that fall",
+  "size": "1 m pane",
+  "blurb": "A stone thrown through a pane of window glass held in its frame: it punches a hole, shards break away round it and fall, the rest stays in the frame. A breakable thin box of glass in Shards."
+ },
+ {
+  "key": "vase_drop",
+  "name": "Vase off a table",
+  "category": "Things that fall",
+  "size": "35 cm vase",
+  "blurb": "A pottery vase knocked off the edge of a table: it tips, falls a metre, lands on its rim and shatters across the tiles. A breakable hollow cylinder of Ceramic."
+ },
+ {
   "key": "water_pour",
   "name": "Pouring water",
   "category": "Liquids",

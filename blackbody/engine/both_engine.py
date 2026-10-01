@@ -315,6 +315,9 @@ class BothEngine:
                 self.cloth.place(scene.fabrics_at(frame - 1), look.ambient_k)
         self.cloth.prepare_frame(self.solver)   # (also clears the solver's steam-off-cloth flag without cloth)
         cloth_steps = max(1, int(math.ceil(fdt * STEPS_PER_SECOND / n)))
+        pieces = poses is not None and self._pieces_for(scene, self.solver)
+        lpieces = poses is not None and self._pieces_for(scene, L, 'liquid')
+        dust = self.solids.dust(scene, fdt, n) if (poses is not None and self.solids.sets) else None
         with self.gpu.batch() as b:
             self._footage_solid(b, scene, frame)
             regions = solids.regions(scene) if solids else []
@@ -339,21 +342,29 @@ class BothEngine:
                     L._write_sdf(b)
                     if self.LAVA_SOLID:
                         b.run(k['solid'], [V.DENS, L.SDF], L._grid(dt, lprm).v4(float(vprm.ppc)), L.dims)
+                    L.pieces_step = (self.body_field_for('liquid'), i) if lpieces else None
                     L.step(b, dt, lprm, srcs, None)
+                    L.pieces_step = None
                 else:
+                    L.pieces_step = (self.body_field_for('liquid'), i) if lpieces else None
                     L.step(b, dt, lprm, srcs, cols)
+                    L.pieces_step = None
                 if regions:
                     L.float_forces(b, regions, i, dt)
                 if wprm is not None:
                     self._step_weather(b, scene, frame, wprm, fs, dt, moving)
                 carried = poses[i] if poses else None   # (things attached to falling objects go with them)
                 ems = scene.emitters_gpu(fs, substeps=n, moved=attached(scene, 'emitter', carried))
+                if dust:
+                    ems = ems + dust[i]    # (dust where things broke; the scene's own sources come first)
                 if V is not None:
                     self._lava_meets(b, scene, prm, dt, lava_k)
                 if self.solver.water is not None:
                     self._water_on_fire(b, scene, prm, ems, dt)
                 self._boil_drops(b, boil, dt, lava_k)
+                self.solver.pieces_step = (self.body_field, i) if pieces else None
                 self.solver.step(b, dt, prm, ems, cols)
+                self.solver.pieces_step = None
                 if cloth:
                     # fabric moves in the air and the water just stepped, then spreads onto the gas
                     self.cloth.step(b, self.solver, dt, scene.fabrics_at(fs + 0.5 / n, moved=attached(scene, 'fabric', carried)), prm, look,
@@ -533,7 +544,9 @@ class BothEngine:
         # the set drawn in CG behind and under it all (stage.py), in place of the footage
         footage = plate is not None
         objects = wlook.colliders_look != 'shaded'
-        stage_on = stage_mod.wanted(scene, footage, mode, objects=objects)
+        pieces = self.piece_poses(frame)   # (broken things: drawn, and holding out what is behind them, in every view)
+        stage_on = stage_mod.wanted(scene, footage, mode, objects=objects) or bool(pieces)
+        r.hold_stage = None
         p_transform, p_gain = INPUT_TRANSFORMS.get(comp.plate_transform, 0), comp.plate_gain
         if stage_on:
             p_transform, p_gain = INPUT_TRANSFORMS['linear'], 1.0
@@ -627,7 +640,10 @@ class BothEngine:
                 stage = ptex = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, ssize,
                                                plate_fit=plate_fit, samples=samples, shutter=lshutter, footage=footage,
                                                vol=vol, ground_y=vol.origin[1], frame=frame, objects=objects,
-                                               floor=not wlook.bottomless)
+                                               floor=not wlook.bottomless, pieces=pieces)
+                if self.stage.has_pieces:   # the fire and the liquids stop at the pieces
+                    r.hold_stage = self.stage.hold
+                    r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])
             if samples == 1:
                 one(b, (0.0, 0.0), base_seed)
             else:
@@ -654,5 +670,6 @@ class BothEngine:
             r.bloom(b, comp.bloom_radius)
             r.composite(b, (W, H), comp, time=t, frame=frame, plate_fit=plate_fit, liquid='both', stage=stage)
             LR.lens_drops(b, wlook, (W, H), time=t)
+        r.hold_stage = None
         self.last_render_ms = (time.perf_counter() - t0) * 1000.0
         return cs

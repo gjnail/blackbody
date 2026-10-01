@@ -40,6 +40,27 @@ Things attached to a falling object (*Attach to* in the viewer's menus) go with 
 
 ![Crates into a fire](media/gif/crates_in_fire.gif "Crates into a fire: three wooden crates dropped onto a campfire; they land on the logs, catch and burn.")
 
+## Breaking
+
+*Breaks* (Properties › *Breaking*) cuts an object beforehand into pieces glued together, which come apart where it is hit or loaded harder than it holds. A wall is knocked through, a pane shattered, a vase smashed, a crate splintered. A joint gives way when it is pulled apart harder than its strength over its area, sheared harder than that plus the friction of what presses it together, or bent past what its section holds. So a wall stands under its own weight, a soft knock cracks it, and a hard one brings it down, the bricks above the hole caving in.
+
+- *Breaks into*:
+  - *Chunks*: stone, concrete, pottery.
+  - *Bricks*: a box laid as bricks in running bond, held by mortar.
+  - *Shards*: glass, slivers radiating from where it is hit.
+  - *Splinters*: wood, pieces long along the grain.
+- *Pieces*: how many (more take longer to simulate).
+- *Strength* scales how strongly the pieces hold.
+- *Held by*: what holds one that does not fall: glued to the ground along its base (a wall), held round its edges (a pane in its frame), or nothing.
+- A hollow object (*Hollow* above 0) breaks as a shell: a vase into strips of its wall, a crate wall by wall.
+- With *Falls* on too, it falls whole until it hits something hard enough: a dropped vase shatters, a thrown crate splinters.
+
+Broken faces show the material's inside: raw brick, pale wood, the green edge of glass. Where it breaks it throws up dust, as much as the material holds (mortar, plaster and soil most, glass hardly any), in the smoke's colour (Shading › *Smoke colour*: a pale brown for dust). Hundreds of pieces are drawn, shadowed, hide the fire and the liquid behind them, and the gas and the water flow round them and are pushed by them.
+
+The *Things that fall* blocks include a brick wall, a glass pane in its frame, a concrete pillar, a wooden crate that splinters and a vase. Presets: *Ball through a brick wall*, *Stone through a window*, *Vase off a table*.
+
+![Ball through a brick wall](media/gif/wall_smash.gif "Ball through a brick wall: a 260 kg steel ball punches through, the bricks above cave in and the dust rolls out.")
+
 ## How they look
 
 Without footage, objects are drawn in CG in their materials (wood, stone, brick and so on), lit in the same light as the smoke: the key light with soft shadows, the sky (darker in corners and under things), the fire's own light with shadows, and the lights in the set. Glass and ice are clear: you see the fire and the set through them, bent, and the sky in them. *Own colour* draws one in a colour of its own.
@@ -56,8 +77,10 @@ CG objects go over the footage lit by the shot's light, and their shadows darken
 
 ## Limits
 
-- A scene holds up to 16 objects in all, falling or not.
-- Objects do not break yet, and there are no hinges, ropes or chains yet.
+- A scene holds up to 16 objects in all, falling or not (a broken one's pieces do not count: there can be hundreds).
+- A mesh cannot break yet, and there are no hinges, ropes or chains yet.
+- The strengths are effective ones, set so that things break as they look like they should: a joint feels the whole
+  impact spread over its face, where a real brittle thing breaks at the tiny point it is hit.
 - A falling mesh collides as its convex hull: its hollows and dents are filled in.
 - Contacts are slightly soft, so bounces are within about 0.05 of a material's bounce, and the least a thing bounces is about 0.2. Things that start inside each other are thrown apart when they are let go (the log says which).
 - In a liquid scene with grey stand-ins (Water › *Colliders*), things that fall or float are drawn as stand-ins in their material's colour.

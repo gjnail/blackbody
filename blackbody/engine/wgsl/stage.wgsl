@@ -23,8 +23,14 @@
 // Each pixel takes res.z samples spread over it and over the shutter (objects moved along their
 // velocity: motion blur).
 //
+// The pieces of broken objects (engine/fracture.py, any number of them) are traced exactly as convex polyhedra
+// (each bounded by planes in its own frame), found through a coarse grid of the cells they overlap. Their cut faces
+// are drawn in the material's inside colour.
+//
 // out: rgb = the plate (scene-linear), a = how much of the pixel is CG. The composite does not light CG
 // pixels again with the fire and the lamps (they are lit here); footage pixels it lights as before.
+// out_hold: the holdouts the march and the liquid use: x = the footage's matte, y = the distance from the camera to
+// the nearest piece, or to the footage's own surface (0: none).
 //!include common.wgsl
 //!include noise.wgsl
 //!include colour.wgsl
@@ -33,6 +39,7 @@
 
 const PI: f32 = 3.14159265;
 const FLOOR: i32 = 100;
+const PIECE: i32 = 1000;   // a hit on piece k has id PIECE + k
 
 struct Mat {
   c: vec4<f32>,   // albedo (linear rgb), roughness
@@ -65,6 +72,8 @@ struct Params {
   envp: vec4<f32>,      // environment on (1/0), rotation (rad), strength, _
   oc: vec4<f32>,        // OCIO: log shaper low and high (log2), footage LUT uses the shaper (1/0), LUT size
   bound: vec4<f32>,     // a sphere round every object (fire-local centre, radius; radius 0: none)
+  pg: vec4<f32>,        // the pieces' grid: corner (fire-local m), cell size (m)
+  pn: vec4<f32>,        // its dims (cells), pieces (count)
   ccnt: vec4<f32>,      // objects (count), _
   col: array<Collider, MAX_COLLIDERS>,
   mat: array<Mat, MAX_COLLIDERS>,
@@ -85,10 +94,22 @@ struct Params {
 @group(0) @binding(12) var env_t: texture_2d<f32>;      // environment (latitude-longitude)
 @group(0) @binding(13) var lut_plate: texture_3d<f32>;  // OCIO: footage colour space -> scene-linear
 @group(0) @binding(14) var out_plate: texture_storage_2d<rgba16float, write>;
+// pieces: a = centre (fire-local m), planes (count); q = orientation (x y z w); v = velocity (m/s), first plane;
+// o = spin (rad/s, world), material row; r = its centre in the object's frame before it broke, bounding radius
+struct PieceG { a: vec4<f32>, q: vec4<f32>, v: vec4<f32>, o: vec4<f32>, r: vec4<f32> };
+@group(0) @binding(15) var<storage, read> PC: array<PieceG>;
+@group(0) @binding(16) var<storage, read> PL: array<vec4<f32>>;   // n, d in the piece's frame (n . x <= d); a cut face's n is 2 long
+@group(0) @binding(17) var<storage, read> GC: array<vec2<u32>>;   // per grid cell: first, count in GL
+@group(0) @binding(18) var<storage, read> GL: array<u32>;         // piece indices
+@group(0) @binding(19) var out_hold: texture_storage_2d<rgba16float, write>;
 @group(1) @binding(0) var<uniform> U: Params;
 
 var<private> g_tau: f32;   // this sample's time in the shutter (s): objects are moved along their motion
 var<private> g_over: vec4<f32>;   // a colour a pattern puts in place of the material's (mortar), and how much
+var<private> g_plane: i32;        // the plane a piece was hit on (trace)
+var<private> g_opaque: bool;      // only what stops light counts (shadows, the sky's occlusion)
+var<private> t_piece: f32;        // how far along the camera's ray the first piece is (see), -1: none
+var<private> t_footage: f32;      // and the footage's own surface (see), 1e9: none
 
 // ---- the objects -----------------------------------------------------------------------------------
 
@@ -115,6 +136,7 @@ fn scene_d(p: vec3<f32>, want: f32) -> vec2<f32> {
   var best = vec2<f32>(1.0e9, -1.0);
   for (var i = 0; i < i32(U.ccnt.x); i++) {
     if (U.mat[i].d.w < want) { continue; }
+    if (g_opaque && U.mat[i].d.y > 0.5) { continue; }   // (glass lets the light through)
     let d = col_sdf(obj(i), p);
     if (d < best.x) { best = vec2<f32>(d, f32(i)); }
   }
@@ -146,6 +168,103 @@ fn bound_span(ro: vec3<f32>, rd: vec3<f32>) -> vec2<f32> {
 
 struct Hit { t: f32, id: i32 };
 
+// ---- pieces ---------------------------------------------------------------------------------------------------------
+
+// Piece k where it is at this sample's time: centre, orientation.
+fn piece_pose(k: u32) -> array<vec4<f32>, 2> {
+  let P = PC[k];
+  var q = P.q;
+  if (g_tau != 0.0) {
+    let w = P.o.xyz * g_tau;
+    let ang = length(w);
+    if (ang > 1e-6) { q = normalize(quat_mul(vec4<f32>(w / ang * sin(0.5 * ang), cos(0.5 * ang)), q)); }
+  }
+  return array<vec4<f32>, 2>(vec4<f32>(P.a.xyz + P.v.xyz * g_tau, 0.0), q);
+}
+
+struct PHit { t0: f32, t1: f32, k0: i32, k1: i32 };
+
+// Where a ray (fire-local) enters and leaves piece k (t0 > t1: it misses), and the planes it crosses there.
+fn piece_hit(k: u32, ro: vec3<f32>, rd: vec3<f32>) -> PHit {
+  let P = PC[k];
+  let pose = piece_pose(k);
+  let qi = vec4<f32>(-pose[1].xyz, pose[1].w);
+  let o = quat_rotate(qi, ro - pose[0].xyz);
+  let d = quat_rotate(qi, rd);
+  var t0 = -1.0e30;
+  var t1 = 1.0e30;
+  var k0 = -1;
+  var k1 = -1;
+  let first = u32(P.v.w);
+  let n = u32(P.a.w);
+  for (var j = 0u; j < n; j++) {
+    let pl = PL[first + j];
+    let nn = normalize(pl.xyz);
+    let dn = dot(nn, d);
+    let dist = pl.w - dot(nn, o);
+    if (abs(dn) < 1e-12) {
+      if (dist < 0.0) { return PHit(1.0, 0.0, -1, -1); }
+      continue;
+    }
+    let t = dist / dn;
+    if (dn < 0.0) {
+      if (t > t0) { t0 = t; k0 = i32(j); }
+    } else if (t < t1) {
+      t1 = t;
+      k1 = i32(j);
+    }
+    if (t0 > t1) { return PHit(1.0, 0.0, -1, -1); }
+  }
+  return PHit(t0, t1, k0, k1);
+}
+
+// The nearest piece along a ray from t0 to tmax: (t, piece, plane) through the pieces' grid, or piece -1.
+fn trace_pieces(ro: vec3<f32>, rd: vec3<f32>, t0: f32, tmax: f32) -> vec3<f32> {
+  var best = vec3<f32>(tmax, -1.0, -1.0);
+  if (U.pn.w < 0.5) { return best; }
+  let gd = vec3<i32>(U.pn.xyz);
+  let cs = U.pg.w;
+  let lo = U.pg.xyz;
+  let hi = lo + vec3<f32>(gd) * cs;
+  let safe = select(rd, vec3<f32>(1e-12), abs(rd) < vec3<f32>(1e-12));
+  let inv = 1.0 / safe;
+  let ta = (lo - ro) * inv;
+  let tb = (hi - ro) * inv;
+  let tin = max(max(max(min(ta.x, tb.x), min(ta.y, tb.y)), min(ta.z, tb.z)), t0);
+  let tout = min(min(min(max(ta.x, tb.x), max(ta.y, tb.y)), max(ta.z, tb.z)), tmax);
+  if (tin > tout) { return best; }
+  let p = ro + rd * (tin + 1e-6 * cs);
+  var c = clamp(vec3<i32>(floor((p - lo) / cs)), vec3<i32>(0), gd - vec3<i32>(1));
+  let stp = vec3<i32>(sign(rd));
+  let dt = abs(cs * inv);
+  var tnext = (lo + (vec3<f32>(c) + select(vec3<f32>(0.0), vec3<f32>(1.0), rd > vec3<f32>(0.0))) * cs - ro) * inv;
+  tnext = select(tnext, vec3<f32>(1.0e30), abs(rd) < vec3<f32>(1e-12));
+  for (var it = 0; it < 256; it++) {
+    let ci = u32(c.x + gd.x * (c.y + gd.y * c.z));
+    let r = GC[ci];
+    for (var j = r.x; j < r.x + r.y; j++) {
+      let k = GL[j];
+      if (g_opaque && U.mat[i32(PC[k].o.w + 0.5)].d.y > 0.5) { continue; }
+      let h = piece_hit(k, ro, rd);
+      if (h.t0 <= h.t1 && h.t0 > t0 && h.t0 < best.x) { best = vec3<f32>(h.t0, f32(k), f32(h.k0)); }
+    }
+    let tn = min(tnext.x, min(tnext.y, tnext.z));
+    if (tn > best.x || tn > tout) { break; }
+    if (tnext.x <= tnext.y && tnext.x <= tnext.z) {
+      c.x += stp.x;
+      tnext.x += dt.x;
+    } else if (tnext.y <= tnext.z) {
+      c.y += stp.y;
+      tnext.y += dt.y;
+    } else {
+      c.z += stp.z;
+      tnext.z += dt.z;
+    }
+    if (any(c < vec3<i32>(0)) || any(c >= gd)) { break; }
+  }
+  return best;
+}
+
 // The first thing along the ray from t0 to tmax: an object (drawn at least `want`), the floor, or none (-1).
 fn trace(ro: vec3<f32>, rd: vec3<f32>, t0: f32, tmax: f32, want: f32, floor_on: bool) -> Hit {
   var h = Hit(1.0e9, -1);
@@ -153,10 +272,16 @@ fn trace(ro: vec3<f32>, rd: vec3<f32>, t0: f32, tmax: f32, want: f32, floor_on: 
     let tf = (U.stage.y - ro.y) / rd.y;
     if (tf > t0 && tf < tmax) { h = Hit(tf, FLOOR); }
   }
+  let pc = trace_pieces(ro, rd, t0, min(tmax, h.t));
+  if (pc.y >= 0.0) {
+    h = Hit(pc.x, PIECE + i32(pc.y));
+    g_plane = i32(pc.z);
+  }
   if (U.ccnt.x < 0.5) { return h; }
   let span = bound_span(ro, rd);
   var t = max(t0, span.x);
   let lim = min(min(tmax, h.t), span.y);
+  let hp = h;
   var escaping = true;   // a ray that starts inside an object goes on through it
   for (var i = 0; i < 192; i++) {
     if (t >= lim) { break; }
@@ -169,12 +294,20 @@ fn trace(ro: vec3<f32>, rd: vec3<f32>, t0: f32, tmax: f32, want: f32, floor_on: 
     if (d.x < eps) { return Hit(t, i32(d.y)); }
     t += max(d.x, 0.4 * eps);
   }
-  return h;
+  return hp;
 }
 
 // How much of a light of angular size k (sharpness: 1 / tan of its angular radius) in direction l gets
 // to p past the objects (soft shadow; Quilez's).
 fn soft_shadow(p: vec3<f32>, l: vec3<f32>, tmax: f32, k: f32, want: f32, t0: f32) -> f32 {
+  g_opaque = true;
+  let r = soft_shadow_opaque(p, l, tmax, k, want, t0);
+  g_opaque = false;
+  return r;
+}
+
+fn soft_shadow_opaque(p: vec3<f32>, l: vec3<f32>, tmax: f32, k: f32, want: f32, t0: f32) -> f32 {
+  if (trace_pieces(p, l, t0, tmax).y >= 0.0) { return 0.0; }
   if (U.ccnt.x < 0.5) { return 1.0; }
   let span = bound_span(p, l);
   if (span.x > span.y) { return 1.0; }
@@ -194,6 +327,13 @@ fn soft_shadow(p: vec3<f32>, l: vec3<f32>, tmax: f32, k: f32, want: f32, t0: f32
 
 // Ambient occlusion by the objects over the hemisphere round n at p (1 open .. 0 enclosed).
 fn ambient_occ(p: vec3<f32>, n: vec3<f32>, want: f32) -> f32 {
+  g_opaque = true;
+  let r = ambient_occ_opaque(p, n, want);
+  g_opaque = false;
+  return r;
+}
+
+fn ambient_occ_opaque(p: vec3<f32>, n: vec3<f32>, want: f32) -> f32 {
   if (U.ccnt.x < 0.5) { return 1.0; }
   let reach = U.sund.w;
   if (length(p - U.bound.xyz) > U.bound.w + reach) { return 1.0; }
@@ -620,6 +760,27 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
     s.f0 = vec3<f32>(0.04);
     return s;
   }
+  if (h.id >= PIECE) {
+    let kp = u32(h.id - PIECE);
+    let P = PC[kp];
+    let pose = piece_pose(kp);
+    let pl = PL[u32(P.v.w) + u32(max(g_plane, 0))];
+    let cut = length(pl.xyz) > 1.5;
+    s.n = quat_rotate(pose[1], normalize(pl.xyz));
+    let row = i32(P.o.w + 0.5);
+    let m = U.mat[row];
+    // the pattern runs on through the pieces as it did through the whole object
+    let qi = vec4<f32>(-pose[1].xyz, pose[1].w);
+    let q = quat_rotate(qi, s.p - pose[0].xyz) + P.r.xyz;
+    let pt = pattern(i32(m.d.z + 0.5), q, col_scale(U.col[row]), normalize(pl.xyz), fw);
+    let metal = clamp(m.d.x, 0.0, 1.0);
+    var base = mix(max(m.c.rgb * pt.rgb, vec3<f32>(0.0)), g_over.rgb, g_over.a);
+    if (cut) { base = m.e.rgb * (0.85 + 0.3 * fnoise(q * 40.0, fw * 40.0)); }
+    s.rough = clamp(select(m.c.w + pt.w, 0.9, cut), 0.02, 1.0);
+    s.alb = min(base, vec3<f32>(0.95)) * ((1.0 - metal) * (1.0 - clamp(m.d.y, 0.0, 1.0)));
+    s.f0 = mix(vec3<f32>(0.04), min(base, vec3<f32>(1.0)), metal);
+    return s;
+  }
   let k = obj(h.id);
   let m = U.mat[h.id];
   s.n = obj_normal(h.id, s.p, max(0.5 * fw, 2.0e-4));
@@ -651,6 +812,8 @@ fn exit_t(i: i32, ro: vec3<f32>, rd: vec3<f32>, eps: f32) -> f32 {
 // in world axes.
 fn see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w: vec3<f32>) -> Seen {
   let footage = U.stage.w > 0.5;
+  t_piece = -1.0;
+  t_footage = 1.0e9;
   var ro = ro0;
   var rd = rd0;
   var thr = vec3<f32>(1.0);
@@ -664,13 +827,15 @@ fn see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w: vec3
       let fd = footage_distance(puv, rd_w);
       if (fd > 0.0) { t_foot = max(fd - U.fwd.w / max(dot(rd_w, U.fwd.xyz), 1e-3), 0.0); }
     }
+    t_footage = t_foot;
     if (U.foot.z > 0.5) { matte = clamp(textureSampleLevel(hold, lin, puv, 0.0).x, 0.0, 1.0); }
   }
   for (var bounce = 0; bounce < 3; bounce++) {
     let h = trace(ro, rd, 0.0, select(1.0e5, t_foot - t_all, footage), 1.0, !footage);
     var drawn = false;
-    if (h.id == FLOOR) { drawn = true; }
+    if (h.id == FLOOR || h.id >= PIECE) { drawn = true; }
     if (h.id >= 0 && h.id < FLOOR) { drawn = U.mat[h.id].d.w > 1.5; }
+    if (h.id >= PIECE && bounce == 0) { t_piece = h.t; }
     if (!drawn) {
       // past the CG: the footage (with the CG objects' shadows on it), or the sky
       if (footage) {
@@ -678,7 +843,7 @@ fn see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w: vec3
         var pr = vec3<f32>(0.0);
         var nr = vec3<f32>(0.0, 1.0, 0.0);
         var have = false;
-        if (h.id >= 0) {
+        if (h.id >= 0 && h.id < FLOOR) {
           pr = ro + rd * h.t;
           nr = obj_normal(h.id, pr, max(0.5 * U.fit.w * h.t, 2.0e-4));
           have = true;
@@ -717,10 +882,12 @@ fn see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w: vec3
       c = mix(c, sky_dir(vec3<f32>(rd.x, 0.0, rd.z)) * 0.9, fade);
     }
     col += thr * haze(c, dist);
-    let clear = select(0.0, clamp(U.mat[h.id].d.y, 0.0, 1.0), h.id < FLOOR);
+    var row = h.id;
+    if (h.id >= PIECE) { row = i32(PC[u32(h.id - PIECE)].o.w + 0.5); }
+    let clear = select(0.0, clamp(U.mat[row].d.y, 0.0, 1.0), h.id < FLOOR || h.id >= PIECE);
     if (clear <= 0.0 || bounce == 2) { break; }
     // glass, ice: its reflection (above) and then the light refracted through it
-    let m = U.mat[h.id];
+    let m = U.mat[row];
     let ior = max(m.e.w, 1.0);
     let n = s.n;
     let nv = max(dot(n, v), 1e-4);
@@ -728,9 +895,20 @@ fn see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w: vec3
     var rin = refract(rd, n, 1.0 / ior);
     if (dot(rin, rin) < 0.5) { rin = rd; }
     let pin = s.p - n * s.eps;
-    let tx = exit_t(h.id, pin, rin, s.eps);
+    var tx = 0.0;
+    var nout = vec3<f32>(0.0, 1.0, 0.0);
+    if (h.id >= PIECE) {
+      // a piece is a convex polyhedron: the refracted ray leaves it through one of its planes
+      let kp = u32(h.id - PIECE);
+      let ph = piece_hit(kp, pin, rin);
+      tx = max(ph.t1, s.eps);
+      let pose = piece_pose(kp);
+      nout = quat_rotate(pose[1], normalize(PL[u32(PC[kp].v.w) + u32(max(ph.k1, 0))].xyz));
+    } else {
+      tx = exit_t(h.id, pin, rin, s.eps);
+      nout = obj_normal(h.id, pin + rin * tx, s.eps);
+    }
     let pout = pin + rin * tx;
-    var nout = obj_normal(h.id, pout, s.eps);
     var rout = refract(rin, -nout, ior);
     if (dot(rout, rout) < 0.5) { rout = reflect(rin, -nout); }
     // tinted by its colour over the path through it (Beer-Lambert per 10 cm)
@@ -770,6 +948,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let ns = max(i32(U.res.z + 0.5), 1);
   var acc = vec3<f32>(0.0);
   var cov = 0.0;
+  var near_sum = 0.0;       // the pieces (or footage surfaces) the samples saw: their distance from the camera (m)
+  var near_n = 0.0;
   let seed = u32(px.x) * 1973u + u32(px.y) * 9277u + u32(U.depth.z) * 26699u;
   for (var i = 0; i < ns; i++) {
     // samples on a rotated grid over the pixel, each at its own time in the shutter
@@ -796,7 +976,22 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let s = see(ro, rd, pp, puv, rd_w);
     acc += s.c;
     cov += s.cg;
+    let to_near = U.fwd.w / max(dot(rd_w, U.fwd.xyz), 1e-3);   // camera to where the ray starts (m)
+    var near = 1.0e9;
+    if (t_piece >= 0.0) { near = t_piece + to_near; }
+    if (t_footage < 1.0e8) { near = min(near, t_footage + to_near); }
+    if (near < 1.0e8) {
+      near_sum += near;
+      near_n += 1.0;
+    }
   }
   let inv = 1.0 / f32(ns);
   textureStore(out_plate, px, vec4<f32>(acc * inv, cov * inv));
+  var matte = 0.0;
+  if (U.stage.w > 0.5 && U.foot.z > 0.5) {
+    matte = clamp(textureSampleLevel(hold, lin, (vec2<f32>(px) + vec2<f32>(0.5)) / U.res.xy, 0.0).x, 0.0, 1.0);
+  }
+  // (a pixel holds out what is behind it where most of its samples saw something: its edge is where the CG's is)
+  let held = near_n >= 0.5 * f32(ns);
+  textureStore(out_hold, px, vec4<f32>(matte, select(0.0, near_sum / max(near_n, 1.0), held), 0.0, 0.0));
 }

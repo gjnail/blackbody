@@ -280,6 +280,30 @@ COMPONENTS = [
                           material='wood', density=150.0)
                        for k, pos in enumerate(((-0.52, 0.25, 0.0), (0.0, 0.25, 0.0), (0.52, 0.25, 0.0), (-0.26, 0.75, 0.0),
                                                 (0.26, 0.75, 0.0), (0.0, 1.25, 0.0)))]),
+    # -- things that break (engine/fracture.py, solids.py) --------------------------------------------------------------------
+    Component('brick_wall', 'Brick wall', 'Things that fall', 'A 1.6 m brick wall, half a brick thick, in running bond: it '
+              'stands until something hits it hard enough, then it comes apart at the mortar, brick by brick, in a puff of '
+              'dust. Throw a ball at it.', 'wall', room=(0.9, 1.3, 0.2),
+              objects=[_C(name='Brick wall', shape='box', position=(0.0, 0.6, 0.0), size=(0.8, 0.6, 0.05), material='brick',
+                          breakable=True, fracture='bricks')]),
+    Component('glass_pane', 'Glass pane', 'Things that fall', 'A 1 m pane of window glass held in its frame: something thrown '
+              'through it punches a hole and the shards fall out.', 'window', room=(0.6, 1.5, 0.1),
+              objects=[_C(name='Glass pane', shape='box', position=(0.0, 0.9, 0.0), size=(0.5, 0.5, 0.004), material='glass',
+                          breakable=True, fracture='shards', pieces=40, held='edges')]),
+    Component('pillar_concrete', 'Concrete pillar', 'Things that fall', 'A 2 m concrete pillar standing on the ground: hit it hard '
+              'and it breaks into chunks and topples.', 'pillar', room=(0.3, 2.1, 0.3),
+              objects=[_C(name='Concrete pillar', shape='box', position=(0.0, 1.0, 0.0), size=(0.15, 1.0, 0.15), material='concrete',
+                          breakable=True, pieces=30)]),
+    Component('crate_break', 'Wooden crate (breaks)', 'Things that fall', 'A hollow wooden crate dropped from 2 m: it lands '
+              'on a corner and splinters.', 'crate', room=(0.4, 2.4, 0.4),
+              objects=[_C(name='Crate', shape='box', position=(0.0, 2.0, 0.0), size=(0.22, 0.18, 0.18), yaw=25.0, hollow=0.015,
+                          material='wood', dynamic=True, breakable=True, fracture='splinters', pieces=36, strength=0.2,
+                          start_spin=(60.0, 0.0, 40.0))]),
+    Component('vase', 'Vase', 'Things that fall', 'A pottery vase knocked off a table (1.1 m): it lands on its rim and shatters.',
+              'pillar', room=(0.3, 1.5, 0.3),
+              objects=[_C(name='Vase', shape='cylinder', position=(0.0, 1.3, 0.0), size=(0.1, 0.17, 0.1), hollow=0.008,
+                          material='ceramic', own_colour=True, colour=(0.12, 0.25, 0.55), dynamic=True, breakable=True,
+                          pieces=40, start_spin=(90.0, 0.0, 40.0))]),
     # -- fabric -------------------------------------------------------------------------------------------------------------
     Component('curtain', 'Curtain', 'Fabric', 'A cotton curtain hanging from a rail (real size). It blows in the air and burns.',
               'fabric', room=(0.8, 2.4, 0.9),
@@ -767,6 +791,44 @@ def make_dynamic(scene: Scene, i, on=True, release=0.0):
     from ..engine.solver import MAX_COLLIDERS
     if sum(1 for d in scene.colliders if d['enabled']) > MAX_COLLIDERS:
         notes.append(f'Only the first {MAX_COLLIDERS} objects take part in the simulation.')
+    return notes
+
+
+def make_breakable(scene: Scene, i, on=True, pieces=None, fracture=None):
+    """Make object (collider) i breakable (Make it breakable, in the viewer's menus): cut beforehand into pieces
+    glued together, which come apart where it is hit or loaded harder than its material holds. The pattern is the
+    one its material breaks into unless given: bricks for a brick box, shards for glass, splinters for wood, chunks
+    for the rest. Returns notes for the user."""
+    from ..scene.materials import material
+    import numpy as np
+    c = scene.colliders[i]
+    notes = []
+    if on and c['shape'] == 'mesh':
+        return [f'{c["name"]} is a mesh: meshes cannot break yet. Boxes, balls and cylinders (solid or hollow) can.']
+    c['breakable'] = bool(on)
+    if not on:
+        return notes
+    m = c.get('material', 'wood')
+    if fracture is None:
+        if m == 'brick' and c['shape'] == 'box':
+            fracture = 'bricks'
+        elif material(m).clear > 0.5:
+            fracture = 'shards'
+        elif m == 'wood':
+            fracture = 'splinters'
+        else:
+            fracture = 'voronoi'
+    c['fracture'] = fracture
+    if pieces is not None:
+        c['pieces'] = int(pieces)
+    c['holdout'] = True
+    if c['shape'] != 'box' and fracture == 'bricks':
+        c['fracture'] = 'voronoi'
+    if fracture == 'shards' and float(np.min(np.abs(np.asarray(c['size'], float)))) > 0.03:
+        notes.append(f'{c["name"]} is thick for a pane: glass breaks best as a thin box.')
+    if not c.get('dynamic'):
+        notes.append(f'{c["name"]} stands where it is until it breaks, held by {dict(base="its base", edges="its edges", free="nothing")[c.get("held", "base")]} '
+                     '(Breaking > Held by).')
     return notes
 
 

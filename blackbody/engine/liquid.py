@@ -362,7 +362,7 @@ class LiquidSolver:
         k['p2g'] = g.kernel('liq_p2g.wgsl', ['rbuf', 'buf'], workgroup=P)
         k['norm'] = g.kernel('liq_norm.wgsl', ['rbuf', 'st3d:rgba32float:w', 'st3d:r32float:w', 'st3d:r32float:w'])
         k['forces'] = g.kernel('liq_forces.wgsl', ['utex3d', 'utex3d', 'utex3d', 'st3d:rgba32float:w', 'utex3d', 'utex2d',
-                                                   'utex3d'])
+                                                   'utex3d', 'utex3d'])
         k['attr_p2g'] = g.kernel('liq_attr_p2g.wgsl', ['rbuf', 'rbuf', 'buf'], workgroup=P)
         k['attr_norm'] = g.kernel('liq_attr_norm.wgsl', ['rbuf', 'utex3d', 'st3d:rgba16float:w', 'st3d:rgba16float:w'])
         k['attr_buoy'] = g.kernel('liq_attr_buoy.wgsl', ['utex3d', 'st3d:r32float:w'])
@@ -480,6 +480,15 @@ class LiquidSolver:
         self.colliders = colliders
         with self.gpu.batch() as b:
             self._write_sdf(b)
+
+    def solid_vel(self):
+        """Broken pieces' velocity in the cells inside them (w = 1; bodyfield.py), made when first needed."""
+        sv = getattr(self, 'svel', None)
+        if sv is None or sv.size != tuple(self.dims):
+            if sv is not None:
+                sv.destroy()
+            self.svel = self._t3(self.dims, 'rgba16float', 'liq-solid-velocity')
+        return self.svel
 
     def update_colliders(self, b: Batch, colliders):
         colliders = list(colliders)[:MAX_COLLIDERS]
@@ -852,6 +861,15 @@ class LiquidSolver:
         atlas = self.meshes.atlas
         if colliders is not None:
             self.update_colliders(b, colliders)
+        # broken pieces (bodyfield.py): folded into the colliders' distance, rewritten first so the last are gone
+        ps = getattr(self, 'pieces_step', None)
+        pieces_on = False
+        if ps is not None:
+            self._write_sdf(b)
+            pieces_on = ps[0].bake(b, self, ps[1])
+        elif getattr(self, '_had_pieces', False):
+            self._write_sdf(b)
+        self._had_pieces = pieces_on
         srcs = (self._level_sources(prm) + list(sources))[:MAX_EMITTERS]
         G = self._grid(dt, prm)
         gb = G.tobytes()
@@ -899,9 +917,9 @@ class LiquidSolver:
              .v4(self._sea_kp, cur[0], cur[2], 1.0 if buoy is not None else 0.0)
              .v4(*prm.sea_sides))
         pack_emitters(u, srcs, meshes=self.meshes)
-        pack_colliders(u, self.colliders, self.meshes)
+        pack_colliders(u, self.colliders, self.meshes, pieces=pieces_on)
         b.run(k['forces'], [self.VOLD, self.SDF, atlas, self.VA, self.DENS, self.OCN,
-                            buoy if buoy is not None else self._zero3], u, m)
+                            buoy if buoy is not None else self._zero3, self.svel if pieces_on else self._zero3], u, m)
 
         # 3. a little extrapolation so every face of a liquid cell has a value
         b.run(k['extrap'], [self.VA, self.VB], gb, m)

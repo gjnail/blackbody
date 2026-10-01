@@ -246,6 +246,10 @@ class Renderer:
         # holdouts from the footage (x = matte, y = depth pass), deep samples, OCIO LUTs
         self.hold = None
         self.hold_on = (False, False)
+        # the stage's holdouts in place of the footage's this render (Stage.hold: the pieces' and the footage's
+        # surfaces as a distance from the camera, the footage's matte), and whether that matte is on
+        self.hold_stage = None
+        self.hold_stage_matte = False
         self.deep_n = 0
         self.deep = None
         self._no_deep = g.buffer(32, 'no-deep')
@@ -613,8 +617,8 @@ class Renderer:
         u.v4(max(0.0, min(float(getattr(sf, 'shadows', 1.0)), 1.0)), 1.0 if stain is not None else 0.0,
              1.0 if getattr(sf, 'wet', False) else 0.0, 1.0)
         c = comp or CompParams()
-        matte_on, depth_on = self.hold_on if self.hold is not None else (False, False)
-        u.v4(1.0 if matte_on else 0.0, 1.0 if depth_on else 0.0, DEPTH_KINDS.get(c.depth_kind, 0), c.depth_scale)
+        hold_tex, matte_on, depth_on, kind, scale = self.holdouts(c)
+        u.v4(1.0 if matte_on else 0.0, 1.0 if depth_on else 0.0, kind, scale)
         soot_obj = getattr(sf, 'stain_obj', None) if stain is not None else None
         u.v4(*plate_fit, getattr(sf, 'stain_regions', 0) if soot_obj is not None else 0, self._lamps_on)
         view = np.asarray(camstate.view)
@@ -634,11 +638,20 @@ class Renderer:
                              sf.meshes.atlas if sf.meshes is not None else self._empty_r32,
                              limit if limit is not None else self._black,
                              stain if stain is not None else self._empty_r32,
-                             self.hold if (self.hold is not None and any(self.hold_on)) else self._black,
+                             hold_tex,
                              self.deep if self.deep_n else self._no_deep,
                              soot_obj if soot_obj is not None else self._empty_r32,
                              sf.stain_slots if soot_obj is not None else self._no_soot_slots,
                              self.LT if self._lamps_on else self._empty, self._lamp_buf, self.lamp_surf], u, (w, h, 1))
+
+    def holdouts(self, comp):
+        """(texture, matte on, depth on, depth kind, metres per unit) of the holdouts this render: the stage's when
+        it has pieces of broken things in it (with the footage's matte and depth folded in), else the footage's."""
+        if self.hold_stage is not None:
+            return self.hold_stage, self.hold_stage_matte, True, DEPTH_KINDS['distance'], 1.0
+        matte_on, depth_on = self.hold_on if self.hold is not None else (False, False)
+        tex = self.hold if (self.hold is not None and any(self.hold_on)) else self._black
+        return tex, matte_on, depth_on, DEPTH_KINDS.get(comp.depth_kind, 0), comp.depth_scale
 
     def defocus(self, b, comp: CompParams, camstate: cam.CameraState, fire: cam.FireXform):
         """Depth of field and the footage's softness on the rendered element (beauty, emission, aux), after

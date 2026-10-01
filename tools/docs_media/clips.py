@@ -67,6 +67,9 @@ CLIPS = {
     # ---- things that fall (on the stage: no plate) --------------------------------------------------------------
     'tower_knockdown': clip('tower_knockdown', 0.0, 96, dyaw=8.0, push=0.06),
     'crates_in_fire': clip('crates_in_fire', 0.0, 144, dyaw=6.0, set={'composite': LIT}),
+    'wall_smash': clip('wall_smash', 0.0, 72, dyaw=8.0, push=0.06),
+    'window_smash': clip('window_smash', 0.0, 48, dyaw=6.0, push=0.04),
+    'vase_drop': clip('vase_drop', 0.0, 48, dyaw=6.0, push=0.04),
     # ---- water ----------------------------------------------------------------------------------------------
     'floating': clip('floating', 0.2, 96, plate='ground', plate_args=DAY_PEBBLES),
     'ink_tank': clip('ink_tank', 0.3, 120, plate='ground', plate_args=DAY_FINE, dyaw=8.0),

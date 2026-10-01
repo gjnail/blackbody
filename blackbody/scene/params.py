@@ -716,6 +716,22 @@ COLLIDER_PARAMS = [
     F('release', 'Falls from', 0.0, -10.0, 60.0, 's', 2, tip='Seconds from the first frame when it is let go. Until then it is held '
       'where its keys put it, so it can be carried, lifted or placed and then dropped. Negative values let it go during the '
       'pre-roll, so it has already landed when the shot starts.', group='Physics'),
+    B('breakable', 'Breaks', False, tip='It is made of pieces glued together, which come apart where it is hit or loaded harder '
+      'than its material holds: a wall knocked through, a pane shattered, a crate smashed. Without Falls it stands where it '
+      'is, held by what Held by says, until it breaks.', group='Breaking'),
+    E('fracture', 'Breaks into', 'voronoi', (('voronoi', 'Chunks'), ('bricks', 'Bricks'), ('shards', 'Shards (glass)'),
+                                              ('splinters', 'Splinters (wood)')),
+      tip='How it comes apart: irregular chunks (stone, concrete, pottery), the bricks of a wall (a box), slivers radiating '
+      'from the middle of a pane (glass), or pieces long along the grain (wood).', group='Breaking'),
+    I('pieces', 'Pieces', 24, 2, 300, tip='How many pieces it breaks into (Bricks: as many as fit). More pieces take longer to '
+      'simulate.', group='Breaking'),
+    F('strength', 'Strength', 1.0, 0.01, 100.0, '×', 2, tip='How strongly the pieces hold together, times the material\N{RIGHT SINGLE QUOTATION MARK}s '
+      'strength (for bricks, the mortar\N{RIGHT SINGLE QUOTATION MARK}s). Lower breaks it more easily.', group='Breaking', log=True),
+    E('held', 'Held by', 'base', (('base', 'Its base'), ('edges', 'Its edges'), ('free', 'Nothing')),
+      tip='What holds an object that breaks but does not fall: glued to the ground along its base (a wall), held round its '
+      'edges (a pane in its frame), or nothing (it stands on its own weight).', group='Breaking'),
+    I('fracture_seed', 'Pattern seed', 0, 0, 9999, tip='Another number gives another pattern of pieces.', group='Breaking',
+      advanced=True),
     B('floating', 'Floats', False, tip='The liquid moves it: it floats or sinks by its density, bobs, drifts with the flow, tips and '
       'turns. Falls does the same, and also lets it fall through the air. Its keyframes set only where it starts.', group='Liquid'),
 ]

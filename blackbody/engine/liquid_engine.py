@@ -259,6 +259,7 @@ class LiquidEngine:
                 self.cloth.place(scene.fabrics_at(frame - 1), clook.ambient_k)
             cprm = SimpleNamespace(wind=tuple(scene.liquid_wind(frame)), ground=bool(d['ground']))
             cloth_steps = max(1, int(math.ceil(fdt * STEPS_PER_SECOND / n)))
+        pieces = poses is not None and self._pieces_for(scene, L, 'liquid')
         with self.gpu.batch() as b:
             if shift != (0, 0):
                 L.shift(b, *shift, prm)
@@ -273,7 +274,9 @@ class LiquidEngine:
                 prm.clock = scene.seconds(fs)
                 if tide:
                     prm.water_level = scene.liquid_level(fs)   # a tide: the level at each substep
+                L.pieces_step = (self.body_field_for('liquid'), i) if pieces else None
                 L.step(b, fdt / n, prm, srcs, cols)
+                L.pieces_step = None
                 if regions:
                     L.float_forces(b, regions, i, fdt / n)
                 if cloth:
@@ -431,6 +434,17 @@ class LiquidEngine:
 
     body_overrides = floating_overrides
 
+    def piece_poses(self, frame):
+        """The pieces of broken (breakable) objects at `frame`: {collider index: Solids.piece_poses entry}, or None."""
+        solids = getattr(self, 'solids', None)
+        if self.sim_frame == frame and solids is not None and solids.sets:
+            return solids.piece_poses()
+        entry = self.cache.get(frame) if self.cache is not None else None
+        st = entry.get('solids') if entry is not None else None
+        if isinstance(st, dict) and st.get('pieces'):
+            return st['pieces']
+        return None
+
     def _liquid_view(self, scene, frame):
         L = self.liquid
         ppc = int(scene.data['liquid']['ppc'])
@@ -521,7 +535,9 @@ class LiquidEngine:
         # the set drawn in CG behind and under the liquid (stage.py): the liquid takes it as its footage
         footage = plate is not None
         objects = look.colliders_look != 'shaded'
-        stage_on = stage_mod.wanted(scene, footage, mode, objects=objects)
+        pieces = self.piece_poses(frame)   # (broken things: drawn, and holding out what is behind them, in every view)
+        stage_on = stage_mod.wanted(scene, footage, mode, objects=objects) or bool(pieces)
+        r.hold_stage = None
         p_transform, p_gain = INPUT_TRANSFORMS.get(comp.plate_transform, 0), comp.plate_gain
         standins = stage_mod.standin_colours(scene)
 
@@ -568,7 +584,10 @@ class LiquidEngine:
                 stage = ptex = self.stage.draw(b, r, scene, cs, fire, vol.colliders, vol.meshes, light, comp, size,
                                                plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage,
                                                ground_y=vol.origin[1], frame=frame, objects=objects,
-                                               floor=not look.bottomless)
+                                               floor=not look.bottomless, pieces=pieces)
+                if self.stage.has_pieces:   # the liquid is hidden behind the pieces, and sees them as solid
+                    r.hold_stage = self.stage.hold
+                    r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])
                 p_transform, p_gain = INPUT_TRANSFORMS['linear'], 1.0
             LR.build(b, vol, look)
             LR.sea(b, vol, look)
@@ -599,6 +618,7 @@ class LiquidEngine:
             r.composite(b, (W, H), comp, time=t, frame=frame, plate_fit=plate_fit, liquid=True, liquid_haze=hz,
                         hfov=cs.hfov, stage=stage)
             LR.lens_drops(b, look, (W, H), time=t)
+        r.hold_stage = None
         self.last_render_ms = (time.perf_counter() - t0) * 1000.0
         return cs
 

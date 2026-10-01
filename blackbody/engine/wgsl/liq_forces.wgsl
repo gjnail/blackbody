@@ -23,7 +23,7 @@ struct Params {
                     // level (0), or all the way up (-1 a wave flume's walls along the waves, -2 past the shore)
   ecnt: vec4<f32>,  // source count
   em: array<Emitter, MAX_EMITTERS>,
-  ccnt: vec4<f32>,  // collider count, any moving (1/0)
+  ccnt: vec4<f32>,  // collider count, any moving (1/0), broken pieces in svel (1/0)
   col: array<Collider, MAX_COLLIDERS>,
 };
 
@@ -34,6 +34,7 @@ struct Params {
 @group(0) @binding(4) var dens: texture_3d<f32>;
 @group(0) @binding(5) var ocn_t: texture_2d<f32>;
 @group(0) @binding(6) var buoy: texture_3d<f32>;   // upward share of gravity per cell (two liquids)
+@group(0) @binding(7) var svel: texture_3d<f32>;   // broken pieces' velocity in the cells inside them (w = 1; bodyfield.py)
 //!include liq_level.wgsl
 @group(1) @binding(0) var<uniform> U: Params;
 
@@ -56,6 +57,14 @@ fn wall(c: vec3<i32>, k: u32, n: vec3<i32>) -> bool {
 
 // Velocity of the solid at world point w: that of the nearest collider (zero for walls).
 fn solid_velocity(w: vec3<f32>) -> vec3<f32> {
+  if (U.ccnt.z > 0.5) {
+    let c = vec3<i32>(floor((w - U.g.org.xyz) / U.g.n.w));
+    let n = vec3<i32>(U.g.n.xyz);
+    if (in_grid(c, n)) {
+      let pv = textureLoad(svel, c, 0);
+      if (pv.w > 0.5) { return pv.xyz; }
+    }
+  }
   if (U.ccnt.y < 0.5) { return vec3<f32>(0.0); }
   var best = 1.0e9;
   var v = vec3<f32>(0.0);

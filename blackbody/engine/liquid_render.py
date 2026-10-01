@@ -872,9 +872,8 @@ class LiquidRenderer:
         lava_map = self._lava_glow_lights(b, view, look, gain)
         self.lava_uniforms(u, look, gain, 2.0 / (max(abs(float(camstate.proj[1, 1])), 1e-6) * h),
                            self.crust_field is not self._no_crust_field)
-        from .renderer import DEPTH_KINDS
-        matte_on, depth_on = r.hold_on if r.hold is not None else (False, False)
-        u.v4(1.0 if matte_on else 0.0, 1.0 if depth_on else 0.0, DEPTH_KINDS.get(comp.depth_kind, 0), comp.depth_scale)
+        hold_tex, matte_on, depth_on, kind, scale = r.holdouts(comp)
+        u.v4(1.0 if matte_on else 0.0, 1.0 if depth_on else 0.0, kind, scale)
         u.v4(*plate_fit, 0.0, 0.0)
         pack_colliders(u, view.colliders, view.meshes)
         rows = list(standins or [])[:MAX_COLLIDERS]
@@ -891,7 +890,7 @@ class LiquidRenderer:
                              self.env_tex if env_on else self._no_env, self.gpu.repeat, r.mask,
                              *self.ocean.textures(view.layer), self.heat_tex, self.dye_tex,
                              *(fire_lights if fire_lights is not None else (self._no_lights, self._no_count)),
-                             r.hold if (r.hold is not None and any(r.hold_on)) else self._black, self.gbuf,
+                             hold_tex, self.gbuf,
                              lava_map, cloth if cloth is not None else self._no_cloth],
               u, (w, h, 1))
         if look.glow > 0.0:

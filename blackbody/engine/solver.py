@@ -289,9 +289,10 @@ def pack_emitters(u: Uniforms, emitters, extra1=0.0, extra2=0.0, meshes=None):
     return u
 
 
-def pack_colliders(u: Uniforms, colliders, meshes=None):
+def pack_colliders(u: Uniforms, colliders, meshes=None, pieces=False):
+    """pieces: the solid velocity texture has broken pieces in it this substep (apply.wgsl)."""
     cols = list(colliders or [])[:MAX_COLLIDERS]
-    u.v4(len(cols), 1.0 if any(c.moving for c in cols) else 0.0)
+    u.v4(len(cols), 1.0 if any(c.moving for c in cols) else 0.0, 1.0 if pieces else 0.0)
     for c in cols:
         m0, m1, m2, an = _mesh_ref(meshes, c.mesh, c.mesh_frame, c.mesh_fps) if c.shape == 'mesh' else NO_MESH + (NO_ANIM,)
         u.v4(*c.pos, COLLIDER_SHAPES.get(c.shape, 1))
@@ -331,6 +332,11 @@ class Solver:
         self.colliders = []
         self.features = dict(NO_FEATURES)
         self._burn_dirty = True
+        # the pieces of broken objects (bodyfield.py): (BodyField, substep) for the next step, or None
+        self.pieces_step = None
+        self._pieces_on = False
+        self._had_pieces = False
+        self.svel = None
         self._k = {}
         self.meshes = MeshLibrary(gpu)
         # stand-ins bound where an optional field is not in use (separate ones for reading and writing)
@@ -515,7 +521,7 @@ class Solver:
         k['rhs_subtract'] = g.kernel('rhs_mean.wgsl', ['st3d:r32float:rw', 'utex3d', 'buf'], 'subtract')
         k['curl'] = g.kernel('curl.wgsl', ['utex3d', 'st3d:rgba16float:w'])
         k['force'] = g.kernel('force.wgsl', ['utex3d', 'utex3d', 'st3d:rgba16float:w'])
-        k['apply'] = g.kernel('apply.wgsl', ['utex3d'] * 6 + [f'st3d:{vf}:w'], 'main', V)
+        k['apply'] = g.kernel('apply.wgsl', ['utex3d'] * 6 + [f'st3d:{vf}:w', 'utex3d'], 'main', V)
         k['div'] = g.kernel('divergence.wgsl', ['utex3d', 'utex3d', 'utex3d', 'st3d:r32float:w'])
         k['smooth'] = g.kernel('mg_smooth.wgsl', ['st3d:r32float:rw', 'utex3d', 'utex3d'])
         k['residual'] = g.kernel('mg_residual.wgsl', ['utex3d', 'utex3d', 'utex3d', 'st3d:r32float:w'])
@@ -589,6 +595,14 @@ class Solver:
             self._stain_dirty = True
         self.colliders = colliders
         self._write_sdf(b)
+
+    def solid_vel(self):
+        """The broken pieces' velocity in the cells inside them (w = 1), made when first needed."""
+        if self.svel is None or self.svel.size != tuple(self.dims):
+            if self.svel is not None:
+                self.svel.destroy()
+            self.svel = self._t3(self.dims, 'rgba16float', 'solid-velocity')
+        return self.svel
 
     def _write_sdf(self, b):
         u = pack_colliders(self._grid(0.0), self.colliders, self.meshes)
@@ -826,6 +840,15 @@ class Solver:
         ems = list(emitters)[:MAX_EMITTERS]
         if colliders is not None:
             self.update_colliders(b, colliders)
+        # broken pieces: folded into the colliders' distance (rewritten first, so last substep's are gone)
+        self._pieces_on = False
+        if self.pieces_step is not None:
+            field, i = self.pieces_step
+            self._write_sdf(b)
+            self._pieces_on = field.bake(b, self, i)
+        elif self._had_pieces:
+            self._write_sdf(b)
+        self._had_pieces = self._pieces_on
         if f['burn'] and self._burn_dirty:
             self._init_burn(b, prm)
         if f.get('stain') and self._stain_dirty:
@@ -890,9 +913,10 @@ class Solver:
         wet = 1.0 if self._vapour_on(prm) else 0.0
         u = (ga().v4(prm.buoyancy, prm.soot_weight, prm.damping, VAPOUR_LIFT * wet).v4(prm.fuel_weight)
              .v4(*prm.wind, prm.wind_relax))
-        pack_colliders(u, self.colliders, self.meshes)
+        pack_colliders(u, self.colliders, self.meshes, pieces=self._pieces_on)
         pack_emitters(u, ems, 1.0 if any(e.swirl != 0 for e in ems) else 0.0, meshes=self.meshes)
-        b.run(k['apply'], [self.vel[0], self.scal[0], self.force, self.sdf, atlas, self._aux_rw()[0], self.vel[1]], u, vdims)
+        b.run(k['apply'], [self.vel[0], self.scal[0], self.force, self.sdf, atlas, self._aux_rw()[0], self.vel[1],
+                           self.svel if self._pieces_on else self._dummy['aux_r']], u, vdims)
         self.vel.reverse()
         if self.cloth_hook is not None:
             self.cloth_hook(b, self, dt, 'velocity')   # fabric holds the air back
