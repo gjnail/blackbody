@@ -18,7 +18,8 @@ from ..engine.solver import MAX_COLLIDERS, MAX_EMITTERS, VOLUME_MODES, ColliderG
 from ..engine.mesh import is_numbered, mesh_deforms, sequence_files, split_source
 from .anim import Curve
 from .params import (COLLIDER_PARAMS, EMITTER_PARAMS, LOOK_KEYS, SECTIONS, SIM_SECTIONS, coerce, collider_defaults, defaults,
-                     emitter_defaults, fabric_defaults, light_defaults, param)
+                     emitter_defaults, fabric_defaults, light_defaults,
+                     matter_defaults, param)
 
 FILE_VERSION = 1
 # settings that only say where frames are kept: they do not change the simulation itself
@@ -105,6 +106,7 @@ class Scene:
         self.colliders = []
         self.lights = []        # lamps in the set (they light the smoke; look only, not the simulation)
         self.fabrics = []       # cloth: curtains, flags, sheets (engine/cloth.py)
+        self.matter = []        # sand, snow, mud, jelly and clay (engine/matter.py)
         self.footage = None     # {'path', 'fps', 'offset'}
         self.track = None       # {'points': {frame: [x, y]}}
         self.roto = []          # roto shapes over the footage (scene/roto.py): a holdout drawn in the app
@@ -127,7 +129,7 @@ class Scene:
         self.path = None
 
     # -- addressing ------------------------------------------------------------------------------
-    # A path is ('section', 'key') or ('emitter' / 'collider' / 'light' / 'fabric', index, 'key').
+    # A path is ('section', 'key') or ('emitter' / 'collider' / 'light' / 'fabric' / 'matter', index, 'key').
 
     def _slot(self, path):
         if path[0] == 'emitter':
@@ -138,6 +140,8 @@ class Scene:
             return self.lights[path[1]], path[2]
         if path[0] == 'fabric':
             return self.fabrics[path[1]], path[2]
+        if path[0] == 'matter':
+            return self.matter[path[1]], path[2]
         return self.data[path[0]], path[1]
 
     @staticmethod
@@ -203,7 +207,7 @@ class Scene:
             for v in vals.values():
                 if isinstance(v, Curve):
                     out.update(v.frames())
-        for group in (self.emitters, self.colliders, self.lights, self.fabrics):
+        for group in (self.emitters, self.colliders, self.lights, self.fabrics, getattr(self, 'matter', [])):
             for d in group:
                 for v in d.values():
                     if isinstance(v, Curve):
@@ -263,6 +267,38 @@ class Scene:
             d[k] = coerce(param('fabric', k), v)
         self.fabrics.append(d)
         return len(self.fabrics) - 1
+
+    def add_matter(self, **kw):
+        d = matter_defaults()
+        for k, v in kw.items():
+            d[k] = coerce(param('matter', k), v)
+        if 'name' not in kw:
+            from .params import MATTER_MATERIALS
+            label = dict(MATTER_MATERIALS).get(d['material'], 'Matter')
+            names = {m['name'] for m in self.matter}
+            d['name'] = label if label not in names else next(f'{label} {n}' for n in range(2, 10000) if f'{label} {n}' not in names)
+        self.matter.append(d)
+        return len(self.matter) - 1
+
+    def matter_specs(self):
+        """The enabled sand, snow, mud, jelly and clay, as sources for engine/matter.py (where they start, in the box's
+        frame, and what they are)."""
+        from ..engine.matter import MatterSpec
+        out = []
+        for i, d in enumerate(getattr(self, 'matter', None) or []):
+            if not d['enabled']:
+                continue
+            g = lambda k: self.get(('matter', i, k), self.start)
+            colour = None
+            if d.get('own_colour'):
+                c = np.asarray(d['colour'], float)
+                colour = tuple(float(x) for x in np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4))
+            out.append(MatterSpec(material=d['material'], shape=d['shape'], pos=tuple(float(x) for x in g('position')),
+                                  size=tuple(abs(float(x)) for x in g('size')), yaw=math.radians(float(g('yaw'))),
+                                  velocity=tuple(float(x) for x in d['velocity']), release=float(d['release']),
+                                  pour=bool(d['pours']), rate=float(d['rate']) / 1000.0, start=float(d['pour_start']),
+                                  stop=float(d['pour_stop']), colour=colour, stiffness=float(d['stiffness']), seed=int(d['seed'])))
+        return out
 
     def fabric_specs(self):
         """What the enabled fabrics are made of and how they are built (engine/cloth.py)."""
@@ -1035,6 +1071,7 @@ class Scene:
             'emitters': [{k: _to_json_value(v) for k, v in e.items() if k != 'name'} for e in self.emitters],
             'colliders': [{k: _to_json_value(v) for k, v in c.items() if k != 'name'} for c in self.colliders],
             'fabrics': [{k: _to_json_value(v) for k, v in f.items() if k != 'name'} for f in self.fabrics],
+            'matter': [{k: _to_json_value(v) for k, v in m.items() if k != 'name'} for m in getattr(self, 'matter', None) or []],
             'fps': self.fps, 'start': self.start, 'layout': [list(x) if isinstance(x, tuple) else x for x in self.sim_layout(final)],
             'embers': {k: _to_json_value(v) for k, v in self.data['embers'].items()},
             'fire_yaw': _to_json_value(self.data['camera']['fire_yaw']),
@@ -1071,6 +1108,7 @@ class Scene:
             'colliders': [{k: _to_json_value(v) for k, v in c.items()} for c in self.colliders],
             'lights': [{k: _to_json_value(v) for k, v in l.items()} for l in self.lights],
             'fabrics': [{k: _to_json_value(v) for k, v in f.items()} for f in self.fabrics],
+            'matter': [{k: _to_json_value(v) for k, v in m.items()} for m in getattr(self, 'matter', None) or []],
             'footage': self.footage,
             'track': ({'points': {str(k): list(v) for k, v in self.track.get('points', {}).items()},
                        'offset': list(self.track.get('offset', (0, 0)))} if self.track else None),
@@ -1129,6 +1167,13 @@ class Scene:
                 if k in x:
                     x[k] = _from_json_value(param('fabric', k), v)
             s.fabrics.append(x)
+        s.matter = []
+        for m in d.get('matter', []):
+            x = matter_defaults()
+            for k, v in m.items():
+                if k in x:
+                    x[k] = _from_json_value(param('matter', k), v)
+            s.matter.append(x)
         s.footage = d.get('footage')
         tr = d.get('track')
         if tr and tr.get('points'):
@@ -1155,7 +1200,8 @@ class Scene:
 
     def find_object(self, kind, name):
         """(index, dict) of the object of a kind with a name, or (None, None)."""
-        items = {'emitter': self.emitters, 'collider': self.colliders, 'light': self.lights, 'fabric': self.fabrics}.get(kind, [])
+        items = {'emitter': self.emitters, 'collider': self.colliders, 'light': self.lights, 'fabric': self.fabrics,
+                 'matter': getattr(self, 'matter', [])}.get(kind, [])
         for i, d in enumerate(items):
             if d.get('name') == name:
                 return i, d

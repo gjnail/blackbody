@@ -301,6 +301,7 @@ class Solids:
         self.joints: list[Joint] = []   # ropes, springs, hinges and ball joints
         self.snaps = []            # (time, collider index) of every joint that broke
         self._tendon0 = None       # the tendons' limits, stiffness and damping as built (a broken one has them taken away)
+        self._pushed = {}          # collider index -> (force, torque) the matter (matter.py) put on it over the last frame
 
     # -- set up --------------------------------------------------------------------------------
 
@@ -1202,6 +1203,7 @@ class Solids:
         self.data.eq_active[:] = self.model.eq_active0
         self.breaks = []
         self.snaps = []
+        self._pushed = {}
         self._unsnap_all()
         if self._w is not None:
             self._w['over'][:] = 0
@@ -1346,9 +1348,19 @@ class Solids:
                 R = q_rot(fb.quat)
                 I_w = R @ np.diag(inertia(fb.shape, fb.size, mass)) @ R.T
                 t += (mass / m_tot) * (t_hyd + 0.5 * t_dyn) - (0.3 + 6.0 * sub) * (I_w @ omega)
+            if bd.index in self._pushed:
+                # sand, snow, mud piled on it or shoving it (matter.py): their push over the last frame
+                pf, pt = self._pushed[bd.index]
+                f = f + pf
+                t = t + pt - np.cross(d.xipos[bid] - d.xpos[bid], pf)
             d.xfrc_applied[bid, :3] = f
             d.xfrc_applied[bid, 3:] = t
         self._joint_friction()
+
+    def matter_push(self, forces, fdt=None):
+        """The matter's push on the objects over the frame just stepped ({collider index: (force, torque about its
+        position)}, N and N m), applied to the falling ones through the next frame."""
+        self._pushed = {int(i): (np.asarray(f, float), np.asarray(t, float)) for i, (f, t) in (forces or {}).items()}
 
     def _joint_friction(self):
         """Hinges and ball joints resist turning: a torque against the turning of one side against the other, that
@@ -1379,15 +1391,20 @@ class Solids:
             if jt.other_free:
                 d.xfrc_applied[jt.oid, 3:] -= tau
 
-    def advance(self, scene, frame, fdt, substeps):
+    def advance(self, scene, frame, fdt, substeps, couple=None):
         """Move every body through frame `frame` (fdt seconds of simulation). Returns, for each of the
-        frame's `substeps` substeps, the colliders' overrides at the middle of it."""
+        frame's `substeps` substeps, the colliders' overrides at the middle of it.
+
+        couple: (longest step (s), fn) to move something in lockstep with the bodies (the matter: matter_engine.py).
+        After each step, fn(h, overrides, f) moves it on h seconds (to fraction f of the frame) with the bodies where they
+        now are, and returns its push on them ({collider index: (force, torque about its position)}), which the next
+        step takes. (Its push a whole frame late would be far too late for anything as stiff as sand.)"""
         import mujoco
         if self.model is None:
             return [None] * substeps
         m, d = self.model, self.data
         dt = m.opt.timestep
-        steps = max(1, int(math.ceil(fdt / dt - 1e-9)))
+        steps = max(1, int(math.ceil(fdt / min(dt, couple[0] if couple else dt) - 1e-9)))
         h = fdt / steps
         m.opt.timestep = h
         marks = [(i + 0.5) / substeps * fdt for i in range(substeps)]
@@ -1408,6 +1425,8 @@ class Solids:
             self._break_joints()
             t += h
             self.time += h
+            if couple is not None:
+                self._pushed = couple[1](h, self._poses(), t / fdt) or {}
         while mi < len(marks):
             out.append(self._poses())
             self.substep_pieces.append(self.piece_poses() if self.sets else None)

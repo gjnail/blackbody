@@ -134,11 +134,13 @@ class Stage:
         self.gpu = gpu
         self.k = gpu.kernel('stage.wgsl', ['utex3d', 'tex3d', 'tex3d', 'tex3d', 'tex3d', 'smp', 'smp', 'rbuf', 'rbuf',
                                            'rbuf', 'tex2d', 'tex2d', 'tex2d', 'tex3d', 'st2d:rgba16float:w',
-                                           'rbuf', 'rbuf', 'rbuf', 'rbuf', 'st2d:rgba16float:w'],
+                                           'rbuf', 'rbuf', 'rbuf', 'rbuf', 'st2d:rgba16float:w', 'tex3d', 'tex3d'],
                             workgroup=(8, 8, 1))
+        self._no_matter = gpu.texture3d((1, 1, 1), 'rgba16float', 'stage-no-matter')
         self.tex = None
         self.hold = None           # the holdouts it leaves for the march (pieces' distance, the footage's matte)
         self.has_pieces = False
+        self.has_matter = False
         self._bufs = {}
         self._zero = gpu.buffer(64, 'stage-no-lights')
         self._env = None
@@ -263,9 +265,12 @@ class Stage:
         return self._env
 
     @staticmethod
-    def _bound(cols, rows, meshes, shutter):
-        """A sphere round every object in the shot (fire-local centre, radius), moving ones over the shutter."""
+    def _bound(cols, rows, meshes, shutter, extra=None):
+        """A sphere round every object in the shot (fire-local centre, radius), moving ones over the shutter, and round
+        `extra` ((lo, hi) fire-local m: the matter)."""
         lo, hi = np.full(3, np.inf), np.full(3, -np.inf)
+        if extra is not None:
+            lo, hi = np.minimum(lo, extra[0]), np.maximum(hi, extra[1])
         for c, row in zip(cols, rows):
             if row[0] == NOT_DRAWN:
                 continue
@@ -290,7 +295,7 @@ class Stage:
 
     def draw(self, b, r, scene, camstate, fire, colliders, meshes, light: StageLight, comp, size, plate_fit=(1.0, 1.0),
              samples=1, shutter=0.0, footage=False, vol=None, ground_y=0.0, frame=0, objects=True, floor=True,
-             pieces=None, ropes=None):
+             pieces=None, ropes=None, matter=None):
         """Draw the stage into self.tex (size: the plate's, footage or output) and return it.
         r: the Renderer (its footage plate and holdouts, light volume, fire lights and lamp buffer);
         colliders: the objects as the solver has them (ColliderGPU, moving ones where they are this frame);
@@ -299,7 +304,8 @@ class Stage:
         objects: draw the CG objects (else they only shade the floor: a liquid scene's grey stand-ins);
         floor: draw the floor (not under bottomless water);
         pieces: the pieces of broken objects, {collider index: Solids.piece_poses entry};
-        ropes: the ropes and springs, {collider index: Solids.rope_poses entry}."""
+        ropes: the ropes and springs, {collider index: Solids.rope_poses entry};
+        matter: the sand, snow, mud, jelly and clay (matter.Matter), or None."""
         g = self.gpu
         pw, ph = int(size[0]), int(size[1])
         self._ensure(pw, ph)
@@ -345,7 +351,11 @@ class Stage:
         # objects: how far ambient occlusion reaches (about half the size of a typical one)
         sizes = [float(np.max(np.abs(cg.size))) for cg, row in zip(cols, rows) if row[0] != NOT_DRAWN]
         ao_reach = float(np.clip(0.6 * np.median(sizes), 0.05, 1.5)) if sizes else 0.3
-        centre, radius = self._bound(cols, rows, meshes, shutter)
+        surf = matter.surface() if matter is not None and matter.active else None
+        mb = matter.world_bounds() if surf is not None else None
+        if mb is None:
+            surf = None
+        centre, radius = self._bound(cols, rows, meshes, shutter, mb)
         # the footage under it
         matte_on, depth_on = r.hold_on if (footage and r.hold is not None) else (False, False)
         from .renderer import DEPTH_KINDS, INPUT_TRANSFORMS
@@ -383,6 +393,15 @@ class Stage:
             u.v4().v4()
             bufs = [self._buffer('pieces', np.zeros(20, np.float32)), self._buffer('planes', np.zeros(4, np.float32)),
                     self._buffer('cells', np.zeros(2, np.uint32)), self._buffer('list', np.zeros(1, np.uint32))]
+        if surf is not None:
+            phi, look0, _look1 = surf
+            last = matter.origin + (np.asarray(matter.dims, float) - 1.0) * matter.dx     # (its grid's last node)
+            u.v4(*matter.origin, matter.dx).v4(*matter.dims, 1.0).v4(*matter.origin).v4(*last)
+            mtex = [look0, phi]
+        else:
+            u.v4().v4(1.0, 1.0, 1.0, 0.0).v4().v4()
+            mtex = [self._no_matter, self._no_matter]
+        self.has_matter = surf is not None
         pack_colliders(u, cols, meshes)
         for i in range(MAX_COLLIDERS):
             if i < len(rows):
@@ -402,5 +421,5 @@ class Stage:
                        r.hold if (footage and r.hold is not None and any(r.hold_on)) else black,
                        env if env is not None else black,
                        r.lut_plate if (footage and r.lut_plate is not None) else r._lut_none,
-                       self.tex, *bufs, self.hold], u, (pw, ph, 1))
+                       self.tex, *bufs, self.hold, *mtex], u, (pw, ph, 1))
         return self.tex

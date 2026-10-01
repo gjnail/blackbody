@@ -24,8 +24,8 @@ EXT = '.bbblock'
 FORMAT = 'blackbody-block'
 DIR = None          # set by the app: where your blocks live (a folder of .bbblock files)
 _CACHE = {}         # path -> (mtime, Component)
-LISTS = ('emitters', 'colliders', 'lights', 'fabrics')
-KIND_OF = {'emitters': 'emitter', 'colliders': 'collider', 'lights': 'light', 'fabrics': 'fabric'}
+LISTS = ('emitters', 'colliders', 'lights', 'fabrics', 'matter')
+KIND_OF = {'emitters': 'emitter', 'colliders': 'collider', 'lights': 'light', 'fabrics': 'fabric', 'matter': 'matter'}
 
 
 def folder():
@@ -41,7 +41,8 @@ def slug(name):
 
 
 def _items(scene, kind):
-    return {'emitter': scene.emitters, 'collider': scene.colliders, 'light': scene.lights, 'fabric': scene.fabrics}[kind]
+    return {'emitter': scene.emitters, 'collider': scene.colliders, 'light': scene.lights, 'fabric': scene.fabrics,
+            'matter': scene.matter}[kind]
 
 
 def with_attached(scene, sel):

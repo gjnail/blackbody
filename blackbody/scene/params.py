@@ -85,6 +85,8 @@ SECTIONS = {
         F('maccormack', 'Scalar sharpness', 1.0, 0.0, 1.0, '', 2, tip='MacCormack correction for fire and smoke transport. 1 keeps fine detail; 0 is softer.', group='Solver', advanced=True),
         F('maccormack_vel', 'Velocity sharpness', 0.5, 0.0, 1.0, '', 2, tip='MacCormack correction for the air itself. Higher keeps more swirl but can become unstable.', group='Solver', advanced=True),
         I('mesh_resolution', 'Mesh detail', 96, 32, 192, tip='Resolution of the distance field built from each mesh emitter or collider (cells along its longest side).', group='Solver', advanced=True),
+        I('matter_detail', 'Matter detail', 128, 32, 384, tip='How fine sand, snow, mud, jelly and clay are simulated: grid nodes across the box’s longest side, eight particles to a cell. Finer is slower.', group='Solver', advanced=True),
+        I('matter_particles', 'Most matter particles', 2000000, 10000, 20000000, tip='The most particles sand, snow, mud, jelly and clay are made of (each takes 128 bytes of GPU memory).', group='Solver', advanced=True),
         B('disk_cache', 'Disk cache', False, tip='Also keep every simulated frame on disk (next to the project, in NAME.bbcache): frames survive closing the app, a stopped simulation resumes from its last checkpoint, and render farm machines can share one simulation.', group='Cache'),
         Param('cache_dir', 'Cache folder', 'str', '', tip='Where the disk cache goes. Empty: next to the project file (or the user cache folder for an unsaved scene).', group='Cache', advanced=True),
         I('checkpoint_every', 'Checkpoint every', 10, 1, 500, 'frames', tip='How often the whole simulation state is saved, so a simulation can resume from there. Checkpoints are several times larger than ordinary cached frames.', group='Cache', advanced=True),
@@ -891,6 +893,41 @@ _COLLIDER_INDEX = {p.key: p for p in COLLIDER_PARAMS}
 _LIGHT_INDEX = {p.key: p for p in LIGHT_PARAMS}
 _FABRIC_INDEX = {p.key: p for p in FABRIC_PARAMS}
 
+# Matter: sand, snow, mud, jelly and clay (engine/matter.py), simulated as particles in every kind of scene.
+MATTER_MATERIALS = (('sand', 'Sand'), ('wet_sand', 'Wet sand'), ('snow', 'Snow'), ('packing_snow', 'Packing snow'), ('mud', 'Mud'),
+                    ('jelly', 'Jelly'), ('clay', 'Clay'))
+MATTER_PARAMS = [
+    Param('name', 'Name', 'str', 'Sand'),
+    B('enabled', 'Enabled', True),
+    E('material', 'Made of', 'sand', MATTER_MATERIALS, tip='Sand piles up at its angle of repose and pours; wet sand holds a '
+      'steeper shape and clumps; snow packs where it is squeezed and breaks up where it is pulled; packing snow makes '
+      'snowballs; mud slumps and flows until it is thin enough to stop; jelly wobbles and springs back; clay squashes and '
+      'stays squashed.', group='Matter'),
+    E('shape', 'Shape', 'box', (('box', 'Box'), ('sphere', 'Ball'), ('cylinder', 'Cylinder'), ('pile', 'Pile (a cone)')),
+      tip='The shape of the body of it at the start (a pour: the nozzle is a disc of its Size’s first value across).',
+      group='Matter'),
+    V('position', 'Position', (0.0, 0.5, 0.0), -50.0, 50.0, 'm', decimals=3, tip='Its middle (a pile: the middle of its base; '
+      'a pour: the nozzle).', group='Matter'),
+    V('size', 'Size', (0.25, 0.25, 0.25), 0.005, 20.0, 'm', decimals=3, tip='Half its width, height and depth (a ball: its '
+      'radius; a cylinder or a pile: its radius and half its height).', group='Matter'),
+    F('yaw', 'Rotation', 0.0, -180.0, 180.0, '°', 1, group='Matter'),
+    V('velocity', 'Thrown at', (0.0, 0.0, 0.0), -50.0, 50.0, 'm/s', tip='How fast it moves as it starts (a thrown snowball), or '
+      'as it leaves the nozzle (a pour).', group='Matter'),
+    F('release', 'Let go at', 0.0, -10.0, 60.0, 's', 2, tip='It is held where it is until then (a column of sand let go to '
+      'collapse). Negative: during the pre-roll.', group='Matter'),
+    B('pours', 'Pours', False, tip='A stream poured from a nozzle at Position (its Size’s first value is the nozzle’s '
+      'radius), instead of a body of it at the start.', group='Pour'),
+    F('rate', 'Flow', 0.5, 0.001, 1000.0, 'L/s', 3, tip='How much it pours, in litres a second.', group='Pour', log=True),
+    F('pour_start', 'Pours from', 0.0, -10.0, 60.0, 's', 2, group='Pour'),
+    F('pour_stop', 'Pours until', 5.0, 0.0, 600.0, 's', 2, group='Pour'),
+    B('own_colour', 'Own colour', False, tip='Draw it in a colour of its own instead of its material’s.', group='Look'),
+    C('colour', 'Colour', (0.55, 0.42, 0.25), group='Look'),
+    F('stiffness', 'Stiffness', 1.0, 0.1, 10.0, '×', 2, tip='Times its material’s stiffness: stiffer jelly wobbles faster; '
+      'stiffer anything takes longer to simulate.', group='Matter', log=True, advanced=True),
+    I('seed', 'Seed', 0, 0, 9999, tip='Another number gives other grains in it.', group='Matter', advanced=True),
+]
+_MATTER_INDEX = {p.key: p for p in MATTER_PARAMS}
+
 
 def param(section, key):
     if section == 'emitter':
@@ -899,6 +936,8 @@ def param(section, key):
         return _LIGHT_INDEX[key]
     if section == 'fabric':
         return _FABRIC_INDEX[key]
+    if section == 'matter':
+        return _MATTER_INDEX[key]
     if section == 'collider':
         return _COLLIDER_INDEX[key]
     return _INDEX[(section, key)]
@@ -914,6 +953,10 @@ def emitter_defaults():
 
 def fabric_defaults():
     return {p.key: p.default for p in FABRIC_PARAMS}
+
+
+def matter_defaults():
+    return {p.key: p.default for p in MATTER_PARAMS}
 
 
 def light_defaults():

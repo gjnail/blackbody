@@ -36,6 +36,14 @@ Notable changes to Blackbody. The format follows
   hanging in a curve when slack, springs as coils; they snap, and hinges tear out, past Breaks at. Ropes and hinges
   blocks: wrecking ball, rope swing, door on hinges, hanging lamp, weight on a spring, seesaw. Preset: Wrecking ball.
 - A warning names a falling thing that starts inside something fixed (it is pushed out when it is let go).
+- Sand, snow, mud, jelly and clay (matter): bodies of it, and streams poured from nozzles, simulated as hundreds of
+  thousands of particles on the GPU (MPM) in every kind of scene but the sky. Sand pours and piles at its angle of
+  repose, wet sand holds steeper shapes, snow packs and breaks up, mud slumps until its yield stress holds it, jelly
+  springs back and wobbles, clay stays squashed. Things that fall land on it or sink into it as their weight says,
+  and keyframed objects plough through it. Drawn on the stage and in footage: sand and snow glint, snow lets light
+  in, mud is glossy and jelly clear. Sand, snow & mud blocks (sand pile, sand pour, sand column, snowball, snow
+  drift, mud, jelly, lump of clay) and presets: Sand from a hopper, Snowballs at a wall, Ball dropped on jelly, Crate
+  through mud. The guide: docs/matter.md.
 - Make it fall and Drop it at this frame on any object (right-click it, the Fall chip on its page, or Ctrl+K), and
   Stop it falling. Falling things are drawn and picked where the simulation has them in the viewer, tilted as they
   tumble, and outlined in green. In Build, liquid scenes show objects in their materials instead of grey stand-ins.

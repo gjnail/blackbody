@@ -72,6 +72,8 @@ class LiquidEngine:
             changed = True
         if self.solids.configure(scene, (dims, h, origin)):
             changed = True
+        if self._prepare_matter(scene, (dims, h, origin)):
+            changed = True
         if self.kind != 'liquid':
             self.kind = 'liquid'
             changed = True
@@ -244,7 +246,8 @@ class LiquidEngine:
         # rigid bodies (falling and floating objects) move through the frame first, pushed by the liquid as it
         # was measured over the frame before; the liquid then sees them where they are at each substep
         solids = self.solids if self.solids.active else None
-        poses = solids.advance(scene, frame, fdt, n) if solids else None
+        poses = (solids.advance(scene, frame, fdt, n, couple=self._matter_couple(scene, frame, fdt, self.solver.meshes))
+                 if solids else None)
         moving = scene.colliders_animated() or bool(solids)
         filled = getattr(self, '_filled', None)
         if filled is None:
@@ -296,6 +299,7 @@ class LiquidEngine:
             self._weather_surface_ready()
         if regions:
             solids.liquid_measures(L.read_float(len(regions), n), fdt, n, L.h, prm.rho)
+        self._step_matter(scene, frame, fdt, poses, n, self.solver.meshes)
         self.sim_frame = frame
         self.last_substeps = n
         self.last_step_ms = (time.perf_counter() - t0) * 1000.0
@@ -548,7 +552,9 @@ class LiquidEngine:
         objects = look.colliders_look != 'shaded'
         pieces = self.piece_poses(frame)   # (broken things: drawn, and holding out what is behind them, in every view)
         ropes = self.rope_poses(frame)
-        stage_on = stage_mod.wanted(scene, footage, mode, objects=objects) or bool(pieces) or bool(ropes)
+        matter = self.matter_for(frame) if mode == 'composite' else None
+        stage_on = (stage_mod.wanted(scene, footage, mode, objects=objects) or bool(pieces) or bool(ropes)
+                    or matter is not None)
         r.hold_stage = None
         p_transform, p_gain = INPUT_TRANSFORMS.get(comp.plate_transform, 0), comp.plate_gain
         standins = stage_mod.standin_colours(scene)
@@ -596,8 +602,8 @@ class LiquidEngine:
                 stage = ptex = self.stage.draw(b, r, scene, cs, fire, vol.colliders, vol.meshes, light, comp, size,
                                                plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage,
                                                ground_y=vol.origin[1], frame=frame, objects=objects,
-                                               floor=not look.bottomless, pieces=pieces, ropes=ropes)
-                if self.stage.has_pieces:   # the liquid is hidden behind the pieces, and sees them as solid
+                                               floor=not look.bottomless, pieces=pieces, ropes=ropes, matter=matter)
+                if self.stage.has_pieces or self.stage.has_matter:   # the liquid is hidden behind the pieces and the matter
                     r.hold_stage = self.stage.hold
                     r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])
                 p_transform, p_gain = INPUT_TRANSFORMS['linear'], 1.0

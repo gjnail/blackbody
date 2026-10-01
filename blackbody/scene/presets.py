@@ -54,6 +54,10 @@ def _apply(scene: Scene, spec: dict):
             for k, v in f.items():
                 if isinstance(v, K):
                     scene.fabrics[i][k] = v.curve(param('fabric', k), scene.fps, scene.start)
+    if 'matter' in spec:
+        scene.matter = []
+        for m in spec['matter']:
+            scene.add_matter(**m)
 
 
 PRESETS = {
@@ -752,6 +756,67 @@ PRESETS = {
                  rope_thickness=0.03, release=0.3),
         ],
     },
+    'sand_hopper': {
+        'name': 'Sand from a hopper', 'category': 'Sand, snow and mud', 'size': '40 cm hopper',
+        'blurb': 'Forty litres of dry sand run out through a hole in the bottom of a hopper on legs and build a heap at its '
+                 'angle of repose round the legs. Matter in Sand, filling a hollow box with an opening in its floor.',
+        'render': {'end': 144},
+        'domain': {'size_x': 1.6, 'size_y': 1.5, 'size_z': 1.6, 'resolution': 32, 'preroll': 0.0, 'matter_detail': 128},
+        'composite': {'backdrop': 'stage', 'floor': 'concrete'},
+        'lighting': {'sun_on': True, 'sun_intensity': 3.0, 'sun_elevation': 40.0, 'sun_azimuth': -130.0, 'ambient_intensity': 2.5},
+        'camera': {'distance': 3.1, 'target_y': 0.65, 'pitch': 10, 'yaw': 25, 'focal_mm': 35},
+        'emitters': [],
+        'colliders': [
+            dict(name='Hopper', shape='box', position=(0.0, 1.05, 0.0), size=(0.2, 0.2, 0.2), hollow=0.015,
+                 opening=(0.06, 0.03, 0.06), opening_at=(0.0, -0.2, 0.0), material='painted', own_colour=True,
+                 colour=(0.15, 0.3, 0.45)),
+        ] + [dict(name=f'Leg {k + 1}', shape='box', position=(sx * 0.18, 0.43, sz * 0.18), size=(0.015, 0.43, 0.015),
+                  material='steel') for k, (sx, sz) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))],
+        'matter': [dict(name='Sand', material='sand', shape='box', position=(0.0, 1.03, 0.0), size=(0.17, 0.16, 0.17))],
+    },
+    'snowballs': {
+        'name': 'Snowballs at a wall', 'category': 'Sand, snow and mud', 'size': '18 cm snowballs',
+        'blurb': 'Three snowballs of packing snow thrown one after another at a brick wall: each splats flat, packs where it '
+                 'hits, and breaks into lumps that fall to the ground. Matter in Packing snow, thrown.',
+        'render': {'end': 60},
+        'domain': {'size_x': 3.0, 'size_y': 1.8, 'size_z': 1.8, 'resolution': 32, 'preroll': 0.0, 'matter_detail': 160},
+        'composite': {'backdrop': 'stage', 'floor': 'concrete'},
+        'lighting': {'sun_on': True, 'sun_intensity': 2.5, 'sun_elevation': 30.0, 'sun_azimuth': -60.0, 'ambient_intensity': 2.0},
+        'camera': {'distance': 3.0, 'target_y': 0.7, 'pitch': 6, 'yaw': -50, 'focal_mm': 35},
+        'emitters': [],
+        'colliders': [dict(name='Brick wall', shape='box', position=(0.6, 0.8, 0.0), size=(0.06, 0.8, 0.8), material='brick')],
+        'matter': [dict(name=f'Snowball {k + 1}', material='packing_snow', shape='sphere', position=(-1.25, y, z),
+                        size=(0.09, 0.09, 0.09), velocity=(7.0, vy, -0.4 * z), release=t)
+                   for k, (y, z, vy, t) in enumerate(((1.0, 0.0, 1.3, 0.0), (1.15, 0.35, 0.9, 0.5), (0.9, -0.3, 1.7, 1.0)))],
+    },
+    'jelly_ball': {
+        'name': 'Ball dropped on jelly', 'category': 'Sand, snow and mud', 'size': '34 cm block',
+        'blurb': 'A 7 kg steel ball dropped onto a block of jelly: the jelly squashes deep, throws the ball back up and '
+                 'wobbles. Matter in Jelly and an object that falls, pushing each other.',
+        'render': {'end': 72},
+        'domain': {'size_x': 1.4, 'size_y': 1.4, 'size_z': 1.4, 'resolution': 32, 'preroll': 0.0, 'matter_detail': 128},
+        'composite': {'backdrop': 'stage', 'floor': 'tiles'},
+        'lighting': {'sun_on': True, 'sun_intensity': 3.0, 'sun_elevation': 45.0, 'sun_azimuth': -130.0, 'ambient_intensity': 2.5},
+        'camera': {'distance': 1.8, 'target_y': 0.3, 'pitch': 14, 'yaw': 25, 'focal_mm': 35},
+        'emitters': [],
+        'colliders': [dict(name='Steel ball', shape='sphere', position=(0.03, 0.8, 0.0), size=(0.06, 0.06, 0.06), dynamic=True,
+                           material='steel')],
+        'matter': [dict(name='Jelly', material='jelly', shape='box', position=(0.0, 0.08, 0.0), size=(0.17, 0.08, 0.17))],
+    },
+    'mud_drag': {
+        'name': 'Crate through mud', 'category': 'Sand, snow and mud', 'size': '1.6 m of mud',
+        'blurb': 'A crate dragged through a bed of thick mud: it ploughs a trench, pushes up a bow wave that slumps back, and '
+                 'leaves ridges. Matter in Mud, and an object moved by its keys.',
+        'render': {'end': 72},
+        'domain': {'size_x': 2.2, 'size_y': 1.0, 'size_z': 1.2, 'resolution': 32, 'preroll': 0.0, 'matter_detail': 160},
+        'composite': {'backdrop': 'stage', 'floor': 'dirt'},
+        'lighting': {'sun_on': True, 'sun_intensity': 3.0, 'sun_elevation': 35.0, 'sun_azimuth': -120.0, 'ambient_intensity': 2.5},
+        'camera': {'distance': 2.4, 'target_y': 0.15, 'pitch': 22, 'yaw': 30, 'focal_mm': 35},
+        'emitters': [],
+        'colliders': [dict(name='Crate', shape='box', size=(0.12, 0.12, 0.12), material='wood',
+                           position=K((0.0, (-0.95, 0.1, 0.0)), (0.3, (-0.95, 0.1, 0.0)), (2.7, (0.95, 0.1, 0.0)), interp='linear'))],
+        'matter': [dict(name='Mud', material='mud', shape='box', position=(0.0, 0.05, 0.0), size=(0.8, 0.05, 0.45))],
+    },
     'window_smash': {
         'name': 'Stone through a window', 'category': 'Things that fall', 'size': '1 m pane',
         'blurb': 'A stone thrown through a pane of window glass held in its frame: it punches a hole, shards break away '
@@ -842,7 +907,8 @@ ORDER = ['campfire', 'bonfire', 'torch', 'candle', 'gas_ring', 'pool_fire', 'fir
          'vehicle_fire', 'smoke_plume', 'fire_whirl', 'waved_torch', 'hose_douse', 'grass_fire', 'spot_fires', 'hillside_fire',
          'curtain_fire', 'fabric_curtain', 'wet_towels', 'armchair_fire', 'room_fire', 'backdraft', 'flash_fire', 'gas_cloud', 'coloured_flames', 'road_flare',
          'grinder_sparks', 'fireworks', 'car_through_smoke', 'flag_wind', 'kettle_steam', 'steam_vent',
-         'crates_in_fire', 'tower_knockdown', 'wall_smash', 'wrecking_ball', 'window_smash', 'vase_drop']
+         'crates_in_fire', 'tower_knockdown', 'wall_smash', 'wrecking_ball', 'window_smash', 'vase_drop',
+         'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag']
 
 
 def make(name: str, fps=None, start=None) -> Scene:
@@ -913,6 +979,7 @@ def apply_to(scene: Scene, name: str, keep_camera=True, keep_render=True):
     scene.emitters = fresh.emitters
     scene.colliders = fresh.colliders
     scene.fabrics = fresh.fabrics
+    scene.matter = fresh.matter
     scene.footage, scene.track = footage, track
     scene.preset = name
     return scene

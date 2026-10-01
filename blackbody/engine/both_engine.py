@@ -122,6 +122,8 @@ class BothEngine:
             changed = True
         if self.solids.configure(scene, (dims, h, origin)):
             changed = True
+        if self._prepare_matter(scene, (dims, h, origin)):
+            changed = True
         self.solver.cloth_hook = self.cloth.hook if self.cloth.active else None
         lava_on = scene.has_lava()
         if lava_on:
@@ -299,7 +301,7 @@ class BothEngine:
         poses = None
         if solids:
             self._air_for_solids()
-            poses = solids.advance(scene, frame, fdt, n)
+            poses = solids.advance(scene, frame, fdt, n, couple=self._matter_couple(scene, frame, fdt, self.solver.meshes))
         moving = scene.colliders_animated() or bool(solids)
         wprm = scene.weather_params(frame) if (self._wx_on and self.weather is not None) else None
         filled = getattr(self, '_filled', None)
@@ -390,6 +392,7 @@ class BothEngine:
             V.measure()
         if regions:
             solids.liquid_measures(L.read_float(len(regions), n), fdt, n, L.h, lprm.rho)
+        self._step_matter(scene, frame, fdt, poses, n, self.solver.meshes)
         self.sim_frame = frame
         self.last_substeps = n
         self.last_step_ms = (time.perf_counter() - t0) * 1000.0
@@ -546,7 +549,9 @@ class BothEngine:
         objects = wlook.colliders_look != 'shaded'
         pieces = self.piece_poses(frame)   # (broken things: drawn, and holding out what is behind them, in every view)
         ropes = self.rope_poses(frame)
-        stage_on = stage_mod.wanted(scene, footage, mode, objects=objects) or bool(pieces) or bool(ropes)
+        matter = self.matter_for(frame) if mode == 'composite' else None
+        stage_on = (stage_mod.wanted(scene, footage, mode, objects=objects) or bool(pieces) or bool(ropes)
+                    or matter is not None)
         r.hold_stage = None
         p_transform, p_gain = INPUT_TRANSFORMS.get(comp.plate_transform, 0), comp.plate_gain
         if stage_on:
@@ -641,8 +646,8 @@ class BothEngine:
                 stage = ptex = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, ssize,
                                                plate_fit=plate_fit, samples=samples, shutter=lshutter, footage=footage,
                                                vol=vol, ground_y=vol.origin[1], frame=frame, objects=objects,
-                                               floor=not wlook.bottomless, pieces=pieces, ropes=ropes)
-                if self.stage.has_pieces:   # the fire and the liquids stop at the pieces
+                                               floor=not wlook.bottomless, pieces=pieces, ropes=ropes, matter=matter)
+                if self.stage.has_pieces or self.stage.has_matter:   # the fire and the liquids stop at the pieces and the matter
                     r.hold_stage = self.stage.hold
                     r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])
             if samples == 1:

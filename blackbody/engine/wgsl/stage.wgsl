@@ -42,6 +42,7 @@ const FLOOR: i32 = 100;
 const PIECE: i32 = 1000;   // a hit on piece k has id PIECE + k
 const ROPE_ROW: i32 = 16;  // = MAX_COLLIDERS: the material rows of ropes (then steel cables and springs) follow the objects'
 const MAT_ROWS: u32 = 18u;
+const MATTER: i32 = 200;   // a hit on the matter (sand, snow, mud, jelly, clay: matter.py)
 
 struct Mat {
   c: vec4<f32>,   // albedo (linear rgb), roughness
@@ -76,6 +77,10 @@ struct Params {
   bound: vec4<f32>,     // a sphere round every object (fire-local centre, radius; radius 0: none)
   pg: vec4<f32>,        // the pieces' grid: corner (fire-local m), cell size (m)
   pn: vec4<f32>,        // its dims (cells), pieces (count)
+  mo: vec4<f32>,        // the matter's grid: node 0 (fire-local m), node spacing (m)
+  mn: vec4<f32>,        // its nodes (x, y, z), matter drawn (1/0)
+  mlo: vec4<f32>,       // the matter's grid's extent (fire-local m: its first and last nodes), _
+  mhi: vec4<f32>,
   ccnt: vec4<f32>,      // objects (count), _
   col: array<Collider, MAX_COLLIDERS>,
   mat: array<Mat, MAT_ROWS>,
@@ -106,6 +111,8 @@ struct PieceG { a: vec4<f32>, q: vec4<f32>, v: vec4<f32>, o: vec4<f32>, r: vec4<
 @group(0) @binding(17) var<storage, read> GC: array<vec2<u32>>;   // per grid cell: first, count in GL
 @group(0) @binding(18) var<storage, read> GL: array<u32>;         // piece indices
 @group(0) @binding(19) var out_hold: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(20) var m_look: texture_3d<f32>;   // the matter's albedo (linear rgb), roughness
+@group(0) @binding(21) var m_phi: texture_3d<f32>;    // its distance to the surface (m), clear, sparkle, wrap
 @group(1) @binding(0) var<uniform> U: Params;
 
 var<private> g_tau: f32;   // this sample's time in the shutter (s): objects are moved along their motion
@@ -134,10 +141,51 @@ fn obj(i: i32) -> Collider {
   return k;
 }
 
+// ---- the matter -----------------------------------------------------------------------------------------
+
+fn matter_uvw(p: vec3<f32>) -> vec3<f32> {
+  return ((p - U.mo.xyz) / U.mo.w + vec3<f32>(0.5)) / U.mn.xyz;
+}
+
+// The distance from fire-local p to the matter's surface (m): its field (distances from everywhere in its grid:
+// mpm_jfa.wgsl), and outside the grid, the distance to it plus the field at its edge.
+fn matter_d(p: vec3<f32>) -> f32 {
+  let q = clamp(p, U.mlo.xyz, U.mhi.xyz);
+  return length(p - q) + textureSampleLevel(m_phi, lin, matter_uvw(q), 0.0).x;
+}
+
+fn matter_normal(p: vec3<f32>) -> vec3<f32> {
+  let e = 0.5 * U.mo.w;
+  let g = vec3<f32>(matter_d(p + vec3<f32>(e, 0.0, 0.0)) - matter_d(p - vec3<f32>(e, 0.0, 0.0)),
+                    matter_d(p + vec3<f32>(0.0, e, 0.0)) - matter_d(p - vec3<f32>(0.0, e, 0.0)),
+                    matter_d(p + vec3<f32>(0.0, 0.0, e)) - matter_d(p - vec3<f32>(0.0, 0.0, e)));
+  let l = length(g);
+  return select(vec3<f32>(0.0, 1.0, 0.0), g / l, l > 1e-12);
+}
+
+// Where a ray inside the matter leaves it: its distance along the ray.
+fn matter_exit_t(ro: vec3<f32>, rd: vec3<f32>, eps: f32) -> f32 {
+  var t = 2.0 * eps;
+  for (var j = 0; j < 96; j++) {
+    let d = matter_d(ro + rd * t);
+    if (d > 0.0) { return t; }   // (only out of it for good: dips in its field inside are not surfaces)
+    t += max(-d, max(eps, 0.25 * U.mo.w));
+  }
+  return t;
+}
+
+// Anything to trace: objects, or the matter.
+fn objects_on() -> bool {
+  return U.ccnt.x > 0.5 || U.mn.w > 0.5;
+}
+
 // The nearest object at fire-local p whose drawn flag is at least `want` (1: in the shot, 2: CG):
 // (distance (m), index).
 fn scene_d(p: vec3<f32>, want: f32) -> vec2<f32> {
   var best = vec2<f32>(1.0e9, -1.0);
+  if (U.mn.w > 0.5) {
+    best = vec2<f32>(matter_d(p), f32(MATTER));
+  }
   for (var i = 0; i < i32(U.ccnt.x); i++) {
     if (U.mat[i].d.w < want) { continue; }
     if (g_opaque && U.mat[i].d.y > 0.5) { continue; }   // (glass lets the light through)
@@ -281,12 +329,13 @@ fn trace(ro: vec3<f32>, rd: vec3<f32>, t0: f32, tmax: f32, want: f32, floor_on: 
     h = Hit(pc.x, PIECE + i32(pc.y));
     g_plane = i32(pc.z);
   }
-  if (U.ccnt.x < 0.5) { return h; }
+  if (!objects_on()) { return h; }
   let span = bound_span(ro, rd);
   var t = max(t0, span.x);
   let lim = min(min(tmax, h.t), span.y);
   let hp = h;
   var escaping = true;   // a ray that starts inside an object goes on through it
+  var t_out = t;         // the last point found outside everything
   for (var i = 0; i < 192; i++) {
     if (t >= lim) { break; }
     let d = scene_d(ro + rd * t, want);
@@ -295,7 +344,20 @@ fn trace(ro: vec3<f32>, rd: vec3<f32>, t0: f32, tmax: f32, want: f32, floor_on: 
       if (d.x < 0.0) { t += max(-d.x, eps); continue; }
       escaping = false;
     }
-    if (d.x < eps) { return Hit(t, i32(d.y)); }
+    if (d.x < eps) {
+      if (d.x < -eps && i32(d.y) == MATTER) {
+        // stepped past the matter's surface (its field is not an exact distance): back to where the ray crosses it
+        var a = t_out;
+        var b = t;
+        for (var k = 0; k < 8; k++) {
+          let m = 0.5 * (a + b);
+          if (matter_d(ro + rd * m) > 0.0) { a = m; } else { b = m; }
+        }
+        return Hit(b, MATTER);
+      }
+      return Hit(t, i32(d.y));
+    }
+    t_out = t;
     t += max(d.x, 0.4 * eps);
   }
   return hp;
@@ -312,7 +374,7 @@ fn soft_shadow(p: vec3<f32>, l: vec3<f32>, tmax: f32, k: f32, want: f32, t0: f32
 
 fn soft_shadow_opaque(p: vec3<f32>, l: vec3<f32>, tmax: f32, k: f32, want: f32, t0: f32) -> f32 {
   if (trace_pieces(p, l, t0, tmax).y >= 0.0) { return 0.0; }
-  if (U.ccnt.x < 0.5) { return 1.0; }
+  if (!objects_on()) { return 1.0; }
   let span = bound_span(p, l);
   if (span.x > span.y) { return 1.0; }
   var res = 1.0;
@@ -338,7 +400,7 @@ fn ambient_occ(p: vec3<f32>, n: vec3<f32>, want: f32) -> f32 {
 }
 
 fn ambient_occ_opaque(p: vec3<f32>, n: vec3<f32>, want: f32) -> f32 {
-  if (U.ccnt.x < 0.5) { return 1.0; }
+  if (!objects_on()) { return 1.0; }
   let reach = U.sund.w;
   if (length(p - U.bound.xyz) > U.bound.w + reach) { return 1.0; }
   var occ = 0.0;
@@ -615,6 +677,9 @@ struct Surf {
   rough: f32,
   eps: f32,          // how far off the surface shadow rays start (m)
   want: f32,         // what casts shadows on it (1: everything in the shot, 2: CG objects only)
+  wrap: f32,         // light wrapping into it past where it faces away (snow)
+  glint: f32,        // the glint of its grains or crystals toward the key light
+  gn: vec3<f32>,     // the normal of the grain that glints
 };
 
 // Light reflected toward v by surface s: the key light, the sky, the fire, the lights in the set.
@@ -629,12 +694,20 @@ fn shade(s: Surf, v: vec3<f32>) -> vec3<f32> {
   if (max(U.sun.r, max(U.sun.g, U.sun.b)) > 0.0) {
     let l = U.sund.xyz;
     let nl = dot(n, l);
-    if (nl > 0.0) {
+    let nlw = (nl + s.wrap) / (1.0 + s.wrap);
+    if (nlw > 0.0) {
       var vis = soft_shadow(po, l, 1.0e4, U.sun.w, s.want, 2.0 * s.eps);
       let ps = pl + n * 1.5 + l * 0.75;
       if (vis > 0.0 && in_light(ps)) { vis *= samp_c(L0, lin, ps, U.ln.xyz).a; }
-      diff += U.sun.rgb * (nl * vis);
-      spec += U.sun.rgb * (nl * vis * ggx(n, v, l, s.rough));
+      diff += U.sun.rgb * (nlw * vis);
+      if (nl > 0.0) {
+        var sp = ggx(n, v, l, s.rough);
+        if (s.glint > 0.0) {
+          // a grain turned just so flashes the sun at the camera
+          sp += s.glint * pow(max(dot(s.gn, normalize(l + v)), 0.0), 600.0) * 40.0;
+        }
+        spec += U.sun.rgb * (nl * vis * sp);
+      }
     }
   }
   // the sky: from above, hidden by objects nearby and by smoke overhead
@@ -803,6 +876,28 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
     s.f0 = vec3<f32>(0.04);
     return s;
   }
+  if (h.id == MATTER) {
+    s.n = matter_normal(s.p);
+    // (its field is not an exact distance: the trace can stop a little inside it. Out onto the surface, and shadow and
+    // sky rays start a third of a node off it, so it does not shade itself)
+    s.p = s.p - s.n * min(matter_d(s.p), 0.0);
+    s.eps = max(s.eps, 0.33 * U.mo.w);
+    let uvw = matter_uvw(s.p);
+    let lk = textureSampleLevel(m_look, lin, uvw, 0.0);
+    let ph = textureSampleLevel(m_phi, lin, uvw, 0.0);
+    // grains: a fine mottle, and a few turned to glint
+    let grain = 0.0025;
+    let gq = s.p / max(grain, fw);
+    let mot = fnoise(s.p / grain * 0.5, fw / grain * 0.5);
+    s.alb = min(lk.rgb * (1.0 + 0.12 * mot), vec3<f32>(0.95)) * (1.0 - clamp(ph.y, 0.0, 1.0));
+    s.rough = clamp(lk.a, 0.02, 1.0);
+    s.f0 = vec3<f32>(0.04);
+    s.wrap = ph.w;
+    let hr = vec3<f32>(hash31(gq), hash31(gq + vec3<f32>(17.0)), hash31(gq + vec3<f32>(41.0))) - vec3<f32>(0.5);
+    s.gn = normalize(s.n + 0.7 * hr);
+    s.glint = ph.z * select(0.0, 1.0, hash31(gq + vec3<f32>(73.0)) > 0.8) * (1.0 - smoothstep(0.004, 0.02, fw));
+    return s;
+  }
   if (h.id >= PIECE) {
     let kp = u32(h.id - PIECE);
     let P = PC[kp];
@@ -877,9 +972,9 @@ fn see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w: vec3
   for (var bounce = 0; bounce < 3; bounce++) {
     let h = trace(ro, rd, 0.0, select(1.0e5, t_foot - t_all, footage), 1.0, !footage);
     var drawn = false;
-    if (h.id == FLOOR || h.id >= PIECE) { drawn = true; }
+    if (h.id == FLOOR || h.id >= PIECE || h.id == MATTER) { drawn = true; }
     if (h.id >= 0 && h.id < FLOOR) { drawn = U.mat[h.id].d.w > 1.5; }
-    if (h.id >= PIECE && bounce == 0) { t_piece = h.t; }
+    if ((h.id >= PIECE || h.id == MATTER) && bounce == 0) { t_piece = h.t; }
     if (!drawn) {
       // past the CG: the footage (with the CG objects' shadows on it), or the sky
       if (footage) {
@@ -928,11 +1023,22 @@ fn see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w: vec3
     col += thr * haze(c, dist);
     var row = h.id;
     if (h.id >= PIECE) { row = i32(PC[u32(h.id - PIECE)].o.w + 0.5); }
-    let clear = select(0.0, clamp(U.mat[row].d.y, 0.0, 1.0), h.id < FLOOR || h.id >= PIECE);
+    var clear = 0.0;
+    var tint_c = vec3<f32>(1.0);
+    var ior = 1.0;
+    if (h.id == MATTER) {
+      // jelly
+      let uvw = matter_uvw(s.p);
+      clear = clamp(textureSampleLevel(m_phi, lin, uvw, 0.0).y, 0.0, 1.0);
+      tint_c = textureSampleLevel(m_look, lin, uvw, 0.0).rgb;
+      ior = 1.35;
+    } else if (h.id < FLOOR || h.id >= PIECE) {
+      clear = clamp(U.mat[row].d.y, 0.0, 1.0);
+      tint_c = U.mat[row].c.rgb;
+      ior = max(U.mat[row].e.w, 1.0);
+    }
     if (clear <= 0.0 || bounce == 2) { break; }
-    // glass, ice: its reflection (above) and then the light refracted through it
-    let m = U.mat[row];
-    let ior = max(m.e.w, 1.0);
+    // glass, ice, jelly: its reflection (above) and then the light refracted through it
     let n = s.n;
     let nv = max(dot(n, v), 1e-4);
     let fr = fresnel(vec3<f32>(pow((ior - 1.0) / (ior + 1.0), 2.0)), nv).x;
@@ -941,7 +1047,10 @@ fn see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w: vec3
     let pin = s.p - n * s.eps;
     var tx = 0.0;
     var nout = vec3<f32>(0.0, 1.0, 0.0);
-    if (h.id >= PIECE) {
+    if (h.id == MATTER) {
+      tx = matter_exit_t(pin, rin, s.eps);
+      nout = matter_normal(pin + rin * tx);
+    } else if (h.id >= PIECE) {
       // a piece is a convex polyhedron: the refracted ray leaves it through one of its planes
       let kp = u32(h.id - PIECE);
       let ph = piece_hit(kp, pin, rin);
@@ -956,7 +1065,7 @@ fn see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w: vec3
     var rout = refract(rin, -nout, ior);
     if (dot(rout, rout) < 0.5) { rout = reflect(rin, -nout); }
     // tinted by its colour over the path through it (Beer-Lambert per 10 cm)
-    let tint = pow(max(m.c.rgb, vec3<f32>(1e-3)), vec3<f32>(tx / 0.1));
+    let tint = pow(max(tint_c, vec3<f32>(1e-3)), vec3<f32>(tx / 0.1));
     thr *= clear * (1.0 - fr) * tint;
     ro = pout + nout * (2.0 * s.eps);
     rd = rout;

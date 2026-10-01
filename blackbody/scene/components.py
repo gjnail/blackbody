@@ -54,6 +54,10 @@ def _F(**kw):
     return ('fabric', kw)
 
 
+def _M(**kw):
+    return ('matter', kw)
+
+
 SPARKS = {'embers': {'enabled': True, 'rate': 1500.0, 'count': 32768, 'lifetime': 0.9, 'life_jitter': 0.7, 'launch': 14.0,
                      'spread': 1.2, 'direction': (1.0, -0.2, 0.0), 'cone': 12.0, 'drag': 0.35, 'gravity': 9.81, 'turbulence': 0.5,
                      'temperature': 2300.0, 'cooling': 1.6, 'size_min': 0.0006, 'size_max': 0.0025, 'brightness': 1.8,
@@ -352,6 +356,34 @@ COMPONENTS = [
                           material='rubber', own_colour=True, colour=(0.7, 0.12, 0.05)),
                        _C(name='Steel ball', shape='sphere', position=(1.0, 1.5, 0.0), size=(0.12, 0.12, 0.12), dynamic=True,
                           material='steel')]),
+    # -- sand, snow, mud, jelly, clay (engine/matter.py: real size, in every kind of scene but the sky) -----------------------
+    Component('sand_pile', 'Sand pile', 'Sand, snow & mud', 'A heap of dry sand 60 cm across, at its angle of repose: knock '
+              'into it or drop something on it and it slides.', 'hill', room=(0.4, 0.3, 0.4),
+              objects=[_M(name='Sand pile', material='sand', shape='pile', position=(0.0, 0.1, 0.0), size=(0.3, 0.1, 0.3))]),
+    Component('sand_pour', 'Sand pour', 'Sand, snow & mud', 'Sand poured from 80 cm up at a litre a second for four seconds: '
+              'it builds a heap that slides as it grows.', 'pour', room=(0.4, 1.0, 0.4),
+              objects=[_M(name='Sand pour', material='sand', pours=True, position=(0.0, 0.8, 0.0), size=(0.03, 0.03, 0.03),
+                          velocity=(0.0, -0.5, 0.0), rate=1.0, pour_start=0.0, pour_stop=4.0)]),
+    Component('sand_column', 'Sand column', 'Sand, snow & mud', 'A 60 cm column of sand held up, then let go at half a second: '
+              'it collapses and spreads.', 'pillar', room=(0.6, 0.7, 0.6),
+              objects=[_M(name='Sand column', material='sand', shape='cylinder', position=(0.0, 0.3, 0.0), size=(0.12, 0.3, 0.12),
+                          release=0.5)]),
+    Component('snowball', 'Snowball', 'Sand, snow & mud', 'A 14 cm snowball of packing snow thrown at 6 m/s: it splats on '
+              'what it hits and breaks into lumps.', 'snow', room=(0.3, 0.8, 0.3),
+              objects=[_M(name='Snowball', material='packing_snow', shape='sphere', position=(0.0, 0.7, 0.0),
+                          size=(0.07, 0.07, 0.07), velocity=(6.0, 1.0, 0.0))]),
+    Component('snow_drift', 'Snow drift', 'Sand, snow & mud', 'A bank of fresh snow 25 cm deep: things that land in it sink in '
+              'and pack it.', 'snow', room=(0.7, 0.3, 0.4),
+              objects=[_M(name='Snow drift', material='snow', shape='box', position=(0.0, 0.125, 0.0), size=(0.6, 0.125, 0.3))]),
+    Component('mud', 'Mud', 'Sand, snow & mud', 'A heap of thick mud let go: it slumps and flows until it is thin enough to '
+              'stop.', 'hill', room=(0.8, 0.4, 0.8),
+              objects=[_M(name='Mud', material='mud', shape='pile', position=(0.0, 0.15, 0.0), size=(0.3, 0.15, 0.3))]),
+    Component('jelly_block', 'Jelly', 'Sand, snow & mud', 'A 16 cm block of jelly dropped from 30 cm: it squashes, bounces, '
+              'wobbles and settles.', 'cube', room=(0.3, 0.6, 0.3),
+              objects=[_M(name='Jelly', material='jelly', shape='box', position=(0.0, 0.38, 0.0), size=(0.08, 0.08, 0.08))]),
+    Component('clay_lump', 'Lump of clay', 'Sand, snow & mud', 'A 16 cm lump of clay dropped from 30 cm: it lands with a flat '
+              'base and keeps it.', 'cube', room=(0.3, 0.6, 0.3),
+              objects=[_M(name='Clay', material='clay', shape='box', position=(0.0, 0.38, 0.0), size=(0.08, 0.08, 0.08))]),
     # -- fabric -------------------------------------------------------------------------------------------------------------
     Component('curtain', 'Curtain', 'Fabric', 'A cotton curtain hanging from a rail (real size). It blows in the air and burns.',
               'fabric', room=(0.8, 2.4, 0.9),
@@ -443,7 +475,7 @@ def _values(v):
     from .anim import Curve
     return [k[1] for k in v.keys] if isinstance(v, Curve) else [v]
 GROUPS = ['Fire', 'Smoke, steam & sparks', 'Liquids', 'Fabric', 'Weather', 'Forces', 'Objects', 'Things that fall',
-          'Ropes and hinges', 'Lights']
+          'Ropes and hinges', 'Sand, snow & mud', 'Lights']
 
 # Making a scene from scratch: (label, box width in metres)
 SCALES = {'small': ('Tabletop', 0.6), 'person': ('Person-sized', 2.0), 'large': ('Car or room', 6.0), 'huge': ('Building', 20.0)}
@@ -608,6 +640,17 @@ def _extent(kind, d):
             r = np.array([w / 2, 0.05, h / 2])
             return p - r, p + r
         return p - np.array([w / 2, h / 2, 0.1]), p + np.array([w / 2, h / 2, 0.1])   # a panel's position is its middle
+    if kind == 'matter':
+        s = np.abs(np.asarray(d.get('size', (0.25, 0.25, 0.25)), float))
+        if d.get('shape') == 'sphere':
+            s = np.array([s[0]] * 3)
+        elif d.get('shape') in ('cylinder', 'pile'):
+            s = np.array([s[0], s[1], s[0]])
+        if d.get('pours'):
+            # a stream: from the nozzle down to the ground, spreading into a heap round it
+            r = max(0.3, 0.6 * float(p[1]))
+            return np.array([p[0] - r, 0.0, p[2] - r]), np.array([p[0] + r, p[1] + s[0], p[2] + r])
+        return p - s, p + s
     return p, p
 
 
@@ -635,7 +678,7 @@ def add(scene: Scene, key, at=None, mesh=None):
                          '(Create › Start from scratch).')
     if target != scene.kind:
         was = scene.kind
-        empty = not (scene.emitters or scene.colliders or scene.fabrics)
+        empty = not (scene.emitters or scene.colliders or scene.fabrics or scene.matter)
         convert_kind(scene, target)
         if empty:   # nothing in it yet: the box takes the shape and grid that kind of simulation wants
             _domain_for(scene, target, round(scene_width(scene), 3))
@@ -696,7 +739,8 @@ def add(scene: Scene, key, at=None, mesh=None):
     elif at is not None:
         anchor = (0.0, 0.0)
     added = []
-    lists = {'emitter': scene.emitters, 'collider': scene.colliders, 'light': scene.lights, 'fabric': scene.fabrics}
+    lists = {'emitter': scene.emitters, 'collider': scene.colliders, 'light': scene.lights, 'fabric': scene.fabrics,
+             'matter': scene.matter}
     renamed = {}
     for kind, d in objs:
         d = dict(d)
@@ -750,7 +794,7 @@ def add(scene: Scene, key, at=None, mesh=None):
         renamed[(kind, base)] = d.get('name', base)
         curves = {k: v for k, v in d.items() if isinstance(v, Curve)}   # animated settings go in as they are
         i = {'emitter': scene.add_emitter, 'collider': scene.add_collider, 'light': scene.add_light,
-             'fabric': scene.add_fabric}[kind](**{k: v for k, v in d.items() if k not in curves})
+             'fabric': scene.add_fabric, 'matter': scene.add_matter}[kind](**{k: v for k, v in d.items() if k not in curves})
         lists[kind][i].update(curves)
         added.append((kind, i))
     for kind, i in added:   # its joints, to its objects as they are named here

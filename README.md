@@ -67,6 +67,12 @@ Any object can fall: it tumbles, slides, bounces, stacks and knocks things over,
 
 <img src="docs/media/gif/wall_smash.gif" width="49%" alt="A steel ball punching through a brick wall, the bricks above caving in"> <img src="docs/media/gif/window_smash.gif" width="49%" alt="A stone thrown through a window, shards breaking away and falling">
 
+### Sand, snow and mud
+
+<img src="docs/media/gif/sand_hopper.gif" width="49%" alt="Sand running out of a hopper on legs and heaping up round them"> <img src="docs/media/gif/jelly_ball.gif" width="49%" alt="A steel ball dropped onto a block of red jelly, thrown back up">
+
+Sand pours and piles at its angle of repose, wet sand holds a cut edge, snow packs into snowballs that splat, mud slumps and flows until it is thin enough to stop, jelly wobbles and springs back, and clay squashes and stays squashed. Each is hundreds of thousands of particles that remember how they have been squeezed (the material point method, on the GPU). Things that fall land on it or sink into it, and objects plough through it. [The guide](docs/matter.md)
+
 ### Water
 
 <img src="docs/media/gif/rock_splash_slowmo.gif" width="49%" alt="A rock dropped into a pond, in slow motion"> <img src="docs/media/gif/honey.gif" width="49%" alt="Honey pouring into a thick, slowly spreading pool">
@@ -147,6 +153,7 @@ The [tutorial](docs/tutorial.md) takes a shot from footage to final render in ab
 | [Fire, smoke and sparks](docs/fire.md) | Puffing, swirl, sparks, colour, steam, spreading fire, rooms, flame fronts, meshes |
 | [Fabric and burning cloth](docs/fabric.md) | Real fabrics, burning through, soaking, dripping and steaming |
 | [Things that fall](docs/physics.md) | Rigid bodies, materials, what pushes them, breaking, ropes, springs and hinges, the CG stage, CG objects in footage |
+| [Sand, snow and mud](docs/matter.md) | Sand, wet sand, snow, mud, jelly and clay: bodies and pours, what moves them, how they look |
 | [Liquids](docs/liquids.md) | Sources, floating objects, viscosity, dye, whitewater, the look, rain, underwater |
 | [The sea, surf and rivers](docs/ocean.md) | The FFT ocean, whitecaps, beaches and surf, tsunamis, bores, currents |
 | [Lava, and fire with water](docs/lava.md) | Molten liquids and crust, and fire, water and lava together |

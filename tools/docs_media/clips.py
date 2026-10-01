@@ -71,6 +71,11 @@ CLIPS = {
     'wrecking_ball': clip('wrecking_ball', 0.0, 96, dyaw=6.0, push=0.05),
     'window_smash': clip('window_smash', 0.0, 48, dyaw=6.0, push=0.04),
     'vase_drop': clip('vase_drop', 0.0, 48, dyaw=6.0, push=0.04),
+    # ---- sand, snow and mud (on the stage) -------------------------------------------------------------------------
+    'sand_hopper': clip('sand_hopper', 0.0, 144, dyaw=6.0, push=0.04),
+    'snowballs': clip('snowballs', 0.0, 60, dyaw=4.0, push=0.04),
+    'jelly_ball': clip('jelly_ball', 0.0, 72, dyaw=6.0, push=0.04),
+    'mud_drag': clip('mud_drag', 0.0, 72, dyaw=6.0, push=0.04),
     # ---- water ----------------------------------------------------------------------------------------------
     'floating': clip('floating', 0.2, 96, plate='ground', plate_args=DAY_PEBBLES),
     'ink_tank': clip('ink_tank', 0.3, 120, plate='ground', plate_args=DAY_FINE, dyaw=8.0),

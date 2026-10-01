@@ -24,6 +24,7 @@ from .gpu import GPU, TU, Uniforms, groups_1d
 from .both_engine import BothEngine
 from .cloud_engine import CloudEngine
 from .liquid_engine import LiquidEngine
+from .matter_engine import MatterEngine
 from .renderer import Renderer, SurfaceInputs
 from . import stage as stage_mod
 from .bodyfield import BodyField
@@ -123,7 +124,7 @@ def halton(i, b):
     return r
 
 
-class Engine(LiquidEngine, BothEngine, CloudEngine):
+class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine):
     def __init__(self, gpu: GPU | None = None, cache_bytes=4 << 30):
         self.gpu = gpu or GPU()
         self.solver = Solver(self.gpu)
@@ -219,6 +220,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
             changed = True
         if self.solids.configure(scene, (dims, h, origin)):
             changed = True
+        if self._prepare_matter(scene, (dims, h, origin)):
+            changed = True
         self.solver.cloth_hook = self.cloth.hook if self.cloth.active else None
         if changed or final != self.final or self.sig is None:
             self.sig = sig
@@ -237,6 +240,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
 
     def reset(self):
         self.solids.reset()
+        if self._matter is not None:
+            self._matter.reset()
         if self.kind == 'liquid':
             self._reset_liquid()
             self.sim_frame = None
@@ -290,7 +295,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
         poses = None
         if self.solids.active:
             self._air_for_solids()
-            poses = self.solids.advance(scene, frame, fdt, n)
+            poses = self.solids.advance(scene, frame, fdt, n, couple=self._matter_couple(scene, frame, fdt, self.solver.meshes))
         moving = scene.colliders_animated() or poses is not None
         # deforming meshes: the frames either side of this step in the atlas
         self.solver.set_meshes(scene.mesh_items(frame - 1), d['mesh_resolution'])
@@ -323,6 +328,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
                         self.embers.step(b, self.solver, ep, ember_ems, fdt / n, cam_g, look.smoke_density, look.ambient_k)
         self.solver.pieces_step = None
         self.solver.measure()
+        self._step_matter(scene, frame, fdt, poses, n, self.solver.meshes)
         if d.get('grow'):
             self._grow(scene, prm)
         self.sim_frame = frame
@@ -364,12 +370,15 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
 
     def snapshot(self, scene=None):
         if self.kind == 'liquid':
-            return self._snapshot_liquid()
-        if self.kind == 'both':
-            return self._snapshot_both(scene)
-        if self.kind == 'cloud':
+            entry = self._snapshot_liquid()
+        elif self.kind == 'both':
+            entry = self._snapshot_both(scene)
+        elif self.kind == 'cloud':
             return self._snapshot_cloud()
-        return self._snapshot_fire(scene)
+        else:
+            entry = self._snapshot_fire(scene)
+        self._snapshot_matter(entry)
+        return entry
 
     def _snapshot_fire(self, scene=None):
         s = self.solver
@@ -718,7 +727,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
         footage = plate is not None
         pieces = self.piece_poses(frame)   # (broken things: drawn, and holding out what is behind them, in every view)
         ropes = self.rope_poses(frame)
-        stage_on = stage_mod.wanted(scene, footage, mode) or bool(pieces) or bool(ropes)
+        matter = self.matter_for(frame) if mode == 'composite' else None
+        stage_on = stage_mod.wanted(scene, footage, mode) or bool(pieces) or bool(ropes) or matter is not None
         r.hold_stage = None
 
         with self.gpu.batch() as b:
@@ -732,8 +742,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
                 size = r.plate_size if footage else (W, H)
                 stage = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, size,
                                         plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage, vol=vol,
-                                        ground_y=vol.origin[1], frame=frame, pieces=pieces, ropes=ropes)
-                if self.stage.has_pieces:   # the march stops at the pieces too
+                                        ground_y=vol.origin[1], frame=frame, pieces=pieces, ropes=ropes, matter=matter)
+                if self.stage.has_pieces or self.stage.has_matter:   # the march stops at the pieces and the matter too
                     r.hold_stage = self.stage.hold
                     r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])
             if samples == 1:

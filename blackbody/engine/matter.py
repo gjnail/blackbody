@@ -1,0 +1,674 @@
+"""Matter: sand, snow, mud, jelly and clay, simulated as MPM particles on the GPU (MLS-MPM, Hu et al. 2018), in every
+kind of scene.
+
+Each particle carries its position, velocity, the affine part of the velocity round it (APIC) and its elastic
+deformation gradient F. Every step (mpm_*.wgsl):
+- p2g: the particles add their mass, momentum and the push of their stress to the grid's nodes (fixed-point integer
+  atomics: the same sums on any GPU, in any order);
+- grid: the nodes' velocities, gravity, and the ground, the box's walls and the objects in the scene (falling and
+  keyframed ones moving), with friction; the momentum each object takes from the matter is kept for the rigid
+  bodies (solids.py), which it pushes back;
+- g2p: the particles pick up the new velocity, deform with it, and give way where their material yields
+  (plastic): sand slides past its friction angle (Drucker-Prager, Klar et al. 2016), snow packs and breaks up
+  (Stomakhin et al. 2013), mud and clay flow past their yield stress (von Mises; mud relaxes toward it, clay is
+  perfectly plastic), and jelly springs back (neo-Hookean).
+
+The step is as long as the stiffest material's sound speed and the fastest particle allow. For drawing, the
+particles make a distance field round them on the grid (Zhu and Bridson 2005) with their look at each node, which the
+stage traces like any other object (stage.wgsl).
+
+Sources (Scene.matter_specs): a body of matter at the start (a pile of sand, a snowball, a block of jelly), held
+where it is until it is let go, or a stream poured from a nozzle.
+"""
+from __future__ import annotations
+
+import logging
+import math
+from dataclasses import dataclass, field
+
+import numpy as np
+
+from .gpu import GPU, Batch, Uniforms, groups_1d
+
+log = logging.getLogger(__name__)
+
+PARTICLE_BYTES = 128
+PER_AXIS = 2              # particles per node spacing along each axis (8 to a cell)
+MAX_MATS = 16             # (slot 15 marks a particle that is gone in the 8-byte form: 15 materials at most)
+CFL_SOUND = 0.4           # a step lets sound cross this share of a cell
+CFL_MOVE = 0.3            # and the fastest particle move this share
+FX_R = 64.0               # mpm_grid.wgsl react's fixed point
+SURF_R = 2.0              # the surface's kernel radius (cells)
+SURF_PARTICLE = 0.55      # a particle's radius in it (cells)
+MARGIN = 3                # nodes of grid past the box all round
+SURF_SMOOTH = 2           # passes smoothing the surface
+
+# The heap sand poured onto the ground makes (its angle of repose: atan of its height over its radius) for the friction
+# angle of the Drucker-Prager model, measured: the grid and the transfers smooth the heap down a few degrees.
+_REPOSE = (21.4, 28.7, 33.8, 38.7)
+_PHI = (25.0, 33.0, 40.0, 48.0)
+
+
+def friction_angle(repose):
+    """The model's friction angle (degrees) that gives sand an angle of repose `repose` (degrees)."""
+    r = float(repose)
+    if r > _REPOSE[-1]:
+        return _PHI[-1] + (r - _REPOSE[-1]) * (_PHI[-1] - _PHI[-2]) / (_REPOSE[-1] - _REPOSE[-2])
+    return float(np.interp(r, _REPOSE, _PHI)) if r >= _REPOSE[0] else r * _PHI[0] / _REPOSE[0]
+
+
+@dataclass(frozen=True)
+class MatterMaterial:
+    key: str
+    label: str
+    model: str                  # jelly (neo-Hookean), sand (Drucker-Prager), snow (Stomakhin), mud, clay (von Mises)
+    E: float                    # Young's modulus (Pa): soft for a simulation, as MPM work uses them
+    nu: float                   # Poisson's ratio
+    density: float              # kg/m^3
+    friction: float = 0.5       # against the ground and objects (Coulomb)
+    angle: float = 0.0          # sand: its angle of repose (degrees)
+    cohesion: float = 0.0       # sand: the stretch it holds (wet sand)
+    theta_c: float = 0.0        # snow: the squeeze and the stretch it holds before it packs or breaks
+    theta_s: float = 0.0
+    xi: float = 0.0             # snow: hardening (how much stiffer packed snow is)
+    h_max: float = 1.0          # snow: the most it hardens
+    yield_stress: float = 0.0   # mud, clay: Pa
+    relax: float = 0.0          # mud: the share of the stress past its yield it lets go per second
+    tension: bool = False       # clay holds together when pulled; mud tears
+    colour: tuple = (0.5, 0.5, 0.5)   # linear albedo (jelly: its tint)
+    roughness: float = 0.8
+    clear: float = 0.0          # light through it (jelly)
+    sparkle: float = 0.0        # glints from its grains or crystals
+    wrap: float = 0.0           # light into it (snow)
+    variation: float = 0.2      # how much its particles' colours differ
+
+    @property
+    def mu(self):
+        return self.E / (2.0 * (1.0 + self.nu))
+
+    @property
+    def lam(self):
+        return self.E * self.nu / ((1.0 + self.nu) * (1.0 - 2.0 * self.nu))
+
+    def sound(self, hardening=1.0):
+        """Its fastest wave (m/s): pressure waves through it."""
+        return math.sqrt((self.lam + 2.0 * self.mu) * hardening / self.density)
+
+
+MATTERS = {m.key: m for m in (
+    MatterMaterial('sand', 'Sand', 'sand', 3.5e5, 0.3, 1600.0, friction=0.5, angle=34.0, colour=(0.55, 0.42, 0.25),
+                   roughness=0.95, sparkle=0.6, variation=0.3),
+    MatterMaterial('wet_sand', 'Wet sand', 'sand', 3.5e5, 0.3, 1900.0, friction=0.7, angle=38.0, cohesion=0.004,
+                   colour=(0.3, 0.22, 0.13), roughness=0.55, sparkle=0.3, variation=0.25),
+    MatterMaterial('snow', 'Snow', 'snow', 1.4e5, 0.2, 400.0, friction=0.3, theta_c=0.025, theta_s=0.0075, xi=10.0, h_max=3.0,
+                   colour=(0.85, 0.88, 0.92), roughness=0.8, sparkle=1.0, wrap=0.6, variation=0.04),
+    MatterMaterial('packing_snow', 'Packing snow', 'snow', 2.5e5, 0.2, 600.0, friction=0.4, theta_c=0.019, theta_s=0.0075,
+                   xi=10.0, h_max=3.0, colour=(0.8, 0.83, 0.87), roughness=0.7, sparkle=0.6, wrap=0.5, variation=0.04),
+    MatterMaterial('mud', 'Mud', 'mud', 1.5e5, 0.4, 1700.0, friction=0.9, yield_stress=400.0, relax=800.0,
+                   colour=(0.11, 0.075, 0.045), roughness=0.3, variation=0.15),
+    MatterMaterial('jelly', 'Jelly', 'jelly', 3.0e4, 0.42, 1050.0, friction=0.6, colour=(0.92, 0.22, 0.26), roughness=0.08,
+                   clear=0.85, variation=0.0),
+    MatterMaterial('clay', 'Clay', 'clay', 4.0e5, 0.35, 1800.0, friction=0.8, yield_stress=2.0e4, tension=True,
+                   colour=(0.48, 0.22, 0.12), roughness=0.7, variation=0.08),
+)}
+MODELS = {'jelly': 0, 'sand': 1, 'snow': 2, 'mud': 3, 'clay': 4}
+
+
+def material(key):
+    return MATTERS.get(key, MATTERS['sand'])
+
+
+@dataclass
+class MatterSpec:
+    """One source of matter (Scene.matter_specs): a body of it at the start, or a stream poured from a nozzle."""
+    material: str = 'sand'
+    shape: str = 'box'          # box, sphere, cylinder, pile (a cone: radius size x, height size y)
+    pos: tuple = (0.0, 0.5, 0.0)          # fire-local m: its middle (a pile, a pour: its base's middle, the nozzle)
+    size: tuple = (0.25, 0.25, 0.25)      # half extents, or radius and half height
+    yaw: float = 0.0                      # radians
+    velocity: tuple = (0.0, 0.0, 0.0)     # m/s as it starts (a thrown snowball) or as it pours
+    release: float = 0.0                  # s of simulation: held still until then
+    pour: bool = False                    # a stream instead of a body
+    rate: float = 0.0                     # a stream's flow (m^3/s)
+    start: float = 0.0                    # when it pours (s of simulation)
+    stop: float = 1.0e9
+    colour: tuple = None                  # its own colour (linear), or None: the material's
+    stiffness: float = 1.0                # times the material's
+    seed: int = 0
+
+
+def fill_points(shape, size, spacing, rng):
+    """Points filling a shape (its own frame, m), on a lattice `spacing` apart, each jittered within its cell."""
+    s = np.abs(np.asarray(size, float))
+    ext = np.array([s[0], s[1], s[2]]) if shape in ('box', 'cylinder', 'pile') else np.array([s[0]] * 3)
+    if shape == 'cylinder':
+        ext = np.array([s[0], s[1], s[0]])
+    if shape == 'pile':
+        ext = np.array([s[0], s[1], s[0]])
+    n = np.maximum(np.ceil(2.0 * ext / spacing).astype(int), 1)
+    axes = [(np.arange(k) + 0.5) * spacing - e for k, e in zip(n, ext)]
+    g = np.stack(np.meshgrid(*axes, indexing='ij'), -1).reshape(-1, 3)
+    g = g + (rng.random(g.shape) - 0.5) * spacing
+    if shape == 'sphere':
+        keep = np.linalg.norm(g, axis=1) <= s[0]
+    elif shape == 'cylinder':
+        keep = (np.hypot(g[:, 0], g[:, 2]) <= s[0]) & (np.abs(g[:, 1]) <= s[1])
+    elif shape == 'pile':
+        # a cone standing on its base: radius s0 at the bottom (y = -s1), its tip at y = +s1
+        h = (g[:, 1] + s[1]) / max(2.0 * s[1], 1e-9)
+        keep = (h >= 0.0) & (h <= 1.0) & (np.hypot(g[:, 0], g[:, 2]) <= s[0] * (1.0 - h))
+    else:
+        keep = np.all(np.abs(g) <= s, axis=1)
+    return g[keep]
+
+
+def _yaw(v, yaw):
+    c, s = math.cos(yaw), math.sin(yaw)
+    v = np.asarray(v, float)
+    return np.stack([c * v[..., 0] + s * v[..., 2], v[..., 1], -s * v[..., 0] + c * v[..., 2]], -1)
+
+
+def particles(xs, mat_index, vel, release, rng):
+    """New particles (n, 32) float32 at grid positions xs (n, 3)."""
+    n = len(xs)
+    P = np.zeros((n, 32), np.float32)
+    P[:, 0:3] = xs
+    P[:, 3] = mat_index
+    P[:, 4:7] = vel
+    P[:, 7] = 1.0                       # snow's Jp
+    P[:, 11] = rng.random(n)            # its own random number (look)
+    P[:, 15] = release                  # held until
+    P[:, 20] = P[:, 25] = P[:, 30] = 1.0  # F = I
+    return P
+
+
+class Matter:
+    """The matter in a simulation: its particles, grid and surface on the GPU."""
+
+    def __init__(self, gpu: GPU, meshes=None):
+        self.gpu = gpu
+        self.meshes = meshes
+        self.specs: list[MatterSpec] = []
+        self.key = None
+        self.dims = None
+        self.dx = 0.0
+        self.origin = np.zeros(3)
+        self.capacity = 0
+        self.count = 0               # particle slots in use (some may be gone)
+        self.time = 0.0
+        self.max_speed = 0.0
+        self.min_jp = 1.0
+        self.bounds = None           # (lo, hi) grid units of the matter last frame
+        self.forces = {}             # collider index (in the solver's list) -> (force, torque) from the last frame
+        self.warnings = []
+        self._buf = {}
+        self._tex = {}
+        self._k = {}
+        self._mats = []              # MatterMaterial per material slot
+        self._colours = []           # per slot: colour (linear) or None
+        self._mat_bytes = b''
+        self._poured = []            # per source: particles poured so far (and the fraction owed)
+        self._rng = None
+        self._init = None            # the particles as they start (numpy)
+        self.surface_ready = False
+
+    # -- set up --------------------------------------------------------------------------------
+
+    @property
+    def active(self):
+        return self.dims is not None and bool(self.specs)
+
+    def configure(self, specs, box_origin, box_size, resolution=128, max_particles=1_000_000, gravity=9.81, ground=True,
+                  closed=False, fps=24.0, duration=10.0):
+        """Match the matter to the scene's sources and box. Returns True when it has to start again."""
+        specs = list(specs or [])
+        key = (tuple((s.material, s.shape, tuple(map(float, s.pos)), tuple(map(float, s.size)), float(s.yaw),
+                      tuple(map(float, s.velocity)), float(s.release), bool(s.pour), float(s.rate), float(s.start),
+                      float(s.stop), None if s.colour is None else tuple(map(float, s.colour)), float(s.stiffness), int(s.seed))
+                     for s in specs),
+               tuple(map(float, box_origin)), tuple(map(float, box_size)), int(resolution), int(max_particles), float(gravity),
+               bool(ground), bool(closed), float(fps), float(duration))
+        if not specs:
+            changed = self.dims is not None
+            self.release()
+            self.specs = []
+            self.key = None
+            return changed
+        if key == self.key:
+            return False
+        self.key = key
+        self.specs = specs
+        self.gravity = float(gravity)
+        self.ground = bool(ground)
+        self.closed = bool(closed)
+        size = np.asarray(box_size, float)
+        self.dx = float(size.max()) / max(int(resolution), 8)
+        # (the grid reaches MARGIN nodes past the box all round, so matter resting on the ground or against a closed
+        # side is well inside it)
+        dims = tuple(int(x) for x in np.ceil(size / self.dx).astype(int) + 1 + 2 * MARGIN)
+        self.box = (np.asarray(box_origin, float), np.asarray(box_origin, float) + size)
+        self.origin = np.asarray(box_origin, float) - MARGIN * self.dx
+        self.warnings = []
+        # materials: one slot per material and colour
+        slots, self._mats, self._colours = {}, [], []
+        self._slot = []
+        for s in specs:
+            k = (s.material, None if s.colour is None else tuple(s.colour), float(s.stiffness))
+            if k not in slots and len(slots) < MAX_MATS - 1:
+                slots[k] = len(slots)
+                self._mats.append(material(s.material))
+                self._colours.append((k[1], k[2]))
+            self._slot.append(slots.get(k, 0))
+        self._mat_bytes = self._pack_materials()
+        # the particles each source makes: its body at the start, or its stream over the shot
+        self._rng = np.random.default_rng(12345)
+        bodies = []
+        need = 0
+        vp = (self.dx / PER_AXIS) ** 3
+        for n, s in enumerate(specs):
+            if s.pour:
+                t = max(min(s.stop, duration) - max(s.start, 0.0), 0.0)
+                need += int(s.rate * t / vp) + 64
+                bodies.append(None)
+            else:
+                pts = self._body(s, n, dims)
+                bodies.append(pts)
+                need += len(pts)
+        cap = min(need, int(max_particles))
+        if need > max_particles:
+            self.warnings.append(f'The matter needs {need:,} particles; only {int(max_particles):,} are made (Matter › Most '
+                                 'particles). Lower Matter › Detail for fewer, bigger particles.')
+        cap = max(int(math.ceil(cap / 64.0) * 64), 64)
+        init = np.concatenate([b for b in bodies if b is not None] or [np.zeros((0, 32), np.float32)])[:cap]
+        if dims != self.dims or cap != self.capacity:
+            self.release()
+            self.dims, self.capacity = dims, cap
+            self._allocate()
+            self._compile()
+        self._init = init
+        self.reset()
+        log.info('Matter: %d sources, grid %s at %.1f mm, %d particles to start (%d slots)', len(specs), dims, self.dx * 1e3,
+                 len(init), cap)
+        return True
+
+    def _body(self, s: MatterSpec, n, dims):
+        rng = np.random.default_rng(1000 + 7 * n + int(s.seed))
+        local = fill_points(s.shape, s.size, self.dx / PER_AXIS, rng)
+        if not len(local):
+            local = np.zeros((1, 3))
+        world = _yaw(local, s.yaw) + np.asarray(s.pos, float)
+        xs = (world - self.origin) / self.dx
+        inside = np.all((xs >= 2.0) & (xs < np.asarray(dims) - 3.0), axis=1)
+        if not inside.all():
+            self.warnings.append(f'Some of the {material(s.material).label.lower()} is outside the box: it is left out.')
+        xs = xs[inside]
+        return particles(xs, self._slot[n], np.asarray(s.velocity, float), float(s.release), rng)
+
+    def _pack_materials(self):
+        u = Uniforms()
+        for k in range(MAX_MATS):
+            if k < len(self._mats):
+                m = self._mats[k]
+                colour, stiff = self._colours[k]
+                mu, la = m.mu * stiff, m.lam * stiff
+                model = MODELS[m.model]
+                if m.model == 'sand':
+                    sp = math.sin(math.radians(min(friction_angle(m.angle), 75.0)))
+                    b = (math.sqrt(2.0 / 3.0) * 2.0 * sp / (3.0 - sp), m.cohesion, 0.0, 0.0)
+                elif m.model == 'snow':
+                    b = (m.theta_c, m.theta_s, m.xi, 0.0)
+                else:
+                    b = (m.yield_stress, m.relax, 1.0 if m.tension else 0.0, 0.0)
+                u.v4(model, mu, la, m.density).v4(*b).v4(m.friction, m.h_max).v4(*(colour or m.colour), m.roughness) \
+                 .v4(m.clear, m.sparkle, m.wrap, m.variation)
+            else:
+                u.v4(0.0, 1.0, 1.0, 1000.0).v4().v4().v4().v4()
+        return u.data
+
+    def _allocate(self):
+        g = self.gpu
+        nx, ny, nz = self.dims
+        nodes = nx * ny * nz
+        self._buf['P'] = g.buffer(self.capacity * PARTICLE_BYTES, 'matter-particles')
+        self._buf['C'] = g.buffer(self.capacity * 8, 'matter-compact')
+        self._buf['CV'] = g.buffer(self.capacity * 8, 'matter-compact-view')
+        self._buf['G'] = g.buffer(nodes * 4 * 4, 'matter-grid')
+        self._buf['S'] = g.buffer(nodes * 11 * 4, 'matter-surface-sums')
+        self._buf['react_i'] = g.buffer(16 * 6 * 4, 'matter-react-step')
+        self._buf['react'] = g.buffer(16 * 6 * 4, 'matter-react')
+        self._buf['stats'] = g.buffer(8 * 4, 'matter-stats')
+        self._tex['vel'] = g.texture3d(self.dims, 'rgba32float', 'matter-vel')
+        self._tex['phi'] = g.texture3d(self.dims, 'r32float', 'matter-phi')
+        self._tex['phi2'] = g.texture3d(self.dims, 'r32float', 'matter-phi2')
+        self._tex['seed'] = g.texture3d(self.dims, 'rgba16float', 'matter-seeds')
+        self._tex['seed2'] = g.texture3d(self.dims, 'rgba16float', 'matter-seeds2')
+        self._tex['look0'] = g.texture3d(self.dims, 'rgba16float', 'matter-look0')
+        self._tex['look1'] = g.texture3d(self.dims, 'rgba16float', 'matter-look1')
+        self._tex['surf'] = g.texture3d(self.dims, 'rgba16float', 'matter-surface')
+
+    def release(self):
+        for b in self._buf.values():
+            b.destroy()
+        for t in self._tex.values():
+            t.destroy()
+        self._buf, self._tex = {}, {}
+        self.dims = None
+        self.capacity = 0
+        self.count = 0
+        self.surface_ready = False
+
+    def _compile(self):
+        g = self.gpu
+        P = (64, 1, 1)
+        self._k['p2g'] = g.kernel('mpm_p2g.wgsl', ['rbuf', 'buf'], workgroup=P)
+        self._k['grid'] = g.kernel('mpm_grid.wgsl', ['utex3d', 'rbuf', 'st3d:rgba32float:w', 'buf'])
+        self._k['g2p'] = g.kernel('mpm_g2p.wgsl', ['buf', 'utex3d', 'buf'], workgroup=P)
+        self._k['react'] = g.kernel('mpm_react.wgsl', ['buf', 'buf'], workgroup=P)
+        self._k['compact'] = g.kernel('mpm_compact.wgsl', ['rbuf', 'buf'], workgroup=P)
+        self._k['surf_p2g'] = g.kernel('mpm_surf_p2g.wgsl', ['rbuf', 'buf'], workgroup=P)
+        self._k['surf_norm'] = g.kernel('mpm_surf_norm.wgsl', ['rbuf', 'st3d:r32float:w', 'st3d:rgba16float:w',
+                                                               'st3d:rgba16float:w'])
+        self._k['surf_smooth'] = g.kernel('mpm_surf_smooth.wgsl', ['utex3d', 'st3d:r32float:w'])
+        self._k['jfa_init'] = g.kernel('mpm_jfa.wgsl', ['utex3d', 'st3d:rgba16float:w'], 'init')
+        self._k['jfa_step'] = g.kernel('mpm_jfa.wgsl', ['utex3d', 'st3d:rgba16float:w'], 'step')
+        self._k['surf_pack'] = g.kernel('mpm_surf_pack.wgsl', ['utex3d', 'utex3d', 'utex3d', 'st3d:rgba16float:w'])
+
+    def reset(self):
+        """Back to the start: the bodies of matter where they begin, nothing poured yet."""
+        if self.dims is None:
+            return
+        self.time = 0.0
+        self.max_speed = max([float(np.linalg.norm(s.velocity)) for s in self.specs] + [1.0])
+        self.min_jp = 1.0
+        self.forces = {}
+        self.bounds = None
+        self._poured = [0.0 for _ in self.specs]
+        self._pour_rng = np.random.default_rng(777)
+        self.count = len(self._init)
+        if self.count:
+            self.gpu.write_buffer(self._buf['P'], self._init)
+        self.gpu.write_buffer(self._buf['react'], np.zeros(96, np.float32))
+        self.gpu.write_buffer(self._buf['react_i'], np.zeros(96, np.int32))
+        self.surface_ready = False
+        self._view = None            # what the surface is drawn from: None the live particles, else a cached frame's
+        self._compact(None)
+
+    # -- stepping -------------------------------------------------------------------------------
+
+    def step_for(self, frame_dt):
+        """The step its stiffest material and fastest particle allow (s), and how many fit in a frame."""
+        hard = max([math.exp(min(m.xi * (1.0 - self.min_jp), math.log(max(m.h_max, 1.0)))) if m.model == 'snow' else 1.0
+                    for m in self._mats] + [1.0])
+        sound = max([m.sound(hard) * math.sqrt(st) for m, (_, st) in zip(self._mats, self._colours)] + [1.0])
+        dt = min(CFL_SOUND * self.dx / sound, CFL_MOVE * self.dx / max(self.max_speed, 1e-3), frame_dt)
+        n = max(1, int(math.ceil(frame_dt / dt - 1e-9)))
+        return frame_dt / n, n
+
+    def _pour(self, fdt):
+        """Particles streaming from the nozzles over the next fdt seconds, spread along their flow so the stream is even."""
+        vp = (self.dx / PER_AXIS) ** 3
+        new = []
+        t0, t1 = self.time, self.time + fdt
+        for n, s in enumerate(self.specs):
+            if not s.pour:
+                continue
+            a, b = max(t0, s.start), min(t1, s.stop)
+            if b <= a:
+                continue
+            self._poured[n] += s.rate * (b - a) / vp
+            k = int(self._poured[n])
+            self._poured[n] -= k
+            if k <= 0:
+                continue
+            rng = self._pour_rng
+            r = float(abs(s.size[0]))
+            ang = rng.random(k) * 2.0 * math.pi
+            rad = r * np.sqrt(rng.random(k))
+            v = np.asarray(s.velocity, float)
+            sp = float(np.linalg.norm(v))
+            d = v / sp if sp > 1e-6 else np.array([0.0, -1.0, 0.0])
+            side = np.cross(d, [0.0, 1.0, 0.0] if abs(d[1]) < 0.9 else [1.0, 0.0, 0.0])
+            side /= np.linalg.norm(side)
+            up = np.cross(side, d)
+            along = rng.random(k) * max(sp, 0.5) * (b - a)
+            pts = (np.asarray(s.pos, float) + np.outer(rad * np.cos(ang), side) + np.outer(rad * np.sin(ang), up)
+                   + np.outer(along, d))
+            xs = (pts - self.origin) / self.dx
+            ok = np.all((xs >= 2.0) & (xs < np.asarray(self.dims) - 3.0), axis=1)
+            if ok.any():
+                new.append(particles(xs[ok], self._slot[n], v, 0.0, rng))
+        if not new:
+            return
+        P = np.concatenate(new)
+        room = self.capacity - self.count
+        if room <= 0:
+            return
+        P = P[:room]
+        self.gpu.write_buffer(self._buf['P'], P, offset=self.count * PARTICLE_BYTES)
+        self.count += len(P)
+
+    def _particle_u(self, dt, t_end):
+        return Uniforms().v4(*self.dims, self.count).v4(dt, self.dx, 0.0, t_end).raw(self._mat_bytes)
+
+    def advance(self, frame_dt, colliders_at=None, meshes_atlas=None, pack=None):
+        """Simulate frame_dt seconds in one batch. colliders_at(f): the colliders (ColliderGPU list, the solver's order)
+        at fraction f of the frame; pack(u, colliders): adds them to a uniform block (solver.pack_colliders). The push
+        on each object over the frame ends up in self.forces."""
+        if not self.active:
+            return
+        dt, n = self.begin(frame_dt)
+        last, gu = None, None
+        with self.gpu.batch() as b:
+            for i in range(n):
+                cols = colliders_at((i + 0.5) / n) if colliders_at is not None else []
+                if cols is not last or gu is None:
+                    gu = self._grid_u(dt, cols, pack)
+                    last = cols
+                self._substep(b, dt, gu, meshes_atlas, fold=True)
+        react = np.frombuffer(self.gpu.read_buffer(self._buf['react']), np.float32).reshape(16, 6)
+        self.forces = self._react_forces(react, frame_dt)
+        self.end()
+
+    def begin(self, frame_dt):
+        """Start a frame: pour what the nozzles pour in it, and clear its measures. Returns its step and step count."""
+        self._pour(frame_dt)
+        dt, n = self.step_for(frame_dt)
+        self._frame_dt = frame_dt
+        g = self.gpu
+        g.write_buffer(self._buf['react'], np.zeros(96, np.float32))
+        g.write_buffer(self._buf['react_i'], np.zeros(96, np.int32))
+        g.write_buffer(self._buf['stats'], np.array([0, 0x7FFFFFFF, 0x7FFFFFFF, 0x7FFFFFFF, 0, 0, 0,
+                                                     np.float32(1.0).view(np.uint32)], np.uint32))
+        self.forces = {}
+        return dt, n
+
+    def step(self, dt, colliders, meshes_atlas=None, pack=None):
+        """One step of dt seconds on its own, the objects where `colliders` has them; returns the push on each object
+        over it ({index in the solver's collider list: (force, torque about its position)}, N and N m). For moving in
+        lockstep with the rigid bodies (solids.py), which take the push into their next step."""
+        with self.gpu.batch() as b:
+            self._substep(b, dt, self._grid_u(dt, colliders, pack), meshes_atlas, fold=False)
+        react = np.frombuffer(self.gpu.read_buffer(self._buf['react_i']), np.int32).reshape(16, 6)
+        if not react.any():
+            return {}
+        self.gpu.write_buffer(self._buf['react_i'], np.zeros(96, np.int32))
+        return self._react_forces(react.astype(np.float64) / FX_R, dt)
+
+    def end(self):
+        """Finish a frame: the particles' 8-byte form for drawing, and what the frame's measures say."""
+        g = self.gpu
+        self._compact(None)
+        st = np.frombuffer(g.read_buffer(self._buf['stats']), np.uint32)
+        self.max_speed = max(float(st[0:1].view(np.float32)[0]), 0.05)
+        lo, hi = st[1:4].astype(np.int64) - (1 << 20), st[4:7].astype(np.int64) - (1 << 20)
+        self.bounds = (lo, hi) if np.all(hi >= lo) else None
+        self.min_jp = float(st[7:8].view(np.float32)[0])
+        self.surface_ready = False
+        self._view = None
+
+    def _react_forces(self, react, seconds):
+        """The momentum the objects took (in particles of water times m/s, (16, 6)) as forces over `seconds` (N, N m)."""
+        unit = 1000.0 * (self.dx / PER_AXIS) ** 3 / seconds
+        return {i: (np.asarray(react[i, :3], float) * unit, np.asarray(react[i, 3:], float) * unit)
+                for i in range(16) if np.any(react[i] != 0.0)}
+
+    def _grid_u(self, dt, cols, pack):
+        ground_y = self.box[0][1] if self.ground else -1.0e9
+        u = Uniforms().v4(*self.dims, 0).v4(dt, self.dx, self.gravity, self._wall_friction()) \
+            .v4(*self.origin, ground_y).v4(1.0 if self.closed else 0.0, MARGIN)
+        if pack is not None:
+            pack(u, cols)
+        else:
+            _pack_none(u)
+        return u
+
+    def _substep(self, b, dt, gu, meshes_atlas, fold):
+        k = self._k
+        groups = groups_1d(max(self.count, 1))
+        atlas = meshes_atlas if meshes_atlas is not None else self._empty_atlas()
+        t_end = self.time + dt
+        b.clear_buffer(self._buf['G'])
+        b.run(k['p2g'], [self._buf['P'], self._buf['G']], self._particle_u(dt, self.time), groups=groups)
+        b.run(k['grid'], [atlas, self._buf['G'], self._tex['vel'], self._buf['react_i']], gu, self.dims)
+        if fold:
+            b.run(k['react'], [self._buf['react_i'], self._buf['react']], Uniforms().v4(96, 1.0 / FX_R), groups=(2, 1, 1))
+        # (held or let go as at the start of the step in both passes: p2g's momentum is what g2p picks up)
+        b.run(k['g2p'], [self._buf['P'], self._tex['vel'], self._buf['stats']], self._particle_u(dt, self.time), groups=groups)
+        self.time = t_end
+
+    def _compact(self, b):
+        """The particles' 8-byte form (mpm_compact.wgsl), for drawing and the frame cache."""
+        if not self.count:
+            return
+        if b is None:
+            with self.gpu.batch() as bb:
+                self._compact(bb)
+            return
+        b.run(self._k['compact'], [self._buf['P'], self._buf['C']], Uniforms().v4(*self.dims, self.count),
+              groups=groups_1d(self.count))
+
+    def _wall_friction(self):
+        return max([m.friction for m in self._mats] + [0.0])
+
+    def _empty_atlas(self):
+        t = self._tex.get('atlas1')
+        if t is None:
+            t = self._tex['atlas1'] = self.gpu.texture3d((1, 1, 1), 'r32float', 'matter-no-mesh')
+        return t
+
+    # -- drawing --------------------------------------------------------------------------------
+
+    def surface(self):
+        """Build the matter's surface for drawing (if the particles moved since): (surface, look0, look1) textures on the
+        grid, rgba16float: surface = the distance to the surface (m, negative inside), how clear (jelly), sparkly and
+        how much light it lets in (snow); look0 = its albedo (linear) and roughness."""
+        if not self.active:
+            return None
+        if not self.surface_ready:
+            g = self.gpu
+            k = self._k
+            count, src = (self.count, self._buf['C']) if self._view is None else (self._view[0], self._buf['CV'])
+            mats = Uniforms().v4(*self.dims, count).v4(SURF_R).raw(self._mat_bytes)
+            band = (SURF_R - SURF_PARTICLE) * self.dx
+            with g.batch() as b:
+                b.clear_buffer(self._buf['S'])
+                b.run(k['surf_p2g'], [src, self._buf['S']], mats, groups=groups_1d(max(count, 1)))
+                b.run(k['surf_norm'], [self._buf['S'], self._tex['phi'], self._tex['look0'], self._tex['look1']],
+                      Uniforms().v4(*self.dims, 0).v4(SURF_R, SURF_PARTICLE, self.dx), self.dims)
+                # smoothed a little (it shows the lie of the matter, not its particles)
+                phi = self._tex['phi']
+                for _ in range(SURF_SMOOTH):
+                    other = self._tex['phi2'] if phi is self._tex['phi'] else self._tex['phi']
+                    b.run(k['surf_smooth'], [phi, other], Uniforms().v4(*self.dims).v4(band, 0.6), self.dims)
+                    phi = other
+                # the distance to it from everywhere in the grid (jump flooding), for rays, shadows and occlusion
+                b.run(k['jfa_init'], [phi, self._tex['seed']], Uniforms().v4(*self.dims, self.dx).v4(band), self.dims)
+                src, dst = self._tex['seed'], self._tex['seed2']
+                step = 1 << int(math.ceil(math.log2(max(self.dims)))) - 1
+                while step >= 1:
+                    b.run(k['jfa_step'], [src, dst], Uniforms().v4(*self.dims, self.dx).v4(band, step), self.dims)
+                    src, dst = dst, src
+                    step //= 2
+                b.run(k['surf_pack'], [phi, self._tex['look1'], src, self._tex['surf']],
+                      Uniforms().v4(*self.dims, self.dx).v4(band), self.dims)
+            self.surface_ready = True
+        return self._tex['surf'], self._tex['look0'], self._tex['look1']
+
+    def world_bounds(self):
+        """(lo, hi) of the matter (fire-local m), or None."""
+        bounds = self.bounds if self._view is None else self._view[1]
+        if bounds is None:
+            return None
+        lo, hi = bounds
+        return self.origin + (lo - 2) * self.dx, self.origin + (hi + 2) * self.dx
+
+    # -- state ---------------------------------------------------------------------------------
+
+    def snapshot(self):
+        """The particles as drawn this frame, for the frame cache: (n, 4) uint16 (mpm_compact.wgsl's form), or None."""
+        if not self.active or not self.count:
+            return None
+        return np.frombuffer(self.gpu.read_buffer(self._buf['C'], size=self.count * 8), np.uint16).reshape(-1, 4).copy()
+
+    def show(self, snap):
+        """Draw a cached frame's particles (snapshot()) instead of the live ones (until the next step or show_live())."""
+        if not self.active:
+            return False
+        snap = np.ascontiguousarray(snap, np.uint16).reshape(-1, 4)[:self.capacity]
+        if len(snap):
+            self.gpu.write_buffer(self._buf['CV'], snap)
+        live = (snap[:, 3] >> 12) < 15
+        bounds = None
+        if live.any():
+            q = snap[live, :3].astype(np.float64) / 65535.0 * np.asarray(self.dims, float)
+            bounds = (np.floor(q.min(0)).astype(np.int64), np.ceil(q.max(0)).astype(np.int64))
+        self._view = (len(snap), bounds)
+        self.surface_ready = False
+        return True
+
+    def show_live(self):
+        if self._view is not None:
+            self._view = None
+            self.surface_ready = False
+
+    def read_particles(self):
+        """The live particles (n, 32) float32 (for tests and the cache)."""
+        if not self.active or not self.count:
+            return np.zeros((0, 32), np.float32)
+        P = np.frombuffer(self.gpu.read_buffer(self._buf['P'], size=self.count * PARTICLE_BYTES), np.float32).reshape(-1, 32)
+        return P
+
+    def positions(self):
+        """Where the live particles are (fire-local m) and their material slots."""
+        P = self.read_particles()
+        live = P[:, 3] >= 0.0
+        return self.origin + P[live, :3].astype(float) * self.dx, P[live, 3].astype(int)
+
+    def state(self):
+        """Everything needed to carry on from now."""
+        if not self.active:
+            return None
+        return dict(particles=self.read_particles().copy(), time=float(self.time), poured=list(self._poured),
+                    max_speed=float(self.max_speed), min_jp=float(self.min_jp))
+
+    def load_state(self, st):
+        if not self.active or st is None:
+            return False
+        P = np.asarray(st['particles'], np.float32).reshape(-1, 32)
+        if len(P) > self.capacity:
+            return False
+        self.count = len(P)
+        if self.count:
+            self.gpu.write_buffer(self._buf['P'], P)
+        self.time = float(st.get('time', 0.0))
+        self._poured = list(st.get('poured', self._poured))
+        self.max_speed = float(st.get('max_speed', 1.0))
+        self.min_jp = float(st.get('min_jp', 1.0))
+        self.surface_ready = False
+        return True
+
+
+def _pack_none(u):
+    """No colliders (as solver.pack_colliders with an empty list)."""
+    from .solver import pack_colliders
+    pack_colliders(u, [])
