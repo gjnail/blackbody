@@ -105,6 +105,7 @@ def main():
     win.resize(1600, 960)
     win.show()
     doc = win.doc
+    win.doc.set_playing(False)   # the app plays on start; these screenshots want still, refined frames
     got = []
     w.frameReady.connect(lambda img, f, st: got.append((f, bool(st.get('refined')))))
 
@@ -152,8 +153,8 @@ def main():
     d = ImageDraw.Draw(tour)
     lib, view, props, tl = (rect_in(win, x) for x in (win.library, win.viewport, win.props, win.timeline))
     comp_btn = rect_in(win, win.mode_group.button(0))
-    for n, x, y in ((1, lib[0] + 78, lib[1] - 14), (2, comp_btn[0] - 18, comp_btn[1] + comp_btn[3] // 2),
-                    (3, view[0] + view[2] - 28, view[1] + 26), (4, props[0] + 110, props[1] - 14),
+    for n, x, y in ((1, lib[0] + 100, lib[1] + 20), (2, comp_btn[0] - 18, comp_btn[1] + comp_btn[3] // 2),
+                    (3, view[0] + view[2] - 28, view[1] + 26), (4, props[0] + 41, props[1] + 66),
                     (5, tl[0] + tl[2] // 2, tl[1] + 14)):
         badge(d, (x, y), n)
     save(tour, '02_window.png')

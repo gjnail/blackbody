@@ -4,12 +4,12 @@
 // slabs along z so its accumulators stay small.
 //
 // accumulator slots per node: sum k, sum k*dx, sum k*dy, sum k*dz, sum k*vx, sum k*vy, sum k*vz,
-// max(R - d) (fixed point); slots 8-10 hold whitewater (liq_surf_ww.wgsl).
+// max(R - d) (fixed point); slots 8-10 hold whitewater (liq_surf_ww.wgsl), slot 11 sum k*heat.
 //
 // With sheets on, each kernel is an ellipsoid from the local shape of the liquid (liq_surf_aniso.wgsl):
 // distances are measured through that particle block's matrix.
 
-const FX_K: f32 = 16777216.0;   // 2^24
+const FX_K: f32 = 1048576.0;     // 2^20: room for thousands of overlapping kernels in a node without overflowing
 const FX_D: f32 = 4194304.0;    // 2^22, offsets (surface cells)
 const FX_V: f32 = 262144.0;     // 2^18, velocity (m/s)
 const FX_Q: f32 = 65536.0;      // 2^16, distance (surface cells)
@@ -23,13 +23,16 @@ struct Params {
   nf: vec4<f32>,   // surface grid dims; w = particle radius r (surface cells)
   z: vec4<f32>,    // slab first z, slab end z (exclusive), kernel radius R (surface cells), _
   e: vec4<f32>,    // reach k of the deep test (cells): skip particles whose cells within k are all deep;
-                   // y = anisotropic kernels on (1/0)
+                   // w = ice on (1/0): the frozen share to its own accumulator (heat_t.w)
+                   // y = anisotropic kernels on (1/0), w = ice on (1/0)
 };
 
 @group(0) @binding(0) var<storage, read> packed: array<vec4<u32>>;
 @group(0) @binding(1) var<storage, read_write> acc: array<atomic<i32>>;
 @group(0) @binding(2) var<storage, read> deep: array<u32>;
 @group(0) @binding(3) var<storage, read> aniso: array<f32>;
+@group(0) @binding(4) var<storage, read> pice: array<u32>;             // frozen share, cloudiness (liquid_thermal.py)
+@group(0) @binding(5) var<storage, read_write> iacc: array<atomic<i32>>;   // sum k * frozen share per node
 
 // A particle whose every cell within k is deep can only reach nodes the resolve marks inside anyway.
 fn buried(q: vec3<f32>) -> bool {
@@ -55,6 +58,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
   if (i >= u32(U.n.w)) { return; }
   let pk = packed[i];
   let q = vec3<f32>(unpack2x16unorm(pk.x), unpack2x16unorm(pk.y).x);
+  let heat = unpack2x16unorm(pk.y).y;
+  var ice = 0.0;
+  if (U.e.w > 0.5) { ice = unpack2x16unorm(pice[i]).x; }
   let vxy = unpack2x16float(pk.z);
   let vel = vec3<f32>(vxy, unpack2x16float(pk.w).x);
   let nf = U.nf.xyz;
@@ -98,6 +104,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
         atomicAdd(&acc[base + 4u], i32(round(k * vel.x * FX_V)));
         atomicAdd(&acc[base + 5u], i32(round(k * vel.y * FX_V)));
         atomicAdd(&acc[base + 6u], i32(round(k * vel.z * FX_V)));
+        atomicAdd(&acc[base + 11u], i32(round(k * heat * FX_K)));
+        if (ice > 0.0) { atomicAdd(&iacc[u32(x + ni.x * (y + ni.y * (z - z0)))], i32(round(k * ice * FX_K))); }
         atomicMax(&acc[base + 7u], i32(round((R - sqrt(dot(da, da))) * FX_Q)));
       }
     }

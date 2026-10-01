@@ -25,7 +25,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
   let a = A[i];
   if (a.w <= 0.0) { return; }
   let q = clamp(a.xyz / vec3<f32>(gdim(U.g)), vec3<f32>(0.0), vec3<f32>(1.0));
-  let code = (B[i].w + clamp(a.w / max(U.k.y, 1e-3), 0.0, 0.999)) / 3.0;
+  let cls = select(B[i].w, 2.0, B[i].w < 0.0);   // steam bubbles (liq_steam.wgsl) draw as bubbles
+  let code = (cls + clamp(a.w / max(U.k.y, 1e-3), 0.0, 0.999)) / 3.0;
   let slot = atomicAdd(&wctr[1], 1u);
   let v = clamp(B[i].xyz, vec3<f32>(-6.0e4), vec3<f32>(6.0e4));
   packed[slot] = vec4<u32>(pack2x16unorm(q.xy), pack2x16unorm(vec2<f32>(q.z, code)),

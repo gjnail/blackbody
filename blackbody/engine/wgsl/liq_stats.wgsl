@@ -17,9 +17,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
   let i = lin_id(id, nwg);
   if (i >= u32(U.k.x)) { return; }
   let P = parts[i];
-  if (P.p.w < 0.5) { return; }
+  if (!alive(P)) { return; }
   atomicAdd(&out[0], 1u);
-  atomicMax(&out[1], bitcast<u32>(length(P.v.xyz)));
+  atomicMax(&out[1], bitcast<u32>(length(P.v)));
   let c = vec3<u32>(max(floor(P.p.xyz), vec3<f32>(0.0)));
   for (var a = 0; a < 3; a++) {
     atomicMin(&out[2 + a], c[a]);

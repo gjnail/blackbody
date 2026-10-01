@@ -2,7 +2,7 @@
 
 In this tutorial you put a campfire into a short panning shot, match it to the footage, make it flare up, and render a finished composite and a fire element for compositing. Then you render the same shot from the command line, and swap the fire for water.
 
-It takes about 30 minutes. You learn the steps every Blackbody shot goes through; the [README](../README.md) has the full reference for each one.
+It takes about 30 minutes. You learn the steps every Blackbody shot goes through; the [guides](getting-started.md) cover each one in depth.
 
 ![The finished shot: a campfire flaring up on a dusk hillside](tutorial/00_result.png)
 
@@ -10,7 +10,7 @@ It takes about 30 minutes. You learn the steps every Blackbody shot goes through
 
 You need:
 
-- **Blackbody running.** See *Install and run* in the [README](../README.md#install-and-run).
+- **Blackbody running.** See [Install and first steps](getting-started.md).
 - **A shot to work in.** Any clip with some ground in it works. To follow along exactly, make the practice plate the tutorial uses: a 3-second, 1280×720, 30 fps dusk landscape with a slow pan and a sound track. From the Blackbody folder:
 
   ```bash
@@ -27,14 +27,14 @@ Open Blackbody. The first time, a card in the viewer lists the five steps of a s
 
 ![Blackbody on first launch, with the Getting started card](tutorial/01_first_launch.png)
 
-The window has five parts. You will use all of them:
+Across the top, the header holds what you do most: **Import footage**, **Open**, **Save**, undo and redo, and **Render**. Under it, the window has five parts. You will use all of them:
 
 ![The main window, numbered](tutorial/02_window.png)
 
-1. **Library.** The built-in fires, smoke, sparks, steam and liquids. Its **Scene** tab lists what is in the shot (emitters, colliders) and the groups of settings (Combustion, Motion, Composite and so on).
-2. **View bar.** What the viewer shows: the composite, the fire over black, its alpha, and passes such as heat and depth (keys **1** to **7**). *Preview* sets the resolution of the live preview, and *Guides* shows or hides the handles and the simulation box (**G**).
-3. **Viewer.** Your frame. The text at the top left is the simulation grid, the size of one cell, and how long each frame took. It says *refined* once a paused frame has been redrawn at full quality.
-4. **Properties.** The settings of whatever is selected: an emitter, a collider, or a group of settings from the Scene tab. Tick *Advanced* for expert settings.
+1. **Effects and Create.** *Effects* has the built-in fires, smoke, sparks, steam, liquids, seas and skies, in categories, with a search box (**Ctrl+E**). *Create* is for building your own from an empty scene; this tutorial starts from a preset.
+2. **View bar.** What the viewer shows: the composite, the fire over black, its alpha, and passes such as heat and depth (keys **1** to **7**). *Preview* sets the resolution of the live preview, *Guides* shows or hides the handles and the simulation box (**G**), and *Stats* shows the simulation grid, the size of one cell and how long each frame took.
+3. **Viewer.** Your frame. The label at the top left says which view and frame you are looking at.
+4. **Properties.** The settings, on pages picked from the bar down its left side: **Essentials** (the settings that matter most for this kind of effect), **Objects** (the emitters, colliders, lights and fabrics in the shot, and the settings of the one selected), then one page per section: Combustion, Motion, Domain, Composite and so on. The search box at the top (**Ctrl+F**) finds any setting by name. Tick *Advanced* for expert settings.
 5. **Timeline.** Play controls, the current frame, the frame range, and a bar underneath that turns green as frames are simulated and cached. Keyframes show as diamonds.
 
 The status bar at the bottom shows the GPU Blackbody is using.
@@ -43,11 +43,11 @@ The status bar at the bottom shows the GPU Blackbody is using.
 
 Choose **File › Import footage** (**Ctrl+I**) and pick `out/practice_plate.mp4`.
 
-The top right of the view bar now describes the clip: `practice_plate.mp4 · Video · 1280×720 · 30.000 fps · 90 frames · h264 · 8 bit · audio`. The output size, frame rate and frame range (1 to 90) have changed to match it, so there is nothing to set up.
+The header now names the clip, `practice_plate.mp4`; hover over it for the details (`Video · 1280×720 · 30.000 fps · 90 frames · h264 · 8 bit · audio`). The output size, frame rate and frame range (1 to 90) have changed to match it, so there is nothing to set up. (You can also drop a clip onto the window.)
 
 ## 3. Pick a fire
 
-In the **Library**, check that **Keep my shot** (under the thumbnails) is ticked, then double-click **Campfire**.
+In **Effects**, check that **Keep my shot** (under the thumbnails) is ticked, then click **Campfire**.
 
 *Keep my shot* swaps in the new fire but keeps your footage, frame range, output settings and where the fire sits in the frame. Untick it to load a preset exactly as it was made. Like every change in Blackbody, loading a preset can be undone with **Ctrl+Z**.
 
@@ -60,7 +60,7 @@ With *Guides* on, the fire has two handles:
 - **The ring** is the base of the fire. Drag it onto the ground in the left third of the frame, near the bottom.
 - **The square** is the top of the simulation box. Drag it down to make the fire a little smaller in the frame.
 
-To type exact values instead, open the **Scene** tab, click **Camera**, and under *Placement* set **Base X** to 0.30, **Base Y** to 0.90 and **Scale in frame** to 0.65. (The left of the practice plate has the most texture in the ground, which you will need for tracking in step 8.)
+To type exact values instead, click **Camera** in the bar down the left of Properties, and under *Placement* set **Base X** to 0.30, **Base Y** to 0.90 and **Scale in frame** to 0.65. (The left of the practice plate has the most texture in the ground, which you will need for tracking in step 8.)
 
 Two more moves to know:
 
@@ -98,7 +98,7 @@ Pause on a frame and press **1**, **3** and **5** in turn:
 
 ## 7. Make it sit in the shot
 
-In the **Scene** tab, click **Composite** and set:
+In Properties, click **Composite** and set:
 
 | Setting | Value | What it does |
 |---|---|---|
@@ -112,7 +112,10 @@ Then click **Motion** and set **Wind speed** to 0.6 m/s, a light breeze. The fla
 
 A few things make settings quicker to work with:
 
-- **Drag a setting's name** sideways to scrub its value (hold **Shift** for fine steps). **Double-click the name** to reset it.
+- **Drag a number** sideways to change it (hold **Shift** for fine steps), or **click it** to type a value.
+- **Drag a setting's name** to scrub it too. **Double-click the name** for its default.
+- A setting you have changed from the preset shows its name in **orange**; the **↺** next to it puts the preset's value back.
+- **Search** (**Ctrl+F**) finds a setting anywhere: type *haze* or *wind* and change it right there.
 - **Hover** over a setting for a tooltip that explains it, often with typical real-world values.
 - **Too bright or too dim?** *Shading › Fire exposure* is in stops, like a camera.
 
@@ -128,18 +131,20 @@ Choose **Tracking › Track the fire base** (**Ctrl+T**). Blackbody follows the 
 
 If the fire should sit slightly elsewhere, drag the ring: the whole track moves with it. **Tracking › Clear track** removes the track.
 
-The tracker follows one point in 2D, and needs texture under the ring (it tells you if there is too little). For shots with a strong change of perspective, import a camera solve instead with **File › Import camera track (.chan)** (see *Moving shots* in the README).
+The tracker follows one point in 2D, and needs texture under the ring (it tells you if there is too little). For shots with a strong change of perspective, import a camera solve instead with **File › Import camera track (.chan)** (see [Moving shots](scene-import.md#moving-shots)).
 
 ## 9. Make it flare up
 
 Any setting with a **◆** next to it can be animated. Make the fire flare up as if someone threw fuel on it:
 
-1. In the **Scene** tab, click **Combustion**.
+1. In Properties, click **Combustion**.
 2. Go to frame 40 (type it in the frame box at the left of the timeline, or use the arrow keys).
 3. Click the **◆** next to **Master fuel**. The diamond fills in: there is a key at 1.00 on this frame.
 4. Go to frame 55 and set **Master fuel** to 2.5. Because the setting is now animated, this adds a second key by itself.
 
 ![Master fuel keyed on frames 40 and 55, with the keys on the timeline](tutorial/07_keyframes.png)
+
+The keys also show in the animation editor (**Animation**, at the right of the timeline), where you can drag them in time and change how they ease.
 
 Play it: after frame 40 the fire starts to swell. Fuel takes a moment to burn and rise, so the flames keep growing after the last key and roar by the end of the shot. *Master fuel* scales every emitter at once, which makes it the quickest way to ignite, grow or put out a fire. Right-click a **◆** to remove a key or clear the animation.
 
@@ -192,15 +197,15 @@ The output type follows the file extension: `.mp4` is an H.264 composite over th
 blackbody render out/campfire_shot.bbfire -o out/wedge/soot15.####.exr --set combustion.soot=1.5
 ```
 
-To find a setting's command-line name, `blackbody settings combustion` lists every setting in a section with its default, typical range and the name you see in the app (*Soot yield* is `combustion.soot`). A misspelt name stops the render before it starts, with a suggestion. `blackbody presets` lists the presets. See *Command line* in the README for the rest.
+To find a setting's command-line name, `blackbody settings combustion` lists every setting in a section with its default, typical range and the name you see in the app (*Soot yield* is `combustion.soot`). A misspelt name stops the render before it starts, with a suggestion. `blackbody presets` lists the presets. See [Command line and render farms](command-line.md) in the README for the rest.
 
 ## 12. Swap the fire for water
 
-Back in the app, go to the **Library**, scroll past the fires, and double-click **Fountain jet** (with *Keep my shot* still ticked).
+Back in the app, click **Water** at the top of **Effects** (or type *fountain* in its search box), then click **Fountain jet** (with *Keep my shot* still ticked).
 
 ![A fountain jet in the same shot, with the Liquid look settings](tutorial/09_liquid.png)
 
-A jet of water now rises from the same spot, breaks up at the top and rains back down, wetting the ground. The placement, track and render settings carried over. The Scene tab changes to match: emitters become *Sources*, and **Liquid** (how it behaves) and **Liquid look** (how it looks) take the place of the fire settings. Try these in **Liquid look**:
+A jet of water now rises from the same spot, breaks up at the top and rains back down, wetting the ground. The placement, track and render settings carried over. Properties changes to match: emitters become *Sources*, Essentials shows the liquid's main settings, and **Liquid** (how it behaves) and **Liquid look** (how it looks) take the place of the fire sections. Try these in **Liquid look**:
 
 - **Colour** and **Clarity** for tea, muddy water or wine
 - **Wet ground**: how much the ground darkens where the water has been
@@ -210,15 +215,19 @@ Liquids are simulated as particles, often millions of them, so they are slower t
 
 ## What next
 
-You have been through every step of a shot: import, pick, place, match, track, animate and render. From here, the [README](../README.md) covers:
+You have been through every step of a shot: import, pick, place, match, track, animate and render. From here, the guides cover:
 
-- **Presets:** fires, smoke, sparks, steam and liquids, each a starting point at real-world size
-- **Swirl, sparks, steam and more:** fire whirls, dousing, spreading fire, burning meshes, coloured flames
-- **Moving shots:** camera solves from Nuke, Blender, SynthEyes, 3DEqualizer and PFTrack
-- **Outputs:** premultiplied or straight alpha, heat distortion in Nuke and After Effects, OpenVDB volumes in Blender and Houdini
-- **Performance and memory:** resolution, GPU memory and render times
+- [Presets](presets.md): fires, smoke, sparks, steam, liquids, seas and skies, each a starting point at real-world size
+- [Fire, smoke and sparks](fire.md): fire whirls, dousing, spreading fire, burning meshes, coloured flames
+- [Liquids](liquids.md), [the sea](ocean.md), [lava](lava.md), [ice and steam](heat.md), [fabric](fabric.md) and [weather](weather.md)
+- [Fitting it into your footage](compositing.md): holdouts, fire light, lens, haze and noise
+- [Moving shots and scene import](scene-import.md): camera solves from Nuke, Blender, SynthEyes, 3DEqualizer and PFTrack, and USD scenes
+- [Outputs](outputs.md): premultiplied or straight alpha, heat distortion in Nuke and After Effects, OpenVDB volumes in Blender and Houdini
+- [Performance and memory](performance.md): resolution, GPU memory and render times
 
-To keep a fire you have tuned, click **Save as preset…** under the Library. It appears at the end of the Library, with a thumbnail of your shot.
+To keep a fire you have tuned, click **Save as preset…** under Effects. It appears under **Mine**, with a thumbnail of your shot.
+
+To build an effect yourself, open **Create** (**Ctrl+N**): start an empty scene and drag in fire, liquids, fabric, weather, objects and lights. See [Build your own](getting-started.md#build-your-own).
 
 ## If something goes wrong
 
@@ -229,4 +238,4 @@ To keep a fire you have tuned, click **Save as preset…** under the Library. It
 | The fire slides over the ground | The camera moves: track it (step 8) or import a camera solve. |
 | "Too little detail at this spot to track" | Move the ring onto a textured spot or a corner, track, then drag the ring back. |
 | The render runs out of GPU memory | Lower *Simulation resolution* in the Render dialog. |
-| Blackbody uses the wrong GPU | See *Troubleshooting* in the README. |
+| Blackbody uses the wrong GPU | See [Troubleshooting](troubleshooting.md). |

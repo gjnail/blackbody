@@ -9,7 +9,7 @@ import wgpu
 
 from . import camera as cam
 from .gpu import GPU, BU, SS, Uniforms, load_wgsl
-from .solver import pack_emitters
+from .solver import pack_colliders, pack_emitters
 
 
 @dataclass
@@ -47,7 +47,8 @@ class Embers:
         self.cursor = 0
         self.accum = 0.0
         self.seed = 0
-        self.k_update = gpu.kernel('embers.wgsl', ['tex3d', 'tex3d', 'smp', 'utex3d', 'utex3d', 'buf', 'buf', 'buf', 'buf', 'buf'],
+        self.k_update = gpu.kernel('embers.wgsl', ['tex3d', 'tex3d', 'smp', 'utex3d', 'utex3d', 'buf', 'buf', 'buf', 'buf', 'buf',
+                                                   'buf', 'utex3d', 'rbuf', 'buf'],
                                    workgroup=(64, 1, 1))
         dev = gpu.device
         vis = SS.VERTEX | SS.FRAGMENT
@@ -59,6 +60,7 @@ class Embers:
             {'binding': 4, 'visibility': vis, 'sampler': {'type': 'filtering'}},
             {'binding': 5, 'visibility': vis, 'buffer': {'type': 'read-only-storage'}},
             {'binding': 6, 'visibility': vis, 'texture': {'sample_type': 'float', 'view_dimension': '2d'}},
+            {'binding': 7, 'visibility': SS.FRAGMENT, 'buffer': {'type': 'storage'}},
         ])
         module = dev.create_shader_module(code=load_wgsl('embers_draw.wgsl'), label='embers_draw')
         add = {'color': {'src_factor': 'one', 'dst_factor': 'one', 'operation': 'add'},
@@ -114,10 +116,23 @@ class Embers:
         d = np.asarray(prm.direction, float)
         d = d / n if (n := float(np.linalg.norm(d))) > 1e-6 else np.array([0.0, 1.0, 0.0])
         u.v3(d, math.radians(max(0.0, min(180.0, prm.cone))))
-        u.v4(prm.bounce, prm.friction, 1.0 if (prm.collide and solver.colliders) else 0.0)
-        pack_emitters(u, emitters, ambient_k, meshes=solver.meshes)
+        # hot embers landing on a burnable floor can start spot fires there (solver.spots, read by the burn step)
+        sp = solver._prm.spread
+        spots = getattr(solver, 'spots', None)
+        spotting = spots is not None and sp.spotting > 0
+        u.v4(prm.bounce, prm.friction, 1.0 if (prm.collide and solver.colliders) else 0.0, 1.0 if spotting else 0.0)
+        pack_emitters(u, emitters, ambient_k, sp.spot_temp, meshes=solver.meshes)
+        # ... and on burnable colliders (their object-burn atlas)
+        spots_obj = getattr(solver, 'spots_obj', None)
+        on_obj = spots_obj is not None and sp.spotting > 0 and bool(solver.burn_obj)
+        u.v4(*(solver.burn_obj[0].size if on_obj else (1, 1, 1)), 1.0 if on_obj else 0.0)
+        pack_colliders(u, solver.colliders, solver.meshes)
         b.run(self.k_update, [solver.vel[0], solver.scal[0], self.gpu.linear, solver.sdf, solver.meshes.atlas,
-                              self.A, self.B, self.C, self.D, self.E], u, (self.count, 1, 1))
+                              self.A, self.B, self.C, self.D, self.E, spots if spotting else solver._no_spots,
+                              solver.burn_obj[0] if on_obj else solver._dummy['burn_r'],
+                              solver.burn_slots if on_obj else solver._no_slots,
+                              spots_obj if on_obj else solver._no_spots],
+              u, (self.count, 1, 1))
         self.cursor = (self.cursor + spawn) % self.count
         self.seed += 1
 
@@ -125,7 +140,12 @@ class Embers:
              size, fps):
         if not prm.enabled or not self.count:
             return
-        key = (id(renderer.bb), id(self.A), id(renderer.mask))
+        w, h = size
+        deep = renderer.deep_n > 0
+        edeep = renderer.ember_deep_buffer(w, h) if deep else renderer._no_deep
+        if deep:
+            renderer._ember_deep_used = True
+        key = (id(renderer.bb), id(self.A), id(renderer.mask), id(edeep))
         if self._bg is None or self._bg_key != key:
             self._bg = self.gpu.device.create_bind_group(layout=self.layout0, entries=[
                 {'binding': 0, 'resource': {'buffer': self.A.buf, 'offset': 0, 'size': self.A.size}},
@@ -135,6 +155,7 @@ class Embers:
                 {'binding': 4, 'resource': self.gpu.linear},
                 {'binding': 5, 'resource': {'buffer': self.E.buf, 'offset': 0, 'size': self.E.size}},
                 {'binding': 6, 'resource': renderer.mask.view},
+                {'binding': 7, 'resource': {'buffer': edeep.buf, 'offset': 0, 'size': edeep.size}},
             ])
             self._bg_key = key
         w, h = size
@@ -145,7 +166,7 @@ class Embers:
         u = (Uniforms().m4(camstate.view_proj).m4(fire.local_to_world())
              .v4(w, h, shutter, gain)
              .v4(look.ambient_k, look.flame_k, look.dynamic_range, prm.min_width_px)
-             .v4(renderer.log_y_ref(look.flame_k), prm.fade_in, focal_px))
+             .v4(renderer.log_y_ref(look.flame_k), prm.fade_in, focal_px, 1.0 if deep else 0.0))
         off = b.uniform_offset(u)
         rp = b.render_pass(color_attachments=[
             {'view': renderer.beauty.view, 'load_op': 'load', 'store_op': 'store'},
@@ -155,6 +176,23 @@ class Embers:
         rp.set_bind_group(1, self.gpu.arena.group, [off])
         rp.draw(4, self.count)
         rp.end()
+
+    def save_state(self):
+        """Every particle and the spawn bookkeeping (for a checkpoint)."""
+        if not self.count:
+            return {'count': 0}
+        bufs = [np.frombuffer(self.gpu.read_buffer(x), np.float32).reshape(-1, 4) for x in (self.A, self.B, self.C, self.D, self.E)]
+        return {'count': self.count, 'particles': np.stack(bufs), 'cursor': self.cursor, 'accum': self.accum, 'seed': self.seed}
+
+    def load_state(self, st):
+        n = int(st.get('count', 0))
+        if not n:
+            self.reset()
+            return
+        self.ensure(n)
+        for buf, data in zip((self.A, self.B, self.C, self.D, self.E), st['particles']):
+            self.gpu.write_buffer(buf, np.ascontiguousarray(data, np.float32))
+        self.cursor, self.accum, self.seed = int(st['cursor']), float(st['accum']), int(st['seed'])
 
     def cached_buffers(self):
         """The particle state a cached frame needs to draw its embers again."""

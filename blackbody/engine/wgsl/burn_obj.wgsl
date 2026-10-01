@@ -2,6 +2,8 @@
 // its own frame (a grid of the simulation's cell size around it), so the burn travels with the
 // object when it moves or turns. `init` marks the cells just outside its surface and lays out
 // patchy fuel; `main` steps them (see burn_common.wgsl), sampling the gas where the cell is now.
+// Hot embers that hit a burnable collider are counted per atlas cell (embers.wgsl, `spots`), and
+// each one can start a spot fire there.
 //!include common.wgsl
 //!include noise.wgsl
 //!include meshsdf.wgsl
@@ -14,6 +16,7 @@ struct Params {
   sp: vec4<f32>,    // catch temperature, 1 / catch time (1/s), creep speed (m/s), 1 / burn time (1/s)
   sp2: vec4<f32>,   // 1 / smoulder time (1/s), water on (1/0), how fast water puts a surface out (1/s), atlas depth (cells)
   pat: vec4<f32>,   // coverage (0..1), patch frequency (1/m), seed, _
+  sp3: vec4<f32>,   // 1 / drying time (1/s, 0 = never soaked), chance that a landing ember starts a spot fire, step seed, _
   cnt: vec4<f32>,   // emitter count
   em: array<Emitter, MAX_EMITTERS>,
   ccnt: vec4<f32>,  // collider count
@@ -27,6 +30,7 @@ struct Params {
 @group(0) @binding(4) var water: texture_3d<f32>;
 @group(0) @binding(5) var<storage, read> slots: array<BurnSlot>;
 @group(0) @binding(6) var lin: sampler;
+@group(0) @binding(7) var<storage, read_write> spots: array<atomic<u32>>;  // embers landed per atlas cell
 @group(1) @binding(0) var<uniform> U: Params;
 
 // Which collider owns atlas cell c, and c's position in that collider's frame (m); ok = false if none.
@@ -50,7 +54,7 @@ fn owner_of(c: vec3<i32>) -> Owner {
   return o;
 }
 
-fn world_at(k: Collider, q: vec3<f32>) -> vec3<f32> { return k.a.xyz + yaw_to_world(q, k.b.w); }
+fn world_at(k: Collider, q: vec3<f32>) -> vec3<f32> { return col_to_world(k, q); }
 
 @compute @workgroup_size(8, 8, 4)
 fn init(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -83,7 +87,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let c = vec3<i32>(id);
   let dims = vec3<i32>(textureDimensions(dst));
   if (any(c >= dims)) { return; }
-  let b = textureLoad(src, c, 0);
+  var b = textureLoad(src, c, 0);
   if (b.z < 0.5) {
     textureStore(dst, c, b);
     return;
@@ -92,6 +96,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (!o.ok) {
     textureStore(dst, c, b);
     return;
+  }
+  if (U.sp3.y > 0.0) {
+    let hits = atomicExchange(&spots[u32(c.x) + u32(c.y) * u32(dims.x) + u32(c.z) * u32(dims.x) * u32(dims.y)], 0u);
+    if (hits > 0u && b.y >= 0.0 && b.y < 1.0 && b.x > 0.0) {
+      // each hot ember that landed here has this chance of setting it alight
+      let p = 1.0 - pow(1.0 - clamp(U.sp3.y, 0.0, 1.0), f32(min(hits, 64u)));
+      if (rand1(u32(c.x) * 7919u + u32(c.y) * 3571u + u32(c.z) * 104729u + u32(U.sp3.z) * 15731u) < p) { b.y = 1.0; }
+    }
   }
   let k = U.col[o.k];
   let s = slots[i32(k.m2.w)];
@@ -122,5 +134,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (burn_alight(textureLoad(src, q, 0))) { nb = max(nb, 1.0 / length(vec3<f32>(off))); }
     }
   }
-  textureStore(dst, c, burn_step(b, T, nb, wet, U.g.bc.w, s.dims.w, U.sp, U.sp2.x));
+  textureStore(dst, c, burn_step(b, T, nb, wet, U.g.bc.w, s.dims.w, U.sp, U.sp2.x, U.sp3.x));
 }

@@ -4,7 +4,7 @@
 
 // The atlas cell of collider k (region s) under world point w, or (-1, -1, -1) outside the region.
 fn obj_burn_cell(k: Collider, s: BurnSlot, w: vec3<f32>) -> vec3<i32> {
-  let q = yaw_to_local(w - k.a.xyz, k.b.w);
+  let q = col_to_local(k, w);
   let ci = vec3<i32>(floor((q - s.lo.xyz) / s.dims.w));
   if (any(ci < vec3<i32>(0)) || any(ci >= vec3<i32>(s.dims.xyz))) { return vec3<i32>(-1); }
   return vec3<i32>(ci.x, ci.y, ci.z + i32(s.lo.w));

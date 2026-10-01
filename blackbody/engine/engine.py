@@ -3,7 +3,9 @@
 Simulation is stateful and only moves forward. Every simulated frame's scalar fields (and ember
 state) go into a RAM cache, so scrubbing back and changing the look, lighting, camera or
 composite re-renders from the cache without re-simulating. Anything that changes the simulation
-itself invalidates the cache.
+itself invalidates the cache. With Domain › Disk cache the frames also go to disk (io/simcache.py),
+with a checkpoint of the whole simulation every few frames, so a simulation survives closing the
+app, resumes from its last checkpoint, and can be rendered on other machines.
 """
 from __future__ import annotations
 
@@ -16,9 +18,11 @@ from dataclasses import dataclass
 import numpy as np
 
 from . import camera as cam
+from .cloth import STEPS_PER_SECOND, Cloth
 from .embers import Embers
 from .gpu import GPU, TU, Uniforms
 from .both_engine import BothEngine
+from .cloud_engine import CloudEngine
 from .liquid_engine import LiquidEngine
 from .renderer import Renderer, SurfaceInputs
 from .solver import Solver
@@ -27,18 +31,32 @@ log = logging.getLogger('blackbody.engine')
 
 
 class FrameCache:
-    """Per-frame simulation snapshots (scalars as float16, plus ember state) under a memory budget."""
+    """Per-frame simulation snapshots (scalars as float16, plus ember state) under a memory budget,
+    optionally backed by a disk cache (SimCache) that also holds checkpoints."""
 
     def __init__(self, budget_bytes=4 << 30):
         self.budget = int(budget_bytes)
         self.items = OrderedDict()
         self.bytes = 0
+        self.disk = None
+
+    def attach(self, disk):
+        """Back the cache with a SimCache (or None)."""
+        if self.disk is not None and self.disk is not disk:
+            self.disk.flush()
+        self.disk = disk
 
     def clear(self):
         self.items.clear()
         self.bytes = 0
 
     def put(self, frame, entry):
+        if self.disk is not None:
+            self.disk.put(frame, {k: v for k, v in entry.items() if not k.startswith('_')})
+            if 'state' in entry:
+                self.disk.mark_checkpoint(frame)
+        # checkpoints (the whole solver state) stay on disk only
+        entry = {k: v for k, v in entry.items() if k not in ('state', 'ember_state')}
         size = sum(a.nbytes for a in entry.values() if isinstance(a, np.ndarray))
         if frame in self.items:
             self.bytes -= self.items.pop(frame)['_size']
@@ -53,13 +71,23 @@ class FrameCache:
         e = self.items.get(frame)
         if e is not None:
             self.items.move_to_end(frame)
-        return e
+            return e
+        if self.disk is not None and frame in self.disk:
+            e = self.disk.get(frame)
+            if e is not None:
+                disk, self.disk = self.disk, None   # already on disk: only keep it in RAM
+                self.put(frame, e)
+                self.disk = disk
+                return self.items.get(frame)
+        return None
 
     def frames(self):
+        if self.disk is not None:
+            return sorted(set(self.items) | set(self.disk.frames()))
         return sorted(self.items)
 
     def __contains__(self, frame):
-        return frame in self.items
+        return frame in self.items or (self.disk is not None and frame in self.disk)
 
 
 @dataclass
@@ -76,6 +104,11 @@ class VolumeView:
     vel_k: int = 1              # cells of this volume per velocity cell (the upres factor)
     burn: object = None         # burnable floor (for scorch)
     burn_obj: object = None     # object-burn atlas (for scorch on burnable colliders)
+    stain: object = None        # soot left on surfaces (simulation grid)
+    grid: tuple = None          # the simulation grid's dims (the volume may be finer, with upres)
+    cell: float = 0.0           # the simulation grid's cell size (m)
+    stain_obj: object = None    # soot on colliders, each in its own frame
+    cloth: object = None        # fabric: 'live', or a cached frame's arrays (Cloth.snapshot)
 
 
 def halton(i, b):
@@ -87,12 +120,13 @@ def halton(i, b):
     return r
 
 
-class Engine(LiquidEngine, BothEngine):
+class Engine(LiquidEngine, BothEngine, CloudEngine):
     def __init__(self, gpu: GPU | None = None, cache_bytes=4 << 30):
         self.gpu = gpu or GPU()
         self.solver = Solver(self.gpu)
         self.renderer = Renderer(self.gpu)
         self.embers = Embers(self.gpu)
+        self.cloth = Cloth(self.gpu)
         self.cache = FrameCache(cache_bytes)
         self.sim_frame = None
         self.sig = None
@@ -105,7 +139,14 @@ class Engine(LiquidEngine, BothEngine):
         self._rchem = None
         self._rburn = None
         self._rburn_obj = None
+        self._rvel = None
+        self._rstain = None
         self._acc2 = None
+        self._disk_key = None
+        self.base_dims = None
+        self._ocio_key = None
+        self._ocio_error = None
+        self.cache_readonly = False   # render farm machines read a shared disk cache without writing to it
         self._zero_vel = self.gpu.texture3d((4, 4, 4), self.gpu.vel_format, 'zero-vel')
         self.gpu.upload(self._zero_vel, np.zeros((4, 4, 4, 4), np.float32 if self.gpu.vel_format == 'rgba32float' else np.float16))
         g = self.gpu
@@ -122,20 +163,53 @@ class Engine(LiquidEngine, BothEngine):
         A new grid layout always restarts the simulation. Other simulation changes restart it too,
         unless `soft` is set: then the running simulation carries on with the new settings (live
         tweaking), and only the cache, now stale, is dropped."""
+        if scene.kind != 'fire':
+            self.solver.cloth_hook = None   # fabric is simulated in fire scenes only
         if scene.kind == 'liquid':
-            return self._prepare_liquid(scene, final, soft)
-        if scene.kind == 'both':
-            return self._prepare_both(scene, final, soft)
+            out = self._prepare_liquid(scene, final, soft)
+        elif scene.kind == 'both':
+            out = self._prepare_both(scene, final, soft)
+        elif scene.kind == 'cloud':
+            out = self._prepare_cloud(scene, final, soft)
+        else:
+            out = self._prepare_fire(scene, final, soft)
+        self._attach_disk(scene, final)
+        return out
+
+    def _attach_disk(self, scene, final):
+        """Back the frame cache with the scene's disk cache (Domain › Disk cache), or detach it."""
+        d = scene.data['domain']
+        if not d.get('disk_cache'):
+            self.cache.attach(None)
+            self._disk_key = None
+            return
+        from pathlib import Path
+        from ..io.simcache import SimCache, default_root
+        folder = (Path(d['cache_dir']) if d.get('cache_dir') else default_root(scene.path)) / ('final' if final else 'preview')
+        sig = scene.sim_signature(final)
+        key = (str(folder), sig, self.cache_readonly)
+        if key != self._disk_key or self.cache.disk is None:
+            try:
+                self.cache.attach(SimCache(folder, sig, readonly=self.cache_readonly))
+                self._disk_key = key
+            except OSError as ex:
+                log.warning('Disk cache unavailable (%s): %s', folder, ex)
+                self.cache.attach(None)
+                self._disk_key = None
+
+    def _prepare_fire(self, scene, final=False, soft=False):
         if self.kind != 'fire':
             self.kind = 'fire'
             self.sig = None
         sig = scene.sim_signature(final)
         dims, h, origin = scene.sim_layout(final)
-        meshes = [scene.mesh_path(d['mesh']) for d in scene.emitters + scene.colliders
-                  if d['enabled'] and d['shape'] == 'mesh' and d['mesh']]
-        self.solver.set_meshes(meshes, scene.data['domain']['mesh_resolution'])
-        changed = self.solver.configure(dims, h, origin, scene.features(), scene.data['render']['upres'] if final else 1)
+        self.solver.set_meshes(scene.mesh_items(scene.start), scene.data['domain']['mesh_resolution'])
+        changed = self.solver.configure(dims, h, origin, scene.features(), scene.upres_for(final))
+        self.base_dims = dims
         self.solver.set_colliders(scene.colliders_gpu(scene.start))
+        if self.cloth.configure(scene.fabric_specs()):
+            changed = True
+        self.solver.cloth_hook = self.cloth.hook if self.cloth.active else None
         if changed or final != self.final or self.sig is None:
             self.sig = sig
             self.final = final
@@ -160,8 +234,14 @@ class Engine(LiquidEngine, BothEngine):
             self._reset_both()
             self.sim_frame = None
             return
+        if self.kind == 'cloud':
+            self._reset_cloud()
+            self.sim_frame = None
+            return
+        self.solver.restore_base()
         self.solver.reset()
         self.embers.reset()
+        self.cloth.reset()
         self.sim_frame = None
 
     def invalidate(self):
@@ -183,6 +263,8 @@ class Engine(LiquidEngine, BothEngine):
             return self._step_liquid(scene, frame)
         if self.kind == 'both':
             return self._step_both(scene, frame)
+        if self.kind == 'cloud':
+            return self._step_cloud(scene, frame)
         t0 = time.perf_counter()
         fps = scene.fps
         fdt = scene.v('domain', 'time_scale', frame) / fps
@@ -190,37 +272,72 @@ class Engine(LiquidEngine, BothEngine):
         prm = scene.solver_params(frame)
         ep = scene.ember_params(frame)
         look = scene.look(frame)
-        n = self.solver.substeps_for(fdt, cfl=d['cfl'], lo=d['substeps_min'], hi=d['substeps_max'])
+        n = self.solver.substeps_for(fdt, cfl=d['cfl'], lo=d['substeps_min'], hi=scene.substep_cap(frame, self.solver.h))
         cam_g = self._cam_grid(scene, frame) if ep.enabled else (0.0, 0.0, 0.0)
         moving = scene.colliders_animated()
+        # deforming meshes: the frames either side of this step in the atlas
+        self.solver.set_meshes(scene.mesh_items(frame - 1), d['mesh_resolution'])
+        cloth = self.cloth.active
+        if cloth and not self.cloth.placed:
+            self.cloth.place(scene.fabrics_at(frame - 1), look.ambient_k)
+        self.cloth.prepare_frame(self.solver)   # (also clears the solver's steam-off-cloth flag without cloth)
+        cloth_steps = max(1, int(math.ceil(fdt * STEPS_PER_SECOND / n)))
         with self.gpu.batch() as b:
             for i in range(n):
                 # emitters and colliders move within the frame, so fast ones leave a continuous trail
                 fs = frame - 1 + (i + 0.5) / n
-                ems = scene.emitters_gpu(fs)
+                ems = scene.emitters_gpu(fs, substeps=n)
                 cols = scene.colliders_gpu(fs) if moving else None
                 self.solver.step(b, fdt / n, prm, ems, cols)
+                if cloth:
+                    # fabric moves in the air just stepped, then spreads onto the gas for the next substep
+                    self.cloth.step(b, self.solver, fdt / n, scene.fabrics_at(fs + 0.5 / n), prm, look,
+                                    self.solver.colliders, self.solver.meshes, steps=cloth_steps)
+                    self.cloth.splat(b, self.solver, look)
                 if ep.enabled:
                     ember_ems = scene.emitters_gpu(fs, embers_only=True)
                     if ember_ems or self.embers.count:
                         self.embers.step(b, self.solver, ep, ember_ems, fdt / n, cam_g, look.smoke_density, look.ambient_k)
         self.solver.measure()
+        if d.get('grow'):
+            self._grow(scene, prm)
         self.sim_frame = frame
         self.last_substeps = n
         self.last_step_ms = (time.perf_counter() - t0) * 1000.0
 
-    def snapshot(self):
+    def _grow(self, scene, prm):
+        """Domain › Grow to fit: enlarge the box on each open side the smoke comes near."""
+        s = self.solver
+        base = np.asarray(s.base[0] if s.base else s.dims)
+        limit = np.maximum(base, np.floor(base * max(1.0, scene.data['domain']['grow_limit']) / 8) * 8).astype(int)
+        margin = int(prm.sponge) + 4
+        step = max(8, int(round(max(s.dims) * 0.125 / 8)) * 8)
+        lo, hi = s.growth_needed(margin, step, limit, prm)
+        if lo.any() or hi.any():
+            old = s.dims
+            s.grow(lo, hi)
+            log.info('Domain grew from %s to %s cells', old, s.dims)
+
+    def snapshot(self, scene=None):
         if self.kind == 'liquid':
             return self._snapshot_liquid()
         if self.kind == 'both':
-            entry = self._snapshot_fire()
-            entry.update(self._snapshot_liquid())
-            return entry
-        return self._snapshot_fire()
+            return self._snapshot_both(scene)
+        if self.kind == 'cloud':
+            return self._snapshot_cloud()
+        return self._snapshot_fire(scene)
 
-    def _snapshot_fire(self):
+    def _snapshot_fire(self, scene=None):
         s = self.solver
-        entry = {'scal': s.read_scalars_fine(), 'time': s.time, 'upres': s.upres}
+        entry = {'scal': s.read_scalars_fine(), 'time': s.time, 'upres': s.upres,
+                 'dims': list(s.dims), 'origin': list(s.origin), 'h': s.h}
+        if scene is None or scene.data['render'].get('motion_blur', True):
+            # face velocities at half precision, so frames shown from the cache get motion blur too
+            entry['vel'] = s.read_velocity()
+        if s.stain:
+            entry['stain'] = s.read_stain().astype(np.float16)
+        if s.stain_obj is not None:
+            entry['stain_obj'] = s.read_stain_obj().astype(np.float16)
         if s.burn:
             entry['burn0'] = np.ascontiguousarray(s.read_burn()[:, 0:1])  # the floor: only its bottom layer
         if s.burn_obj:
@@ -232,6 +349,11 @@ class Engine(LiquidEngine, BothEngine):
         if self.embers.count:
             entry['embers'] = np.stack([
                 np.frombuffer(self.gpu.read_buffer(buf), np.float32).reshape(-1, 4) for buf in self.embers.cached_buffers()])
+        if self.cloth.active:
+            c = self.cloth.snapshot()
+            if c is not None:
+                for k, v in c.items():
+                    entry['cloth_' + k] = v
         return entry
 
     def simulate_to(self, scene, frame, progress=None, cancelled=None, cache=True):
@@ -240,6 +362,8 @@ class Engine(LiquidEngine, BothEngine):
         if self.sim_frame is None or frame < self.sim_frame:
             self.reset()
             self.sim_frame = start - self.preroll_frames(scene) - 1
+            if cache and self.kind == 'fire':
+                self._resume(scene, frame)
         first = self.sim_frame
         total = max(1, frame - first)
         while self.sim_frame < frame:
@@ -247,10 +371,57 @@ class Engine(LiquidEngine, BothEngine):
                 return False
             self.step_frame(scene, self.sim_frame + 1)
             if cache and self.sim_frame >= start:
-                self.cache.put(self.sim_frame, self.snapshot())
+                entry = self.snapshot(scene)
+                if self._checkpoint_due(scene, self.sim_frame):
+                    entry['state'] = self.solver.save_state()
+                    entry['ember_state'] = self.embers.save_state()
+                    cst = self.cloth.save_state()
+                    if cst is not None:
+                        entry['cloth_state'] = cst
+                self.cache.put(self.sim_frame, entry)
             if progress is not None:
                 progress((self.sim_frame - first) / total, self.sim_frame)
         return True
+
+    def _checkpoint_due(self, scene, frame):
+        disk = self.cache.disk
+        if disk is None or self.kind != 'fire':
+            return False
+        every = max(1, int(scene.data['domain'].get('checkpoint_every', 10)))
+        return (frame - scene.start) % every == 0 or frame == scene.end
+
+    def _resume(self, scene, frame):
+        """Carry on from the latest checkpoint in the disk cache at or before `frame`, if there is one."""
+        disk = self.cache.disk
+        if disk is None:
+            return False
+        for c in reversed(disk.checkpoints()):
+            if c > frame or c < scene.start:
+                continue
+            entry = disk.get(c)
+            if not entry or 'state' not in entry:
+                continue
+            st = entry['state']
+            s = self.solver
+            s._prm = scene.solver_params(c)
+            base = s.base
+            if tuple(st['dims']) != tuple(s.dims):
+                # the domain had grown by then: take its layout, then the state
+                s.base = None
+                s.configure(tuple(st['dims']), st['h'], tuple(st['origin']), dict(s.features), s.upres)
+                s.base = base
+            s.set_meshes(scene.mesh_items(c), scene.data['domain']['mesh_resolution'])
+            s.colliders = []
+            s.set_colliders(scene.colliders_gpu(c))
+            s.load_state(st)
+            if 'ember_state' in entry:
+                self.embers.load_state(entry['ember_state'])
+            if self.cloth.active and not self.cloth.load_state(entry.get('cloth_state')):
+                continue   # the fabric changed since: this checkpoint cannot carry on
+            self.sim_frame = c
+            log.info('Resumed the simulation from the checkpoint at frame %d', c)
+            return True
+        return False
 
     # -- rendering -------------------------------------------------------------------------------
 
@@ -265,17 +436,48 @@ class Engine(LiquidEngine, BothEngine):
             scal = s.scal_fine[0] if k > 1 else s.scal[0]
             return VolumeView([scal], [s.vel[0]], dims_v, s.h / k, s.origin,
                               [s.aux[0]] if s.aux else None, [s.chem[0]] if s.chem else None, s.time, k,
-                              s.burn[0] if s.burn else None, s.burn_obj[0] if s.burn_obj else None), True
+                              s.burn[0] if s.burn else None, s.burn_obj[0] if s.burn_obj else None,
+                              s.stain, tuple(s.dims), s.h, s.stain_obj, 'live' if self.cloth.active else None), True
         entry = self.cache.get(frame)
         if entry is None:
             return None, False
         k = entry.get('upres', 1)
-        dims_v = tuple(d * k for d in s.dims)
+        # the frame's own layout: a growing domain may have been smaller then
+        gd = tuple(int(x) for x in entry.get('dims', s.dims))
+        h = float(entry.get('h', s.h))
+        origin = tuple(float(x) for x in entry.get('origin', s.origin))
+        dims_v = tuple(d * k for d in gd)
         self._rscal = self._cached_tex(self._rscal, dims_v, 'cached-scal')
         self.gpu.upload(self._rscal, entry['scal'])
+        vel = self._zero_vel
+        if 'vel' in entry:
+            vd = tuple(d + 1 for d in gd)
+            if self._rvel is None or self._rvel.size != vd:
+                if self._rvel is not None:
+                    self._rvel.destroy()
+                self._rvel = self.gpu.texture3d(vd, self.gpu.vel_format, 'cached-vel')
+            self.gpu.upload(self._rvel, entry['vel'])
+            vel = self._rvel
+        stain = stain_obj = None
+        if 'stain' in entry:
+            if self._rstain is None or self._rstain.size != gd:
+                if self._rstain is not None:
+                    self._rstain.destroy()
+                self._rstain = self.gpu.texture3d(gd, 'r32float', 'cached-stain')
+            self.gpu.upload(self._rstain, entry['stain'].astype(np.float32))
+            stain = self._rstain
+        if 'stain_obj' in entry:
+            so = entry['stain_obj']
+            size = (so.shape[2], so.shape[1], so.shape[0])
+            if getattr(self, '_rstain_obj', None) is None or self._rstain_obj.size != size:
+                if getattr(self, '_rstain_obj', None) is not None:
+                    self._rstain_obj.destroy()
+                self._rstain_obj = self.gpu.texture3d(size, 'r32float', 'cached-stain-obj')
+            self.gpu.upload(self._rstain_obj, so.astype(np.float32))
+            stain_obj = self._rstain_obj
         burn = burn_obj = None
         if 'burn0' in entry:
-            self._rburn = self._cached_tex(self._rburn, (s.dims[0], 1, s.dims[2]), 'cached-burn')
+            self._rburn = self._cached_tex(self._rburn, (gd[0], 1, gd[2]), 'cached-burn')
             self.gpu.upload(self._rburn, entry['burn0'])
             burn = self._rburn
         if 'burn_obj' in entry:
@@ -285,18 +487,21 @@ class Engine(LiquidEngine, BothEngine):
             burn_obj = self._rburn_obj
         aux = chem = None
         if 'aux' in entry:
-            self._raux = self._cached_tex(self._raux, s.dims, 'cached-aux')
+            self._raux = self._cached_tex(self._raux, gd, 'cached-aux')
             self.gpu.upload(self._raux, entry['aux'])
             aux = [self._raux]
         if 'chem' in entry:
-            self._rchem = self._cached_tex(self._rchem, s.dims, 'cached-chem')
+            self._rchem = self._cached_tex(self._rchem, gd, 'cached-chem')
             self.gpu.upload(self._rchem, entry['chem'])
             chem = [self._rchem]
-        if 'embers' in entry and self.embers.count == entry['embers'].shape[1]:
-            for buf, data in zip(self.embers.cached_buffers(), entry['embers']):
-                self.gpu.write_buffer(buf, data)
-        return VolumeView([self._rscal], [self._zero_vel], dims_v, s.h / k, s.origin, aux, chem, entry.get('time', s.time), k,
-                          burn, burn_obj), False
+        if 'embers' in entry:
+            self.embers.ensure(entry['embers'].shape[1])
+            if self.embers.count == entry['embers'].shape[1]:
+                for buf, data in zip(self.embers.cached_buffers(), entry['embers']):
+                    self.gpu.write_buffer(buf, data)
+        cl = {k[6:]: v for k, v in entry.items() if k.startswith('cloth_') and k != 'cloth_state'} or None
+        return VolumeView([self._rscal], [vel], dims_v, h / k, origin, aux, chem, entry.get('time', s.time), k,
+                          burn, burn_obj, stain, gd, h, stain_obj, cl), False
 
     def _cached_tex(self, tex, dims, label):
         if tex is None or tex.size != tuple(dims):
@@ -332,8 +537,45 @@ class Engine(LiquidEngine, BothEngine):
         spread = bool(scene.data['spread']['enabled'])
         return SurfaceInputs(
             colliders=cols, meshes=s.meshes, burn=vol.burn, burn_obj=vol.burn_obj,
-            slots=s.burn_slots if vol.burn_obj is not None else None, grid=s.dims, cell=s.h,
-            ground=bool(scene.data['domain']['ground']), lit=comp.surface_light > 0.0, scorch=spread and comp.scorch > 0.0)
+            slots=s.burn_slots if vol.burn_obj is not None else None, grid=vol.grid or s.dims, cell=vol.cell or s.h,
+            ground=bool(scene.data['domain']['ground']), lit=comp.surface_light > 0.0, scorch=spread and comp.scorch > 0.0,
+            stain=vol.stain if comp.soot > 0.0 else None, shadows=comp.surface_shadows,
+            stain_obj=vol.stain_obj if (comp.soot > 0.0 and s.stain_slots is not None) else None,
+            stain_slots=s.stain_slots, stain_regions=s.stain_regions,
+            wet=spread and comp.wet > 0.0 and (vol.burn is not None or vol.burn_obj is not None))
+
+    def _set_ocio(self, scene, comp):
+        """Bake (once per change) the OCIO LUTs the composite needs; on a bad config, fall back to the
+        Standard view and sRGB footage, with a warning."""
+        c = scene.data['composite']
+        want_view = comp.view == 'ocio'
+        want_plate = comp.plate_transform == 'ocio' and bool(c.get('ocio_plate'))
+        key = (want_view, want_plate, c.get('ocio_config', ''), c.get('ocio_working', ''), c.get('ocio_display', ''),
+               c.get('ocio_view', ''), c.get('ocio_look', ''), c.get('ocio_plate', '') if want_plate else '')
+        if key == getattr(self, '_ocio_key', None):
+            if self._ocio_error:
+                comp.view = 'standard' if want_view else comp.view
+                comp.plate_transform = 'srgb' if comp.plate_transform == 'ocio' else comp.plate_transform
+            return
+        self._ocio_key = key
+        self._ocio_error = None
+        if not (want_view or want_plate):
+            self.renderer.set_ocio(None, None)
+            if comp.plate_transform == 'ocio':
+                comp.plate_transform = 'srgb'
+            return
+        from ..io import ocio
+        try:
+            pipe = ocio.pipeline(c)
+            view_lut = pipe.view_lut() if want_view else None
+            plate_lut, plate_log = pipe.plate_lut(c['ocio_plate']) if want_plate else (None, False)
+            self.renderer.set_ocio(view_lut, plate_lut, plate_log)
+        except Exception as ex:
+            self._ocio_error = str(ex)
+            log.warning('OCIO: %s', ex)
+            self.renderer.set_ocio(None, None)
+            comp.view = 'standard' if want_view else comp.view
+            comp.plate_transform = 'srgb' if comp.plate_transform == 'ocio' else comp.plate_transform
 
     def _ensure_acc2(self, w, h):
         if self._acc2 is not None and self._acc2[0].size[:2] == (w, h):
@@ -355,7 +597,9 @@ class Engine(LiquidEngine, BothEngine):
         self._acc_size = (w, h)
 
     def render(self, scene, frame, out_size, mode='composite', final=False, samples=1, motion_blur=False,
-               fire_scale=1.0, plate=None, plate_fit=(1.0, 1.0), seed=None):
+               fire_scale=1.0, plate=None, plate_fit=(1.0, 1.0), seed=None, holdout=None, deep=0):
+        """holdout: (matte, depth) arrays from the footage (either may be None; see Renderer.set_holdout).
+        deep: gather up to this many deep samples per pixel (Renderer.read_deep)."""
         """Render `frame` into the renderer's buffers. The frame must be live or cached."""
         if self.kind == 'liquid':
             return self._render_liquid(scene, frame, out_size, mode, final, samples, motion_blur, fire_scale, plate,
@@ -363,6 +607,9 @@ class Engine(LiquidEngine, BothEngine):
         if self.kind == 'both':
             return self._render_both(scene, frame, out_size, mode, final, samples, motion_blur, fire_scale, plate,
                                      plate_fit, seed)
+        if self.kind == 'cloud':
+            return self._render_cloud(scene, frame, out_size, mode, final, samples, motion_blur, fire_scale, plate,
+                                      plate_fit, seed)
         t0 = time.perf_counter()
         vol, live = self.volume_for(scene, frame)
         if vol is None:
@@ -377,11 +624,18 @@ class Engine(LiquidEngine, BothEngine):
         if plate is not None and scene.data['lighting'].get('ambient_from_footage', True):
             look.ambient = self.footage_ambient(plate, scene, frame)
         comp = scene.comp(frame, mode)
+        self._set_ocio(scene, comp)
         ep = scene.ember_params(frame)
         t = vol.time  # the frame's own time, so a cached frame renders exactly as it did live
         shutter = 0.0
-        if motion_blur and live:
+        if motion_blur and (live or vol.vel[0] is not self._zero_vel):
             shutter = scene.data['render']['shutter_angle'] / 360.0 / scene.fps * scene.v('domain', 'time_scale', frame)
+        if not live:
+            # deforming meshes as they were at this frame (and the simulation's frames stay in the atlas)
+            items = scene.mesh_items(frame)
+            if self.sim_frame is not None:
+                items += scene.mesh_items(self.sim_frame - 1)
+            self.solver.set_meshes(items, scene.data['domain']['mesh_resolution'])
         r = self.renderer
         if plate is not None:
             r.set_plate(plate)
@@ -390,23 +644,47 @@ class Engine(LiquidEngine, BothEngine):
         base_seed = frame * 64 if seed is None else seed
         samples = max(1, int(samples))
         surfaces = self.surfaces_for(scene, frame, vol, comp)
+        r.set_holdout(*(holdout or (None, None)))
+        r.set_deep(deep, samples)
         ground = scene.data['domain']['ground']
+        cloth = self.cloth.active and vol.cloth is not None
+        self._cloth_drawn = cloth
+        if cloth:
+            self.cloth.use_view(None if isinstance(vol.cloth, str) else vol.cloth)
+        look.time = t
+
+        def cloth_pass(b, i, jit):
+            if cloth:
+                off = shutter * ((i + 0.5) / samples - 0.5) if samples > 1 else 0.0
+                self.cloth.draw(b, r, cs, fire, look, (fw, fh), jitter=jit, shutter=off, solver=vol)
+            return self.cloth.aux if cloth else None
+
+        if cloth:
+            self.cloth.prepare_light(r.light_dims_for(vol.dims))
+
         with self.gpu.batch() as b:
-            r.light(b, vol, look, fire, t)
+            r.light(b, vol, look, fire, t, occluder=self.cloth.occlusion if cloth else None,
+                    colliders=surfaces.colliders, meshes=surfaces.meshes)
             if samples == 1:
+                lim = cloth_pass(b, 0, (0.0, 0.0))
                 r.march(b, vol, cs, fire, look, (fw, fh), seed=base_seed, shutter=shutter, ground=ground, time=t,
-                        surfaces=surfaces)
+                        surfaces=surfaces, comp=comp, plate_fit=plate_fit, deep_pass=0, limit=lim)
+                if cloth:
+                    self.cloth.merge(b, r, 0, 1, 0.35 * (vol.cell or vol.h))
             else:
                 self._ensure_acc(fw, fh)
                 self._ensure_acc2(fw, fh)
                 r._ensure_fire(fw, fh)
                 set0, set1 = self._acc[0:3], self._acc[3:6]
                 sur0, sur1 = self._acc2[0:3], self._acc2[3:6]
-                srcs2 = [r.surf, r.mask, r.mask]
+                srcs2 = [r.surf, r.mask, r.lamp_surf]
                 for i in range(samples):
                     jit = (halton(i + 1, 2) - 0.5, halton(i + 1, 3) - 0.5)
+                    lim = cloth_pass(b, i, jit)
                     r.march(b, vol, cs, fire, look, (fw, fh), jitter=jit, seed=base_seed + i, shutter=shutter,
-                            ground=ground, time=t, surfaces=surfaces)
+                            ground=ground, time=t, surfaces=surfaces, comp=comp, plate_fit=plate_fit, deep_pass=i, limit=lim)
+                    if cloth:
+                        self.cloth.merge(b, r, i, samples, 0.35 * (vol.cell or vol.h))
                     src_in, dst = (set0, set1) if i % 2 == 0 else (set1, set0)
                     b.run(self.k_accum, [r.beauty, r.emit, r.aux, *src_in, *dst], Uniforms().v4(fw, fh, 0, i), (fw, fh, 1))
                     s_in, s_dst = (sur0, sur1) if i % 2 == 0 else (sur1, sur0)
@@ -416,9 +694,10 @@ class Engine(LiquidEngine, BothEngine):
                 b.run(self.k_copy, [*other, r.beauty, r.emit, r.aux], Uniforms().v4(fw, fh), (fw, fh, 1))
                 slast, sother = (sur1, sur0) if (samples - 1) % 2 == 0 else (sur0, sur1)
                 b.run(self.k_accum, [*srcs2, *slast, *sother], Uniforms().v4(fw, fh, 1, samples), (fw, fh, 1))
-                b.run(self.k_copy, [*sother, r.surf, r.mask, self._acc2_spare], Uniforms().v4(fw, fh), (fw, fh, 1))
+                b.run(self.k_copy, [*sother, r.surf, r.mask, r.lamp_surf], Uniforms().v4(fw, fh), (fw, fh, 1))
             if ep.enabled and self.embers.count:
                 self.embers.draw(b, r, cs, fire, ep, look, (fw, fh), scene.fps)
+            r.defocus(b, comp, cs, fire)
             r.bloom(b, comp.bloom_radius)
             r.composite(b, (W, H), comp, time=t, frame=frame, plate_fit=plate_fit)
         self.last_render_ms = (time.perf_counter() - t0) * 1000.0
@@ -436,6 +715,9 @@ class Engine(LiquidEngine, BothEngine):
             # fire light on surfaces (rgb) + holdout coverage (a); scorch, holdout depth * coverage, coverage
             out['surface'] = self.gpu.read(r.surf)
             out['mask'] = self.gpu.read(r.mask)
+            out['lamps'] = self.gpu.read(r.lamp_surf)
+            if getattr(self, '_cloth_drawn', False):
+                out['fabric'] = self.gpu.read(self.cloth.fabric)
         return out
 
     def linear_comp(self):
@@ -446,6 +728,8 @@ class Engine(LiquidEngine, BothEngine):
     def stats(self):
         if self.kind == 'liquid' and self.liquid is not None:
             return self._stats_liquid()
+        if self.kind == 'cloud' and self.cloud is not None:
+            return self._stats_cloud()
         s = self.solver
         out = {
             'gpu': self.gpu.name, 'backend': self.gpu.backend, 'dims': s.dims, 'voxels': int(np.prod(s.dims)) if s.dims else 0,

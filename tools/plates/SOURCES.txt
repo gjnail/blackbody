@@ -1,0 +1,9 @@
+Photographs for the preset thumbnails and demo renders (tools/make_thumbnails.py --photo, PHOTO_PLATES).
+
+spatter_ground_kilauea_2024.jpg
+  "Fresh lava spatter litters the ground next to a new lava flow from the Kilauea Southwest Rift Zone fissure
+  eruption of June 3 2024", USGS photo by Drew Downs (Hawaiian Volcano Observatory), 3 June 2024. iPhone XR,
+  4.25 mm lens (sensor about 5.64 mm wide). USGS media 124618.
+  Public domain: a work of the U.S. Geological Survey (U.S. federal government).
+  https://commons.wikimedia.org/wiki/File:Fresh_lava_spatter_litters_the_ground_next_to_a_new_lava_flow_from_the_K%C4%ABlauea_Southwest_Rift_Zone_fissure_eruption_of_June_3_2024_(124618).jpg
+  Original 4032 x 3024 (SHA-1 65ccbffaac0a634709603cb60063ce2417b6f029), downscaled here to 2400 x 1800.

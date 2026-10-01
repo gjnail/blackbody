@@ -6,3 +6,7 @@ build/
 dist/
 *.bbfire.tmp
 .pytest_cache/
+_site/
+*.bbcache/
+bash.exe.stackdump
+*.stackdump

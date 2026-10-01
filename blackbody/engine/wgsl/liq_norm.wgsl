@@ -1,5 +1,6 @@
 // Grid velocities from the particle sums: momentum / weight per face, with a flag for faces that
-// received particle data. Also writes the particle density (particles per cell) at cell centres.
+// received particle data. Also writes the particle density (particles per cell) at cell centres, and
+// the liquid's heat there (0..1, the particles' mean).
 //!include common.wgsl
 //!include liq_common.wgsl
 
@@ -8,6 +9,7 @@ struct Params { g: Grid };
 @group(0) @binding(0) var<storage, read> acc: array<i32>;
 @group(0) @binding(1) var vold: texture_storage_3d<rgba32float, write>;
 @group(0) @binding(2) var dens: texture_storage_3d<r32float, write>;
+@group(0) @binding(3) var heat: texture_storage_3d<r32float, write>;
 @group(1) @binding(0) var<uniform> U: Params;
 
 @compute @workgroup_size(8, 8, 4)
@@ -28,6 +30,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   textureStore(vold, c, vec4<f32>(v, f32(mask)));
   if (all(c < n)) {
-    textureStore(dens, c, vec4<f32>(f32(acc[i + 6u]) / FX_W, 0.0, 0.0, 0.0));
+    let dw = f32(acc[i + 6u]) / FX_W;
+    textureStore(dens, c, vec4<f32>(dw, 0.0, 0.0, 0.0));
+    textureStore(heat, c, vec4<f32>(select(1.0, f32(acc[i + 7u]) / FX_W / max(dw, 1e-6), dw > 1e-4), 0.0, 0.0, 0.0));
   }
 }

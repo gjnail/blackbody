@@ -5,6 +5,15 @@
   blackbody render shot.bbfire -o renders/fire.####.exr
   blackbody render --preset campfire --footage plate.mov -o comp.mov --content composite
   blackbody render shot.bbfire -o vol/fire.####.vdb --frames 1001-1100
+  blackbody render shot.bbfire -o renders/fire.deep.####.exr          deep EXR (a name with .deep.)
+  blackbody render pond.bbfire -o mesh/pond.usdc                     a liquid's surface as a USD mesh (or .####.obj)
+  blackbody render --preset campfire --usd shot.usd -o fire.####.exr  camera and objects from USD
+
+Render farms: simulate once into a shared disk cache (resuming from the last checkpoint if it was
+stopped), then render frame ranges on as many machines as you like from that cache:
+  blackbody simulate shot.bbfire --cache //server/cache/shot
+  blackbody render shot.bbfire --from-cache //server/cache/shot --frames 1001-1050 -o fire.####.exr
+
   blackbody presets | settings | info
 
 Exit codes: 0 done, 1 failed, 2 bad arguments, 130 cancelled.
@@ -103,15 +112,16 @@ def _check_value(p, text):
 
 
 def _apply_setting(scene, kv):
-    """--set SECTION.KEY=VALUE, or emitter.N.KEY=VALUE / collider.N.KEY=VALUE. Returns an error or None."""
+    """--set SECTION.KEY=VALUE, or emitter.N.KEY=VALUE / collider.N.KEY=VALUE / light.N.KEY=VALUE / fabric.N.KEY=VALUE.
+    Returns an error or None."""
     from .scene.params import SECTIONS, param
     key, eq, val = kv.partition('=')
     key = key.strip()
     parts = key.split('.')
     if not eq or len(parts) not in (2, 3):
         return f'--set needs SECTION.KEY=VALUE, got "{kv}".'
-    if parts[0] in ('emitter', 'collider'):
-        items = scene.emitters if parts[0] == 'emitter' else scene.colliders
+    if parts[0] in ('emitter', 'collider', 'light', 'fabric'):
+        items = {'emitter': scene.emitters, 'collider': scene.colliders, 'light': scene.lights, 'fabric': scene.fabrics}[parts[0]]
         if len(parts) != 3 or not parts[1].isdigit():
             return f'{parts[0].capitalize()} settings need an index, e.g. {parts[0]}.0.{parts[-1]}={val}.'
         if int(parts[1]) >= len(items):
@@ -126,7 +136,7 @@ def _apply_setting(scene, kv):
         p = param(path[0], path[-1]) if path else None
     except KeyError:
         p = None
-    if p is None or p.kind == 'str':
+    if p is None or (p.kind == 'str' and path[-1] == 'name'):
         names = [f'{s}.{q.key}' for s, qs in SECTIONS.items() for q in qs]
         near = difflib.get_close_matches(key, names, n=3)
         return (f'Unknown setting "{key}".' + (f' Did you mean {" or ".join(near)}?' if near else '')
@@ -180,6 +190,9 @@ def cmd_render(args):
             return _fail(err, 2)
     if args.res:
         scene.data['domain']['resolution'] = args.res
+    err = _usd_and_cache(scene, args)
+    if err:
+        return err
     if args.size:
         try:
             w, h = (int(x) for x in args.size.lower().split('x'))
@@ -214,7 +227,7 @@ def cmd_render(args):
             o.compression = args.exr_compression
         if args.float:
             o.half = False
-        if o.content == 'composite' and footage is None and o.kind != 'vdb':
+        if o.content == 'composite' and footage is None and o.kind not in ('vdb', 'mesh'):
             print(f'Note: {path} is a composite but there is no footage; the fire is composited over the background colour.')
         outputs.append(o)
     try:
@@ -230,7 +243,8 @@ def cmd_render(args):
         for o in outputs:
             print(f'  -> {o.path}  [{o.label()}]')
     job = RenderJob(scene, outputs, engine, frames=(first, last), final=not args.draft, footage=footage,
-                    samples=args.samples, motion_blur=False if args.no_motion_blur else None)
+                    samples=args.samples, motion_blur=False if args.no_motion_blur else None,
+                    from_cache=bool(args.from_cache))
     t0 = time.perf_counter()
     try:
         written = job.run(progress=_progress_printer(args.quiet))
@@ -258,8 +272,9 @@ def cmd_presets(args):
 
 def cmd_settings(args):
     """Every name --set accepts, with its default and typical range."""
-    from .scene.params import COLLIDER_PARAMS, EMITTER_PARAMS, SECTIONS
-    groups = list(SECTIONS.items()) + [('emitter.N', EMITTER_PARAMS), ('collider.N', COLLIDER_PARAMS)]
+    from .scene.params import COLLIDER_PARAMS, EMITTER_PARAMS, FABRIC_PARAMS, LIGHT_PARAMS, SECTIONS
+    groups = list(SECTIONS.items()) + [('emitter.N', EMITTER_PARAMS), ('collider.N', COLLIDER_PARAMS),
+                                       ('light.N', LIGHT_PARAMS), ('fabric.N', FABRIC_PARAMS)]
     if args.section and not any(g == args.section or g.split('.')[0] == args.section for g, _ in groups):
         return _fail(f'Unknown section "{args.section}". Choose from: '
                      f'{", ".join(g.split(".")[0] for g, _ in groups)}', 2)
@@ -306,11 +321,94 @@ def cmd_info(args):
     return 0
 
 
+def _usd_and_cache(scene, args):
+    """--usd FILE (camera and meshes from a USD scene), --cache / --from-cache DIR (the disk cache)."""
+    if getattr(args, 'usd', None):
+        from .io.usd import import_usd
+        try:
+            for line in import_usd(scene, args.usd):
+                if not getattr(args, 'quiet', False):
+                    print(f'USD: {line}')
+        except Exception as ex:
+            return _fail(f'Could not import {args.usd}: {ex}', 2)
+    folder = getattr(args, 'from_cache', None) or getattr(args, 'cache', None)
+    if folder:
+        if getattr(args, 'from_cache', None) and not Path(folder).is_dir():
+            return _fail(f'No disk cache at {folder}; simulate into it first (blackbody simulate ... --cache {folder}).', 2)
+        scene.data['domain']['disk_cache'] = True
+        scene.data['domain']['cache_dir'] = str(Path(folder).resolve())
+    return None
+
+
+def cmd_simulate(args):
+    """Simulate into the disk cache (resuming from its last checkpoint), without rendering."""
+    from .engine.engine import Engine
+    from .scene import Scene, presets
+    if args.scene:
+        if not Path(args.scene).is_file():
+            return _fail(f'No project file at {args.scene}', 2)
+        try:
+            scene = Scene.load(args.scene)
+        except Exception as ex:
+            return _fail(f'Could not read the project {args.scene}: {ex}')
+    elif args.preset:
+        if args.preset not in presets.ORDER:
+            return _fail(f'Unknown preset "{args.preset}". Choose from: {", ".join(presets.ORDER)}', 2)
+        scene = presets.make(args.preset)
+    else:
+        return _fail('Give a project file or --preset NAME.', 2)
+    for kv in args.set or []:
+        err = _apply_setting(scene, kv)
+        if err:
+            return _fail(err, 2)
+    if args.res:
+        scene.data['domain']['resolution'] = args.res
+    if not args.cache:
+        args.cache = str(Path(args.scene).with_suffix('.bbcache')) if args.scene else 'blackbody.bbcache'
+    err = _usd_and_cache(scene, args)
+    if err:
+        return err
+    try:
+        first, last = _frames(args.frames, scene)
+    except ValueError:
+        return _fail(f'--frames needs a frame or a range, e.g. 1001-1100, got "{args.frames}".', 2)
+    try:
+        engine = Engine()
+    except Exception as ex:
+        return _fail(f'Could not start the GPU engine: {ex}.')
+    final = not args.draft
+    engine.prepare(scene, final=final)
+    disk = engine.cache.disk
+    if not args.quiet:
+        dims, h, _ = scene.sim_layout(final=final)
+        cps = disk.checkpoints() if disk else []
+        print(f'Simulating "{scene.name}" frames {scene.start}-{last} into {disk.folder if disk else "?"} '
+              f'({dims[0]}x{dims[1]}x{dims[2]} voxels); {len(disk.frames()) if disk else 0} frames already cached'
+              + (f', resuming from frame {max(c for c in cps if c <= last)}' if any(c <= last for c in cps) else ''))
+    t0 = time.perf_counter()
+    report = _progress_printer(args.quiet)
+    try:
+        ok = engine.simulate_to(scene, last, progress=lambda f, fr: report(f, f'Frame {fr}'))
+    except KeyboardInterrupt:
+        print('\nStopped; the next run resumes from the last checkpoint.')
+        return 130
+    except Exception as ex:
+        traceback.print_exc()
+        return _fail(f'Simulation failed: {ex}')
+    finally:
+        if engine.cache.disk is not None:
+            engine.cache.disk.flush()
+    if not args.quiet:
+        print(f'Done in {time.perf_counter() - t0:.1f}s: {len(disk.frames())} frames cached, '
+              f'{disk.size_bytes() / 1e9:.2f} GB.')
+    return 0 if ok else 1
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     _utf8_streams()
     logging.basicConfig(level=logging.WARNING, format='%(levelname)s %(name)s: %(message)s')
-    if not argv or (argv[0] not in ('render', 'presets', 'settings', 'info', 'gui', '-h', '--help', '--version')):
+    if not argv or (argv[0] not in ('render', 'simulate', 'presets', 'settings', 'info', 'gui', '-h', '--help', '--version')):
         from .ui.app import run
         return run(argv)
     ap = argparse.ArgumentParser(prog='blackbody', description='GPU fire and smoke simulation for compositing into footage.')
@@ -321,9 +419,11 @@ def main(argv=None):
     r = sub.add_parser('render', help='render a project or preset without opening the app')
     r.add_argument('scene', nargs='?', help='.bbfire project file')
     r.add_argument('--preset', help='start from a built-in preset instead of a project')
-    r.add_argument('-o', '--output', action='append', help='output path; #### is the frame number. .exr .png .vdb .mov .mp4 .webm (repeatable)')
+    r.add_argument('-o', '--output', action='append', help='output path; #### is the frame number. .exr .png .vdb .mov .mp4 .webm, '
+                                                           'and for liquids .obj (per frame) or .usd/.usdc/.usda (repeatable)')
     r.add_argument('--format', help='video profile: prores4444, prores422hq, dnxhr_hq, dnxhr_444, h264, h265, vp9_alpha')
-    r.add_argument('--content', choices=('element', 'composite'), help='the fire with alpha, or the fire composited over the footage')
+    r.add_argument('--content', choices=('element', 'composite', 'deep'),
+                   help='the fire with alpha, the fire composited over the footage, or (for .exr) deep samples')
     r.add_argument('--footage', help='footage to composite over (sets size, frame rate and length)')
     r.add_argument('--frames', help='frame range, e.g. 1-120 or 1001-1100')
     r.add_argument('--size', help='output size, e.g. 1920x1080')
@@ -337,7 +437,20 @@ def main(argv=None):
     r.add_argument('--float', action='store_true', help='32-bit float EXR instead of half')
     r.add_argument('--draft', action='store_true', help='interactive quality (fast)')
     r.add_argument('--no-motion-blur', action='store_true')
+    r.add_argument('--usd', help='bring in the camera and meshes (as colliders) from a USD scene')
+    r.add_argument('--cache', help='also write the simulated frames to this disk cache folder')
+    r.add_argument('--from-cache', help='render frames already simulated into this disk cache folder (see simulate)')
     r.add_argument('-q', '--quiet', action='store_true')
+    sm = sub.add_parser('simulate', help='simulate into a disk cache without rendering (resumes if stopped)')
+    sm.add_argument('scene', nargs='?', help='.bbfire project file')
+    sm.add_argument('--preset', help='start from a built-in preset instead of a project')
+    sm.add_argument('--cache', help='disk cache folder (default: next to the project, NAME.bbcache)')
+    sm.add_argument('--frames', help='simulate up to the last frame of this range, e.g. 1-120')
+    sm.add_argument('--res', type=int, help='voxels on the longest side of the box')
+    sm.add_argument('--set', action='append', metavar='SECTION.KEY=VALUE', help='override any setting')
+    sm.add_argument('--usd', help='bring in the camera and meshes (as colliders) from a USD scene')
+    sm.add_argument('--draft', action='store_true', help='interactive quality (fast)')
+    sm.add_argument('-q', '--quiet', action='store_true')
     sub.add_parser('presets', help='list the built-in presets')
     st = sub.add_parser('settings', help='list every setting --set accepts, with defaults and ranges')
     st.add_argument('section', nargs='?', help='only this section, e.g. motion or emitter')
@@ -345,6 +458,8 @@ def main(argv=None):
     args = ap.parse_args(argv)
     if args.cmd == 'render':
         return cmd_render(args)
+    if args.cmd == 'simulate':
+        return cmd_simulate(args)
     if args.cmd == 'presets':
         return cmd_presets(args)
     if args.cmd == 'settings':

@@ -28,6 +28,44 @@ def write_exr(path, channels, compression='zip', attrs=None):
         f.write(str(path))
 
 
+def write_deep_exr(path, samples, attrs=None):
+    """Write a deep scanline OpenEXR from (h, w, k, 8) samples as the ray march gathers them: premultiplied
+    R, G, B, A, then the front and back depth (Z, ZBack, metres along the view axis), front to back.
+    Samples with no opacity and no light are left out; pixels without any are empty."""
+    import OpenEXR
+    s = np.asarray(samples, np.float32)
+    h, w, k, _ = s.shape
+    flat = s.reshape(h * w, k, 8)
+    keep = (flat[..., 3] > 1e-6) | (flat[..., :3].max(-1) > 1e-7)
+    keep &= flat[..., 5] >= flat[..., 4]
+    # front to back within each pixel (the embers' light comes last in the array)
+    order = np.argsort(np.where(keep, flat[..., 4], np.inf), axis=1, kind='stable')
+    flat = np.take_along_axis(flat, order[..., None], axis=1)
+    keep = np.take_along_axis(keep, order, axis=1)
+    counts = keep.sum(1)
+    nz = counts > 0
+    vals = flat[keep]                       # (total, 8), pixel by pixel, front to back within each
+    cuts = np.cumsum(counts[nz])[:-1]
+    ch = {}
+    for name, col in (('R', 0), ('G', 1), ('B', 2), ('A', 3), ('Z', 4), ('ZBack', 5)):
+        o = np.full(h * w, None, dtype=object)
+        if vals.shape[0]:
+            # one array per pixel, filled element by element: with every pixel holding the same number
+            # of samples numpy would otherwise stack them into a 2-D array
+            parts = np.split(np.ascontiguousarray(vals[:, col]), cuts)
+            cell = np.empty(len(parts), dtype=object)
+            for i, part in enumerate(parts):
+                cell[i] = part
+            o[nz] = cell
+        ch[name] = o.reshape(h, w)
+    header = {'compression': OpenEXR.ZIPS_COMPRESSION, 'type': OpenEXR.deepscanline}
+    for key, v in (attrs or {}).items():
+        header[key] = v
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with OpenEXR.File(header, ch) as f:
+        f.write(str(path))
+
+
 def _chunk(kind, data):
     return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xFFFFFFFF)
 
@@ -79,14 +117,26 @@ def rolloff(x, knee=0.8):
     return np.where(x > knee, knee + r * (1.0 - np.exp(-(x - knee) / r)), x)
 
 
-def element_to_display(rgb_premult, alpha, knee=0.8, mode='premultiplied'):
+def camera_rolloff(x, knee=0.8, white=0.0):
+    """rolloff() as a camera sensor clips, matching composite.wgsl: each colour channel also catches some of
+    the others' light (crosstalk `white`), so over-bright colours go to white instead of clipping to a flat
+    hue. Identity wherever no channel passes the knee; white 0 is the plain per-channel roll-off."""
+    x = np.asarray(x, np.float32)
+    s = np.float32(min(max(white, 0.0), 0.9))
+    if s <= 0.0:
+        return rolloff(x, knee)
+    y = rolloff(x * (1.0 - s) + s * x.mean(axis=-1, keepdims=True), knee)
+    return (y - s * y.mean(axis=-1, keepdims=True)) / (1.0 - s)
+
+
+def element_to_display(rgb_premult, alpha, knee=0.8, mode='premultiplied', white=0.0):
     """Scene-linear premultiplied fire element -> display-encoded RGBA in [0, 1].
 
     premultiplied: colour stays premultiplied (interpret as 'premultiplied' / 'matted with black').
     straight: alpha is raised to cover emitted light (luma key) and colour is divided through, so the
               element drops onto footage with an ordinary Normal blend.
     """
-    rgb = rolloff(np.asarray(rgb_premult, np.float32), knee)
+    rgb = camera_rolloff(np.asarray(rgb_premult, np.float32), knee, white)
     a = np.clip(np.asarray(alpha, np.float32), 0.0, 1.0)
     if mode == 'straight':
         lum = np.clip(rgb @ np.array([0.2126, 0.7152, 0.0722], np.float32), 0.0, 1.0)

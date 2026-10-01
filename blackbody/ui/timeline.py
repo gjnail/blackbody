@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, QSettings, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPolygonF
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QSpinBox, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QAbstractSpinBox, QHBoxLayout, QLabel, QSizePolicy, QSpinBox, QToolButton, QVBoxLayout, QWidget
 
 from . import icons, theme
 
@@ -28,7 +28,7 @@ class Ruler(QWidget):
         self.doc = doc
         self.cached = set()
         self.progress_frame = None
-        self.setMinimumHeight(58)
+        self.setMinimumHeight(54)
         self.setMouseTracking(True)
         self._drag = False
 
@@ -44,7 +44,11 @@ class Ruler(QWidget):
 
     def paintEvent(self, e):
         p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
         p.fillRect(self.rect(), QColor(theme.PANEL))
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(theme.CARD))
+        p.drawRoundedRect(QRectF(4, 0, self.width() - 8, self.height()), 6, 6)
         sc = self.doc.scene
         a, b = sc.start, sc.end
         w = self.width()
@@ -81,7 +85,7 @@ class Ruler(QWidget):
             if y > 36:
                 break
         # cache bar
-        cy = self.height() - 16
+        cy = self.height() - 12
         p.fillRect(QRectF(12, cy, w - 24, 4), QColor(theme.FIELD))
         if self.cached:
             col = QColor(theme.GOOD)
@@ -99,7 +103,7 @@ class Ruler(QWidget):
             if run_start is not None:
                 p.fillRect(QRectF(self._x(run_start - 0.5), cy, self._x(prev + 0.5) - self._x(run_start - 0.5), 4), col)
         # keyframes
-        ky = self.height() - 28
+        ky = self.height() - 24
         p.setPen(Qt.NoPen)
         p.setBrush(QColor(theme.KEY))
         for fr in sc.key_frames():
@@ -133,13 +137,26 @@ class Ruler(QWidget):
             self.released.emit()
 
 
+class ElidedLabel(QLabel):
+    """A label that shortens its text with … when squeezed, instead of clipping it."""
+
+    def minimumSizeHint(self):
+        return QSize(10, super().minimumSizeHint().height())
+
+    def paintEvent(self, e):
+        p = QPainter(self)
+        p.setPen(self.palette().color(self.foregroundRole()))
+        text = self.fontMetrics().elidedText(self.text(), Qt.ElideRight, self.width())
+        p.drawText(self.rect(), self.alignment(), text)
+
+
 class Timeline(QWidget):
     def __init__(self, doc, parent=None):
         super().__init__(parent)
         self.doc = doc
         v = QVBoxLayout(self)
-        v.setContentsMargins(6, 4, 6, 6)
-        v.setSpacing(2)
+        v.setContentsMargins(8, 6, 8, 8)
+        v.setSpacing(6)
         bar = QHBoxLayout()
         bar.setSpacing(2)
 
@@ -156,43 +173,72 @@ class Timeline(QWidget):
         tb(icons.jump(False), 'First frame (Home)', lambda: doc.set_frame(doc.scene.start))
         tb(icons.step(False), 'Previous frame (Left)', lambda: doc.set_frame(doc.frame - 1))
         self.play_btn = tb(icons.play(), 'Play / pause (Space)', lambda: doc.set_playing(not doc.playing))
+        self.play_btn.setFixedSize(34, 30)
+        self.play_btn.setIconSize(QSize(20, 20))
+        self.play_btn.setStyleSheet(f'QToolButton {{ background: {theme.FIELD}; border-radius: 15px; }}'
+                                    f'QToolButton:hover {{ background: {theme.FIELD_HI}; }}')
         tb(icons.step(True), 'Next frame (Right)', lambda: doc.set_frame(doc.frame + 1))
         tb(icons.jump(True), 'Last frame (End)', lambda: doc.set_frame(doc.scene.end))
-        bar.addSpacing(10)
-        self.frame_spin = QSpinBox()
-        self.frame_spin.setRange(-100000, 100000)
-        self.frame_spin.setFixedWidth(70)
-        self.frame_spin.setToolTip('Current frame')
-        self.frame_spin.setKeyboardTracking(False)
+        bar.addSpacing(12)
+
+        def spin(width, tip):
+            sp = QSpinBox()
+            sp.setRange(-100000, 100000)
+            sp.setFixedWidth(width)
+            sp.setAlignment(Qt.AlignRight)
+            sp.setButtonSymbols(QAbstractSpinBox.NoButtons)
+            sp.setKeyboardTracking(False)
+            sp.setToolTip(tip)
+            from .params import guard_wheel
+            guard_wheel(sp)
+            return sp
+        self.frame_spin = spin(64, 'Current frame (type one to jump there)')
         self.frame_spin.valueChanged.connect(doc.set_frame)
         bar.addWidget(self.frame_spin)
+        bar.addSpacing(6)
         self.tc = QLabel()
         self.tc.setFont(theme.mono_font(9))
         self.tc.setObjectName('hint')
         bar.addWidget(self.tc)
-        bar.addStretch(1)
-        self.info = QLabel()
-        self.info.setObjectName('hint')
-        bar.addWidget(self.info)
-        bar.addSpacing(10)
-        lab = QLabel('Range')
-        lab.setObjectName('hint')
-        bar.addWidget(lab)
-        self.start_spin = QSpinBox()
-        self.end_spin = QSpinBox()
-        for sp, key in ((self.start_spin, 'start'), (self.end_spin, 'end')):
-            sp.setRange(-100000, 100000)
-            sp.setFixedWidth(64)
-            sp.setKeyboardTracking(False)
+        self.info = ElidedLabel()
+        self.info.setObjectName('faint')
+        self.info.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.info.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        bar.addWidget(self.info, 1)
+        bar.addSpacing(14)
+        self.start_spin = spin(58, 'First frame of the shot')
+        self.end_spin = spin(58, 'Last frame of the shot')
+        for sp, key, label in ((self.start_spin, 'start', 'Start'), (self.end_spin, 'end', 'End')):
+            lab = QLabel(label)
+            lab.setObjectName('hint')
+            bar.addWidget(lab)
+            bar.addSpacing(4)
             sp.valueChanged.connect(lambda v, k=key: self._range(k, v))
             bar.addWidget(sp)
-        bar.addSpacing(8)
-        self.cache_btn = tb(icons.cache(), 'Simulate and cache the whole frame range', lambda: doc.worker and doc.worker.post('cache_range'))
+            bar.addSpacing(8)
+        self.cache_btn = tb(icons.cache(), 'Simulate and cache the whole frame range (the green bar shows what is cached)',
+                            lambda: doc.worker and doc.worker.post('cache_range'))
+        self.cache_btn.setText(' Cache all')
+        self.cache_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.restart_btn = tb(icons.restart(), 'Restart the simulation from the first frame', lambda: doc.worker and doc.worker.post('restart'))
+        self.restart_btn.setText(' Restart')
+        self.restart_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        bar.addSpacing(6)
+        self.keys_btn = QToolButton()
+        self.keys_btn.setObjectName('toggle')
+        self.keys_btn.setCheckable(True)
+        self.keys_btn.setToolTip('The animation editor: every animated setting, with its keys to move, add, delete and ease')
+        self.keys_btn.toggled.connect(self._show_keys)
+        bar.addWidget(self.keys_btn)
         v.addLayout(bar)
         self.ruler = Ruler(doc)
         self.ruler.scrubbed.connect(self._scrub)
         v.addWidget(self.ruler)
+        from .keys import KeyEditor
+        self.keys = KeyEditor(doc)
+        self.keys.hide()
+        v.addWidget(self.keys, 1)
+        self.keys_btn.setChecked(QSettings().value('ui/keys_open', False, type=bool))
         doc.frameChanged.connect(self.sync)
         doc.sceneReplaced.connect(self.sync)
         doc.paramChanged.connect(lambda *_: self.sync())
@@ -200,6 +246,13 @@ class Timeline(QWidget):
         doc.playingChanged.connect(self._playing)
         doc.selectionChanged.connect(lambda *_: self.ruler.update())
         self.sync()
+
+    def _show_keys(self, on):
+        QSettings().setValue('ui/keys_open', bool(on))
+        self.keys.setVisible(on)
+        if on:
+            self.keys.rebuild()
+            self.keys.setFocus()
 
     def _scrub(self, f):
         if self.doc.playing:
@@ -230,4 +283,7 @@ class Timeline(QWidget):
         self.tc.setText(timecode(self.doc.frame, sc.fps, sc.start))
         n = sc.end - sc.start + 1
         self.info.setText(f'{n} frames · {sc.fps:g} fps · {n / sc.fps:.2f} s')
+        from .keys import animated_paths
+        na = len(animated_paths(sc))
+        self.keys_btn.setText(f'Animation  {na}' if na else 'Animation')
         self.ruler.update()

@@ -443,7 +443,7 @@ class GPU:
         alim = self.adapter.limits
         # counts: ask for what the kernels need; sizes: take whatever the adapter offers
         wanted = {'max-storage-textures-per-shader-stage': 8, 'max-sampled-textures-per-shader-stage': 16,
-                  'max-storage-buffers-per-shader-stage': 8, 'max-storage-buffer-binding-size': None,
+                  'max-storage-buffers-per-shader-stage': 10, 'max-storage-buffer-binding-size': None,
                   'max-buffer-size': None, 'max-texture-dimension-2d': None, 'max-texture-dimension-3d': None,
                   'max-compute-workgroup-storage-size': None}
         limits = {}
@@ -462,7 +462,8 @@ class GPU:
         self.repeat = d.create_sampler(mag_filter='linear', min_filter='linear', mipmap_filter='nearest',
                                        address_mode_u='repeat', address_mode_v='repeat', address_mode_w='repeat')
         self._kernels = {}
-        self.vel_format = 'rgba32float' if self.float32_filterable else 'rgba16float'
+        self.on_compile = None   # called with the shader file before a new kernel compiles (the app shows it)
+        self.vel_format ='rgba32float' if self.float32_filterable else 'rgba16float'
         log.info('GPU: %s (%s)', self.name, self.backend)
 
     @staticmethod
@@ -508,6 +509,8 @@ class GPU:
         key = (source_file, entry, tuple(bindings), tuple(sorted((defines or {}).items())), workgroup)
         k = self._kernels.get(key)
         if k is None:
+            if self.on_compile is not None:
+                self.on_compile(source_file)
             k = Kernel(self, source_file, bindings, entry, defines, workgroup)
             self._kernels[key] = k
         return k

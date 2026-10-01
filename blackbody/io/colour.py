@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .images import linear_to_srgb, rolloff
+from .images import camera_rolloff, linear_to_srgb
 
 _AGX = np.array([[0.842479062253094, 0.0423282422610123, 0.0423756549057051],
                  [0.0784335999999992, 0.878468636469772, 0.0784336],
@@ -30,8 +30,8 @@ def aces_fit(x):
     return np.clip((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0)
 
 
-def view_transform(rgb, view='standard', knee=0.8):
-    """Scene-linear RGB -> display-encoded sRGB in [0, 1]."""
+def view_transform(rgb, view='standard', knee=0.8, white=0.0):
+    """Scene-linear RGB -> display-encoded sRGB in [0, 1]. white: the Standard view's highlights to white."""
     rgb = np.asarray(rgb, np.float32)
     if view == 'agx':
         out = agx(rgb)
@@ -40,5 +40,5 @@ def view_transform(rgb, view='standard', knee=0.8):
     elif view == 'raw':
         out = np.clip(rgb, 0.0, 1.0)
     else:
-        out = rolloff(rgb, knee)
+        out = camera_rolloff(rgb, knee, white)
     return linear_to_srgb(np.clip(out, 0.0, 1.0))

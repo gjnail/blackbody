@@ -47,45 +47,56 @@ def _apply(scene: Scene, spec: dict):
         scene.emitters = [_em(scene, **e) for e in spec['emitters']]
     if 'colliders' in spec:
         scene.colliders = [_col(scene, i, **c) for i, c in enumerate(spec['colliders'])]
+    if 'fabrics' in spec:
+        scene.fabrics = []
+        for f in spec['fabrics']:
+            i = scene.add_fabric(**{k: v for k, v in f.items() if not isinstance(v, K)})
+            for k, v in f.items():
+                if isinstance(v, K):
+                    scene.fabrics[i][k] = v.curve(param('fabric', k), scene.fps, scene.start)
 
 
 PRESETS = {
     'campfire': {
         'name': 'Campfire', 'category': 'Fires', 'size': '1.2 m flames',
         'blurb': 'A wood campfire on the ground: lively flame tongues, grey smoke, a steady stream of embers.',
-        'domain': {'size_x': 2.2, 'size_y': 3.6, 'size_z': 2.2, 'resolution': 144, 'preroll': 2.5},
+        'domain': {'size_x': 2.2, 'size_y': 3.6, 'size_z': 2.2, 'resolution': 144, 'preroll': 2.5, 'time_scale': 1.6, 'substeps_max': 12},
         'combustion': {'burn_rate': 5.0, 'heat': 0.6, 'soot': 0.35, 'cooling': 2.2, 'flame_life': 0.08},
-        'motion': {'buoyancy': 5.5, 'turbulence': 3.5, 'turb_freq': 2.5, 'vorticity': 1.6, 'disturbance': 2.5, 'disturb_block': 0.04},
-        'shading': {'flame_k': 1650, 'max_k': 2250, 'smoke_density': 5.0},
+        'motion': {'puffing': 0.6, 'buoyancy': 5.5, 'turbulence': 3.5, 'turb_freq': 2.5, 'vorticity': 1.6, 'disturbance': 2.5, 'disturb_block': 0.04},
+        # flame shape checked against footage of a real wood campfire: opaque, sharp-edged tongues, little glowing soot
+        'shading': {'flame_k': 1650, 'max_k': 2250, 'smoke_density': 2.0, 'smoke_albedo': (0.55, 0.54, 0.53), 'coal_bed': 1.0,
+                    'coal_height': 0.08, 'flame_threshold': 0.1, 'flame_sharpness': 3.2, 'flame_absorption': 10.0,
+                    'soot_glow': 0.1, 'detail': 0.5},
         'embers': {'rate': 90, 'launch': 1.6, 'lifetime': 2.4},
         'camera': {'distance': 6.5, 'target_y': 1.2, 'pitch': 5, 'anchor_x': 0.5, 'anchor_y': 0.9, 'focal_mm': 35},
         'emitters': [
-            dict(name='Log A', shape='capsule', position=(-0.42, 0.07, -0.18), end=(0.4, 0.07, 0.2), size=(0.08, 0.08, 0.08), fuel=10, temperature=0.45),
-            dict(name='Log B', shape='capsule', position=(-0.35, 0.09, 0.25), end=(0.38, 0.09, -0.22), size=(0.08, 0.08, 0.08), fuel=10, temperature=0.45, seed=3),
-            dict(name='Coal bed', shape='cylinder', position=(0, 0.04, 0), size=(0.34, 0.04, 0.34), fuel=8, temperature=0.4, seed=7),
+            dict(noise_rise=1.5, name='Log A', shape='capsule', position=(-0.42, 0.07, -0.18), end=(0.4, 0.07, 0.2), size=(0.08, 0.08, 0.08), fuel=10, temperature=0.45),
+            dict(noise_rise=1.5, name='Log B', shape='capsule', position=(-0.35, 0.09, 0.25), end=(0.38, 0.09, -0.22), size=(0.08, 0.08, 0.08), fuel=10, temperature=0.45, seed=3),
+            dict(noise_rise=1.5, name='Coal bed', shape='cylinder', position=(0, 0.04, 0), size=(0.34, 0.04, 0.34), fuel=8, temperature=0.4, seed=7),
         ],
     },
     'bonfire': {
         'name': 'Bonfire', 'category': 'Fires', 'size': '5 m flames',
         'blurb': 'A large pile of burning wood: tall rolling flames, a thick smoke column and a heavy shower of embers.',
-        'domain': {'size_x': 7.0, 'size_y': 13.0, 'size_z': 7.0, 'resolution': 160, 'preroll': 3.0},
+        'domain': {'size_x': 7.0, 'size_y': 13.0, 'size_z': 7.0, 'resolution': 160, 'preroll': 3.0, 'time_scale': 1.5, 'substeps_max': 12},
         'combustion': {'burn_rate': 4.0, 'heat': 0.45, 'soot': 0.3, 'cooling': 1.6, 'radiative': 0.3, 'flame_life': 0.1, 'smoke_dissipation': 0.35},
-        'motion': {'buoyancy': 6.5, 'turbulence': 4.0, 'turb_freq': 0.8, 'turb_rise': 3.0, 'vorticity': 2.0, 'disturbance': 3.0,
+        'motion': {'puffing': 0.6, 'buoyancy': 6.5, 'turbulence': 4.0, 'turb_freq': 0.8, 'turb_rise': 3.0, 'vorticity': 2.0, 'disturbance': 3.0,
                    'disturb_block': 0.14},
-        'shading': {'flame_k': 1600, 'max_k': 2200, 'smoke_density': 3.5, 'detail_freq': 1.2, 'smoke_albedo': (0.16, 0.155, 0.15)},
+        'shading': {'flame_k': 1600, 'max_k': 2200, 'smoke_density': 3.5, 'detail_freq': 1.2, 'smoke_albedo': (0.16, 0.155, 0.15),
+                    'coal_bed': 1.0, 'coal_height': 0.25},
         'lighting': {'light_spread': 1.2},
         'embers': {'rate': 450, 'launch': 4.0, 'spread': 1.6, 'lifetime': 3.5, 'size_max': 0.016, 'turb_freq': 0.8, 'turbulence': 5.0},
         'camera': {'distance': 18.0, 'target_y': 3.4, 'pitch': 3, 'anchor_y': 0.92, 'focal_mm': 35},
         'emitters': [
-            dict(name='Wood pile', shape='cone', position=(0, 0.45, 0), size=(1.5, 0.45, 1.5), fuel=12, temperature=0.45, noise_freq=1.2, noise_rise=1.0),
+            dict(name='Wood pile', shape='cone', position=(0, 0.45, 0), size=(1.5, 0.45, 1.5), fuel=12, temperature=0.45, noise_freq=1.2, noise_rise=2.5),
         ],
     },
     'torch': {
         'name': 'Torch', 'category': 'Fires', 'size': '40 cm flame',
         'blurb': 'A hand-held torch head in mid-air: a compact, fast-flickering flame with a thin smoke trail.',
-        'domain': {'size_x': 0.7, 'size_y': 1.6, 'size_z': 0.7, 'resolution': 128, 'ground': False, 'preroll': 1.5},
+        'domain': {'size_x': 0.7, 'size_y': 1.6, 'size_z': 0.7, 'resolution': 128, 'ground': False, 'preroll': 1.5, 'time_scale': 1.75, 'substeps_max': 12},
         'combustion': {'burn_rate': 7.0, 'heat': 0.55, 'soot': 0.3, 'cooling': 3.5, 'flame_life': 0.06},
-        'motion': {'buoyancy': 4.0, 'turbulence': 2.0, 'turb_freq': 8.0, 'turb_rise': 1.0, 'vorticity': 1.2, 'disturbance': 1.6,
+        'motion': {'puffing': 0.6, 'buoyancy': 4.0, 'turbulence': 2.0, 'turb_freq': 8.0, 'turb_rise': 1.0, 'vorticity': 1.2, 'disturbance': 1.6,
                    'disturb_block': 0.012},
         'shading': {'flame_k': 1700, 'smoke_density': 6.0, 'detail_freq': 10.0, 'flame_absorption': 15.0},
         'lighting': {'light_spread': 0.12},
@@ -93,7 +104,7 @@ PRESETS = {
         'camera': {'distance': 2.4, 'target_y': 0.45, 'pitch': 2, 'anchor_y': 0.75, 'focal_mm': 35},
         'emitters': [
             dict(name='Torch head', shape='cylinder', position=(0, 0.1, 0), size=(0.055, 0.06, 0.055), fuel=18, temperature=0.5,
-                 noise_freq=14.0, noise_rise=0.5, noise=0.7),
+                 noise_freq=14.0, noise_rise=1.25, noise=0.7),
         ],
     },
     'candle': {
@@ -131,16 +142,16 @@ PRESETS = {
     'pool_fire': {
         'name': 'Fuel spill', 'category': 'Fires', 'size': '3 m flames',
         'blurb': 'Burning petrol spread on the ground: pulsing orange flames and thick black smoke.',
-        'domain': {'size_x': 5.0, 'size_y': 9.0, 'size_z': 5.0, 'resolution': 144, 'preroll': 2.5},
+        'domain': {'size_x': 5.0, 'size_y': 9.0, 'size_z': 5.0, 'resolution': 144, 'preroll': 2.5, 'time_scale': 2.2, 'substeps_max': 12},
         'combustion': {'burn_rate': 4.0, 'heat': 0.5, 'soot': 1.2, 'cooling': 1.8, 'radiative': 0.25, 'flame_life': 0.1, 'smoke_dissipation': 0.2},
-        'motion': {'buoyancy': 6.0, 'turbulence': 3.0, 'turb_freq': 1.1, 'turb_rise': 2.0, 'vorticity': 2.0, 'disturbance': 2.5,
+        'motion': {'puffing': 0.6, 'buoyancy': 6.0, 'turbulence': 3.0, 'turb_freq': 1.1, 'turb_rise': 2.0, 'vorticity': 2.0, 'disturbance': 2.5,
                    'disturb_block': 0.08},
         'shading': {'flame_k': 1550, 'max_k': 2100, 'smoke_density': 9.0, 'smoke_albedo': (0.05, 0.05, 0.05), 'detail_freq': 1.5},
         'lighting': {'light_spread': 0.8},
         'embers': {'rate': 20, 'launch': 2.0},
         'camera': {'distance': 16.0, 'target_y': 3.0, 'pitch': 4, 'anchor_y': 0.9, 'focal_mm': 35},
         'emitters': [
-            dict(name='Spill', shape='cylinder', position=(0, 0.03, 0), size=(1.3, 0.03, 1.1), fuel=12, temperature=0.45, noise_freq=1.6),
+            dict(noise_rise=1.5, name='Spill', shape='cylinder', position=(0, 0.03, 0), size=(1.3, 0.03, 1.1), fuel=12, temperature=0.45, noise_freq=1.6),
         ],
     },
     'fire_line': {
@@ -195,17 +206,17 @@ PRESETS = {
     'vehicle_fire': {
         'name': 'Vehicle fire', 'category': 'Fires', 'size': 'car-sized',
         'blurb': 'Flames over a car-sized body with heavy black smoke. Place the collider box over the car in your footage.',
-        'domain': {'size_x': 8.0, 'size_y': 12.0, 'size_z': 6.0, 'resolution': 160, 'preroll': 3.0},
+        'domain': {'size_x': 8.0, 'size_y': 12.0, 'size_z': 6.0, 'resolution': 160, 'preroll': 3.0, 'time_scale': 1.9, 'substeps_max': 12},
         'combustion': {'burn_rate': 4.0, 'heat': 0.5, 'soot': 1.4, 'cooling': 1.8, 'radiative': 0.25, 'flame_life': 0.1, 'smoke_dissipation': 0.18},
-        'motion': {'buoyancy': 6.0, 'turbulence': 3.5, 'turb_freq': 1.0, 'vorticity': 2.0, 'disturbance': 2.5, 'disturb_block': 0.08},
+        'motion': {'puffing': 0.6, 'buoyancy': 6.0, 'turbulence': 3.5, 'turb_freq': 1.0, 'vorticity': 2.0, 'disturbance': 2.5, 'disturb_block': 0.08},
         'shading': {'flame_k': 1550, 'smoke_density': 10.0, 'smoke_albedo': (0.04, 0.04, 0.04), 'detail_freq': 1.5},
         'lighting': {'light_spread': 0.9},
         'embers': {'rate': 60},
         'camera': {'distance': 20.0, 'target_y': 3.5, 'pitch': 5, 'anchor_y': 0.9, 'focal_mm': 35},
         'colliders': [dict(name='Car body', shape='box', position=(0, 0.72, 0), size=(2.2, 0.72, 0.95))],
         'emitters': [
-            dict(name='Cabin', shape='box', position=(0.3, 1.5, 0), size=(1.2, 0.12, 0.8), fuel=14, temperature=0.45, noise_freq=1.8),
-            dict(name='Engine bay', shape='box', position=(-1.6, 1.25, 0), size=(0.6, 0.1, 0.8), fuel=10, temperature=0.45, seed=4),
+            dict(noise_rise=1.5, name='Cabin', shape='box', position=(0.3, 1.5, 0), size=(1.2, 0.12, 0.8), fuel=14, temperature=0.45, noise_freq=1.8),
+            dict(noise_rise=1.5, name='Engine bay', shape='box', position=(-1.6, 1.25, 0), size=(0.6, 0.1, 0.8), fuel=10, temperature=0.45, seed=4),
         ],
     },
     'smoke_plume': {
@@ -227,6 +238,7 @@ PRESETS = {
     'fire_whirl': {
         'name': 'Fire whirl', 'category': 'Fires', 'size': '8 m column',
         'blurb': 'A pool of burning fuel drawn into a spinning column of flame: a fire tornado. The emitter\'s Swirl sets the spin.',
+        'render': {'end': 168},   # long enough to reach what its library picture shows
         'domain': {'size_x': 5.0, 'size_y': 12.0, 'size_z': 5.0, 'resolution': 160, 'preroll': 4.0},
         'combustion': {'burn_rate': 2.2, 'heat': 0.6, 'soot': 0.45, 'cooling': 1.0, 'radiative': 0.2, 'flame_life': 0.14,
                        'smoke_dissipation': 0.3},
@@ -376,6 +388,7 @@ PRESETS = {
     'grass_fire': {
         'name': 'Grass fire', 'category': 'Fires', 'size': 'spreading in wind',
         'blurb': 'A dropped torch lights dry grass and the wind drives the fire front across the ground. Spreading fire burns the floor by itself.',
+        'render': {'end': 192},   # long enough to reach what its library picture shows
         'domain': {'size_x': 14.0, 'size_y': 4.0, 'size_z': 7.0, 'resolution': 192, 'preroll': 0.0},
         'combustion': {'burn_rate': 6.0, 'heat': 0.6, 'soot': 0.45, 'cooling': 2.4, 'flame_life': 0.08},
         'motion': {'buoyancy': 5.0, 'turbulence': 3.0, 'turb_freq': 2.0, 'vorticity': 1.6, 'disturbance': 2.5, 'disturb_block': 0.05,
@@ -394,6 +407,7 @@ PRESETS = {
     'curtain_fire': {
         'name': 'Curtain catching', 'category': 'Fires', 'size': '2.4 m curtain',
         'blurb': 'A small flame at the hem of a curtain climbs it and spreads across. The curtain is a collider marked Burnable.',
+        'render': {'end': 168},   # long enough to reach what its library picture shows
         'domain': {'size_x': 3.0, 'size_y': 3.4, 'size_z': 1.6, 'resolution': 176, 'preroll': 0.0},
         'combustion': {'burn_rate': 6.0, 'heat': 0.6, 'soot': 0.6, 'cooling': 2.2, 'flame_life': 0.08, 'smoke_dissipation': 0.3},
         'motion': {'buoyancy': 5.0, 'turbulence': 2.5, 'turb_freq': 3.0, 'vorticity': 1.5, 'disturbance': 2.0, 'disturb_block': 0.03},
@@ -409,6 +423,88 @@ PRESETS = {
         'emitters': [
             dict(name='Lighter', shape='sphere', position=(0.1, 0.2, -0.38), size=(0.04, 0.06, 0.04), fuel=20, temperature=0.7,
                  stop=2.0, fade_out=0.3, embers=False),
+        ],
+    },
+    'fabric_curtain': {
+        'name': 'Burning curtain', 'category': 'Fires', 'size': '2.4 m curtain',
+        'blurb': 'A lighter at the hem of a real cotton curtain: it catches, the flames race up it, and it chars, burns through '
+                 'and falls apart in about ten seconds, feeding the fire as it goes. The curtain is a Fabric: try silk, wool (it '
+                 'puts itself out) or polyester (it shrinks away and melts).',
+        'render': {'end': 264},   # long enough to reach what its library picture shows
+        'domain': {'size_x': 3.0, 'size_y': 3.6, 'size_z': 1.8, 'resolution': 160, 'preroll': 0.0},
+        'combustion': {'burn_rate': 6.0, 'heat': 0.6, 'soot': 0.6, 'cooling': 2.2, 'flame_life': 0.08, 'smoke_dissipation': 0.3},
+        'motion': {'buoyancy': 5.0, 'turbulence': 2.5, 'turb_freq': 3.0, 'vorticity': 1.5, 'disturbance': 2.0, 'disturb_block': 0.03},
+        'shading': {'flame_k': 1650, 'max_k': 2250, 'smoke_density': 4.0, 'smoke_albedo': (0.3, 0.28, 0.25),
+                    'flame_threshold': 0.1, 'flame_sharpness': 3.2, 'flame_absorption': 10.0, 'soot_glow': 0.1, 'detail': 0.5},
+        'embers': {'rate': 30},
+        # a dim room lit from the side (a window), so the folds show before the fire takes over
+        'lighting': {'ambient': (0.035, 0.038, 0.045), 'sun_on': True, 'sun_intensity': 0.9, 'sun_azimuth': 65.0,
+                     'sun_elevation': 20.0},
+        'camera': {'distance': 6.0, 'target_y': 1.5, 'pitch': 2, 'anchor_y': 0.92, 'focal_mm': 35},
+        'colliders': [
+            dict(name='Wall', shape='box', position=(0.0, 1.8, -0.7), size=(1.5, 1.8, 0.06)),
+        ],
+        'emitters': [
+            dict(name='Lighter', shape='sphere', position=(0.15, 0.24, -0.5), size=(0.05, 0.07, 0.05), fuel=24, temperature=0.8,
+                 start=0.2, stop=4.0, fade_out=0.4, embers=False, noise=0.3),
+        ],
+        'fabrics': [
+            dict(name='Curtain', position=(0.0, 1.45, -0.5), width=1.3, height=2.3, fullness=2.0, pins='top', material='cotton',
+                 colour=(0.72, 0.62, 0.45), detail=80),
+        ],
+    },
+    'wet_towels': {
+        'name': 'Wet and dry towels', 'category': 'Fires', 'size': '70 cm towels',
+        'blurb': 'Two cotton tea towels hung over a fire on a cold, damp morning. The dry one catches and burns away in '
+                 'seconds. The soaked one drips, steams and holds at 100 C while the fire boils its water off, and '
+                 'outlasts it: it cannot catch until it has dried. Wet at start, on a Fabric, sets how soaked it is.',
+        'domain': {'size_x': 2.0, 'size_y': 3.0, 'size_z': 1.4, 'resolution': 144, 'preroll': 1.0},
+        'render': {'end': 288},
+        'combustion': {'burn_rate': 5.0, 'heat': 0.6, 'soot': 0.35, 'cooling': 2.2, 'flame_life': 0.08, 'smoke_dissipation': 0.3},
+        'motion': {'puffing': 0.4, 'buoyancy': 5.5, 'turbulence': 3.0, 'turb_freq': 2.5, 'vorticity': 1.6, 'disturbance': 2.0,
+                   'disturb_block': 0.04},
+        'shading': {'flame_k': 1650, 'max_k': 2250, 'smoke_density': 2.5, 'smoke_albedo': (0.55, 0.54, 0.53), 'flame_threshold': 0.1,
+                    'flame_sharpness': 3.2, 'flame_absorption': 10.0, 'soot_glow': 0.1, 'detail': 0.5, 'ambient_k': 279.0,
+                    'humidity': 85.0},
+        'embers': {'rate': 25},
+        'lighting': {'ambient': (0.16, 0.17, 0.2), 'sun_on': True, 'sun_intensity': 1.2, 'sun_azimuth': 55.0, 'sun_elevation': 18.0},
+        'camera': {'distance': 4.0, 'target_y': 1.05, 'pitch': 4, 'anchor_y': 0.9, 'focal_mm': 35},
+        'colliders': [
+            dict(name='Rail', shape='box', position=(0.0, 1.415, 0.0), size=(0.62, 0.012, 0.012)),
+        ],
+        'emitters': [
+            dict(noise_rise=1.5, name='Fire', shape='cylinder', position=(0.0, 0.05, 0.0), size=(0.36, 0.05, 0.24), fuel=10,
+                 temperature=0.5, seed=5),
+        ],
+        'fabrics': [
+            dict(name='Dry towel', position=(-0.27, 1.05, 0.0), width=0.45, height=0.7, fullness=1.25, pins='top',
+                 material='cotton', colour=(0.3, 0.45, 0.66), detail=40),
+            dict(name='Soaked towel', position=(0.27, 1.05, 0.0), width=0.45, height=0.7, fullness=1.25, pins='top',
+                 material='cotton', colour=(0.3, 0.45, 0.66), detail=40, wetness=1.0),
+        ],
+    },
+    'flag_wind': {
+        'name': 'Flag in smoky wind', 'category': 'Smoke', 'size': '1.5 m flag',
+        'blurb': 'A nylon flag on a pole streams and flutters in a gusting wind while the smoke of a fire upwind blows past it; '
+                 'the flag stirs the smoke behind it. The flag is a Fabric held by one side: change its material, size or the wind.',
+        'domain': {'size_x': 6.0, 'size_y': 3.6, 'size_z': 3.0, 'resolution': 144, 'preroll': 1.0},
+        'combustion': {'soot': 0.9, 'smoke_dissipation': 0.1},
+        'motion': {'buoyancy': 5.0, 'turbulence': 3.0, 'turb_freq': 2.0, 'disturbance': 2.0,
+                   'wind_speed': 3.5, 'wind_dir': 90.0, 'gust': 0.5, 'wind_relax': 1.5},
+        'shading': {'smoke_density': 2.5, 'smoke_albedo': (0.7, 0.7, 0.72)},
+        'lighting': {'sun_on': True, 'sun_intensity': 3.0},
+        'embers': {'enabled': False},
+        'camera': {'distance': 7.0, 'target_y': 1.8, 'pitch': 4, 'anchor_y': 0.9, 'focal_mm': 35},
+        'colliders': [
+            dict(name='Pole', shape='cylinder', position=(-0.85, 1.1, 0.0), size=(0.025, 1.1, 0.025), holdout=False),
+        ],
+        'emitters': [
+            dict(name='Fire', shape='cylinder', position=(-2.4, 0.05, 0.35), size=(0.45, 0.05, 0.45), fuel=14.0, temperature=0.7,
+                 smoke=4.0, embers=False),
+        ],
+        'fabrics': [
+            dict(name='Flag', position=(-0.08, 1.75, 0.0), width=1.5, height=1.0, pins='side', material='nylon',
+                 colour=(0.75, 0.08, 0.06), detail=40, burnable=False),
         ],
     },
     'room_fire': {
@@ -472,6 +568,7 @@ PRESETS = {
     'armchair_fire': {
         'name': 'Burning armchair', 'category': 'Fires', 'size': 'mesh, 1 m',
         'blurb': 'Fire spreading over an armchair from a flame on its seat. The chair is a mesh (OBJ) collider marked Burnable: use your own model the same way.',
+        'render': {'end': 336},   # long enough to reach what its library picture shows
         'domain': {'size_x': 2.4, 'size_y': 3.6, 'size_z': 2.4, 'resolution': 160, 'preroll': 0.0},
         'combustion': {'burn_rate': 5.0, 'heat': 0.6, 'soot': 1.1, 'cooling': 2.0, 'flame_life': 0.1, 'smoke_dissipation': 0.25},
         'motion': {'buoyancy': 5.5, 'turbulence': 3.0, 'turb_freq': 3.0, 'vorticity': 1.6, 'disturbance': 2.0, 'disturb_block': 0.03},
@@ -487,12 +584,115 @@ PRESETS = {
                  stop=2.5, fade_out=0.5, embers=False),
         ],
     },
+    'flash_fire': {
+        'name': 'Fuel spill flash fire', 'category': 'Fires', 'size': '3 m of spilled petrol',
+        'blurb': 'Petrol vapour from a spill creeps along the ground, heavier than air. A spark at 3 s lights its edge and a flame front runs back across the vapour to the puddle, which keeps burning. Uses Flame speed and Fuel vapour weight.',
+        'render': {'end': 168},
+        'domain': {'size_x': 4.4, 'size_y': 2.6, 'size_z': 2.2, 'resolution': 176, 'preroll': 0.0, 'substeps_max': 8},
+        'combustion': {'flame_speed': 4.0, 'fuel_weight': 1.0, 'fuel_dissipation': 0.02, 'burn_rate': 6.0, 'heat': 0.6, 'soot': 0.8,
+                       'cooling': 2.0, 'flame_life': 0.1, 'expansion': 1.0, 'rich': 4.0},
+        'motion': {'buoyancy': 5.5, 'turbulence': 3.0, 'turb_freq': 3.0, 'vorticity': 1.6, 'disturbance': 2.0, 'disturb_block': 0.03},
+        'shading': {'flame_k': 1700, 'smoke_density': 5.0, 'smoke_albedo': (0.06, 0.06, 0.06)},
+        'embers': {'enabled': False},
+        'camera': {'distance': 6.0, 'target_y': 0.5, 'yaw': 10, 'pitch': 12, 'anchor_y': 0.8, 'focal_mm': 35},
+        'emitters': [
+            dict(name='Petrol spill', shape='box', position=(-1.2, 0.02, 0.0), size=(0.5, 0.02, 0.45), fuel=4.0, temperature=0.0,
+                 noise=0.3, noise_freq=4.0, embers=False),
+            dict(name='Spark', shape='sphere', position=(-0.4, 0.05, 0.1), size=(0.05, 0.05, 0.05), fuel=0.0, temperature=1.5,
+                 start=3.0, stop=3.5, fade_in=0.05, fade_out=0.1, embers=False),
+        ],
+    },
+    'gas_cloud': {
+        'name': 'Gas cloud ignition', 'category': 'Explosions', 'size': '5 m cloud',
+        'blurb': 'A burst of propane spreads into a low cloud that drifts onto a pilot flame at about 2 s: a flame front burns through the whole cloud in half a second and it swells into a fireball. Uses Flame speed, Fuel vapour weight and Heat expansion.',
+        'render': {'end': 96},
+        'domain': {'size_x': 7.0, 'size_y': 6.0, 'size_z': 5.0, 'resolution': 176, 'preroll': 0.0, 'substeps_max': 10, 'mg_cycles': 3},
+        'combustion': {'flame_speed': 6.0, 'fuel_weight': 0.6, 'fuel_dissipation': 0.05, 'burn_rate': 8.0, 'heat': 0.9, 'soot': 0.9,
+                       'cooling': 1.6, 'flame_life': 0.2, 'expansion': 2.0, 'thermal_expansion': 0.8, 'rich': 6.0, 'flame_gain': 1.5},
+        'motion': {'buoyancy': 6.0, 'turbulence': 5.0, 'turb_freq': 1.2, 'vorticity': 2.0, 'disturbance': 3.0, 'disturb_block': 0.08},
+        'shading': {'flame_k': 1800, 'max_k': 2300, 'smoke_density': 3.0, 'smoke_albedo': (0.07, 0.065, 0.06)},
+        'embers': {'enabled': False},
+        'camera': {'distance': 13.0, 'target_y': 1.6, 'pitch': 6, 'anchor_y': 0.85, 'focal_mm': 35},
+        'emitters': [
+            dict(name='Leak', shape='sphere', position=(-0.8, 0.3, 0.0), size=(0.4, 0.3, 0.4), fuel=14.0, temperature=0.0, radial=3.0,
+                 vel_blend=0.4, stop=1.0, fade_out=0.3, embers=False),
+            dict(name='Pilot flame', shape='sphere', position=(0.4, 0.15, 0.2), size=(0.06, 0.06, 0.06), fuel=0.0, temperature=1.5,
+                 start=1.2, stop=2.5, fade_in=0.05, fade_out=0.1, embers=False),
+        ],
+    },
+    'backdraft': {
+        'name': 'Backdraft', 'category': 'Fires', 'size': 'small room, 1.6 m',
+        'blurb': 'A fire in a shut room uses up the air and dies back, filling the room with hot, fuel-rich smoke. When the door slides open at 4 s the smoke pours out of the doorway, meets fresh air and ignites, and the flames roll back in along the air coming in. Soot blackens the ceiling and the door frame. Uses tracked air, Flame speed and Soot stains.',
+        'render': {'end': 192},
+        'domain': {'size_x': 5.0, 'size_y': 2.6, 'size_z': 2.4, 'resolution': 128, 'preroll': 0.0, 'substeps_max': 10, 'mg_cycles': 3},
+        'combustion': {'air': 'tracked', 'air_use': 2.5, 'air_mixing': 0.6, 'thermal_expansion': 0.4, 'flame_speed': 4.0,
+                       'burn_rate': 6.0, 'rich': 8.0, 'fuel_dissipation': 0.01, 'heat': 0.7, 'cooling': 0.05, 'soot': 0.8,
+                       'flame_life': 0.18, 'expansion': 0.3, 'smoke_dissipation': 0.05, 'flame_gain': 2.0, 'soot_stain': 0.4},
+        'motion': {'buoyancy': 8.0, 'turbulence': 4.0, 'turb_freq': 2.5, 'vorticity': 2.0, 'disturbance': 2.5, 'disturb_block': 0.05,
+                   'mask_smoke': 0.3},
+        'shading': {'flame_k': 1700, 'smoke_density': 1.5, 'smoke_albedo': (0.08, 0.075, 0.07), 'soot_glow': 0.3},
+        'lighting': {'light_spread': 0.5, 'fire_scatter': 1.5},
+        'embers': {'enabled': False},
+        'camera': {'distance': 6.0, 'target_y': 0.8, 'yaw': 45, 'pitch': 5, 'anchor_x': 0.45, 'anchor_y': 0.8, 'focal_mm': 35},
+        'colliders': [
+            # a hollow room with a doorway in its front wall (+x), and a door that slides aside at 4 s; a
+            # 4 cm gap under the door lets the room breathe a little, as real rooms do. They do not hide
+            # the fire, so the demo shows inside (turn Hides fire on to match a real room)
+            dict(name='Room', shape='box', position=(-1.0, 0.8, 0.0), size=(0.9, 0.8, 0.9), hollow=0.15,
+                 opening=(0.3, 0.7, 0.35), opening_at=(0.825, -0.1, 0.0), holdout=False),
+            dict(name='Door', shape='box', size=(0.04, 0.7, 0.36), holdout=False,
+                 position=K((0.0, (-0.055, 0.74, 0.0)), (4.0, (-0.055, 0.74, 0.0)), (4.25, (-0.055, 0.74, -0.75)), interp='linear')),
+        ],
+        'emitters': [
+            dict(name='Burning furniture', shape='box', position=(-1.3, 0.2, 0.0), size=(0.35, 0.12, 0.35), fuel=30, temperature=0.6,
+                 noise_freq=2.0),
+        ],
+    },
+    'hillside_fire': {
+        'name': 'Fire running uphill', 'category': 'Fires', 'size': '8 m slope',
+        'blurb': 'A fire lit at the foot of a grassy slope runs up it, driven by the breeze that climbs the hill and by its flames leaning onto the unburnt grass above. The slope is a heightfield: a greyscale image used as a Burnable mesh collider.',
+        'render': {'end': 216},
+        'domain': {'size_x': 9.0, 'size_y': 6.0, 'size_z': 9.0, 'resolution': 176, 'preroll': 0.0, 'mesh_resolution': 128},
+        'combustion': {'burn_rate': 6.0, 'heat': 0.6, 'soot': 0.45, 'cooling': 2.4, 'flame_life': 0.08},
+        'motion': {'buoyancy': 5.0, 'turbulence': 3.0, 'turb_freq': 2.0, 'vorticity': 1.6, 'disturbance': 2.5, 'disturb_block': 0.05,
+                   'wind_speed': 2.0, 'wind_dir': 180.0, 'gust': 0.3},
+        'spread': {'enabled': True, 'ground': False, 'coverage': 0.85, 'patch_freq': 1.2, 'burn_time': 2.0, 'fuel': 10.0, 'heat': 0.5,
+                   'smoke': 0.8, 'catch_temp': 0.25, 'catch_time': 0.3, 'creep': 0.12, 'smoulder': 4.0, 'smoulder_smoke': 1.2},
+        'shading': {'flame_k': 1650, 'smoke_density': 4.0, 'smoke_albedo': (0.3, 0.29, 0.27)},
+        'embers': {'rate': 80},
+        'camera': {'distance': 15.0, 'target_y': 1.6, 'yaw': 20, 'pitch': 12, 'anchor_y': 0.8, 'focal_mm': 35},
+        'colliders': [dict(name='Hillside', shape='mesh', mesh='builtin:hillside.png', position=(0.0, 0.0, 0.0),
+                           size=(8.0, 3.2, 8.0), burnable=True)],
+        'emitters': [
+            dict(name='Dropped torch', shape='sphere', position=(-0.5, 0.25, 3.4), size=(0.3, 0.15, 0.3), fuel=14, temperature=0.6,
+                 stop=1.5, fade_out=0.3),
+        ],
+    },
+    'spot_fires': {
+        'name': 'Spot fires', 'category': 'Fires', 'size': 'wind-driven embers',
+        'blurb': 'A strong wind throws burning embers ahead of a grass fire; where hot ones land they start new fires, which the wind then joins up. Spreading fire › Spot fires.',
+        'render': {'end': 216},
+        'domain': {'size_x': 16.0, 'size_y': 5.0, 'size_z': 8.0, 'resolution': 192, 'preroll': 0.0},
+        'combustion': {'burn_rate': 6.0, 'heat': 0.6, 'soot': 0.45, 'cooling': 2.4, 'flame_life': 0.08},
+        'motion': {'buoyancy': 5.0, 'turbulence': 3.0, 'turb_freq': 2.0, 'vorticity': 1.6, 'disturbance': 2.5, 'disturb_block': 0.05,
+                   'wind_speed': 6.0, 'wind_dir': 90.0, 'gust': 0.5},
+        'spread': {'enabled': True, 'ground': True, 'area_x': 15.0, 'area_z': 7.5, 'coverage': 0.8, 'patch_freq': 1.0, 'burn_time': 1.6,
+                   'fuel': 10.0, 'heat': 0.5, 'smoke': 0.8, 'catch_temp': 0.3, 'catch_time': 0.25, 'creep': 0.1, 'smoulder': 4.0,
+                   'smoulder_smoke': 1.2, 'spotting': 0.06, 'spot_temp': 800.0},
+        'shading': {'flame_k': 1650, 'smoke_density': 4.0, 'smoke_albedo': (0.3, 0.29, 0.27)},
+        'embers': {'rate': 400, 'launch': 3.0, 'lifetime': 4.0, 'cooling': 0.25},
+        'camera': {'distance': 18.0, 'target_y': 0.6, 'pitch': 16, 'anchor_y': 0.75, 'focal_mm': 35},
+        'emitters': [
+            dict(name='Dropped torch', shape='sphere', position=(-6.5, 0.1, 0.0), size=(0.3, 0.1, 0.3), fuel=14, temperature=0.6,
+                 stop=1.0, fade_out=0.3),
+        ],
+    },
 }
 
 ORDER = ['campfire', 'bonfire', 'torch', 'candle', 'gas_ring', 'pool_fire', 'fire_line', 'fireball', 'flamethrower',
-         'vehicle_fire', 'smoke_plume', 'fire_whirl', 'waved_torch', 'hose_douse', 'grass_fire', 'curtain_fire', 'armchair_fire',
-         'room_fire', 'coloured_flames', 'road_flare', 'grinder_sparks', 'fireworks', 'car_through_smoke',
-         'kettle_steam', 'steam_vent']
+         'vehicle_fire', 'smoke_plume', 'fire_whirl', 'waved_torch', 'hose_douse', 'grass_fire', 'spot_fires', 'hillside_fire',
+         'curtain_fire', 'fabric_curtain', 'wet_towels', 'armchair_fire', 'room_fire', 'backdraft', 'flash_fire', 'gas_cloud', 'coloured_flames', 'road_flare',
+         'grinder_sparks', 'fireworks', 'car_through_smoke', 'flag_wind', 'kettle_steam', 'steam_vent']
 
 
 def make(name: str, fps=None, start=None) -> Scene:
@@ -518,7 +718,8 @@ def apply_to(scene: Scene, name: str, keep_camera=True, keep_render=True):
     keep = {}
     if keep_camera:
         keep['camera'] = dict(scene.data['camera'])
-        for k in ('distance', 'target_y', 'focal_mm'):
+        # (the clip planes go with the effect's scale: a sky preset works in kilometres)
+        for k in ('distance', 'target_y', 'focal_mm', 'near', 'far'):
             keep['camera'][k] = fresh.data['camera'][k]
     if keep_render:
         keep['render'] = dict(scene.data['render'])
@@ -529,6 +730,7 @@ def apply_to(scene: Scene, name: str, keep_camera=True, keep_render=True):
         scene.data[k] = v
     scene.emitters = fresh.emitters
     scene.colliders = fresh.colliders
+    scene.fabrics = fresh.fabrics
     scene.footage, scene.track = footage, track
     scene.preset = name
     return scene
@@ -539,3 +741,33 @@ from .liquid_presets import LIQUID_ORDER, liquid_presets  # noqa: E402
 
 PRESETS.update(liquid_presets(K))
 ORDER.extend(LIQUID_ORDER)
+
+# Sea presets (the open water of engine/ocean.py) too.
+from .ocean_presets import OCEAN_ORDER, ocean_presets  # noqa: E402
+
+PRESETS.update(ocean_presets(K))
+ORDER.extend(OCEAN_ORDER)
+
+# Liquids that freeze, melt, boil and evaporate (engine/liquid_thermal.py).
+from .phase_presets import PHASE_ORDER, phase_presets  # noqa: E402
+
+PRESETS.update(phase_presets(K))
+ORDER.extend(PHASE_ORDER)
+
+# Weather: snow, hail, sleet and freezing rain (engine/weather.py).
+from .weather_presets import WEATHER_ORDER, weather_presets  # noqa: E402
+
+PRESETS.update(weather_presets(K))
+ORDER.extend(WEATHER_ORDER)
+
+# The sky: clouds, storms (engine/cloud.py).
+from .cloud_presets import CLOUD_ORDER, cloud_presets  # noqa: E402
+
+PRESETS.update(cloud_presets(K))
+ORDER.extend(CLOUD_ORDER)
+
+# Fire, water and lava together (engine/both_engine.py).
+from .both_presets import BOTH_ORDER, both_presets  # noqa: E402
+
+PRESETS.update(both_presets(K))
+ORDER.extend(n for n in BOTH_ORDER if n not in ORDER)

@@ -1,0 +1,555 @@
+[
+ {
+  "key": "campfire",
+  "name": "Campfire",
+  "category": "Fires",
+  "size": "1.2 m flames",
+  "blurb": "A wood campfire on the ground: lively flame tongues, grey smoke, a steady stream of embers."
+ },
+ {
+  "key": "bonfire",
+  "name": "Bonfire",
+  "category": "Fires",
+  "size": "5 m flames",
+  "blurb": "A large pile of burning wood: tall rolling flames, a thick smoke column and a heavy shower of embers."
+ },
+ {
+  "key": "torch",
+  "name": "Torch",
+  "category": "Fires",
+  "size": "40 cm flame",
+  "blurb": "A hand-held torch head in mid-air: a compact, fast-flickering flame with a thin smoke trail."
+ },
+ {
+  "key": "candle",
+  "name": "Candle",
+  "category": "Small flames",
+  "size": "4 cm flame",
+  "blurb": "A single candle flame: calm and teardrop-shaped with a blue base. Pair with a slight breeze for flicker."
+ },
+ {
+  "key": "gas_ring",
+  "name": "Gas burner",
+  "category": "Small flames",
+  "size": "10 cm flames",
+  "blurb": "A ring of clean gas flames: blue at the base, almost no smoke."
+ },
+ {
+  "key": "pool_fire",
+  "name": "Fuel spill",
+  "category": "Fires",
+  "size": "3 m flames",
+  "blurb": "Burning petrol spread on the ground: pulsing orange flames and thick black smoke."
+ },
+ {
+  "key": "fire_line",
+  "name": "Fire line",
+  "category": "Fires",
+  "size": "6 m long",
+  "blurb": "A line of burning ground, like a fuel trail or the edge of a grass fire."
+ },
+ {
+  "key": "fireball",
+  "name": "Fireball",
+  "category": "Explosions",
+  "size": "8 m ball",
+  "blurb": "A fuel-air fireball: a blazing burst that rolls up into a cauliflower ball of flame, then a dark smoke column."
+ },
+ {
+  "key": "flamethrower",
+  "name": "Flamethrower",
+  "category": "Explosions",
+  "size": "7 m jet",
+  "blurb": "A pressurised jet of burning fuel that curls upward as it slows."
+ },
+ {
+  "key": "vehicle_fire",
+  "name": "Vehicle fire",
+  "category": "Fires",
+  "size": "car-sized",
+  "blurb": "Flames over a car-sized body with heavy black smoke. Place the collider box over the car in your footage."
+ },
+ {
+  "key": "smoke_plume",
+  "name": "Smoke plume",
+  "category": "Smoke",
+  "size": "6 m column",
+  "blurb": "Smouldering smoke with no visible flame, for aftermath shots."
+ },
+ {
+  "key": "fire_whirl",
+  "name": "Fire whirl",
+  "category": "Fires",
+  "size": "8 m column",
+  "blurb": "A pool of burning fuel drawn into a spinning column of flame: a fire tornado. The emitter's Swirl sets the spin."
+ },
+ {
+  "key": "waved_torch",
+  "name": "Waved torch",
+  "category": "Fires",
+  "size": "40 cm flame, swinging",
+  "blurb": "A torch swung back and forth: the flame and its embers trail behind the moving head. Keyframe an emitter's position to move it."
+ },
+ {
+  "key": "hose_douse",
+  "name": "Fire put out",
+  "category": "Fires",
+  "size": "1.2 m flames, hosed",
+  "blurb": "A campfire hit by a hose after a second and a half: the flames collapse and the fire turns to billowing steam."
+ },
+ {
+  "key": "grass_fire",
+  "name": "Grass fire",
+  "category": "Fires",
+  "size": "spreading in wind",
+  "blurb": "A dropped torch lights dry grass and the wind drives the fire front across the ground. Spreading fire burns the floor by itself."
+ },
+ {
+  "key": "spot_fires",
+  "name": "Spot fires",
+  "category": "Fires",
+  "size": "wind-driven embers",
+  "blurb": "A strong wind throws burning embers ahead of a grass fire; where hot ones land they start new fires, which the wind then joins up. Spreading fire › Spot fires."
+ },
+ {
+  "key": "hillside_fire",
+  "name": "Fire running uphill",
+  "category": "Fires",
+  "size": "8 m slope",
+  "blurb": "A fire lit at the foot of a grassy slope runs up it, driven by the breeze that climbs the hill and by its flames leaning onto the unburnt grass above. The slope is a heightfield: a greyscale image used as a Burnable mesh collider."
+ },
+ {
+  "key": "curtain_fire",
+  "name": "Curtain catching",
+  "category": "Fires",
+  "size": "2.4 m curtain",
+  "blurb": "A small flame at the hem of a curtain climbs it and spreads across. The curtain is a collider marked Burnable."
+ },
+ {
+  "key": "fabric_curtain",
+  "name": "Burning curtain",
+  "category": "Fires",
+  "size": "2.4 m curtain",
+  "blurb": "A lighter at the hem of a real cotton curtain: it catches, the flames race up it, and it chars, burns through and falls apart in about ten seconds, feeding the fire as it goes. The curtain is a Fabric: try silk, wool (it puts itself out) or polyester (it shrinks away and melts)."
+ },
+ {
+  "key": "wet_towels",
+  "name": "Wet and dry towels",
+  "category": "Fires",
+  "size": "70 cm towels",
+  "blurb": "Two cotton tea towels hung over a fire on a cold, damp morning. The dry one catches and burns away in seconds. The soaked one drips, steams and holds at 100 C while the fire boils its water off, and outlasts it: it cannot catch until it has dried. Wet at start, on a Fabric, sets how soaked it is."
+ },
+ {
+  "key": "armchair_fire",
+  "name": "Burning armchair",
+  "category": "Fires",
+  "size": "mesh, 1 m",
+  "blurb": "Fire spreading over an armchair from a flame on its seat. The chair is a mesh (OBJ) collider marked Burnable: use your own model the same way."
+ },
+ {
+  "key": "room_fire",
+  "name": "Starved room fire",
+  "category": "Fires",
+  "size": "room, 2.6 m",
+  "blurb": "A fire in a closed room uses up its air and dies down, filling the room with hot smoke and unburnt fuel that leaks under the door. When the door slides open at 6 s, fresh air gets in and flames roll out of the doorway. Uses tracked air and a moving collider."
+ },
+ {
+  "key": "backdraft",
+  "name": "Backdraft",
+  "category": "Fires",
+  "size": "small room, 1.6 m",
+  "blurb": "A fire in a shut room uses up the air and dies back, filling the room with hot, fuel-rich smoke. When the door slides open at 4 s the smoke pours out of the doorway, meets fresh air and ignites, and the flames roll back in along the air coming in. Soot blackens the ceiling and the door frame. Uses tracked air, Flame speed and Soot stains."
+ },
+ {
+  "key": "flash_fire",
+  "name": "Fuel spill flash fire",
+  "category": "Fires",
+  "size": "3 m of spilled petrol",
+  "blurb": "Petrol vapour from a spill creeps along the ground, heavier than air. A spark at 3 s lights its edge and a flame front runs back across the vapour to the puddle, which keeps burning. Uses Flame speed and Fuel vapour weight."
+ },
+ {
+  "key": "gas_cloud",
+  "name": "Gas cloud ignition",
+  "category": "Explosions",
+  "size": "5 m cloud",
+  "blurb": "A burst of propane spreads into a low cloud that drifts onto a pilot flame at about 2 s: a flame front burns through the whole cloud in half a second and it swells into a fireball. Uses Flame speed, Fuel vapour weight and Heat expansion."
+ },
+ {
+  "key": "coloured_flames",
+  "name": "Coloured flames",
+  "category": "Small flames",
+  "size": "3 burners",
+  "blurb": "Three burners dosed with flame colourants: copper (green), strontium (red) and sodium (orange). Set any emitter's Colourant to colour its flame."
+ },
+ {
+  "key": "road_flare",
+  "name": "Road flare",
+  "category": "Small flames",
+  "size": "20 cm flame",
+  "blurb": "A burning road flare on the ground: a searing strontium-red flame, white smoke and red sparks."
+ },
+ {
+  "key": "grinder_sparks",
+  "name": "Grinder sparks",
+  "category": "Sparks",
+  "size": "angle-grinder cut",
+  "blurb": "A spray of white-hot metal sparks from a cut: launched in a narrow cone, falling at full gravity and skittering off the floor."
+ },
+ {
+  "key": "fireworks",
+  "name": "Firework bursts",
+  "category": "Sparks",
+  "size": "20 m bursts",
+  "blurb": "Three shells bursting into stars: red strontium, green copper and gold. Each star takes its emitter's colourant colour."
+ },
+ {
+  "key": "car_through_smoke",
+  "name": "Car through smoke",
+  "category": "Smoke",
+  "size": "car at 30 km/h",
+  "blurb": "A car drives through a smoke column and drags it along in its wake. Keyframe a collider's position to move it."
+ },
+ {
+  "key": "flag_wind",
+  "name": "Flag in smoky wind",
+  "category": "Smoke",
+  "size": "1.5 m flag",
+  "blurb": "A nylon flag on a pole streams and flutters in a gusting wind while the smoke of a fire upwind blows past it; the flag stirs the smoke behind it. The flag is a Fabric held by one side: change its material, size or the wind."
+ },
+ {
+  "key": "kettle_steam",
+  "name": "Kettle steam",
+  "category": "Steam",
+  "size": "spout plume",
+  "blurb": "Steam from a kettle spout: clear right at the spout, clouding over as it cools, then evaporating as it mixes into the room."
+ },
+ {
+  "key": "steam_vent",
+  "name": "Steam vent",
+  "category": "Steam",
+  "size": "6 m plume, cold day",
+  "blurb": "A pipe venting steam into freezing air: a dense white column that billows and thins as it rises."
+ },
+ {
+  "key": "water_pour",
+  "name": "Pouring water",
+  "category": "Liquids",
+  "size": "80 cm pour",
+  "blurb": "A steady stream of water poured from knee height onto the ground, splashing and spreading into a puddle."
+ },
+ {
+  "key": "rock_splash",
+  "name": "Rock into a pond",
+  "category": "Liquids",
+  "size": "15 cm rock",
+  "blurb": "A rock dropped into still water: the crown splash, the cavity closing into a rebound jet, rings spreading out. The rock itself is a collider: put it in your footage or render it separately."
+ },
+ {
+  "key": "bucket_throw",
+  "name": "Thrown bucket",
+  "category": "Liquids",
+  "size": "8 litres",
+  "blurb": "A bucket of water thrown forward: the mass spreads into sheets and drops in flight, then slaps onto the ground."
+ },
+ {
+  "key": "fountain",
+  "name": "Fountain jet",
+  "category": "Liquids",
+  "size": "1.2 m jet",
+  "blurb": "A vertical fountain jet that rises, breaks up at the top and rains back down onto the ground."
+ },
+ {
+  "key": "hose",
+  "name": "Hose on a wall",
+  "category": "Liquids",
+  "size": "1.5 m jet",
+  "blurb": "A garden hose sprayed at a wall: the jet hits, fans out across the wall and runs down to the ground. The wall is a collider: line it up with the wall in your footage."
+ },
+ {
+  "key": "wave",
+  "name": "Breaking wave",
+  "category": "Liquids",
+  "size": "4 m channel",
+  "blurb": "A wall of water released down a channel, crashing over a low obstacle. The channel sides are glass."
+ },
+ {
+  "key": "waterfall",
+  "name": "Waterfall",
+  "category": "Liquids",
+  "size": "1.5 m drop",
+  "blurb": "A sheet of water flowing off a ledge and falling onto the ground below."
+ },
+ {
+  "key": "spill",
+  "name": "Spilled glass",
+  "category": "Liquids",
+  "size": "25 cl",
+  "blurb": "A glass of water knocked over: it rushes out across the ground and settles into a puddle."
+ },
+ {
+  "key": "floating",
+  "name": "Things in a pond",
+  "category": "Liquids",
+  "size": "2.4 m pond",
+  "blurb": "A crate, a ball and a stone dropped into open water: the crate plunges and bobs back up, the ball barely dips, the stone sinks. The liquid moves them (Floats), and rings spread out past the frame."
+ },
+ {
+  "key": "pond_below",
+  "name": "Pond from below",
+  "category": "Liquids",
+  "size": "2.4 m pond",
+  "blurb": "The floating things seen from under the water: the sky through a bright circle overhead (Snell's window), the surface a rippling mirror of the pond floor all around it, the crate and the ball hanging from it, and the water fading green into the distance. The camera is under the water level; the view follows it."
+ },
+ {
+  "key": "rain_pond",
+  "name": "Rain on a pond",
+  "category": "Liquids",
+  "size": "3 m pond",
+  "blurb": "Steady rain on still water: rings spreading from every drop, little crowns of spray where they land, streaks falling through the air. Rain sets the rate (mm/h), Raindrop size the drops."
+ },
+ {
+  "key": "towel_dip",
+  "name": "Towel dipped in water",
+  "category": "Liquids",
+  "size": "40 x 55 cm towel",
+  "blurb": "A cotton hand towel dunked in a pond and lifted out again. Below the water it darkens as it soaks, and comes out heavy and limp, with a sharp line where the wet ends. Water runs down the cloth to its hem and drips back into the pond, faster at first, then more and more slowly; the towel stays damp. It is a Fabric whose pins are keyframed; set Wet at start to hang it wet."
+ },
+ {
+  "key": "boat_wake",
+  "name": "Boat wake",
+  "category": "Liquids",
+  "size": "1.2 m hull, 2.5 m/s",
+  "blurb": "A small hull running across a lake in a light breeze: bow wave, spray blown off by the wind, and a V of wake that fans out behind it across the open water, long after the hull has gone by, with a trail of foam behind it. The open water round the box carries the wake on past its edges."
+ },
+ {
+  "key": "honey",
+  "name": "Honey",
+  "category": "Liquids",
+  "size": "45 cm pour",
+  "blurb": "A thin stream of honey poured onto a surface: it lands slowly and builds a thick, rounded pool that creeps outward. Viscosity makes it thick; lower it for syrup or oil."
+ },
+ {
+  "key": "lava",
+  "name": "Lava flow",
+  "category": "Liquids",
+  "size": "4 m flow",
+  "blurb": "Pahoehoe lava welling up at a vent at dusk and spreading over the ground in a lobe that buds toes at its edge. Fresh melt glows orange through a thin glassy skin, in stretch marks drawn out along the flow; within seconds the skin greys over and darkens, tearing where the flow pulls it apart and roping up where it is squeezed. The foot of the advancing lobe glows where it splits along the ground, the air over the lava shimmers and its glow lights the ground."
+ },
+ {
+  "key": "ink_tank",
+  "name": "Ink in water",
+  "category": "Liquids",
+  "size": "50 cm tank",
+  "blurb": "A thin stream of ink poured into a tank of still water: it plunges in a dark thread, curls into mushroom clouds and billows, and slowly clouds the water blue. Dye and cloudiness are per source."
+ },
+ {
+  "key": "oil_water",
+  "name": "Oil on water",
+  "category": "Liquids",
+  "size": "1.2 m pool",
+  "blurb": "Oil poured onto still water: lighter than the water, it dives in, bobs back up and spreads into an amber slick on the surface. Each source can pour its own density and dye."
+ },
+ {
+  "key": "river_post",
+  "name": "River past a post",
+  "category": "Liquids",
+  "size": "3 m of river",
+  "blurb": "A river flowing past a post: the water piles up against it, splits and trails a wake of eddies and foam downstream. The open water carries on to the horizon, flowing with the current."
+ },
+ {
+  "key": "hose_on_fire",
+  "name": "Hose on a fire",
+  "category": "Fire and liquid",
+  "size": "1 m campfire",
+  "blurb": "A campfire knocked down by a hose. The stream sweeps across the fire: where it lands the flames collapse, the soaked logs stop burning and the hot embers boil the water off in a thick white plume of steam that billows up through the smoke; a corner the water missed keeps burning, and the water runs off across the ground. Flames behind the stream show through it, refracted."
+ },
+ {
+  "key": "sea_swell",
+  "name": "Crates at sea",
+  "category": "Liquids",
+  "size": "6 m of sea",
+  "blurb": "A patch of open sea in a swell, running on to the horizon, with two crates riding the waves: they bob, tilt and roll as the crests pass. Waves, whitecaps and wind chop on the open water; deep water (Bottomless) seen from above."
+ },
+ {
+  "key": "open_ocean",
+  "name": "Open ocean",
+  "category": "Sea",
+  "size": "12 m of sea, to the horizon",
+  "blurb": "Deep water in a fresh breeze: local wind waves on top of a long swell from a storm far away, scattered whitecaps whose foam drifts off in streaks, sunlight glowing through the crests and a glitter path under the sun. A buoy rides it."
+ },
+ {
+  "key": "storm_sea",
+  "name": "Storm at sea",
+  "category": "Sea",
+  "size": "16 m of sea, 20 m/s wind",
+  "blurb": "A gale: steep, confused seas over a big swell, crests breaking all over into whitecaps, the foam they leave drawn out into long streaks down the wind, gusts darkening patches of the water. Overcast light. A crate is thrown about."
+ },
+ {
+  "key": "calm_lake",
+  "name": "Calm lake",
+  "category": "Sea",
+  "size": "5 m of lake",
+  "blurb": "A still lake late in the day: glassy water, a faint swell left by a boat long gone, and puffs of breeze (cat’s paws) roughening drifting patches of ripples. A mooring post stands in it."
+ },
+ {
+  "key": "harbour_chop",
+  "name": "Harbour chop",
+  "category": "Sea",
+  "size": "5 m, pier posts",
+  "blurb": "Short, choppy waves running in from every side in a breezy harbour, slapping against the posts of a pier and throwing up spray; a few whitecaps on the steepest crests."
+ },
+ {
+  "key": "beach_break",
+  "name": "Beach break",
+  "category": "Sea",
+  "size": "1 m surf on a sandy beach",
+  "blurb": "A swell rolling onto a sandy beach: the waves slow and steepen as they feel the bottom, spill over into white water and run up the sand, and the foam drifts back. Waves come in from the sea side only (the other sides are walls along them), as in a wave tank; the open water past the box shoals too."
+ },
+ {
+  "key": "shore_break",
+  "name": "Shore break",
+  "category": "Sea",
+  "size": "1 m wave, close up",
+  "blurb": "A wave dumping onto a steep beach, seen close: it rears up in the shallows, pitches its lip forward over a hollow tube and crashes onto the sand, then rushes up the beach as white water. A small box with fine cells: the lip and the tube stay crisp."
+ },
+ {
+  "key": "reef_barrel",
+  "name": "Reef barrel",
+  "category": "Sea",
+  "size": "2 m tube over a slab reef",
+  "blurb": "A long-period groundswell meeting a slab reef: deep water right up to a steep reef face, so each wave jacks up in a few metres, throws a thick lip out over a hollow tube and peels along the reef, exploding into white water where the lip lands. Seen with a long lens from the channel beside the break. Fine cells (7.5 cm) and every drop of the water simulated (no narrow band): a few seconds a frame. The sides along the waves are mirrors, so the break carries on past the box."
+ },
+ {
+  "key": "big_wave",
+  "name": "Big wave",
+  "category": "Sea",
+  "size": "7 m tube over an outer reef",
+  "blurb": "A giant winter swell meeting a deep outer slab: a mountain of water jacks up out of deep water, throws a lip as thick as a house over a tube you could drive a truck through, and explodes into a wall of white water. The Reef barrel scaled up four times, as a wave tank scales: every length times four, every time twice as slow (Froude scaling), so it breaks the same way, at 30 cm cells."
+ },
+ {
+  "key": "tsunami",
+  "name": "Tsunami",
+  "category": "Sea",
+  "size": "4 m tsunami onto a seafront",
+  "blurb": "A tsunami reaching a town’s seafront, seen from a hotel balcony: first the sea draws back, baring the sea floor, then a wall of water rises out of the bay, breaks into a churning white bore, runs up the beach and pours over the sea wall into the streets, lifting the boats and the cars on the promenade. 13 seconds; every drop of the water simulated (no narrow band), 25 cm cells. The surge is one long wave (Liquid, Surge shape Tsunami); the sides along it are mirrors, so the flood runs on along the shore past the box."
+ },
+ {
+  "key": "tidal_bore",
+  "name": "Tidal bore",
+  "category": "Sea",
+  "size": "60 cm bore up a river",
+  "blurb": "The incoming tide running up a river as a single breaking front: the water behind it stands higher and flows upstream against the river’s current, churning white along its face and rolling up the banks. A bore surge (Liquid, Surge shape)."
+ },
+ {
+  "key": "river_rocks",
+  "name": "River past rocks",
+  "category": "Sea",
+  "size": "1.8 m/s current",
+  "blurb": "A fast river running past boulders: the water piles up against them, pours round, and trails eddies and lines of foam far downstream, past the edge of the box, where the open water carries the current on round another rock."
+ },
+ {
+  "key": "ice_cubes",
+  "name": "Ice cubes in water",
+  "category": "Ice and steam",
+  "size": "4 cm cubes, 24 cm tank",
+  "blurb": "Four ice cubes from the freezer (-18 C) dropped into a tank of water at room temperature. They plunge trailing bubbles, bob back up and float with about a tenth of their height out of the water, as ice does: clear at the rim, milky at the core where they froze last, wet and glossy as they start to melt."
+ },
+ {
+  "key": "ice_melt",
+  "name": "Ice melting",
+  "category": "Ice and steam",
+  "size": "4 cm cubes, time-lapse",
+  "blurb": "Four ice cubes standing in a shallow tray of warm water (30 C), heat sped up 40 times (5 s is 3 minutes): their edges round off, they shrink and settle, and the meltwater runs down their sides and spreads into the tray. The cold meltwater sinks under the warm water around them."
+ },
+ {
+  "key": "pond_freeze",
+  "name": "Pond freezing over",
+  "category": "Ice and steam",
+  "size": "1.6 m pond, time-lapse",
+  "blurb": "A small pond through a night of hard frost (-18 C, a light breeze), heat sped up 3000 times (each second is 50 minutes): a skin of clear ice creeps out from the frozen banks and the rocks, joins up across the pond and thickens, and the ripples die under it. Water is densest at 4 C, so the pond freezes from the top down, over clear water that stays a little above freezing, kept warm by the earth under it."
+ },
+ {
+  "key": "frozen_pour",
+  "name": "Water on dry ice",
+  "category": "Ice and steam",
+  "size": "40 cm slab, -78 C",
+  "blurb": "Water poured onto a slab of dry ice on a frozen day: it freezes where it lands, first a glaze, then a growing mound of white, rimed ice the rest of the stream runs over and freezes onto. Heat sped up 20 times."
+ },
+ {
+  "key": "boiling_pot",
+  "name": "Boiling pot",
+  "category": "Ice and steam",
+  "size": "20 cm pot, rolling boil",
+  "blurb": "A pot of water on full heat: steam bubbles stream up from spots on the hot bottom, the boil rolls the surface, bursting bubbles spit drops, and steam rises off it, clear right over the water and clouding as it cools in the kitchen air."
+ },
+ {
+  "key": "hot_plate",
+  "name": "Water on hot steel",
+  "category": "Ice and steam",
+  "size": "2 plates, 150 C and 300 C",
+  "blurb": "A glass of water splashed across two steel plates. On the left one (150 C) it boils where it lands, sizzling, spitting and steaming away in a few seconds. The right one (300 C) is past the Leidenfrost point: the water rides on its own vapour, never quite touching the steel, so it glides and skates across it in beads and puddles and boils off far more slowly."
+ },
+ {
+  "key": "steaming_pool",
+  "name": "Hot pool in frost",
+  "category": "Ice and steam",
+  "size": "2 m pool, -12 C air",
+  "blurb": "A hot spring pool (40 C) on a freezing morning: the water evaporates into the dry, cold air, which cannot hold the vapour, so it condenses straight into a fog that rises off the whole surface and drifts away on the breeze (sea smoke, steam fog)."
+ },
+ {
+  "key": "boiling_throw",
+  "name": "Boiling water into -30 C air",
+  "category": "Ice and steam",
+  "size": "5 litres thrown",
+  "blurb": "A pot of boiling water flung into the air on a -30 C day. The spray is so hot and the air so cold and dry that the drops evaporate as they fly, and the vapour freezes into a roaring cloud of ice fog, while what is left of the water falls as a shower of cooling drops."
+ },
+ {
+  "key": "snow_pond",
+  "name": "Snow on a pond",
+  "category": "Weather",
+  "size": "1.6 m pond, -4 C",
+  "blurb": "Steady snow on a small pond on a still, grey winter day (-4 C). The flakes drift down, tumbling and fluttering, and settle into a white blanket on the frozen banks and the rocks, while those that reach the water (2 C) vanish into it as they touch, cooling it."
+ },
+ {
+  "key": "hail_pond",
+  "name": "Hailstorm",
+  "category": "Weather",
+  "size": "18 mm hail, 1.6 m pond",
+  "blurb": "A summer thunderstorm drops hail the size of grapes on a garden pond (22 C). The stones fall at 15 to 20 m/s, some partly melted on the way down from the freezing level high above; they crack into the water in crowns of spray, bounce and skitter on the banks, and lie there in white drifts, melting slowly on the warm ground."
+ },
+ {
+  "key": "cumulus_day",
+  "name": "Cumulus building",
+  "category": "Sky and weather",
+  "size": "20 km of sky, time-lapse",
+  "blurb": "A summer afternoon (26 C at the ground, a light breeze), a minute to each second: thermals rise off the sun-warmed fields, and where they pass their condensation level, about a kilometre up, cumulus bubble into being, flat-based and sunlit, build as the latent heat of their condensing vapour lifts them, and flatten against the warm layer of air above, drifting with the breeze and their shadows over the ground."
+ },
+ {
+  "key": "thunderstorm",
+  "name": "Thunderstorm",
+  "category": "Sky and weather",
+  "size": "60 km of sky, time-lapse",
+  "blurb": "A single storm in a hot, humid, sheared afternoon air mass (about 3000 J/kg of CAPE), a minute to each second. A warm bubble of air rises, condenses, and its latent heat drives an updraft of 40 to 60 m/s that towers into a cumulonimbus, overshoots the tropopause at 12 km and spreads its anvil downwind; ice, snow and hail grow in it, and grey shafts of rain and hail fall from its base, their cold outflow spreading over the ground."
+ },
+ {
+  "key": "lava_sea",
+  "name": "Lava into the sea",
+  "category": "Fire and liquid",
+  "size": "4 m of shore",
+  "blurb": "Lava running off a rock shelf into the sea. Where it meets the water it boils it: a thick white plume of steam billows up off the shoreline, and the lava front chills black and glassy while the lava behind it keeps glowing. The hot air over the flow shimmers."
+ },
+ {
+  "key": "lava_quench",
+  "name": "Water on lava",
+  "category": "Fire and liquid",
+  "size": "1.5 m lava pool",
+  "blurb": "A pool of lava fed from a vent, and a hose turned on it after a second: the water flashes to steam where it lands, drops skitter and sizzle away on the hot surface, and the lava chills black and glassy under the stream while the rest keeps glowing."
+ },
+ {
+  "key": "lava_grass",
+  "name": "Lava into grass",
+  "category": "Fire and liquid",
+  "size": "4 m flow",
+  "blurb": "A lava flow creeping into dry grass. The air over the lava is hot enough to light the grass just ahead of the front, so a line of flame and smoke runs ahead of it and the lava rolls on over the burnt ground. Spreading fire is on: the ground is the grass."
+ }
+]

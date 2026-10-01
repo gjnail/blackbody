@@ -1,5 +1,6 @@
 // Ember / spark particles, advected by the simulated air. They launch into a cone, fall under
-// gravity and bounce off the ground and colliders.
+// gravity and bounce off the ground and colliders. Hot ones that land on the burnable floor or on a
+// burnable collider are counted where they land, and the burn steps may start spot fires there.
 // A: position (fire-local metres), life left (s)
 // B: velocity (m/s), temperature (K)
 // C: position at the previous step, age (s)
@@ -9,6 +10,9 @@
 //!include noise.wgsl
 //!include meshsdf.wgsl
 //!include emitters.wgsl
+//!include colliders.wgsl
+//!include burn_common.wgsl
+//!include burnobj.wgsl
 
 struct Params {
   g: Grid,             // simulation grid (org = grid corner in fire-local metres)
@@ -18,9 +22,12 @@ struct Params {
   turb: vec4<f32>,     // turbulence (m/s^2), turbulence frequency (1/m), size min (m), size max (m)
   cam: vec4<f32>,      // camera position in grid cells; w = smoke extinction per unit soot per metre
   dir: vec4<f32>,      // launch direction (unit), cone half-angle (radians)
-  hit: vec4<f32>,      // bounce, friction, hit colliders (1/0), _
-  cnt: vec4<f32>,      // emitter count, ambient K, _, _
+  hit: vec4<f32>,      // bounce, friction, hit colliders (1/0), count landings for spot fires (1/0)
+  cnt: vec4<f32>,      // emitter count, ambient K, hottest landing that cannot start a spot fire (K), _
   em: array<Emitter, MAX_EMITTERS>,
+  bo: vec4<f32>,       // object-burn atlas dims (cells), count landings on burnable colliders (1/0)
+  ccnt: vec4<f32>,     // collider count
+  col: array<Collider, MAX_COLLIDERS>,
 };
 
 @group(0) @binding(0) var vel: texture_3d<f32>;
@@ -33,6 +40,27 @@ struct Params {
 @group(0) @binding(7) var<storage, read_write> C: array<vec4<f32>>;
 @group(0) @binding(8) var<storage, read_write> D: array<vec4<f32>>;
 @group(0) @binding(9) var<storage, read_write> E: array<vec4<f32>>;
+@group(0) @binding(10) var<storage, read_write> spots: array<atomic<u32>>;  // hot embers landed per floor column
+@group(0) @binding(11) var burn_obj: texture_3d<f32>;                         // (declared for burnobj.wgsl)
+@group(0) @binding(12) var<storage, read> slots: array<BurnSlot>;            // object-burn regions
+@group(0) @binding(13) var<storage, read_write> spots_obj: array<atomic<u32>>;  // hot embers landed per object-burn cell
+
+// Count a hot ember that has just hit a solid at p (fire-local m) against the burnable collider it hit.
+fn land_on_object(p: vec3<f32>, h: f32) {
+  var best = 1.5 * h;
+  var hit = -1;
+  for (var i = 0; i < i32(U.ccnt.x); i++) {
+    if (i32(U.col[i].m2.w) < 0) { continue; }
+    let d = col_sdf(U.col[i], p);
+    if (d < best) { best = d; hit = i; }
+  }
+  if (hit < 0) { return; }
+  let k = U.col[hit];
+  let ci = obj_burn_cell(k, slots[i32(k.m2.w)], p);
+  if (ci.x < 0) { return; }
+  let dims = vec3<u32>(U.bo.xyz);
+  atomicAdd(&spots_obj[u32(ci.x) + u32(ci.y) * dims.x + u32(ci.z) * dims.x * dims.y], 1u);
+}
 @group(1) @binding(0) var<uniform> U: Params;
 
 fn spawn_point(e: Emitter, r: vec3<f32>, r2: vec3<f32>, seed: u32) -> vec3<f32> {
@@ -211,6 +239,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       p += v * sdt;
       if (p.y < 0.0 && U.g.bc.z < 0.5) {
         p.y = 0.0;
+        if (U.hit.w > 0.5 && v.y < 0.0 && b.w > U.cnt.z) {
+          // a hot ember landing on the floor: the burn step may start a spot fire here
+          let q = vec2<i32>(floor((p.xz - U.g.org.xz) / h));
+          if (q.x >= 0 && q.y >= 0 && q.x < i32(n.x) && q.y < i32(n.z)) {
+            atomicAdd(&spots[u32(q.x) + u32(q.y) * u32(n.x)], 1u);
+          }
+        }
         v = bounce_off(v, vec3<f32>(0.0, 1.0, 0.0));
       }
       if (U.hit.z > 0.5) {
@@ -220,6 +255,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           if (sg.x < 0.5 && dot(sg.yzw, sg.yzw) > 1e-8) {
             let nrm = normalize(sg.yzw);
             p += nrm * ((0.5 - sg.x) * h);
+            if (U.bo.w > 0.5 && dot(v, nrm) < 0.0 && b.w > U.cnt.z) { land_on_object(p, h); }
             v = bounce_off(v, nrm);
           }
         }

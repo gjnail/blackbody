@@ -1,6 +1,8 @@
 """Physical lookup tables: blackbody colour and brightness, and the tileable detail-noise volume."""
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 BB_MIN_K = 400.0
@@ -45,14 +47,63 @@ def blackbody_xyz(T):
     return (B[..., None] * cmf[None]).sum(axis=1) * 2e-9  # (n, 3)
 
 
-def blackbody_lut(size=BB_SIZE, t_min=BB_MIN_K, t_max=BB_MAX_K):
+def luminance(T):
+    """Luminance (cd/m^2) of a blackbody at T Kelvin."""
+    return 683.0 * float(blackbody_xyz(T)[0, 1])
+
+
+def flame_ev(T):
+    """What a light meter reads (EV at ISO 100) off a blackbody at T Kelvin: EV = log2(L S / K), K = 12.5."""
+    return math.log2(max(luminance(T), 1e-12) * 100.0 / 12.5)
+
+
+def camera_sensitivity(lam_nm):
+    """Spectral sensitivities (r, g, b) of a typical Bayer CMOS sensor behind its infrared-cut filter: smooth
+    fits to the general shape of published camera curves, not any one camera."""
+    def lobe(mu, s1, s2):
+        return np.exp(-0.5 * ((lam_nm - mu) / np.where(lam_nm < mu, s1, s2)) ** 2)
+    ir_cut = 1.0 / (1.0 + np.exp((lam_nm - 655.0) / 9.0))
+    return np.stack([lobe(598, 38, 30) + 0.06 * lobe(450, 25, 25), lobe(532, 42, 48), lobe(462, 30, 40)], -1) * ir_cut[:, None]
+
+
+def camera_to_xyz():
+    """3x3 matrix taking the sensor's white-balanced (daylight) rgb to CIE XYZ, fitted by least squares
+    over smooth reflectances under daylight and over blackbodies, as camera makers fit theirs."""
+    lam = np.arange(380.0, 781.0, 2.0)
+    cmf, cam = cie_cmf(lam), camera_sensitivity(lam)
+    rng = np.random.default_rng(0)
+    day = planck(lam * 1e-9, 6500.0)
+    spectra = []
+    for _ in range(400):
+        r = sum(rng.uniform(0, 1) * np.exp(-0.5 * ((lam - rng.uniform(400, 700)) / rng.uniform(20, 120)) ** 2) for _ in range(3))
+        spectra.append(np.clip(r, 0, 1) * day)
+    spectra += [planck(lam * 1e-9, t) for t in np.linspace(1500.0, 10000.0, 30)]
+    S = np.array(spectra)
+    rgb, xyz = S @ cam, S @ cmf
+    norm = rgb.sum(axis=1, keepdims=True)
+    w_rgb, w_xyz = day @ cam, day @ cmf
+    a = np.vstack([rgb / norm, 50.0 * w_rgb / w_rgb.sum()])     # daylight white must stay white
+    b = np.vstack([xyz / norm, 50.0 * w_xyz / w_rgb.sum()])
+    return np.linalg.lstsq(a, b, rcond=None)[0].T
+
+
+def blackbody_lut(size=BB_SIZE, t_min=BB_MIN_K, t_max=BB_MAX_K, response='eye'):
     """(size, 4) float32: rgb = linear Rec.709 chromaticity scaled to luminance 1, a = log10 luminance.
-    Out-of-gamut reds are desaturated toward white at constant luminance rather than clipped."""
+    response 'camera' takes the colour as a typical camera sensor records it (camera_sensitivity), the
+    brightness still as the eye sees it. Out-of-gamut reds are desaturated toward white at constant
+    luminance rather than clipped."""
     T = np.linspace(t_min, t_max, size)
     xyz = blackbody_xyz(T)
     Y = np.maximum(xyz[:, 1], 1e-300)
-    rgb = xyz @ XYZ_TO_REC709.T
-    rgb = rgb / Y[:, None]
+    if response == 'camera':
+        lam = np.arange(380.0, 781.0, 2.0)
+        B = planck(lam[None, :] * 1e-9, T[:, None])
+        c_xyz = (B @ camera_sensitivity(lam)) @ camera_to_xyz().T
+        rgb = c_xyz @ XYZ_TO_REC709.T
+        rgb = rgb / np.maximum(rgb @ np.array([0.2126, 0.7152, 0.0722]), 1e-300)[:, None]
+    else:
+        rgb = xyz @ XYZ_TO_REC709.T
+        rgb = rgb / Y[:, None]
     lum = rgb @ np.array([0.2126, 0.7152, 0.0722])
     lo = rgb.min(axis=1)
     k = np.where(lo < 0, lum / np.maximum(lum - lo, 1e-9), 1.0)

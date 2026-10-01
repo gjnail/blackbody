@@ -11,6 +11,7 @@
 struct Params {
   g: Grid,
   b: vec4<f32>,     // buoyancy (m/s^2 per unit temperature), soot weight (m/s^2 per unit smoke), damping (1/s), vapour lift (m/s^2 per g/m^3)
+  b2: vec4<f32>,    // fuel weight (m/s^2 per unit fuel: heavier-than-air vapour hugs the ground), _, _, _
   wind: vec4<f32>,  // wind velocity (m/s), relaxation toward it (1/s)
   ccnt: vec4<f32>,  // collider count, any collider moving (1/0)
   col: array<Collider, MAX_COLLIDERS>,
@@ -145,7 +146,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       let T = 0.5 * (sa.x + sb.x);
       let S = 0.5 * (sa.z + sb.z);
       let f = 0.5 * (ld(force, a, d).y + ld(force, c, d).y);
-      var lift = U.b.x * T - U.b.y * S;
+      var lift = U.b.x * T - U.b.y * S - U.b2.x * 0.5 * (sa.y + sb.y);
       if (U.b.w > 0.0) { lift += U.b.w * 0.5 * (ld(aux, a, d).y + ld(aux, c, d).y); }
       v.y += dt * (f + lift);
       v.y += (U.wind.y - v.y) * relax * 0.25;

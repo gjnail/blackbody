@@ -221,12 +221,16 @@ def write_vdb(path, grids, voxel_size, translation, rotation_y=0.0, threshold=1e
 def write_vdb_frame(path, solver, scene, frame=None):
     """Write the solver's current fields as a VDB: density, temperature, flame, fuel and vel, plus
     the optional fields a scene uses: steam (condensed water, g/m^3), vapour (g/m^3), oxygen_used
-    (0..1) and color (flame colourant, vec3). With upres, every grid is written at the finer voxel
-    size: the fire's own fields as carried on the finer grid, the others repeated onto it."""
+    (0..1), color (flame colourant, vec3) and soot (left on surfaces). With upres, every grid is written
+    at the finer voxel size: the fire's own fields as carried on the finer grid, vel as the velocity
+    the finer grid moves with (the simulated air plus its small swirls), the others repeated onto it."""
     k = max(1, int(getattr(solver, 'upres', 1)))
     fine = (lambda a: a) if k == 1 else (lambda a: np.repeat(np.repeat(np.repeat(a, k, 0), k, 1), k, 2))
     sc = (solver.read_scalars_fine() if k > 1 else solver.read_scalars()).astype(np.float32)  # (z, y, x, 4)
-    vel = fine(solver.read_velocity_centres().astype(np.float32))  # (z, y, x, 3), fire-local
+    if k > 1 and hasattr(solver, 'read_velocity_fine'):
+        vel = solver.read_velocity_fine()  # (z, y, x, 3), fire-local
+    else:
+        vel = fine(solver.read_velocity_centres().astype(np.float32))
     to_x = lambda a: np.ascontiguousarray(np.transpose(a, (2, 1, 0) + tuple(range(3, a.ndim))))
     grids = {'density': to_x(sc[..., 2]), 'temperature': to_x(sc[..., 0]), 'flame': to_x(sc[..., 3]),
              'fuel': to_x(sc[..., 1]), 'vel': to_x(vel)}
@@ -250,6 +254,9 @@ def write_vdb_frame(path, solver, scene, frame=None):
     chem = solver.read_chem() if hasattr(solver, 'read_chem') else None
     if chem is not None:
         grids['color'] = to_x(fine(chem[..., :3].astype(np.float32)))  # Blender and Houdini look for 'color'
+    stain = solver.read_stain() if hasattr(solver, 'read_stain') else None
+    if stain is not None:
+        grids['soot'] = to_x(fine(stain[..., 0].astype(np.float32)))
     spec, fire = scene.camera(frame if frame is not None else scene.start)
     h = solver.h / k
     yaw = math.radians(fire.yaw)
@@ -268,7 +275,7 @@ def write_liquid_vdb_frame(path, engine, scene, frame):
     with a one-voxel ramp across the surface, so the 0.5 iso-surface is the liquid surface: mesh it
     with Blender's Volume to Mesh or Houdini's Convert VDB), 'vel' (m/s, for motion blur) and the
     whitewater densities 'spray', 'foam' and 'bubbles'."""
-    vol, _ = engine.volume_for(scene, frame)
+    vol, _ = engine._liquid_view(scene, frame)   # the liquid, also when it shares the box with a fire
     if vol is None:
         raise RuntimeError(f'frame {frame} is neither simulated nor cached')
     look = scene.water_look(frame, final=True)

@@ -1,12 +1,13 @@
 // Draw embers as camera-facing streaks from where they were at shutter open to where they are now,
-// added into the beauty and emission buffers.
+// added into the beauty and emission buffers. With deep output on, each pixel also gathers the embers'
+// light (fixed point) and their nearest depth, for the deep EXR (Renderer.read_deep).
 
 struct Params {
   vp: mat4x4<f32>,     // world -> clip
   l2w: mat4x4<f32>,    // fire-local -> world
   res: vec4<f32>,      // width, height, shutter (s), brightness
   k: vec4<f32>,        // ambient K, flame K (brightness reference), dynamic range, min width (px)
-  k2: vec4<f32>,       // log10 luminance at flame K, fade-in (s), focal length (px), _
+  k2: vec4<f32>,       // log10 luminance at flame K, fade-in (s), focal length (px), deep output on (1/0)
 };
 
 @group(0) @binding(0) var<storage, read> A: array<vec4<f32>>;
@@ -16,6 +17,9 @@ struct Params {
 @group(0) @binding(4) var lin: sampler;
 @group(0) @binding(5) var<storage, read> E: array<vec4<f32>>;
 @group(0) @binding(6) var mask: texture_2d<f32>;  // y = depth (clip w) * coverage of colliders in the shot, z = coverage
+@group(0) @binding(7) var<storage, read_write> edeep: array<atomic<u32>>;  // per pixel: rgb * EMBER_DEEP_SCALE, nearest depth bits
+
+const EMBER_DEEP_SCALE: f32 = 65536.0;  // matches renderer.EMBER_DEEP_SCALE
 @group(1) @binding(0) var<uniform> U: Params;
 
 fn luma(c: vec3<f32>) -> f32 { return dot(c, vec3<f32>(0.2126, 0.7152, 0.0722)); }
@@ -102,6 +106,13 @@ fn fs(i: VOut) -> FOut {
   let f = exp(-r2 * 2.5 / max(i.hw * i.hw, 0.25));
   var o: FOut;
   let c = i.col * f;
+  if (U.k2.w > 0.5) {
+    let idx = (u32(i.pos.y) * u32(U.res.x) + u32(i.pos.x)) * 4u;
+    atomicAdd(&edeep[idx], u32(max(c.r, 0.0) * EMBER_DEEP_SCALE + 0.5));
+    atomicAdd(&edeep[idx + 1u], u32(max(c.g, 0.0) * EMBER_DEEP_SCALE + 0.5));
+    atomicAdd(&edeep[idx + 2u], u32(max(c.b, 0.0) * EMBER_DEEP_SCALE + 0.5));
+    atomicMin(&edeep[idx + 3u], bitcast<u32>(max(i.depth, 0.0)));   // positive floats order like their bits
+  }
   o.beauty = vec4<f32>(c, 0.0);
   o.emit = vec4<f32>(c, 0.0);
   return o;

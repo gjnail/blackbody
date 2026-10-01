@@ -8,6 +8,12 @@
 @group(0) @binding(0) var surf_t: texture_3d<f32>;
 @group(0) @binding(1) var lin: sampler;
 @group(0) @binding(2) var<storage, read_write> acc: array<atomic<u32>>;
+@group(0) @binding(3) var oc_w: texture_3d<f32>;    // the sea's layers (ocn_sample.wgsl)
+@group(0) @binding(4) var oc_f: texture_3d<f32>;
+@group(0) @binding(5) var oc_l1: texture_2d<f32>;
+@group(0) @binding(6) var oc_l2: texture_2d<f32>;
+@group(0) @binding(7) var rep: sampler;
+//!include ocn_sample.wgsl
 @group(1) @binding(0) var<uniform> U: CParams;
 
 const FX_E: f32 = 4096.0;

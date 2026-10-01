@@ -1,9 +1,17 @@
 // Velocity self-advection on the MAC grid, each face component traced from its own face centre.
+//
+// Air traced back to beyond the box's open sides or top comes in no faster than the air out there
+// blows in: not at all in still air (a fire still draws air in, through the pressure the projection
+// supplies every step), at most at the wind's speed on the windward side. Carrying the edge's own
+// inflow in again instead lets an inflow feed itself step after step; on fine grids that grew into a
+// gale through the whole box. The bottom of a box without a floor is left as it was: it usually sits
+// just under the fire (a torch, a candle), in the updraft the fire draws in.
 //!include common.wgsl
 
 struct Params {
   g: Grid,
-  a: vec4<f32>,  // x = MacCormack strength
+  a: vec4<f32>,    // x = MacCormack strength
+  amb: vec4<f32>,  // xyz = the air outside the box (the wind, m/s), _
 };
 
 @group(0) @binding(0) var vel: texture_3d<f32>;
@@ -45,8 +53,25 @@ fn face_pos(c: vec3<i32>, axis: i32) -> vec3<f32> {
   return vec3<f32>(c) + vec3<f32>(0.5) - lattice_off(axis);
 }
 
+// A velocity component traced back to p: its inflow through an open side or the top is held to the
+// outside air's (see the notes at the top).
+fn from_outside(v: f32, p: vec3<f32>, axis: i32, n: vec3<f32>) -> f32 {
+  let w = pick(U.amb, axis);
+  if (axis == 1) {
+    if (U.g.bc.y > 0.5 && p.y > n.y) { return max(v, min(w, 0.0)); }
+    return v;
+  }
+  if (U.g.bc.x < 0.5) { return v; }
+  let x = select(p.z, p.x, axis == 0);
+  let hi = select(n.z, n.x, axis == 0);
+  if (x < 0.0) { return min(v, max(w, 0.0)); }
+  if (x > hi) { return max(v, min(w, 0.0)); }
+  return v;
+}
+
 fn advect_sl(c: vec3<i32>, axis: i32, n: vec3<f32>, k: f32) -> f32 {
-  return comp_at(vel, trace(face_pos(c, axis), n, -k), n, axis);
+  let pb = trace(face_pos(c, axis), n, -k);
+  return from_outside(comp_at(vel, pb, n, axis), pb, axis, n);
 }
 
 fn advect_mc(c: vec3<i32>, axis: i32, n: vec3<f32>, k: f32) -> f32 {
@@ -71,7 +96,7 @@ fn advect_mc(c: vec3<i32>, axis: i32, n: vec3<f32>, k: f32) -> f32 {
   // Selle et al.: where the correction would create a new extremum, fall back to the
   // semi-Lagrangian value instead of clamping (clamping can pump energy into divergent flow)
   if (r < lo || r > up) { return ahead; }
-  return r;
+  return from_outside(r, pb, axis, n);
 }
 
 @compute @workgroup_size(8, 8, 4)

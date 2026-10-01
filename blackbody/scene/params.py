@@ -55,13 +55,18 @@ def V(key, label, default, lo, hi, unit='', anim=False, tip='', group='', decima
 
 SECTIONS = {
     'domain': [
-        E('kind', 'Simulation', 'fire', (('fire', 'Fire and smoke'), ('liquid', 'Liquid'), ('both', 'Fire and liquid')),
-          tip='What this shot simulates: burning gas, a liquid such as water, or both in the same box (a hose putting out a fire, burning fuel on water).', group='Simulation'),
+        E('kind', 'Simulation', 'fire', (('fire', 'Fire and smoke'), ('liquid', 'Liquid'), ('both', 'Fire and liquid'),
+                                          ('cloud', 'Clouds and weather')),
+          tip='What this shot simulates: burning gas, a liquid such as water, both in the same box (a hose putting out a fire, burning fuel on water), '
+              'or the sky: clouds building from the warmed ground, storms, their rain, snow and hail (kilometres across: see Atmosphere › Scale).',
+          group='Simulation'),
         F('size_x', 'Width', 2.0, 0.1, 20.0, 'm', tip='Simulation box width. Fire outside the box is lost, so give it room.', group='Box', log=True, hard_lo=0.02),
         F('size_y', 'Height', 3.2, 0.1, 40.0, 'm', tip='Simulation box height, measured up from the fire base.', group='Box', log=True, hard_lo=0.02),
         F('size_z', 'Depth', 2.0, 0.1, 20.0, 'm', tip='Simulation box depth (toward the camera).', group='Box', log=True, hard_lo=0.02),
         I('resolution', 'Voxels (longest side)', 128, 32, 384, tip='Cells along the longest side of the box for final renders. Detail and memory grow with the cube of this.', group='Resolution', hard_lo=16, hard_hi=768),
         F('preview_scale', 'Interactive resolution', 0.75, 0.25, 1.0, '×', tip='Fraction of the final resolution used while you work. Final renders always use the full resolution.', group='Resolution'),
+        B('grow', 'Grow to fit', False, tip='The box starts small around the fire and grows, keeping its cell size, wherever the smoke gets near an open side. Detail stays high near the fire, and no memory goes on empty air until the smoke needs it.', group='Box'),
+        F('grow_limit', 'Grow up to', 3.0, 1.0, 8.0, '×', 1, tip='How far the box may grow, as a multiple of its size on each side.', group='Box'),
         B('ground', 'Solid ground', True, tip='The bottom of the box is a floor. Turn off for fire in mid-air.', group='Boundaries'),
         B('open_sides', 'Open sides', True, tip='Gas can leave through the sides. Turn off for fire inside a room or container.', group='Boundaries'),
         B('open_top', 'Open top', True, tip='Gas can leave through the top.', group='Boundaries'),
@@ -77,6 +82,9 @@ SECTIONS = {
         F('maccormack', 'Scalar sharpness', 1.0, 0.0, 1.0, '', 2, tip='MacCormack correction for fire and smoke transport. 1 keeps fine detail; 0 is softer.', group='Solver', advanced=True),
         F('maccormack_vel', 'Velocity sharpness', 0.5, 0.0, 1.0, '', 2, tip='MacCormack correction for the air itself. Higher keeps more swirl but can become unstable.', group='Solver', advanced=True),
         I('mesh_resolution', 'Mesh detail', 96, 32, 192, tip='Resolution of the distance field built from each mesh emitter or collider (cells along its longest side).', group='Solver', advanced=True),
+        B('disk_cache', 'Disk cache', False, tip='Also keep every simulated frame on disk (next to the project, in NAME.bbcache): frames survive closing the app, a stopped simulation resumes from its last checkpoint, and render farm machines can share one simulation.', group='Cache'),
+        Param('cache_dir', 'Cache folder', 'str', '', tip='Where the disk cache goes. Empty: next to the project file (or the user cache folder for an unsaved scene).', group='Cache', advanced=True),
+        I('checkpoint_every', 'Checkpoint every', 10, 1, 500, 'frames', tip='How often the whole simulation state is saved, so a simulation can resume from there. Checkpoints are several times larger than ordinary cached frames.', group='Cache', advanced=True),
     ],
     'combustion': [
         F('fuel_scale', 'Master fuel', 1.0, 0.0, 3.0, '×', anim=True, tip='Scales every emitter. Keyframe it to ignite, grow or die down the fire.', group='Fuel'),
@@ -91,8 +99,11 @@ SECTIONS = {
         F('flame_life', 'Flame lifetime', 0.08, 0.01, 0.6, 's', 3, tip='How long visible flame lingers after the fuel burns. Longer gives fuller, softer flames.', group='Flame', log=True),
         F('soot', 'Soot yield', 0.3, 0.0, 3.0, '', 2, tip='Smoke produced per unit of burned fuel. Wood 0.2–0.5, rubber or oil 1–3, gas near 0.', group='Smoke'),
         F('smoke_dissipation', 'Smoke dissipation', 0.4, 0.0, 4.0, '/s', 2, anim=True, tip='How fast smoke thins out.', group='Smoke'),
+        F('soot_stain', 'Soot stains', 0.0, 0.0, 2.0, '/s', 2, tip='Smoke that touches walls, ceilings, colliders and the floor leaves soot on them, heaviest where hot smoke pools under a ceiling or pours out of a doorway. It shows in the composite (Composite › Soot) and as a soot layer in EXRs. 0 is off.', group='Smoke'),
         F('expansion', 'Gas expansion', 0.5, 0.0, 6.0, '', 2, anim=True, tip='Volume released by burning fuel. High values make fireballs billow outward.', group='Expansion'),
         F('thermal_expansion', 'Heat expansion', 0.0, 0.0, 1.0, '', 2, tip='Gas swells as it heats and shrinks as it cools, as real air does (1 is physical). Fireballs billow harder and a hot closed room pushes smoke out of every gap; 0 leaves the swelling to Gas expansion.', group='Expansion'),
+        F('flame_speed', 'Flame speed', 0.0, 0.0, 20.0, 'm/s', 2, tip='Premixed flame fronts: fuel that has already mixed with air catches from any flame next to it and a front runs through it at this speed, however cold it is. A flash fire across a spilled-fuel vapour, a gas cloud going up, or the fireball when air gets into a smoke-filled room (backdraft). Hydrocarbon vapours 2–8 m/s in turbulent air. 0 is off.', group='Flame front'),
+        F('fuel_weight', 'Fuel vapour weight', 0.0, 0.0, 5.0, 'm/s²', 2, tip='How much heavier than air unburnt fuel vapour is: petrol, propane and butane vapour sink and spread along the ground, pooling in low places, until something lights them. 0 is as light as air (natural gas is lighter still).', group='Fuel'),
         F('rich', 'Oxygen limit', 4.0, 0.2, 20.0, '', 2, tip='Fuel level at which lack of air halves the burn rate. Lower it for fuel-rich fireballs that burn from the outside in.', group='Fuel', log=True),
         F('expansion_cap', 'Expansion limit', 40.0, 1.0, 200.0, '/s', 1, tip='Upper limit on how fast burning gas can expand in one place. Keeps violent bursts stable.', group='Expansion', advanced=True),
         E('air', 'Air supply', 'open', (('open', 'Open air'), ('tracked', 'Tracked (rooms, backdraft)')),
@@ -102,13 +113,18 @@ SECTIONS = {
         F('steam_yield', 'Steam from dousing', 150.0, 0.0, 1000.0, 'g/m³', 0, tip='Water vapour made when an emitter with Put out takes heat from the gas, per unit of temperature removed. Water on a fire flashes to steam.', group='Steam'),
         F('water_yield', 'Water from burning', 0.0, 0.0, 200.0, 'g/m³', 0, tip='Water vapour made per unit of burned fuel. Real flames make plenty; it shows as condensing steam in cold, humid air.', group='Steam'),
         F('vapour_dissipation', 'Vapour mixing', 1.5, 0.0, 10.0, '/s', 2, anim=True, tip='How fast water vapour mixes away into the surrounding air. Steam evaporates at its edges as it thins.', group='Steam'),
-        F('water_douse', 'Water on fire', 40.0, 0.0, 200.0, '/s', 1, tip='With liquid in the same box: how fast a place full of water puts the fire out (and turns its heat to steam).', group='Steam'),
+        F('water_douse', 'Water on flames', 40.0, 0.0, 200.0, '/s', 1, tip='With liquid in the same box: how fast a place full of water puts out the flames and hot gas in it (and turns their heat to steam).', group='Water on fire'),
+        F('soak', 'Soaking', 6.0, 0.0, 40.0, '/s', 1, tip='With liquid in the same box: how fast water reaching burning fuel soaks it. Soaked fuel stops burning; once the water stops it dries out and can catch again.', group='Water on fire'),
+        F('ember_heat', 'Ember heat', 150.0, 0.0, 400.0, '×', 0, tip="With liquid in the same box: how much heat a burning fuel bed holds, as a multiple of the air's (a bed of glowing charcoal about 150, a thin layer of burning leaves 20). Water on hot embers boils off in a thick white plume of steam that goes on after the flames are out. 0 makes no steam from the embers.", group='Water on fire'),
+        F('rekindle', 'Drying in flames', 8.0, 0.5, 120.0, 's', 1, tip='With liquid in the same box: how long soaked fuel takes to dry out with flames around it before it can burn again. Short, and a doused corner of the fire soon catches again from the rest; long, and dousing puts it out for good.', group='Water on fire', log=True),
+        F('steam_expansion', 'Steam burst', 0.5, 0.0, 2.0, '', 2, tip='With liquid in the same box: how much water flashing to steam swells and pushes the gas out (1 is physical): the gust of steam, smoke and sparks when water hits a fire.', group='Water on fire'),
         F('latent_heat', 'Latent heat', 1.0, 0.0, 2.0, '', 2, tip='Heat given off as steam condenses (1 is physical). It warms the cloud so steam billows upward like a cumulus; 0 lets it drift.', group='Steam'),
     ],
     'motion': [
         F('buoyancy', 'Buoyancy', 5.0, 0.0, 30.0, 'm/s²', 1, anim=True, tip='Upward acceleration of hot gas per unit of temperature.', group='Buoyancy'),
         F('soot_weight', 'Smoke weight', 0.02, 0.0, 1.0, 'm/s²', 3, tip='Downward pull of soot. Keep small: cooled smoke is close to neutrally buoyant.', group='Buoyancy', advanced=True),
         F('damping', 'Air drag', 0.05, 0.0, 2.0, '/s', 2, group='Buoyancy', advanced=True),
+        F('puffing', 'Puffing', 0.0, 0.0, 1.0, '', 2, anim=True, tip='How strongly the flames pulse. Real fires bulge and pinch off at the tip about 1.5/√D times a second, where D is the width of the base in metres: twice a second for a campfire, under once a second for a bonfire. The grid is too coarse to form these eddies by itself, so the heat and the rise of the gas over each emitter surge at the rate for its size (the flame is a little brighter for it). 0 is off.', group='Puffing'),
         F('vorticity', 'Vorticity', 1.5, 0.0, 10.0, '', 2, anim=True, tip='Vorticity confinement: restores small swirls lost to numerical smoothing.', group='Detail'),
         F('vort_outside', 'Vorticity in smoke', 0.3, 0.0, 1.0, '×', 2, tip='Fraction of the vorticity applied outside hot or burning gas.', group='Detail'),
         F('turbulence', 'Turbulence', 3.0, 0.0, 30.0, 'm/s²', 1, anim=True, tip='Divergence-free noise force in hot gas. Makes flames lick and roll.', group='Turbulence'),
@@ -132,6 +148,8 @@ SECTIONS = {
         F('flame_k', 'Flame temperature', 1650.0, 900.0, 3000.0, 'K', 0, anim=True, tip='Colour temperature of flame at the reference heat. Wood fire 1400–1800 K, candle 1500–1900 K.', group='Flame colour'),
         F('max_k', 'Hottest core', 2250.0, 1000.0, 6000.0, 'K', 0, tip='Colour temperature the hottest gas approaches.', group='Flame colour'),
         F('dynamic_range', 'Physical brightness', 0.75, 0.0, 1.5, '', 2, tip='1 follows real blackbody brightness (cool parts go dark red fast); lower flattens it for a softer look.', group='Flame colour'),
+        B('exposure_physical', 'Real-world brightness', False, tip='Make flame as bright as real flame of its temperature, against how brightly lit the scene in the footage is (Scene light). Fire exposure then adjusts it from there. Real flame is many stops brighter than a scene at night, a few brighter than one at dusk and about as bright as one in full sun.', group='Flame brightness'),
+        F('scene_ev', 'Scene light', 9.0, 0.0, 17.0, 'EV', 1, anim=True, tip='With Real-world brightness: how brightly lit the scene in the footage is, as a light meter would read it (EV at ISO 100). About 3 to 5 for a street at night, 6 to 8 indoors, 9 to 11 at dusk, 12 to 13 on an overcast day, 15 in full sun.', group='Flame brightness'),
         F('exposure', 'Fire exposure', 0.0, -6.0, 6.0, 'EV', 2, anim=True, tip='Brightness of the fire in stops. At 0, thick flame at the flame temperature renders at full white.', group='Flame brightness'),
         F('intensity', 'Emission', 1.0, 0.0, 10.0, '×', 2, group='Flame brightness', advanced=True),
         F('flame_density', 'Flame density', 1.0, 0.0, 4.0, '×', 2, group='Flame shape'),
@@ -141,6 +159,7 @@ SECTIONS = {
         F('flame_occlusion', 'Flame occlusion', 0.35, 0.0, 1.0, '', 2, tip='How much flames hide what is behind them in the alpha channel.', group='Flame shape'),
         F('soot_glow', 'Glowing soot', 0.25, 0.0, 3.0, '', 2, tip='Incandescence of hot smoke just above the flames.', group='Flame shape'),
         F('blue', 'Base glow', 0.0, 0.0, 5.0, '', 2, tip='Glow where fuel is burning: the blue chemiluminescence of gas and alcohol flames. Change its colour for other chemistry.', group='Flame colour'),
+        E('colour_response', 'Colour as seen by', 'camera', (('camera', 'A camera'), ('eye', 'The eye')), tip='Blackbody colours as a typical camera sensor records them (a little more yellow, and always within the colours a display can show) or as the eye sees them.', group='Flame colour'),
         C('blue_color', 'Base glow colour', (0.12, 0.30, 1.0), tip='Colour of the base glow. Blue for gas and alcohol; green for copper or boron, red for strontium, orange for sodium.', group='Flame colour'),
         F('colour_gain', 'Colourant brightness', 1.0, 0.0, 10.0, '×', 2, tip='Brightness of the flame colourants released by emitters (Emitter › Colour).', group='Flame colour'),
         F('smoke_density', 'Smoke density', 6.0, 0.0, 60.0, '/m', 1, anim=True, tip='How thick the smoke looks.', group='Smoke'),
@@ -157,6 +176,9 @@ SECTIONS = {
         F('humidity', 'Air humidity', 50.0, 0.0, 100.0, '%', 0, tip='Relative humidity of the surrounding air. Humid air lets steam linger; dry air evaporates it quickly.', group='Steam'),
         F('steam_density', 'Steam density', 0.4, 0.0, 5.0, '/m', 2, tip='How thick condensed steam looks, per gram of water droplets per cubic metre.', group='Steam'),
         C('steam_albedo', 'Steam colour', (0.92, 0.93, 0.95), tip='Scattering colour of the water droplets. Near white.', group='Steam'),
+        F('coal_bed', 'Coal bed', 0.0, 0.0, 4.0, '', 2, anim=True, tip='Glowing coals on the ground where the flames burn down onto it, over charred ground: the ember bed of a campfire or bonfire, for footage that has none. At 1 the coals glow at about half the brightness of thick flame. 0 is none.', group='Coal bed'),
+        F('coal_k', 'Coal temperature', 1250.0, 800.0, 1600.0, 'K', 0, tip='How hot the coals glow: 900 K dull red, 1100 K cherry red, 1250 K orange, 1400 K yellow-orange.', group='Coal bed'),
+        F('coal_height', 'Coal bed height', 0.08, 0.01, 0.5, 'm', 3, tip='How high the coals are heaped at the middle of the bed: a few centimetres for a campfire, 20 cm or more under a bonfire.', group='Coal bed'),
     ],
     'lighting': [
         C('ambient', 'Ambient light', (0.10, 0.11, 0.13), anim=True, tip='Light reaching the smoke from the surroundings (sky, room). Match it to your footage.', group='Ambient'),
@@ -217,6 +239,9 @@ SECTIONS = {
         F('creep', 'Creep speed', 0.05, 0.0, 2.0, 'm/s', 3, tip='Spread from a burning spot to the spots next to it by contact and radiant heat, even in still air. Wind-blown flames spread much faster through the gas.', group='Catching'),
         F('smoulder', 'Smoulder time', 4.0, 0.0, 60.0, 's', 1, tip='After flaming, a spot smoulders (smoke and a little heat) for this long, then is burnt out for good.', group='Burning out'),
         F('smoulder_smoke', 'Smoulder smoke', 1.0, 0.0, 20.0, '/s', 2, group='Burning out'),
+        F('dry_time', 'Drying time', 20.0, 0.0, 600.0, 's', 1, tip='Water that puts a surface out soaks it: it cannot catch again until it has dried, which takes this long (less in hot gas). Wet surfaces show darker in the composite. 0: it can catch again at once.', group='Water'),
+        F('spotting', 'Spot fires', 0.0, 0.0, 1.0, '', 3, tip='Chance that a hot ember landing on the burnable ground starts a new fire there, ahead of the main fire. Wind-blown embers then carry the fire across gaps. Needs Embers.', group='Spot fires'),
+        F('spot_temp', 'Ember heat needed', 900.0, 400.0, 2000.0, 'K', 0, tip='Embers that have cooled below this land without starting anything.', group='Spot fires', advanced=True),
     ],
     'liquid': [
         F('gravity', 'Gravity', 9.81, 0.0, 30.0, 'm/s²', 2, tip='Downward acceleration. 9.81 is Earth.', group='Forces'),
@@ -227,8 +252,45 @@ SECTIONS = {
         F('viscosity', 'Viscosity', 0.0, 0.0, 200.0, 'Pa·s', 3, tip='How thick the liquid is. Water 0.001 (no visible effect), olive oil 0.08, syrup 2 to 5, honey 10, molten lava 100 and up. Thick liquids coil, fold and flow slowly.', group='Behaviour', log=True),
         F('liquid_density', 'Density', 1000.0, 500.0, 3000.0, 'kg/m³', 0, tip='Mass per volume. Water 1000, oil 900, honey 1400, lava 2600. Sets what floats in it.', group='Behaviour', log=True),
         F('contact_angle', 'Contact angle', 90.0, 0.0, 180.0, '°', 0, tip='How the liquid meets surfaces: below 90 it wets them and spreads (clean glass, concrete), above 90 it beads up (a waxed car, a leaf). Works with surface tension.', group='Behaviour'),
-        F('water_level', 'Water level', 0.0, 0.0, 20.0, 'm', 3, tip='Water that carries on past the open sides of the box up to this height (a pond, a flooded street, the sea). It fills the box to this level at the start, keeps it topped up at the sides, lets waves run out, and is drawn out to the horizon. 0 is off.', group='Open water'),
+        F('cooling', 'Cooling', 0.0, 0.0, 2.0, '/s', 3, tip="How fast a molten liquid (lava, wax, molten glass) loses its heat where it meets the air and the ground. As it cools its glow dims and reddens, a crust covers it and it stiffens until it sets. The inside stays hot much longer. 0 never cools.", group='Molten'),
+        F('solidify', 'Setting', 1000.0, 1.0, 100000.0, '×', 0, tip='How much thicker the liquid is once cooled than when molten. 1000 and up and it sets solid: flows stop where they have cooled, and a crust holds.', group='Molten', log=True),
+        B('thermal', 'Heat and phase changes', False, tip="Give the liquid a temperature. Water then freezes into ice (which floats and moves as solid pieces, and freezes onto cold surfaces), melts, boils in bubbles on hot surfaces and evaporates, with the real heat capacities and latent heats of water. Set the temperatures here, on sources (Heat) and on colliders (Heat). With fire in the box the fire heats it too.", group='Heat'),
+        F('liquid_temp', 'Liquid temperature', 20.0, -40.0, 100.0, '°C', 1, tip='Temperature of the liquid as sources pour it (unless a source sets its own) and of the open water. Below freezing a source pours ice.', group='Heat'),
+        F('air_temp', 'Air temperature', 20.0, -60.0, 60.0, '°C', 1, tip='Temperature of the air round the liquid. Water loses heat to cold air and evaporates into dry air. In a fire and liquid box the gas is the air instead (Shading: Air temperature, Air humidity).', group='Heat'),
+        F('air_humidity', 'Air humidity', 50.0, 0.0, 100.0, '%', 0, tip='Relative humidity of that air. Dry air evaporates water fast (and cools it); saturated air not at all.', group='Heat'),
+        F('ground_temp', 'Ground temperature', 20.0, -200.0, 600.0, '°C', 0, tip='The ground, closed walls and the surfaces in the footage. A hot plate 150 to 250 (water on it boils; past about 210 drops dance on their own vapour), a stove top 400, frozen ground -10, dry ice -78, liquid nitrogen -196 (water on it freezes where it lands).', group='Heat'),
+        F('heat_speed', 'Heat speed-up', 1.0, 1.0, 10000.0, '×', 0, tip='Heat flows this many times faster than in reality, while the liquid still moves at its real speed: a time-lapse of freezing, melting and drying. Real ice takes minutes to hours: a pond skins over in about 10 minutes of hard frost, an ice cube melts in a drink in 10 to 20. 1 is physical.', group='Heat', log=True),
+        F('supercool', 'Supercooling', 1.0, 0.0, 40.0, 'K', 1, tip='How far below freezing still water can cool before ice forms in it by itself. Ice next to it, a cold surface or a disturbance seeds it sooner. Pure, undisturbed water holds 10 to 20: seeded, it then flashes to slush as dendrites race through it.', group='Heat', advanced=True),
+        F('freeze_point', 'Freezing point', 0.0, -30.0, 30.0, '°C', 1, tip='Temperature the liquid freezes at. Fresh water 0, sea water -1.9, brine lower.', group='Heat', advanced=True),
+        F('boil_point', 'Boiling point', 100.0, 50.0, 200.0, '°C', 1, tip='Temperature the liquid boils at. Water 100 at sea level, 93 at 2000 m, 120 in a pressure cooker.', group='Heat', advanced=True),
+        F('bubble_size', 'Steam bubble size', 2.5, 0.5, 10.0, 'mm', 1, tip='Diameter of the steam bubbles boiling water sends up from a hot surface. Hard boiling merges them into bigger ones.', group='Heat', advanced=True),
+        B('footage_collide', 'Hits the footage', False, tip='The liquid collides with the scene in your footage, using its depth pass (Composite › Holdout depth): water splashes against real walls, runs down real steps. Needs a depth pass of the footage; a matte alone does not tell how far things are.', group='Behaviour'),
+        F('rain', 'Rain', 0.0, 0.0, 200.0, 'mm/h', 1, anim=True, tip='Rain falling on the scene: streaks through the air, and ring ripples and splashes where drops hit water. Drizzle 1, steady rain 5, heavy 20, a downpour 50 and up.', group='Rain'),
+        F('rain_drop', 'Raindrop size', 2.5, 0.5, 6.0, 'mm', 1, tip='Typical raindrop diameter. Drizzle 0.5, rain 2 to 3, a thunderstorm 4 to 5.', group='Rain', advanced=True),
+        F('water_level', 'Water level', 0.0, 0.0, 40.0, 'm', 3, anim=True, tip='Water that carries on past the open sides of the box up to this height (a pond, a flooded street, the sea). It fills the box to this level at the start, keeps it topped up at the sides, lets waves run out, and is drawn out to the horizon. Keyframe it for a tide (slowly: a fast rise is a bore, see Surge). 0 is off.', group='Open water'),
         F('level_absorb', 'Edge absorption', 8.0, 0.0, 32.0, 'cells', 0, tip='Width of the layer at the open sides where waves are calmed so they do not bounce back off the box edge.', group='Open water', advanced=True),
+        F('ocean_height', 'Wave height', 0.0, 0.0, 10.0, 'm', 2, anim=True, tip="Waves on the open water: a random sea, as tall as this from trough to crest on average (the significant wave height). A calm lake 0.05, a breezy bay 0.3, a rough sea 1.5 and up. The box's own water rides them, and they carry on to the horizon. Needs a water level; waves are held to less than half of the water's depth, as deeper ones would break. 0 is flat.", group='Open water'),
+        F('ocean_length', 'Wavelength', 6.0, 0.3, 200.0, 'm', 2, anim=True, tip='Distance between the crests of the main waves. Ripples on a pond 0.5, a harbour chop 3, an ocean swell 50 to 150.', group='Open water', log=True),
+        F('ocean_dir', 'Wave direction', 90.0, -180.0, 180.0, '°', 0, anim=True, tip='Direction the waves travel toward, around the vertical axis (as the wind direction).', group='Open water'),
+        F('ocean_spread', 'Crest spread', 0.3, 0.0, 1.0, '', 2, tip='How much the waves come from different directions: 0 long, parallel crests (a swell from a far storm), 1 a confused, choppy sea.', group='Open water'),
+        F('ocean_chop', 'Choppiness', 0.6, 0.0, 1.5, '', 2, tip='Sharpens the crests and flattens the troughs, as real waves are. High values fold the crests over into whitecaps.', group='Open water'),
+        F('swell_height', 'Swell height', 0.0, 0.0, 10.0, 'm', 2, anim=True, tip="A swell from a storm far away, on top of the local waves: long, smooth, parallel crests running in from their own direction. Most real seas have one. 0 is none. Like Wave height, the significant height.", group='Open water'),
+        F('swell_length', 'Swell wavelength', 60.0, 2.0, 400.0, 'm', 1, anim=True, tip='Distance between the crests of the swell: 30 on a lake after a blow, 80 to 300 on the open ocean.', group='Open water', log=True),
+        F('swell_dir', 'Swell direction', 90.0, -180.0, 180.0, '°', 0, anim=True, tip='Direction the swell travels toward, around the vertical axis. It need not follow the wind.', group='Open water'),
+        F('ocean_depth', 'Sea depth', 0.0, 0.0, 1000.0, 'm', 1, tip="How deep the sea is, for how its waves travel: in shallow water they slow, shorten and steepen. 0 takes the water level (the box's floor is the sea bed). Set it deeper for the open sea, where the box is only its top layer.", group='Open water', advanced=True),
+        F('open_water_area', 'Open water area', 6.0, 0.0, 20.0, '×', 1, tip="How far round the box the open water carries on what happens in it: the box's wakes and ripples spread out across it, its foam drifts off with the current, the current flows round islands and posts in it, and the sea bed under it makes waves shoal and break into surf. As a multiple of the box's size; 0 turns it off.", group='Open water', advanced=True),
+        E('ocean_detail', 'Wave detail', '256', (('128', 'Draft (128)'), ('256', 'Standard (256)'), ('512', 'Fine (512)')), tip='Resolution of each of the three scales of waves (from the swell down to the ripples). Fine costs more memory and time for crisper close-ups.', group='Open water', advanced=True),
+        E('sea_from', 'Waves come in', 'all', (('all', 'Through every open side'), ('upwave', 'Only from where they come from')),
+          tip="Where the sea's waves enter the box. Every open side suits open water. For waves running up a beach or breaking over a reef, let them in only from the side they come from: the other sides become walls along the waves (as in a wave tank), so the breaking surf is not pulled back toward the open sea's shape.", group='Open water'),
+        F('surge_height', 'Surge', 0.0, 0.0, 30.0, 'm', 2, tip='A single long wave rolling in on top of the sea: a tsunami, a solitary wave, a flood or tidal bore. How high it stands above the water. It runs up any beach or shore in the box. 0 is none.', group='Surge'),
+        F('surge_length', 'Surge length', 40.0, 1.0, 5000.0, 'm', 1, tip='How long the surge is, front to back (or how steep its front is, for a bore). A tsunami is kilometres long; a tidal bore front a few metres.', group='Surge', log=True),
+        F('surge_dir', 'Surge direction', 90.0, -180.0, 180.0, '°', 0, tip='Direction the surge travels toward, around the vertical axis.', group='Surge'),
+        F('surge_time', 'Surge arrives', 2.0, -60.0, 600.0, 's', 2, tip='When the crest (or front) of the surge passes the middle of the box, in seconds from the first frame. It travels at the speed of a long wave in water of the sea depth.', group='Surge'),
+        E('surge_kind', 'Surge shape', 'wave', (('wave', 'A wave that passes (solitary wave)'), ('bore', 'A front: the water stays raised behind it (bore, flood)'),
+                                                 ('tsunami', 'A tsunami: the sea draws back, then a front floods in')),
+          tip='A wave is a hump of water that passes by. A bore is a step: the water stays higher behind its front, as a tidal bore running up a river or a flood surge. A tsunami is a bore the sea draws back from first, as most real tsunamis do: the water drains off the shore, baring the sea bed, then the front floods in.', group='Surge'),
+        F('current_speed', 'Current', 0.0, 0.0, 5.0, 'm/s', 2, anim=True, tip='The open water flows past: a river, a tidal channel. The water in the box is carried along with it, around rocks and posts.', group='Open water'),
+        F('current_dir', 'Current direction', 90.0, -180.0, 180.0, '°', 0, anim=True, tip='Direction the current flows toward, around the vertical axis.', group='Open water'),
         F('wind_speed', 'Wind speed', 0.0, 0.0, 30.0, 'm/s', 2, anim=True, tip='Wind on the liquid: it blows spray downwind, drifts foam and drags the surface.', group='Wind'),
         F('wind_dir', 'Wind direction', 90.0, -180.0, 180.0, '°', 0, anim=True, tip='Direction the wind blows toward, around the vertical axis.', group='Wind'),
         F('wind_surface', 'Surface drag', 1.0, 0.0, 5.0, '×', 2, tip='How strongly the wind drags the liquid surface (a real surface is dragged about 1/1000 as hard as spray is).', group='Wind', advanced=True),
@@ -238,7 +300,7 @@ SECTIONS = {
         F('volume_correction', 'Volume preservation', 0.3, 0.0, 1.0, '', 2, tip='Pushes particles apart where they have bunched up, so the liquid keeps its volume over long shots.', group='Quality', advanced=True),
         B('narrow_band', 'Narrow band', False, tip='Keep particles only near the surface and let the grid carry the deep liquid. A pond, a pool or the sea then costs particles for its surface only, not its whole volume.', group='Quality', advanced=True),
         I('band_width', 'Band width', 4, 2, 12, 'cells', tip='Depth of the layer under the surface that keeps particles when Narrow band is on.', group='Quality', advanced=True),
-        B('disk_cache', 'Cache to disk', False, tip='Also keep every simulated frame on disk (next to the project, or in the app data folder for an unsaved scene), so final renders and reopened projects re-render without re-simulating.', group='Quality'),
+        E('follow', 'Box follows', 'off', (('off', 'Nothing (stays put)'), ('liquid', 'The liquid'), ('collider', 'The first collider')), tip="The simulation box moves along with the action, in whole cells, so a small box can cover a long run: a flood running down a street, a boat crossing the sea (it follows the first collider, floating or animated). The liquid keeps its place in the world as the box moves; what it leaves behind is dropped, and open water fills in ahead. Needs open sides. Not with fire in the box.", group='Quality', advanced=True),
         F('max_particles', 'Particle limit', 16.0, 0.5, 200.0, 'M', 1, tip='Most particles alive at once, in millions. Sources stop adding liquid when it is reached.', group='Quality', advanced=True, log=True),
         B('whitewater', 'Whitewater', True, tip='Spray, foam and bubbles where the liquid moves fast and churns or breaks, as in any real splash.', group='Whitewater'),
         F('ww_amount', 'Amount', 1.0, 0.0, 10.0, '×', 2, tip='How much whitewater a churning or breaking liquid releases.', group='Whitewater', log=True),
@@ -270,6 +332,17 @@ SECTIONS = {
         F('wet_gloss', 'Wet shine', 0.5, 0.0, 2.0, '', 2, tip='Reflections on wet ground.', group='Ground'),
         F('shadow', 'Shadow', 1.0, 0.0, 2.0, '×', 2, tip='Shadow the liquid casts on the ground from the key light (Lighting). Clear water casts little; murky or coloured liquid more.', group='Ground'),
         F('caustics', 'Caustics', 1.0, 0.0, 4.0, '×', 2, tip='The rippling bright pattern the key light makes on the ground through the water surface. 1 is physically correct.', group='Ground'),
+        F('whitecaps', 'Whitecaps', 1.0, 0.0, 4.0, '×', 2, tip="How easily the open water's crests break into foam where they fold over (Liquid › Wave height, Choppiness). 0 is none.", group='Sea'),
+        F('sea_foam', 'Sea foam', 1.0, 0.0, 4.0, '×', 2, tip='How much of the foam the breaking crests leave on the open water shows: the white of fresh whitecaps and the thin, lacy foam they leave behind.', group='Sea'),
+        F('sea_foam_life', 'Sea foam lifetime', 12.0, 1.0, 120.0, 's', 1, tip='How long the thin foam a breaking crest leaves lasts before it clears. A few seconds on fresh water, 10 to 30 on the sea, minutes in a storm.', group='Sea', log=True),
+        F('foam_streaks', 'Foam streaks', 0.7, 0.0, 1.0, '', 2, tip='The thin foam gathers into long streaks along the wind, as on any windy sea. 0 leaves it in patches.', group='Sea'),
+        F('crest_glow', 'Crest glow', 1.0, 0.0, 4.0, '×', 2, tip='Sunlight passing through the thin tops of the waves glows green-blue, strongest looking toward a low sun. 1 is about right for clear sea water.', group='Sea'),
+        C('crest_glow_color', 'Crest glow colour', (0.1, 0.55, 0.45), tip='Colour of the light through the crests: the water seen through a thin layer. Greener for coastal water, bluer for the open ocean.', group='Sea', advanced=True),
+        F('gusts', 'Gusts', 0.3, 0.0, 1.0, '', 2, tip='Patches of stronger wind drifting over the water (cat\u2019s paws), roughening the ripples into darker, drifting patches. 0 is an even wind.', group='Sea'),
+        F('rainbow', 'Rainbow', 1.0, 0.0, 3.0, '×', 2, tip='The rainbow sunlight makes in spray and droplets, about 42 degrees away from the point opposite the sun (with a fainter second bow outside it). Only where the key light is behind the camera. 1 is physical.', group='Whitewater'),
+        F('lens_drops', 'Drops on the lens', 0.0, 0.0, 3.0, '×', 2, tip='Spray, splashes and rain that reach the camera leave drops on the lens, which bend the picture through them. 0 is a dry lens.', group='Lens'),
+        B('bottomless', 'Bottomless', False, tip="The bottom is out of sight (the sea, a deep lake): looking into the open water you see the water's own colour deepening, not the ground under the box. Use Murkiness and its colour for the colour of deep water.", group='Colour'),
+        C('standin_color', 'Stand-in colour', (0.3, 0.3, 0.3), tip='Colour of the colliders drawn as stand-ins (Colliders: Grey stand-ins): sand for a beach or sea bed, rock for a reef.', group='Look', advanced=True),
         E('colliders_look', 'Colliders', 'holdout', (('holdout', 'In the footage (hold out)'), ('shaded', 'Grey stand-ins')),
           tip='Colliders are real objects in your footage: they hide the liquid behind them and show their own pixels when seen through or in the liquid. Grey stand-ins draws them as plain grey objects, for shots without footage.', group='Look'),
         F('foam', 'Foam', 1.0, 0.0, 4.0, '×', 2, tip='How dense and white the foam on the surface looks.', group='Whitewater'),
@@ -280,7 +353,161 @@ SECTIONS = {
         F('spray', 'Spray', 0.35, 0.0, 4.0, '×', 2, tip='How dense the spray in the air looks.', group='Whitewater'),
         F('bubbles', 'Bubbles', 0.6, 0.0, 4.0, '×', 2, tip='How much bubbles whiten the liquid.', group='Whitewater'),
         C('foam_color', 'Foam colour', (0.92, 0.94, 0.95), group='Whitewater', advanced=True),
+        F('glow', 'Glow', 0.0, 0.0, 10.0, '', 2, anim=True, tip='Incandescence of a molten liquid (lava, molten metal, glass): light from its own heat. Above 0 the liquid is drawn as molten: opaque, glowing from its temperature through a skin or crust that rides the flow, lighting the ground around it and shimmering the air over it (Composite › Heat haze). 1 is about the brightness of basalt lava at 1300 K beside the Key light; 0 for anything cold.', group='Molten'),
+        F('glow_temp', 'Glow temperature', 1300.0, 700.0, 2500.0, 'K', 0, anim=True, tip='Temperature of the fresh melt, which sets its colour and brightness as a blackbody: about 1000 K dull red, 1300 K orange (basalt lava, 1400 K as it erupts), 1800 K yellow-white (molten steel). As it cools it reddens and dims the way real lava does.', group='Molten'),
+        F('crust', 'Crust', 0.6, 0.0, 1.0, '', 2, tip='How thick and dark the crust a cooling surface grows: 0 it stays bare glowing melt, 1 a black crust with only thin glowing cracks. The cracks open wherever the flow pulls the crust apart.', group='Molten'),
+        F('crust_scale', 'Crust plate size', 0.08, 0.01, 1.0, 'm', 3, tip='Size of the crust plates between the glowing cracks. They ride the flow, break into smaller plates where it spreads and fold into ropes where it piles up.', group='Molten', log=True),
+        F('crust_time', 'Crust forms in', 1.5, 0.1, 60.0, 's', 2, tip='How long a fresh molten surface takes to skin over and darken once it is out in the air (Liquid › Cooling sets how fast it loses its heat and stiffens). Real basalt lava darkens over tens of seconds; shorter keeps a young flow crusted in a short shot.', group='Molten', log=True),
+        F('ropes', 'Ropes', 1.0, 0.0, 3.0, '×', 2, tip='How strongly the crust wrinkles into ropes where the flow squeezes it (pahoehoe). 0 keeps it flat.', group='Molten'),
+        C('crust_color', 'Crust colour', (0.075, 0.073, 0.071), tip='Colour of the cooled crust in daylight. Fresh basalt rind is nearly black (about 0.03): bubbly glass, which glitters in the light rather than shining; greyer for older, weathered lava, browner for oxidised.', group='Molten', advanced=True),
+        E('crust_kind', 'Crust kind', 'skin', (('skin', 'A skin (pahoehoe)'), ('plates', 'Plates (a lava lake, a channel)')),
+          tip='A skin: the thin skin of a pahoehoe flow, black glass when fresh, greying as it cools. The glow shows through it where it is young and thin, in stretch marks drawn out along the flow, and stays longest in the troughs of its wrinkles; it splits into ragged glowing tears where the flow pulls it apart hard, ropes up where it is squeezed, and the foot of an advancing lobe glows in a broken seam where its front splits along the ground. Plates: the crust of a lava lake or a lava channel, broken into plates with glowing cracks between them that ride the flow.', group='Molten'),
+        F('crust_roughness', 'Crust roughness', 0.45, 0.05, 1.0, '', 2, tip='Crust kind Plates: how rough the cooled plates are, low for glassy crust that shines silver in the light, high for rubbly crust. (A skin is glassy where fresh and dulls in patches as it ages.)', group='Molten', advanced=True),
+        F('lava_light', 'Glow on surroundings', 1.0, 0.0, 4.0, '×', 2, tip='How strongly the glow lights the ground and the footage around the molten liquid. 1 is physical.', group='Molten'),
+        F('frost', 'Frost', 1.0, 0.0, 2.0, '×', 2, tip='How white frost and rime make ice: ice frozen fast from drops and spray is white rime, and ice left below freezing grows feathers of hoarfrost. Melting ice is wet and glossy instead.', group='Ice'),
+        F('ice_cloud', 'Ice cloudiness', 1.0, 0.0, 3.0, '×', 2, tip='How milky ice looks inside. Ice frozen fast traps air and is white; ice frozen slowly is clear (black ice on a pond). 0 makes all ice clear.', group='Ice'),
+        C('frost_color', 'Frost colour', (0.9, 0.93, 0.97), group='Ice', advanced=True),
+        F('crystal_size', 'Ice crystal size', 0.02, 0.002, 0.2, 'm', 3, tip='Size of the facets of the ice crystals and of the frost feathers on them.', group='Ice', advanced=True, log=True),
         F('step', 'Ray step', 0.35, 0.15, 1.0, 'cells', 2, group='Quality', advanced=True),
+    ],
+    'weather': [
+        E('precip', 'Precipitation', 'none', (('none', 'None'), ('snow', 'Snow'), ('rain', 'Rain'), ('sleet', 'Sleet (ice pellets)'),
+                                               ('freezing_rain', 'Freezing rain'), ('graupel', 'Graupel (soft hail)'), ('hail', 'Hail'),
+                                               ('sky', 'From the temperatures aloft')),
+          tip='What falls on the scene, simulated piece by piece: it melts, refreezes and evaporates on its way down as the air makes it, '
+              'is blown about by the wind, settles on the ground and the colliders, and falls into the liquid. What arrives depends on the air '
+              'too: snow falling through air above freezing (Liquid › Air temperature) arrives wet or as rain; sleet and freezing rain are '
+              'snow melted in warmer air aloft, and need air below freezing at the ground. "From the temperatures aloft" melts snow in the '
+              'layer of warm air given below.', group='Precipitation'),
+        F('rate', 'Rate', 2.0, 0.05, 150.0, 'mm/h', 1, anim=True, log=True,
+          tip='How much falls, as the water it holds: light snow 0.5 (about 5 mm of snow an hour), heavy snow 3, a downpour 30, a hailstorm 20 to 80.',
+          group='Precipitation'),
+        F('size', 'Size', 0.0, 0.0, 80.0, 'mm', 1,
+          tip='Typical size of what forms: snowflakes 2 to 15 mm, graupel 2 to 5, hailstones 5 (a pea) to 45 (a golf ball) and over. 0 takes '
+              'the size the rate gives (hail: 15).', group='Precipitation'),
+        F('starts', 'Starts at', 0.0, -60.0, 3600.0, 's', 1, tip='When it begins, in seconds of the shot (it is falling throughout from 0).',
+          group='Precipitation', advanced=True),
+        F('warm_t', 'Warmest air aloft', 2.0, -20.0, 15.0, '°C', 1,
+          tip='For "From the temperatures aloft": the warmest the air gets in a layer above the cold air at the ground. Above about +1 C the '
+              'snow falling through it melts: partly melted, it refreezes below into ice pellets (sleet); melted through, it stays liquid '
+              'below freezing and freezes onto what it hits (freezing rain).', group='Air aloft', advanced=True),
+        F('warm_z', 'At height', 1500.0, 200.0, 5000.0, 'm', 0, tip='How high that warm layer is.', group='Air aloft', advanced=True),
+        F('humidity', 'Humidity aloft', 95.0, 20.0, 100.0, '%', 0,
+          tip='Of the air the precipitation falls through (over ice below freezing). Drier air evaporates it on the way down (and cools it: '
+              'snow survives warmer air when the air is dry).', group='Air aloft', advanced=True),
+        F('gust', 'Gusts', 0.3, 0.0, 1.0, '', 2, tip='How much the wind (Liquid › Wind) comes and goes.', group='Wind'),
+        F('turbulence', 'Eddies', 0.4, 0.0, 5.0, 'm/s', 2, tip='Swirls in the air that toss what falls about (snow most).', group='Wind'),
+        F('eddy', 'Eddy size', 1.5, 0.1, 20.0, 'm', 1, tip='Size of those swirls.', group='Wind', advanced=True, log=True),
+        F('area', 'Area', 8.0, 0.5, 60.0, 'm', 1, log=True,
+          tip='Width of the ground round the box that precipitation is simulated over (it covers the box at least). Make it reach as far as '
+              'the camera sees falling snow or hail: beyond it, only the haze of the fall shows.', group='Area'),
+        F('top', 'From height', 0.0, 0.0, 60.0, 'm', 1,
+          tip='Height it starts falling from, inside the simulation (above that the air column decides what it is). 0: a metre over the box.',
+          group='Area', advanced=True),
+        F('limit', 'Particle limit', 2.0, 0.1, 16.0, 'M', 1, tip='Most falling pieces simulated at once (millions).', group='Area',
+          advanced=True),
+        F('lying', 'Already lying', 0.0, 0.0, 100.0, 'cm', 1,
+          tip='Snow on the ground (and the colliders\' tops) from before the shot, where they are cold enough to keep it.', group='Ground'),
+        F('buildup', 'Build-up speed-up', 1.0, 1.0, 1000.0, '×', 0, log=True,
+          tip='Makes what lands build up (and melt) this many times faster, as in a time-lapse, while it still falls at its real speed: '
+              'an hour of snow in a few seconds. 1 is real time (3 mm/h of water lays down about 3 cm of snow an hour).',
+          group='Ground'),
+        B('cover', 'Lies on the ground', True,
+          tip='Snow, graupel and sleet build up where they land (on the ground and the colliders\' tops), settle and melt; freezing rain glazes '
+              'them. Off: what lands is gone.', group='Ground'),
+        F('cover_cell', 'Cover detail', 2.0, 0.5, 20.0, 'cm', 1, tip='Size of the cells the ground cover is kept in.', group='Ground',
+          advanced=True),
+        F('snow_bright', 'Snow brightness', 1.0, 0.2, 2.0, '', 2, tip='Brightness of falling and lying snow (1: fresh snow).', group='Look'),
+        F('sparkle', 'Sparkle', 1.0, 0.0, 3.0, '', 2, tip='Glints of the sun on the crystals of lying snow.', group='Look'),
+        F('gloss', 'Glaze and wet shine', 1.0, 0.0, 2.0, '', 2, tip='How strongly glaze ice and wet ground reflect.', group='Look'),
+        F('fall_opacity', 'Falling opacity', 1.0, 0.1, 3.0, '', 2, tip='Opacity of the falling pieces as drawn.', group='Look', advanced=True),
+    ],
+    'atmosphere': [
+        F('scale', 'Scale', 1000.0, 1.0, 10000.0, 'm per m', 0, log=True,
+          tip='Metres of sky for each metre of the scene: at 1000 the box, the camera and the terrain are measured in kilometres.',
+          group='Scale'),
+        F('time_lapse', 'Time-lapse', 20.0, 1.0, 600.0, 's per s', 0, log=True,
+          tip='Seconds of sky for each second of the shot: clouds take 10 to 30 minutes to build, a storm an hour. 1 is real time.',
+          group='Scale'),
+        F('surface_t', 'Air at the ground', 28.0, -40.0, 45.0, '°C', 1, tip='Temperature of the air near the ground.', group='Air column'),
+        F('surface_rh', 'Humidity at the ground', 65.0, 5.0, 100.0, '%', 0, group='Air column'),
+        F('mixed_layer', 'Mixed layer', 1200.0, 0.0, 4000.0, 'm', 0,
+          tip='Depth of the layer the sun-warmed ground keeps stirred (its air cools 9.8 C per km as it rises): cloud bases sit near its top.',
+          group='Air column'),
+        F('lapse', 'Lapse rate', 6.8, 3.0, 9.8, 'K/km', 1,
+          tip='How fast the air cools with height above that layer. Steeper (7 to 9) is unstable: towering clouds and storms; 5 to 6 is stable: '
+              'flat clouds.', group='Air column'),
+        F('free_rh', 'Humidity aloft', 55.0, 5.0, 100.0, '%', 0, tip='Humidity above the mixed layer: dry air aloft eats the clouds away.',
+          group='Air column'),
+        F('tropopause', 'Tropopause', 11000.0, 3000.0, 18000.0, 'm', 0,
+          tip='Above it the air is stable: a storm\'s updraft stops there and spreads into the anvil.', group='Air column'),
+        F('inversion_z', 'Inversion height', 0.0, 0.0, 6000.0, 'm', 0,
+          tip='A layer of warmer air that caps the clouds at its height (fair-weather cumulus, a flat sheet of stratocumulus). 0: none.',
+          group='Air column'),
+        F('inversion_dt', 'Inversion strength', 3.0, 0.0, 15.0, 'K', 1, group='Air column'),
+        F('wind', 'Wind', 4.0, 0.0, 40.0, 'm/s', 1, tip='Wind at the ground.', group='Wind'),
+        F('wind_dir', 'Wind direction', 0.0, -180.0, 180.0, '°', 0, group='Wind'),
+        F('shear', 'Shear', 2.0, 0.0, 10.0, 'm/s per km', 1,
+          tip='How much stronger the wind is per km up: shear tilts clouds and organises storms (strong shear: long-lived supercells).',
+          group='Wind'),
+        F('veer', 'Veer', 0.0, -180.0, 180.0, '°', 0, tip='How far the wind turns from the ground to the tropopause (storms that rotate).',
+          group='Wind', advanced=True),
+        B('follow', 'Follow the storm', False,
+          tip='The box moves with the clouds (at the mean wind of the lowest 6 km), so a storm stays in the middle of it instead of '
+              'drifting out of the side; the ground slides under it. Not with terrain.', group='Wind'),
+        F('heat_flux', 'Ground heating', 300.0, 0.0, 800.0, 'W/m²', 0,
+          tip='Heat the sun-warmed ground gives the air: it sets off the thermals that build cumulus (a summer afternoon 200 to 400, a cloudy '
+              'or cold day 0 to 50).', group='Thermals'),
+        F('evaporation', 'Ground moisture', 150.0, 0.0, 600.0, 'W/m²', 0,
+          tip='Latent heat of the water evaporating from the ground (moist fields, forest, the sea): more makes lower, wetter clouds.',
+          group='Thermals'),
+        F('thermal_size', 'Thermal size', 1500.0, 200.0, 10000.0, 'm', 0, tip='Size of the patches of warmer ground thermals rise from.',
+          group='Thermals', log=True),
+        F('patchy', 'Patchiness', 0.7, 0.0, 1.0, '', 2, tip='How unevenly the ground warms.', group='Thermals'),
+        F('bubble', 'Warm bubble', 0.0, 0.0, 6.0, 'K', 1,
+          tip='Starts a single storm: a bubble of air this much warmer, in the middle of the box (0: none).', group='Thermals'),
+        F('bubble_r', 'Bubble size', 5000.0, 1000.0, 20000.0, 'm', 0, group='Thermals', advanced=True),
+        F('rain_threshold', 'Rain needs', 1.0, 0.1, 3.0, 'g/kg', 2,
+          tip='Cloud water before the droplets start to coalesce into rain: 0.5 over the sea (big droplets), 1 to 2 over land.',
+          group='Precipitation'),
+        F('hail', 'Hail fall speed', 1.0, 0.5, 4.0, '×', 2, tip='Graupel and hail fall this much faster: 2 to 4 for big hail.',
+          group='Precipitation'),
+        F('glaciation', 'Glaciation time', 900.0, 60.0, 3600.0, 's', 0,
+          tip='How long cloud water below freezing takes to turn to ice (seeded clouds glaciate fast).', group='Precipitation',
+          advanced=True),
+        F('vorticity', 'Detail', 0.0, 0.0, 0.05, '', 3,
+          tip='Restores the small eddies the grid smears (cauliflower edges). Strong values make the air unstable.', group='Detail',
+          advanced=True),
+    ],
+    'sky': [
+        F('brightness', 'Cloud brightness', 1.0, 0.2, 3.0, '', 2, group='Clouds'),
+        F('density', 'Cloud density', 1.0, 0.1, 5.0, '', 2, log=True, tip='How opaque a given amount of cloud water looks.', group='Clouds'),
+        F('silver', 'Silver lining', 1.0, 0.0, 1.2, '', 2,
+          tip='How sharply cloud droplets throw sunlight forward: the bright rim of a cloud in front of the sun.', group='Clouds'),
+        F('multiple', 'Multiple scattering', 0.8, 0.0, 1.0, '', 2,
+          tip='Light scattered many times inside thick cloud: keeps their sunlit sides white.', group='Clouds'),
+        F('skylight', 'Skylight', 1.0, 0.0, 3.0, '', 2, tip='Blue light from the sky on the clouds\' shaded sides.', group='Clouds'),
+        F('visibility', 'Visibility', 60.0, 2.0, 300.0, 'km', 0, log=True,
+          tip='How far one sees through the air before it fades into the haze of the horizon.', group='Air'),
+        B('draw_sky', 'Draw the sky', True, tip='The sky and the ground behind the clouds. Off: only the clouds, over the footage.',
+          group='Air'),
+        C('sky_color', 'Sky', (0.25, 0.42, 0.85), tip='Colour of the sky overhead.', group='Air'),
+        C('horizon_color', 'Horizon haze', (0.72, 0.8, 0.92), group='Air'),
+        C('ground_color', 'Ground', (0.22, 0.25, 0.17), group='Air'),
+    ],
+    'lava': [
+        F('viscosity', 'Viscosity', 150.0, 1.0, 100000.0, 'Pa·s', 1, tip='How thick the molten rock is. Runny pahoehoe basalt 100 to 1000, a’a lava 10,000 and up. The lava is as thick as this where it is fresh and hot, and stiffens as it cools (Setting).', group='Lava', log=True),
+        F('liquid_density', 'Density', 2600.0, 1500.0, 3500.0, 'kg/m³', 0, tip='Mass per volume of the lava. Basalt melt about 2600: it sinks in water and pushes it aside.', group='Lava'),
+        F('cooling', 'Cooling', 0.35, 0.0, 2.0, '/s', 3, tip='How fast the lava loses its heat to the air and the ground where it is exposed, so it crusts over and stiffens as it spreads.', group='Lava'),
+        F('solidify', 'Setting', 1000.0, 1.0, 100000.0, '×', 0, tip='How much thicker the lava is once cooled than when molten. 1000 and up and it sets solid.', group='Lava', log=True),
+        F('quench', 'Quenching', 4.0, 0.0, 30.0, '/s', 2, tip='How fast water chills the lava it touches: the skin goes black and glassy within a second or so, while the lava under it stays molten and glowing.', group='Lava meets water'),
+        F('boiling', 'Boiling', 1.0, 0.0, 5.0, '×', 2, tip='How fiercely water touching hot lava boils off into steam (1 is about real: a metre of lava shore makes a thick white plume).', group='Lava meets water'),
+        F('air_heat', 'Heats the air', 1.0, 0.0, 3.0, '×', 2, tip='Heat the lava gives the air over it: the shimmering updraft above a flow, steam off wet ground, and burnable things catching fire when it reaches them.', group='Lava meets water'),
+        F('glow', 'Glow', 1.0, 0.0, 10.0, '', 2, anim=True, tip='Incandescence of the molten lava: light from its own heat, strongest where it is freshest.', group='Look'),
+        F('glow_temp', 'Glow temperature', 1300.0, 700.0, 2500.0, 'K', 0, anim=True, tip='Colour of the glow of fresh lava: about 1000 K dull red, 1300 K orange, 1500 K yellow.', group='Look'),
+        F('crust', 'Crust', 0.6, 0.0, 1.0, '', 2, tip='How much of the surface is dark cooled crust, 0 bare glowing melt, 1 nearly all crust with glowing cracks.', group='Look'),
+        F('crust_scale', 'Crust plate size', 0.07, 0.01, 1.0, 'm', 3, tip='Size of the crust plates between the glowing cracks.', group='Look', log=True),
+        F('glow_light', 'Glow lights the steam', 1.0, 0.0, 3.0, '×', 2, tip='How much the glowing lava lights the steam, smoke and water around it (1 is physical): the plume over a lava shore lit orange from underneath.', group='Look'),
     ],
     'camera': [
         E('mode', 'Camera', 'orbit', (('orbit', 'Orbit the fire'), ('free', 'Free / tracked')), group='Camera'),
@@ -303,12 +530,20 @@ SECTIONS = {
         F('far', 'Far clip', 2000.0, 10.0, 100000.0, 'm', 0, group='Clipping', advanced=True),
     ],
     'composite': [
-        E('plate_transform', 'Footage colour space', 'srgb', (('srgb', 'sRGB (most video)'), ('rec709', 'Rec.709 / BT.1886'), ('linear', 'Linear'), ('acescg', 'ACEScg')),
-          tip='How your footage is encoded. Video from phones and most cameras is sRGB or Rec.709; EXR plates are usually linear.', group='Footage'),
+        E('plate_transform', 'Footage colour space', 'srgb', (('srgb', 'sRGB (most video)'), ('rec709', 'Rec.709 / BT.1886'), ('linear', 'Linear'), ('acescg', 'ACEScg'), ('ocio', 'OCIO colour space')),
+          tip='How your footage is encoded. Video from phones and most cameras is sRGB or Rec.709; EXR plates are usually linear. OCIO: any colour space of the OpenColorIO config (camera log, for example), chosen below.', group='Footage'),
+        Param('ocio_plate', 'Footage OCIO space', 'str', '', tip='With Footage colour space set to OCIO: the colour space of the footage in the OpenColorIO config.', group='Footage'),
         F('plate_exposure', 'Footage exposure', 0.0, -4.0, 4.0, 'EV', 2, group='Footage'),
-        E('view', 'View transform', 'standard', (('standard', 'Standard (footage unchanged)'), ('agx', 'AgX filmic'), ('aces', 'ACES fit'), ('raw', 'Raw (clip)')),
-          tip='How linear light becomes display pixels. Standard leaves footage untouched and rolls off only fire highlights.', group='Output look'),
+        E('view', 'View transform', 'standard', (('standard', 'Standard (footage unchanged)'), ('agx', 'AgX filmic'), ('aces', 'ACES fit'), ('raw', 'Raw (clip)'), ('ocio', 'OCIO display and view')),
+          tip='How linear light becomes display pixels. Standard leaves footage untouched and rolls off only fire highlights. OCIO uses a display and view from an OpenColorIO config (ACES, AgX, a show LUT).', group='Output look'),
+        Param('ocio_config', 'OCIO config', 'file', '', tip='An OpenColorIO config (config.ocio). Empty uses the OCIO environment variable, or the built-in ACES studio config.', group='OCIO'),
+        Param('ocio_working', 'Working space', 'str', '', tip='The colour space in the config that matches Blackbody\u2019s scene-linear Rec.709 working space. Empty finds it (Linear Rec.709 (sRGB), lin_rec709, and so on).', group='OCIO'),
+        Param('ocio_display', 'Display', 'str', '', tip='OCIO display (sRGB, Rec.1886, P3-D65...). Empty: the config\u2019s default.', group='OCIO'),
+        Param('ocio_view', 'View', 'str', '', tip='OCIO view transform for the display (ACES 1.0 SDR-video, Filmic, Un-tone-mapped...). Empty: the display\u2019s default.', group='OCIO'),
+        Param('ocio_look', 'Look', 'str', '', tip='Optional OCIO look (a show grade) applied before the view.', group='OCIO', advanced=True),
+        Param('exr_space', 'EXR colour space', 'str', '', tip='OCIO colour space EXR renders are written in (ACEScg, ACES2065-1...). Empty writes Blackbody\u2019s scene-linear Rec.709.', group='OCIO'),
         F('knee', 'Highlight roll-off', 0.8, 0.5, 1.0, '', 2, tip='Where highlights start to compress in the Standard view.', group='Output look'),
+        F('highlight_white', 'Highlights to white', 0.25, 0.0, 0.9, '', 2, tip='Standard view: how over-bright highlights lose their colour on the way to white, as on a camera sensor, where each colour channel also catches some of the light meant for the others. Over-bright flame goes orange, then yellow, then white at the hottest cores. 0 compresses each channel on its own, so over-bright flame goes flat yellow. Footage below the roll-off is never changed.', group='Output look'),
         F('smoke_opacity', 'Smoke opacity', 1.0, 0.0, 2.0, '×', 2, anim=True, group='Fire'),
         F('saturation', 'Fire saturation', 1.0, 0.0, 2.0, '', 2, group='Fire'),
         C('tint', 'Fire colour balance', (1.0, 1.0, 1.0), group='Fire'),
@@ -316,11 +551,30 @@ SECTIONS = {
         F('bloom_radius', 'Glow radius', 1.0, 0.25, 2.0, '', 2, group='Glow'),
         F('light_cast', 'Fire light on footage', 0.6, 0.0, 4.0, '', 2, anim=True, tip='How much the fire lights up the scene around it in the footage.', group='Interaction'),
         F('surface_light', 'Fire light on surfaces', 1.0, 0.0, 4.0, '', 2, anim=True, tip='Lights the ground and every collider marked Hides fire the way the fire would light the real ones in your footage: brightest facing the flames, falling off with distance.', group='Interaction'),
+        F('surface_shadows', 'Shadows from the fire', 1.0, 0.0, 1.0, '', 2, tip='Colliders in the shot and thick smoke between the fire and a surface shade the fire light on it. 0 lights every surface as if nothing were in the way.', group='Interaction'),
         F('scorch', 'Scorch', 0.8, 0.0, 1.0, '', 2, tip='With Spreading fire: how dark the burnt ground and burnt objects go in the composite.', group='Interaction'),
-        F('haze', 'Heat haze', 1.0, 0.0, 5.0, '', 2, anim=True, tip='Shimmer of hot air distorting the footage behind and above the fire.', group='Interaction'),
-        F('haze_freq', 'Haze size', 1.0, 0.25, 4.0, '', 2, group='Interaction', advanced=True),
-        F('haze_speed', 'Haze speed', 1.0, 0.0, 4.0, '', 2, group='Interaction', advanced=True),
-        F('grain', 'Grain', 0.0, 0.0, 1.0, '', 2, tip='Film grain on the fire so it matches noisy footage.', group='Match'),
+        F('soot', 'Soot', 0.8, 0.0, 1.0, '', 2, tip='With Combustion › Soot stains: how dark the soot left on walls, ceilings and the ground goes in the composite.', group='Interaction'),
+        F('wet', 'Wet surfaces', 0.5, 0.0, 1.0, '', 2, tip='With Spreading fire: how much darker surfaces soaked by a hose or a liquid look while they dry.', group='Interaction'),
+        Param('holdout_matte', 'Holdout matte', 'file', '', tip='An image sequence (name.####.png or .exr, numbered like the footage) with a matte of the objects in front of the fire: the fire, smoke and embers go behind them. Any roto or keyed matte works.', group='Holdouts from footage'),
+        E('matte_channel', 'Matte channel', 'alpha', (('alpha', 'Alpha'), ('luma', 'Brightness'), ('red', 'Red'), ('green', 'Green'), ('blue', 'Blue')), tip='Which channel of the matte holds the objects.', group='Holdouts from footage'),
+        B('matte_invert', 'Invert matte', False, group='Holdouts from footage'),
+        Param('holdout_depth', 'Depth pass', 'file', '', tip='An EXR sequence with the depth of the footage (from a 3D scene, a depth estimator, or a lidar camera): fire behind a surface in the depth pass is hidden, fire in front of it stays, so it can burn around objects.', group='Holdouts from footage'),
+        E('depth_kind', 'Depth is', 'z', (('z', 'Distance along the view axis (Z)'), ('distance', 'Distance from the camera'), ('inverse', 'Inverse depth (1/Z)')), tip='What the depth pass stores. Renderers usually write Z; depth estimators often write inverse depth.', group='Holdouts from footage'),
+        F('depth_scale', 'Depth units', 1.0, 0.0001, 1000.0, 'm', 4, tip='Metres per unit of the depth pass: 1 for metres, 0.01 for centimetres, 0.3048 for feet.', group='Holdouts from footage', log=True, hard_lo=1e-6),
+        F('haze', 'Heat haze', 1.0, 0.0, 5.0, '', 2, anim=True, tip='Shimmer of the hot air bending the light from the footage behind it, traced through the simulated heat so it rises with the plume and ends where the hot air ends; over a molten liquid, the air its surface heats (bending the liquid seen through it too). 1 is its physical strength: stronger with long lenses and small eddies.', group='Interaction'),
+        F('haze_freq', 'Haze size', 1.0, 0.25, 4.0, '', 2, tip='Fineness of the small eddies in the hot air: higher is finer.', group='Interaction', advanced=True),
+        F('haze_speed', 'Haze speed', 1.0, 0.0, 4.0, '', 2, tip='How fast the small eddies change as they drift with the air.', group='Interaction', advanced=True),
+        F('f_stop', 'Aperture', 0.0, 0.0, 22.0, 'f/', 1, tip='Depth of field: the f-number the footage was shot at (f/1.4 very shallow, f/16 deep). The fire blurs by how far it is from the focus distance. 0 keeps it sharp.', group='Lens'),
+        F('focus_distance', 'Focus distance', 0.0, 0.0, 100.0, 'm', 2, anim=True, tip='Where the lens was focused. 0 focuses on the fire.', group='Lens'),
+        F('softness', 'Softness', 0.0, 0.0, 5.0, 'px', 2, tip='Blur the fire as softly as the footage is: a soft lens, compression or slightly missed focus. Compare an edge in the footage with the edges of the fire (pixels at 1080p).', group='Lens'),
+        F('lens_k1', 'Lens distortion', 0.0, -0.3, 0.3, '', 3, tip='The distortion of the lens the footage was shot with, so the fire bends with the picture toward the frame edges: negative for barrel (wide lenses), positive for pincushion. At -0.1 the frame corners are pulled 10% toward the centre.', group='Lens'),
+        F('fringing', 'Colour fringing', 0.0, 0.0, 4.0, 'px', 2, tip='Lateral chromatic aberration: red and blue images a little different in size, so bright edges get coloured fringes toward the frame corners (pixels at the corners, at 1080p).', group='Lens'),
+        F('halation', 'Halation', 0.0, 0.0, 2.0, '', 2, tip='A red glow around the brightest flame, as film shows (light scattering back through the film base) and to a lesser degree many digital cameras.', group='Lens'),
+        F('visibility', 'Visibility', 0.0, 0.0, 1000.0, 'm', 0, tip='How far you can see through the air in the shot: about 50 m in fog, 200–1000 m in mist, smog or dusk haze, 10 km and more on a clear day. The fire and smoke fade into the haze over their distance from the camera, as everything in the footage does. 0 is perfectly clear air.', group='Atmosphere', hard_hi=100000.0),
+        B('atmos_from_footage', 'Haze colour from footage', True, tip='Take the colour of the haze from the footage: the average of its haziest bright spots, usually the sky near the horizon.', group='Atmosphere'),
+        C('atmos_colour', 'Haze colour', (0.55, 0.6, 0.7), tip='Colour of the haze when it is not taken from the footage (scene-linear).', group='Atmosphere'),
+        B('grain_match', 'Match footage noise', True, tip='Measure the noise in the footage (how strong it is at each brightness, how coloured and how coarse) and give the fire the same, so the fire is no cleaner than the picture around it. Grain adds film grain on top.', group='Match'),
+        F('grain', 'Grain', 0.0, 0.0, 1.0, '', 2, tip='Film grain on the fire, on top of the noise matched from the footage (Match footage noise).', group='Match'),
         C('bg', 'Background', (0.0, 0.0, 0.0), group='No footage'),
         B('bg_checker', 'Checkerboard', False, group='No footage'),
     ],
@@ -332,29 +586,47 @@ SECTIONS = {
         I('end', 'Last frame', 120, -10000, 100000, group='Range'),
         F('final_scale', 'Final resolution', 1.0, 0.25, 3.0, '×', 2, tip='Multiplies the voxel resolution for final renders.', group='Quality'),
         I('aa_samples', 'Samples per pixel', 4, 1, 64, tip='Anti-aliasing and noise-free volume sampling. 4 is clean; 16 for hero shots.', group='Quality'),
+        B('auto_resolution', 'Resolution from the shot', True, tip='Final renders, with Detail upres left at 1: pick the detail upres (up to 3) that makes its cells about a pixel and a half on screen, from how big the fire appears in the shot. The voxels stay as set: a finer simulation grid changes how the fire burns.', group='Quality'),
         I('upres', 'Detail upres', 1, 1, 3, tip='Final renders: carry the fire and smoke on a grid this many times finer, moved by the simulated air plus extra small-scale turbulence. Much finer detail for a fraction of the cost of simulating at that resolution. 1 is off.', group='Quality', hard_lo=1, hard_hi=4),
         F('upres_turbulence', 'Upres turbulence', 1.0, 0.0, 4.0, '', 2, tip='Strength of the small swirls the upres adds, scaled by how turbulent the simulated air is.', group='Quality'),
+        B('upres_preview', 'Upres in the viewer', False, tip='Show Detail upres while you work too, not only in final renders. Slower.', group='Quality'),
         F('final_step', 'Final ray step', 0.5, 0.2, 1.0, 'cells', 2, group='Quality', advanced=True),
         B('motion_blur', 'Motion blur', True, group='Motion blur'),
         F('shutter_angle', 'Shutter angle', 180.0, 0.0, 360.0, '°', 0, tip='180° matches most film and video. Match your footage.', group='Motion blur'),
     ],
 }
 
-MESH_TIP = 'A triangle mesh in OBJ format, in metres with y up (the usual export settings). It need not be watertight.'
+MESH_TIP = ('A triangle mesh in OBJ or STL format, in metres with y up (the usual export settings); it need not be watertight. '
+            'A numbered sequence (name.####.obj) deforms over time; a USD prim (file.usd#/World/Car) comes from a USD scene; '
+            'a greyscale image (PNG, TIFF, EXR) is a heightfield: terrain, scaled by Size (width, height, depth in metres).')
+
+VOLUME_TIP = ('An OpenVDB volume (.vdb) from Houdini, Blender, EmberGen or Blackbody itself, a numbered sequence of them '
+              '(smoke.####.vdb, one # per digit) or a Volume prim in a USD file. Its density grid (density, smoke or the first float '
+              'grid) is the smoke; a temperature grid, if there is one, is its heat. Metres; level sets become their inside.')
 
 EMITTER_PARAMS = [
     Param('name', 'Name', 'str', 'Emitter'),
     B('enabled', 'Enabled', True),
     E('shape', 'Shape', 'cylinder', (('sphere', 'Sphere'), ('box', 'Box'), ('cylinder', 'Disc / cylinder'), ('capsule', 'Line'),
-                                     ('ring', 'Ring'), ('cone', 'Cone'), ('mesh', 'Mesh')), group='Shape'),
+                                     ('ring', 'Ring'), ('cone', 'Cone'), ('mesh', 'Mesh'), ('volume', 'Volume (VDB)')), group='Shape'),
     Param('mesh', 'Mesh file', 'file', '', tip=MESH_TIP + ' The object burns over its surface.', group='Shape'),
+    Param('volume', 'Volume file', 'file', '', tip=VOLUME_TIP, group='Shape'),
+    E('volume_mode', 'Volume', 'fill', (('fill', 'Fills the box with its smoke, once'), ('hold', 'Keeps it topped up'),
+                                          ('source', 'Releases where it is dense')),
+      tip='Fills: at Ignite at, the volume\'s smoke (and its heat and fuel) goes into the simulation as it is, and then moves with the air: '
+          'a cloud of smoke, a gas leak, haze. Keeps it topped up: while the emitter is on, the smoke is kept at least as thick as the '
+          'volume every step, so an animated VDB sequence (an explosion from another program) drives it and the simulation carries '
+          'it on. For both, Smoke and Fuel are the amount where the volume is densest (as much as a second of release) and Heat its '
+          'temperature. Releases: the volume is a source, releasing at the emitter\'s rates wherever it is dense.', group='Shape'),
+    B('volume_zup', 'Z-up file', False, tip='The VDB was saved with Z up (Blender does): turn it to y up. USD volumes are turned by the stage\'s own up axis.', group='Shape'),
     V('position', 'Position', (0.0, 0.08, 0.0), -50.0, 50.0, 'm', anim=True, decimals=3,
       tip='Keyframe it to move the emitter: a waved torch, a running stuntman, falling debris. The fire trails behind it.', group='Shape'),
     V('size', 'Size', (0.32, 0.08, 0.32), 0.001, 20.0, 'm', anim=True, decimals=3,
-      tip='Sphere: radii. Box: half-sizes. Disc: radius, half-height, radius. Line: thickness (x). Ring: radius, tube radius. Cone: base radius, half-height. Mesh: scale on each axis (1 = as modelled).', group='Shape'),
+      tip='Sphere: radii. Box: half-sizes. Disc: radius, half-height, radius. Line: thickness (x). Ring: radius, tube radius. Cone: base radius, half-height. Mesh: scale on each axis (1 = as modelled). Volume: scale on each axis (1 = as in the file).', group='Shape'),
     V('end', 'Line end', (1.0, 0.08, 0.0), -50.0, 50.0, 'm', anim=True, decimals=3, tip='Second point of a Line emitter.', group='Shape'),
     F('yaw', 'Rotation', 0.0, -180.0, 180.0, '°', 1, anim=True, tip='Turns the emitter about the vertical axis.', group='Shape'),
     F('thickness', 'Surface depth', 0.04, 0.0, 1.0, 'm', 3, tip='Mesh: fuel comes out within this distance of the surface, so the outside of the object burns. 0 fills the whole inside.', group='Shape'),
+    F('mesh_offset', 'Mesh frame offset', 0.0, -10000.0, 10000.0, 'frames', 1, tip='A deforming mesh (sequence or animated USD) plays this many frames late (negative: early).', group='Shape', advanced=True),
     F('softness', 'Edge softness', 0.0, 0.0, 0.5, 'm', 3, group='Shape'),
     F('fuel', 'Fuel', 14.0, 0.0, 200.0, '/s', 1, anim=True, tip='Fuel released per second inside the emitter.', group='Emission', log=True),
     F('temperature', 'Heat', 0.45, 0.0, 3.0, '', 2, anim=True, tip='Temperature injected with the fuel. Needs to exceed the ignition temperature to light it.', group='Emission'),
@@ -379,12 +651,18 @@ EMITTER_PARAMS = [
     F('fade_in', 'Fade in', 0.3, 0.0, 10.0, 's', 2, group='Timing'),
     F('fade_out', 'Fade out', 0.8, 0.0, 10.0, 's', 2, group='Timing'),
     B('embers', 'Throws embers', True, group='Timing'),
-    E('emits', 'Emits', 'fire', (('fire', 'Fire (fuel, heat, smoke)'), ('liquid', 'Liquid')),
-      tip='In a fire-and-liquid scene: whether this emitter feeds the fire or pours liquid.', group='Liquid'),
+    E('emits', 'Emits', 'fire', (('fire', 'Fire (fuel, heat, smoke)'), ('liquid', 'Liquid (water)'), ('lava', 'Lava (molten rock)')),
+      tip='In a fire-and-liquid scene: whether this emitter feeds the fire, pours the liquid (water), or pours lava. Lava is its own liquid (see the Lava settings): it pushes the water aside, boils it where they meet and crusts over black, and heats the air over it.', group='Liquid'),
     E('liquid_mode', 'Pours', 'stream', (('stream', 'A stream (continuous)'), ('fill', 'A volume, once')),
       tip='A stream keeps pouring at its velocity: the flow is speed times area. A volume fills the shape with liquid once, at Ignite at (a pool, a thrown bucket of water, a wave).', group='Liquid'),
     F('flow', 'Flow', 1.0, 0.0, 1.0, '', 2, anim=True, tip='Fraction of the source that pours. Keyframe it to open and close a tap.', group='Liquid'),
     F('jitter', 'Breakup', 0.02, 0.0, 0.5, '', 3, tip='Random variation of the velocity at the source, which breaks a stream up into drops sooner.', group='Liquid'),
+    C('dye', 'Dye', (0.2, 0.05, 0.05), tip='Colour of a dye this source carries (ink, blood, paint, mud): the liquid from here takes on this colour, and clouds into the rest as it mixes.', group='Dye and density'),
+    F('dye_amount', 'Dye strength', 0.0, 0.0, 200.0, '/m', 1, tip='How strongly the dye colours the liquid: the colour builds up over 1/strength metres of it. Clear water 0, diluted ink 5, blood or paint 100 and up.', group='Dye and density', log=True),
+    F('dye_cloud', 'Cloudiness', 0.5, 0.0, 1.0, '', 2, tip='0 a clear dye (it only tints, as wine or tea), 1 a cloudy one that scatters light (milk, mud, ink clouds).', group='Dye and density'),
+    B('temp_own', 'Own temperature', False, tip='Pour the liquid at its own temperature instead of the liquid one (Liquid: Heat). Needs Heat and phase changes on.', group='Heat'),
+    F('liquid_temp', 'Temperature', 20.0, -200.0, 100.0, '°C', 1, tip='Temperature of the liquid this source pours: boiling water 98 to 100, tap water 10 to 15, below freezing it pours ice (an ice cube placed as a volume, crushed ice, snow).', group='Heat'),
+    F('liquid_density', 'Density', 0.0, 0.0, 20000.0, 'kg/m³', 0, tip='Density of the liquid from this source, if it differs from the rest: oil (900) floats on water, brine (1200) sinks under it, molten metal far more. 0 is the same as the liquid.', group='Dye and density'),
 ]
 
 COLLIDER_PARAMS = [
@@ -397,43 +675,126 @@ COLLIDER_PARAMS = [
     V('size', 'Size', (0.5, 0.5, 0.5), 0.01, 20.0, 'm', anim=True, decimals=3,
       tip='Box: half-sizes. Sphere: radius (x). Cylinder: radius, half-height. Mesh: scale on each axis (1 = as modelled).', group='Shape'),
     F('yaw', 'Rotation', 0.0, -180.0, 180.0, '°', 1, anim=True, group='Shape'),
+    F('mesh_offset', 'Mesh frame offset', 0.0, -10000.0, 10000.0, 'frames', 1, tip='A deforming mesh (sequence or animated USD) plays this many frames late (negative: early).', group='Shape', advanced=True),
     F('hollow', 'Hollow walls', 0.0, 0.0, 1.0, 'm', 3, anim=True, tip='Makes the collider hollow, with walls this thick: a room, a tank, a pipe. 0 is solid.', group='Walls and openings'),
     V('opening', 'Opening size', (0.0, 0.0, 0.0), 0.0, 10.0, 'm', anim=True, decimals=3, tip='Half size of a box cut out of the collider: a door, a window, a vent. Keyframe it to open a door. 0 is none.', group='Walls and openings'),
     V('opening_at', 'Opening at', (0.0, 0.0, 0.0), -20.0, 20.0, 'm', anim=True, decimals=3, tip='Centre of the opening, measured from the collider\'s centre in its own frame (it turns with the collider).', group='Walls and openings'),
     B('holdout', 'Hides fire', True, tip='The object blocks the view of fire behind it, as the real object in your footage would. Turn off for helper colliders that are not in the shot.', group='Rendering'),
     B('burnable', 'Burnable', False, tip='With Spreading fire on, this object catches where hot gas touches it and fire spreads across its surface: a curtain, furniture, a wooden wall. It can move while it burns.', group='Burning'),
+    F('temperature', 'Temperature', 20.0, -200.0, 1500.0, '°C', 0, tip='Temperature of the object surface, for a liquid with Heat and phase changes on: a hot plate 150 to 250, a stove 400, a red-hot steel bar 800, ice-cold metal -20, dry ice -78, liquid nitrogen -196. Water boils on it, dances on its vapour past about 210, or freezes onto it.', group='Heat'),
     B('floating', 'Floats', False, tip='The liquid moves it: it floats or sinks, bobs, drifts with the flow and turns. It stays upright (it turns only about the vertical). Its keyframes set only where it starts.', group='Liquid'),
     F('density', 'Density', 600.0, 20.0, 8000.0, 'kg/m³', 0, tip='Mass per volume of a floating object. Below the liquid\'s density it floats: pine 500, oak 750, ice 920, plastic 950; above it sinks: stone 2600, steel 7800.', group='Liquid', log=True),
+]
+
+# Lights in the set (lamps, street lights, stage spots, windows): they light the smoke and steam, and
+# the smoke shadows them. A real one (in the footage) loses the light the smoke blocks on the footage's
+# surfaces; one added in CG lights them too.
+LIGHT_PARAMS = [
+    Param('name', 'Name', 'str', 'Light'),
+    B('enabled', 'Enabled', True),
+    E('kind', 'Kind', 'point', (('point', 'Point (a bulb, a lamp)'), ('spot', 'Spot'), ('area', 'Area (a window, a panel)')),
+      tip='A point light shines every way; a spot in a cone along its aim; an area light from a flat panel facing its aim, brightest straight in front.', group='Light'),
+    V('position', 'Position', (1.5, 2.0, 1.0), -100.0, 100.0, 'm', anim=True, decimals=3, group='Light'),
+    V('direction', 'Aim', (0.0, -1.0, 0.0), -1.0, 1.0, '', anim=True, decimals=3, tip='The direction a spot or area light shines (any length).', group='Light'),
+    C('colour', 'Colour', (1.0, 0.86, 0.68), group='Light'),
+    F('temperature', 'Colour temperature', 0.0, 0.0, 12000.0, 'K', 0, tip='0 uses the colour as it is; otherwise the colour of a light at this temperature (tungsten 2700–3200 K, daylight 5600–6500 K), times the colour.', group='Light'),
+    F('intensity', 'Intensity at 1 m', 2000.0, 0.0, 200000.0, 'lx', 0, anim=True, log=True, tip='How bright the light is, as the illuminance one metre in front of it: a 100 W bulb is about 130, a car headlight 20 000, a stage spot 50 000 and up. The key light at intensity 3 is bright daylight, about 50 000.', group='Light', hard_lo=0.0),
+    F('radius', 'Size', 0.1, 0.0, 5.0, 'm', 3, tip='Radius of the light: it softens the falloff close to it.', group='Light'),
+    F('cone', 'Cone angle', 30.0, 1.0, 90.0, '°', 1, tip='Spot: half-angle of the beam.', group='Light'),
+    F('softness', 'Cone edge', 0.25, 0.0, 1.0, '', 2, tip='Spot: how soft the edge of the beam is.', group='Light'),
+    B('shadows', 'Smoke shadows', True, tip='Smoke and steam between the light and a point shade it (beams through smoke).', group='Light'),
+    B('in_footage', 'In the footage', True, tip='On for a real light on the set: the footage already shows its light, so the smoke only takes away the light it shadows from the ground and objects. Off for a light added in CG: it lights the ground and the objects in the shot as well, shadowed by them and by the smoke.', group='Light'),
+]
+
+# Fabric (engine/cloth.py): curtains, flags, sheets, banners, or any mesh, as real cloth. It hangs from
+# its pins, drapes over objects, blows in the fire's own air and the wind, holds the air back, and
+# (if burnable) catches, chars and burns through, feeding the fire.
+FABRIC_MATERIALS = (('cotton', 'Cotton (shirting, sheets)'), ('linen', 'Linen'), ('silk', 'Silk'), ('chiffon', 'Chiffon'),
+                    ('wool', 'Wool (puts itself out)'), ('denim', 'Denim'), ('canvas', 'Canvas (tents, sails)'),
+                    ('velvet', 'Velvet'), ('polyester', 'Polyester (shrinks and melts)'), ('nylon', 'Nylon (flags; melts)'))
+
+FABRIC_PARAMS = [
+    Param('name', 'Name', 'str', 'Fabric'),
+    B('enabled', 'Enabled', True),
+    E('shape', 'Shape', 'panel', (('panel', 'Panel (curtain, flag, sheet)'), ('mesh', 'Mesh')), group='Shape'),
+    Param('mesh', 'Mesh file', 'file', '', tip='A triangle mesh (OBJ, STL or a USD prim) to make of cloth: a garment, a tablecloth '
+          'modelled over its table, a tarp. Its own shape is its rest shape.', group='Shape'),
+    F('width', 'Width', 1.2, 0.05, 20.0, 'm', 2, tip='Panel: across (along its top edge).', group='Shape'),
+    F('height', 'Height', 2.0, 0.05, 20.0, 'm', 2, tip='Panel: down from its top edge (or front to back, lying).', group='Shape'),
+    F('fullness', 'Gathered', 1.0, 1.0, 3.0, '×', 2, tip='Panel, hanging: how much cloth is gathered into its width, as a '
+      'curtain on its rail (1 flat; curtains 1.5 to 2.5). It hangs in pleats that fall open lower down.', group='Shape'),
+    E('orientation', 'Hangs', 'hanging', (('hanging', 'Upright (a curtain, a flag)'), ('lying', 'Flat (a sheet, a tablecloth)')),
+      group='Shape'),
+    V('position', 'Position', (0.0, 1.2, -0.6), -50.0, 50.0, 'm', anim=True, decimals=3,
+      tip='The panel\'s centre (a mesh\'s origin). Keyframe it to move what holds the pins: a curtain being drawn, a flag carried.',
+      group='Shape'),
+    F('yaw', 'Rotation', 0.0, -180.0, 180.0, '°', 1, anim=True, group='Shape'),
+    V('scale', 'Scale', (1.0, 1.0, 1.0), 0.01, 100.0, '', tip='Mesh: scale on each axis (1 = as modelled).', group='Shape', decimals=3),
+    E('pins', 'Held by', 'top', (('top', 'Its top edge (a curtain)'), ('side', 'One side (a flag on a pole)'),
+                                  ('top_corners', 'Its top corners (a banner)'), ('corners', 'Four corners (a canopy)'),
+                                  ('none', 'Nothing (it falls)')), group='Shape'),
+    F('release', 'Let go at', -1.0, -1.0, 1000.0, 's', 2, tip='Seconds from the first frame when the pins let go and the fabric falls '
+      '(a curtain rod giving way). -1 never.', group='Shape'),
+    I('detail', 'Detail', 48, 8, 200, tip='Cells across the panel\'s longer side. More gives finer folds and costs more.', group='Shape'),
+    E('material', 'Material', 'cotton', FABRIC_MATERIALS, tip='A real fabric: its weight, how it stretches and bends, how it moves in '
+      'the air, how it looks, and how it catches and burns.', group='Fabric'),
+    C('colour', 'Colour', (0.62, 0.12, 0.1), group='Fabric'),
+    F('weight', 'Weight', 1.0, 0.1, 10.0, '×', 2, tip='Times the material\'s weight per area.', group='Fabric', log=True),
+    F('stiffness', 'Stretch', 1.0, 0.01, 10.0, '×', 2, tip='Times the material\'s resistance to stretching and shearing.',
+      group='Fabric', log=True, advanced=True),
+    F('bend', 'Stiffness', 1.0, 0.01, 100.0, '×', 2, tip='Times the material\'s bending stiffness: higher drapes in bigger, rounder '
+      'folds (starched, waxed); lower crumples finely.', group='Fabric', log=True),
+    B('self_collide', 'Folds on itself', True, tip='The cloth cannot pass through itself as it folds and crumples.', group='Fabric',
+      advanced=True),
+    B('burnable', 'Burnable', True, tip='It catches where the gas around it is hot enough, burns (feeding the fire), chars and burns '
+      'through. Synthetics shrink away from the heat and melt first.', group='Burning'),
+    F('flammability', 'Flammability', 1.0, 0.1, 5.0, '×', 2, tip='How readily it catches and how much fuel it gives off, times the '
+      'material\'s (flame-retardant cloth is about 0.3).', group='Burning', log=True),
+    F('wetness', 'Wet at start', 0.0, 0.0, 1.0, '', 2, tip='How soaked it starts: 1 dripping wet (a towel just out of the water). '
+      'Wet cloth is heavier and limper, darker and glossier; it drips until it has drained, and in heat it steams and stays '
+      'at 100 C until it has dried, so it cannot catch (a wet blanket over a fire smothers it). It soaks in a liquid too.',
+      group='Water'),
 ]
 
 SECTION_TITLES = {
     'domain': 'Domain', 'combustion': 'Combustion', 'motion': 'Motion', 'shading': 'Shading', 'lighting': 'Lighting',
     'embers': 'Embers', 'spread': 'Spreading fire', 'camera': 'Camera', 'composite': 'Composite', 'render': 'Render',
-    'liquid': 'Liquid', 'water': 'Liquid look',
+    'liquid': 'Liquid', 'water': 'Liquid look', 'lava': 'Lava', 'weather': 'Weather', 'atmosphere': 'Atmosphere', 'sky': 'Sky',
 }
 
 # Which sections change the simulation (and so invalidate cached frames) versus only how it looks.
-SIM_SECTIONS = ('domain', 'combustion', 'motion', 'spread', 'liquid')
+SIM_SECTIONS = ('domain', 'combustion', 'motion', 'spread', 'liquid', 'lava', 'weather', 'atmosphere')
+# Settings in the simulation sections that only change how it looks (they do not re-simulate).
+LOOK_KEYS = {('lava', 'glow'), ('lava', 'glow_temp'), ('lava', 'crust'), ('lava', 'crust_scale'), ('lava', 'glow_light'),
+             ('weather', 'snow_bright'), ('weather', 'sparkle'), ('weather', 'gloss'), ('weather', 'fall_opacity')}
 
 # Which settings apply to which kind of simulation (domain 'kind'). Sections and keys not listed here
 # apply to both.
-KIND_SECTIONS = {'fire': ('combustion', 'motion', 'shading', 'embers', 'spread'), 'liquid': ('liquid', 'water')}
+KIND_SECTIONS = {'fire': ('combustion', 'motion', 'shading', 'embers', 'spread'), 'liquid': ('liquid', 'water', 'weather'),
+                 'both': ('lava',), 'cloud': ('atmosphere', 'sky')}
 FIRE_ONLY_KEYS = {
     'domain': {'sponge', 'sponge_strength', 'mg_cycles', 'maccormack', 'maccormack_vel'},
-    'composite': {'smoke_opacity', 'saturation', 'tint', 'light_cast', 'haze', 'haze_freq', 'haze_speed'},
+    'composite': {'smoke_opacity', 'saturation', 'tint', 'light_cast', 'haze', 'haze_freq', 'haze_speed', 'surface_shadows', 'soot',
+                  'wet', 'holdout_matte', 'matte_channel', 'matte_invert', 'holdout_depth', 'depth_kind', 'depth_scale'},
     'emitter': {'fuel', 'temperature', 'smoke', 'swirl', 'swirl_width', 'douse', 'vapour', 'color_amount', 'color', 'noise',
                 'noise_freq', 'noise_rise', 'contrast', 'seed', 'fade_in', 'fade_out', 'embers'},
     'collider': {'burnable'},
 }
-LIQUID_ONLY_KEYS = {'emitter': {'liquid_mode', 'flow', 'jitter'}, 'collider': {'floating', 'density'},
+LIQUID_ONLY_KEYS = {'emitter': {'liquid_mode', 'flow', 'jitter', 'dye', 'dye_amount', 'dye_cloud', 'liquid_density', 'temp_own',
+                                'liquid_temp'},
+                    'collider': {'floating', 'density', 'temperature'},
                     'lighting': {'environment', 'env_rotation', 'env_strength', 'env_sun'}}
-BOTH_ONLY_KEYS = {'emitter': {'emits'}}
+BOTH_ONLY_KEYS = {'emitter': {'emits'}, 'combustion': {'water_douse', 'soak', 'ember_heat', 'rekindle', 'steam_expansion'}}
+
+
+# Liquid settings a fire-and-liquid box takes from its gas instead (the gas is the air round the liquid)
+NOT_BOTH_KEYS = {'liquid': {'air_temp', 'air_humidity'}}
 
 
 def applies(section, key, kind):
     """Whether a setting (or, with key None, a whole section) matters for a simulation kind."""
     if kind == 'both':
-        return True
+        return section not in KIND_SECTIONS['cloud'] and key not in NOT_BOTH_KEYS.get(section, ())
     if key in BOTH_ONLY_KEYS.get(section, ()):
         return False
     for k, secs in KIND_SECTIONS.items():
@@ -441,7 +802,7 @@ def applies(section, key, kind):
             return False
     if key is None:
         return True
-    if kind == 'liquid' and key in FIRE_ONLY_KEYS.get(section, ()):
+    if kind in ('liquid', 'cloud') and key in FIRE_ONLY_KEYS.get(section, ()):
         return False
     if kind != 'liquid' and key in LIQUID_ONLY_KEYS.get(section, ()):
         return False
@@ -450,11 +811,17 @@ def applies(section, key, kind):
 _INDEX = {(s, p.key): p for s, ps in SECTIONS.items() for p in ps}
 _EMITTER_INDEX = {p.key: p for p in EMITTER_PARAMS}
 _COLLIDER_INDEX = {p.key: p for p in COLLIDER_PARAMS}
+_LIGHT_INDEX = {p.key: p for p in LIGHT_PARAMS}
+_FABRIC_INDEX = {p.key: p for p in FABRIC_PARAMS}
 
 
 def param(section, key):
     if section == 'emitter':
         return _EMITTER_INDEX[key]
+    if section == 'light':
+        return _LIGHT_INDEX[key]
+    if section == 'fabric':
+        return _FABRIC_INDEX[key]
     if section == 'collider':
         return _COLLIDER_INDEX[key]
     return _INDEX[(section, key)]
@@ -466,6 +833,14 @@ def defaults(section):
 
 def emitter_defaults():
     return {p.key: p.default for p in EMITTER_PARAMS}
+
+
+def fabric_defaults():
+    return {p.key: p.default for p in FABRIC_PARAMS}
+
+
+def light_defaults():
+    return {p.key: p.default for p in LIGHT_PARAMS}
 
 
 def collider_defaults():

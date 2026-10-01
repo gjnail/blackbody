@@ -1,0 +1,316 @@
+{{head|Blackbody: GPU fire, smoke and water for your footage|Blackbody simulates fire, smoke, water, the sea, lava, ice and weather on your GPU and renders them physically into live-action footage. Free and open source.|}}
+{{header|index}}
+
+<main id="main">
+  <section class="hero">
+    <p class="eyebrow">Free, open-source VFX simulation</p>
+    <h1>Real fire. Real water. <em>Your shot.</em></h1>
+    <p class="lede">Blackbody simulates fire, smoke, liquids, the sea, lava, ice and weather on your GPU, and renders them physically into live-action footage. You can place the effect in your plate, match it to the camera and render a finished composite or the passes your compositor wants.</p>
+    <div class="hero-actions">
+      <a class="btn btn-primary" href="getting-started.html">Get started</a>
+      <a class="btn btn-secondary" href="https://github.com/gjnail/blackbody">View on GitHub</a>
+    </div>
+    <p class="hero-meta">Windows 10 and 11 · macOS and Linux from source · NVIDIA, AMD, Intel and Apple GPUs · MIT license</p>
+  </section>
+
+  <div class="showreel" id="showreel">
+    <div class="player">
+      <video id="reel" autoplay muted loop playsinline preload="metadata" poster="media/video/showreel.jpg">
+        <source src="media/video/showreel.mp4" type="video/mp4">
+      </video>
+      <button class="sound-btn" type="button" data-for="reel">Play with sound</button>
+    </div>
+    <p class="caption">The 30-second showreel. Blackbody simulated and rendered every fire, splash and wave in it. The backplates are procedural, and the music is synthesised.</p>
+  </div>
+
+  <!-- in your footage -->
+  <section class="section" id="footage">
+    <div class="section-head">
+      <p class="kicker">Into your footage</p>
+      <h2>Made for the plate you already shot</h2>
+      <p class="sub">Stock elements never match your camera, your light or your lens. Blackbody simulates the effect inside your shot, so it does.</p>
+    </div>
+    <div class="compare" aria-label="Before and after: drag to compare">
+      <img src="media/img/compare-plate.jpg" alt="The plate: a brick yard at night with an oil drum" width="1600" height="900">
+      <div class="after"><img src="media/img/compare-comp.jpg" alt="The same shot with a simulated fire behind the drum, lighting the ground and the wall" width="1600" height="900"></div>
+      <div class="handle" aria-hidden="true"></div>
+      <span class="tag l">Plate</span><span class="tag r">With Blackbody</span>
+      <input type="range" min="0" max="100" value="50" aria-label="Drag to compare the plate and the composite">
+    </div>
+    <div class="feature" style="margin-top:44px">
+      <div class="feature-media">{{video|in-your-footage||The yard shot}}</div>
+      <div>
+        <h3>It sits in the shot, not on top of it</h3>
+        <ul>
+          <li><b>Matches your camera.</b> Track a handheld move with one click, or import a camera solve (.chan) or a whole USD scene.</li>
+          <li><b>Lights your scene.</b> The fire lights the ground, the walls and the objects in the footage, shadowed by the smoke.</li>
+          <li><b>Hides behind real objects.</b> It goes behind stand-in colliders, roto mattes or the footage's own depth pass.</li>
+          <li><b>Looks like your camera shot it.</b> Lens blur, distortion, heat haze, highlight roll-off, and noise matched to the footage's own.</li>
+        </ul>
+        <a class="more" href="compositing.html">Fitting it into footage →</a>
+      </div>
+    </div>
+    <div class="passes" aria-label="Render passes">
+      <figure class="pass"><img src="media/img/pass-beauty.jpg" alt="" loading="lazy" width="640" height="360"><span>Beauty</span></figure>
+      <figure class="pass"><img src="media/img/pass-emission.jpg" alt="" loading="lazy" width="640" height="360"><span>Emission</span></figure>
+      <figure class="pass"><img src="media/img/pass-heat.jpg" alt="" loading="lazy" width="640" height="360"><span>Heat</span></figure>
+      <figure class="pass"><img src="media/img/pass-depth.jpg" alt="" loading="lazy" width="640" height="360"><span>Depth</span></figure>
+      <figure class="pass"><img src="media/img/pass-alpha.jpg" alt="" loading="lazy" width="640" height="360"><span>Alpha</span></figure>
+      <figure class="pass"><img src="media/img/pass-light.jpg" alt="" loading="lazy" width="640" height="360"><span>Fire light</span></figure>
+    </div>
+  </section>
+
+  <!-- fire -->
+  <section class="section" id="fire">
+    <div class="feature">
+      <div class="feature-media">{{video|campfire||Campfire}}</div>
+      <div>
+        <p class="kicker">Fire and smoke</p>
+        <h3 style="font-size:38px">Fire that burns like fire</h3>
+        <p>Fuel burns into heat, soot and flame. Hot gas rises, swirls and expands, and smoke drifts and is lit by the fire, the sky and your lights. Flame colour and brightness come from blackbody radiation, so thick flame saturates the way real flame does.</p>
+        <ul>
+          <li>Measured against real fires: flame height, gas speed, and the puffing rate of a fire its size</li>
+          <li>Spreading fire, spot fires, flash fires, backdrafts and closed rooms that run out of air</li>
+          <li>Sparks, coloured flames, steam, and hoses that put fire out</li>
+        </ul>
+        <a class="more" href="fire.html">The fire guide →</a>
+      </div>
+    </div>
+    <div class="clips">
+      <div class="clip">{{video|fire_whirl||Fire whirl}}</div>
+      <div class="clip">{{video|coloured_flames||Coloured flames}}</div>
+      <div class="clip">{{video|grinder_sparks||Grinder sparks}}</div>
+      <div class="clip">{{video|hose_douse||Fire put out}}</div>
+      <div class="clip">{{video|gas_cloud||Gas cloud ignition}}</div>
+      <div class="clip">{{video|spot_fires||Spot fires}}</div>
+    </div>
+  </section>
+
+  <!-- fabric -->
+  <section class="section" id="fabric">
+    <div class="feature flip">
+      <div class="feature-media">{{video|fabric_curtain||Burning curtain}}</div>
+      <div>
+        <p class="kicker">Fabric</p>
+        <h3 style="font-size:38px">Cloth that hangs, blows, soaks and burns</h3>
+        <p>Curtains, flags, towels and any mesh, made from ten real fabrics with their measured weight, stretch and stiffness. Cloth blows in the fire's own air. It catches at its ignition temperature and burns the way real cloth does: a halo of toasting, a glowing line, then char and holes that spread until it falls apart.</p>
+        <ul>
+          <li>Soaks and drips in water. Wet cloth holds at 100 °C and steams in the heat</li>
+          <li>Casts shadows on the smoke, the ground and your footage</li>
+          <li>Exports as meshes (OBJ or USD) with the burnt holes cut out</li>
+        </ul>
+        <a class="more" href="fabric.html">The fabric guide →</a>
+      </div>
+    </div>
+    <div class="clips two">
+      <div class="clip">{{video|wet_towels||Wet and dry towels}}</div>
+      <div class="clip">{{video|flag_wind||Flag in smoky wind}}</div>
+    </div>
+  </section>
+
+  <!-- water -->
+  <section class="section" id="water">
+    <div class="feature">
+      <div class="feature-media">{{video|rock_splash_slowmo||Rock into a pond}}</div>
+      <div>
+        <p class="kicker water">Liquids</p>
+        <h3 style="font-size:38px">Water that refracts your footage</h3>
+        <p>FLIP particles on the GPU pour, splash, sheet and break into drops, and throw off spray, foam and bubbles. The surface is ray traced as a real dielectric, so your plate bends through it, reflects in it and goes murky with depth.</p>
+        <ul>
+          <li>Floating objects that bob, tip and drift as real rigid bodies</li>
+          <li>Viscosity from olive oil to honey, dyes, two liquids that do not mix, rain and surface tension</li>
+          <li>Caustics, wet ground, an underwater camera, drops on the lens and rainbows</li>
+        </ul>
+        <a class="more" href="liquids.html">The liquids guide →</a>
+      </div>
+    </div>
+    <div class="clips">
+      <div class="clip">{{video|honey||Honey}}</div>
+      <div class="clip">{{video|floating||Things in a pond}}</div>
+      <div class="clip">{{video|ink_tank||Ink in water}}</div>
+      <div class="clip">{{video|boat_wake||Boat wake}}</div>
+      <div class="clip">{{video|rain_pond||Rain on a pond}}</div>
+      <div class="clip">{{video|pond_below||Pond from below}}</div>
+    </div>
+  </section>
+
+  <!-- the sea -->
+  <section class="section" id="sea">
+    <div class="feature flip water">
+      <div class="feature-media">{{video|storm_sea||Storm at sea}}</div>
+      <div>
+        <p class="kicker water">The sea</p>
+        <h3 style="font-size:38px">An ocean to the horizon</h3>
+        <p>A real ocean spectrum, millions of waves summed by FFT, runs on seamlessly to the horizon. The box in the middle simulates its part of the sea, so things float in it and it breaks against rocks and piers.</p>
+        <ul>
+          <li>Whitecaps and foam streaks that match the wind speed</li>
+          <li>Beaches, reefs and surf that spills, plunges and throws a barrel</li>
+          <li>Tsunamis, tidal bores, tides and rivers</li>
+        </ul>
+        <a class="more" href="ocean.html">The sea guide →</a>
+      </div>
+    </div>
+    <div class="clips four">
+      <div class="clip">{{video|calm_lake||Calm lake}}</div>
+      <div class="clip">{{video|beach_break||Beach break}}</div>
+      <div class="clip">{{video|reef_barrel||Reef barrel}}</div>
+      <div class="clip">{{video|tsunami||Tsunami}}</div>
+    </div>
+  </section>
+
+  <!-- lava -->
+  <section class="section" id="lava">
+    <div class="feature">
+      <div class="feature-media">{{video|lava||Lava flow}}</div>
+      <div>
+        <p class="kicker">Lava, fire and water together</p>
+        <h3 style="font-size:38px">When the elements meet</h3>
+        <p>Molten lava glows by its own heat as a blackbody, crusts over as it cools and lights everything around it. Fire, water and lava can share one box. Water soaks fuel and boils off in a plume of steam, and lava boils the sea while its skin chills black.</p>
+        <a class="more" href="lava.html">The lava guide →</a>
+      </div>
+    </div>
+    <div class="clips">
+      <div class="clip">{{video|hose_on_fire||Hose on a fire}}</div>
+      <div class="clip">{{video|lava_sea||Lava into the sea}}</div>
+      <div class="clip">{{video|lava_quench||Water on lava}}</div>
+    </div>
+  </section>
+
+  <!-- heat -->
+  <section class="section" id="heat">
+    <div class="feature flip water">
+      <div class="feature-media">{{video|ice_cubes||Ice cubes in water}}</div>
+      <div>
+        <p class="kicker ice">Ice, boiling and steam</p>
+        <h3 style="font-size:38px">Liquids with a temperature</h3>
+        <p>Every particle carries its heat, with water's real heat capacities and latent heats. So water freezes into ice that floats a tenth out of the water. It boils in nucleate streams, skates on its own vapour past the Leidenfrost point, and evaporates into steam that clouds in cold air.</p>
+        <a class="more" href="heat.html">The ice and steam guide →</a>
+      </div>
+    </div>
+    <div class="clips four">
+      <div class="clip">{{video|boiling_pot||Boiling pot}}</div>
+      <div class="clip">{{video|pond_freeze||Pond freezing over}}</div>
+      <div class="clip">{{video|frozen_pour||Water on dry ice}}</div>
+      <div class="clip">{{video|boiling_throw||Ice fog}}</div>
+    </div>
+  </section>
+
+  <!-- weather -->
+  <section class="section" id="weather">
+    <div class="feature">
+      <div class="feature-media">{{video|cumulus_day||Cumulus building}}</div>
+      <div>
+        <p class="kicker water">Weather and clouds</p>
+        <h3 style="font-size:38px">From a snowflake to a storm</h3>
+        <p>Snow, sleet, freezing rain, graupel and hail fall as the column of air above decides. Each piece melts, refreezes and settles where it lands. The sky can be simulated too, with clouds building from the sun-warmed ground into storms that rain and hail.</p>
+        <a class="more" href="weather.html">The weather guide →</a>
+      </div>
+    </div>
+    <div class="clips">
+      <div class="clip">{{video|snow_pond||Snow on a pond}}</div>
+      <div class="clip">{{video|hail_pond||Hailstorm}}</div>
+      <div class="clip">{{video|thunderstorm||Thunderstorm}}</div>
+    </div>
+  </section>
+
+  <!-- the app -->
+  <section class="section" id="app">
+    <div class="section-head">
+      <p class="kicker">The app</p>
+      <h2>Built for working on a shot</h2>
+      <p class="sub">The simulation runs live while you change it, and finished frames are cached as you go. Every setting has a tooltip and can be scrubbed by dragging its name.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-media">{{video|ui-library||Effects panel}}</div>
+      <div>
+        <h3>Start from {{preset_count}} presets</h3>
+        <p>Click a fire, a liquid, a sea or a sky in the Effects panel and it simulates live in your shot. Each one is an ordinary scene that you can change and save as your own.</p>
+        <a class="more" href="presets.html">Browse the presets →</a>
+      </div>
+    </div>
+    <div class="feature flip">
+      <div class="feature-media">{{video|ui-create||Create}}</div>
+      <div>
+        <h3>Or build your own</h3>
+        <p>Start from an empty scene: what you add decides what it simulates, and the box and grid follow. Click or drag in ready-made building blocks: fire sources, smoke, steam and sparks, liquids, lava, fabric, rain, snow, hail, wind, objects and lights. Fire and water added to one scene simulate together.</p>
+        <a class="more" href="getting-started.html#build-your-own">Build your own →</a>
+      </div>
+    </div>
+    <div class="feature">
+      <div class="feature-media">{{video|ui-place||Placing the fire}}</div>
+      <div>
+        <h3>Place it with two handles</h3>
+        <p>Drag the ring onto the ground in your footage, and drag the square to scale the effect. Alt-drag orbits the camera, and the 2D tracker follows a handheld move.</p>
+        <a class="more" href="tutorial.html">Follow the tutorial →</a>
+      </div>
+    </div>
+    <div class="feature flip">
+      <div class="feature-media">{{video|ui-views||View modes}}</div>
+      <div>
+        <h3>Check it like a compositor</h3>
+        <p>Switch the viewer between the composite, the effect alone, its alpha, emission, heat, depth and temperature. Settings can be keyframed and edited in the animation editor, and a render writes every pass you ticked in one go.</p>
+        <a class="more" href="outputs.html">Outputs →</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- outputs -->
+  <section class="section" id="outputs">
+    <div class="section-head">
+      <p class="kicker">Outputs</p>
+      <h2>Whatever your pipeline needs</h2>
+    </div>
+    <div class="outputs">
+      <div class="output"><h3>Multi-layer OpenEXR</h3><p class="for">Nuke · After Effects · Fusion · Resolve · Flame</p><p>Scene-linear, premultiplied RGBA with emission, glow, heat, depth, fire light, holdout, scorch, soot and wet layers, plus the liquid's mattes.</p></div>
+      <div class="output"><h3>Deep OpenEXR</h3><p class="for">Nuke · Houdini · Katana</p><p>Up to 8 samples per pixel with front and back depth, so fire and smoke merge correctly with other deep renders.</p></div>
+      <div class="output"><h3>ProRes 4444 and PNG elements</h3><p class="for">Premiere · Final Cut · Resolve · any editor</p><p>An element with alpha that drops onto your footage, premultiplied or straight.</p></div>
+      <div class="output"><h3>Finished composite</h3><p class="for">Delivery and review</p><p>ProRes 422 HQ, H.264, H.265 or DNxHR over the footage, with the footage's audio carried along.</p></div>
+      <div class="output"><h3>OpenVDB volumes</h3><p class="for">Blender · Houdini · Maya · Cinema 4D · Unreal</p><p>Density, temperature, flame, fuel and velocity grids, and the liquid as a level set.</p></div>
+      <div class="output"><h3>Liquid and fabric meshes</h3><p class="for">USD · OBJ</p><p>The liquid surface with per-point velocities for motion blur, spray, foam and bubbles as points, and cloth with its burnt holes.</p></div>
+    </div>
+  </section>
+
+  <!-- physics -->
+  <section class="section" id="physics">
+    <div class="section-head center">
+      <p class="kicker">Under the hood</p>
+      <h2>Physics, not tricks</h2>
+      <p class="sub">Everything runs in GPU compute shaders through wgpu, so it runs on Vulkan, Direct3D 12 and Metal. Nearly 300 tests check the physics against textbook values and measurements of real fires, waves and weather.</p>
+    </div>
+    <div class="stats">
+      <div class="stat"><b>{{preset_count}}</b><span>built-in presets, from a candle to a thunderstorm</span></div>
+      <div class="stat"><b>5</b><span>solvers: a reacting gas, FLIP liquids, cloth, the FFT ocean and cloud microphysics</span></div>
+      <div class="stat"><b>59 fps</b><span>campfire simulated and previewed live at 96 voxels on an RTX 3090</span></div>
+      <div class="stat"><b>MIT</b><span>free for commercial work, and open to read and change</span></div>
+    </div>
+    <p style="text-align:center;margin-top:26px"><a class="more" href="how-it-works.html">How it works →</a></p>
+  </section>
+
+  <!-- install -->
+  <section class="section" id="install">
+    <div class="section-head">
+      <p class="kicker">Get Blackbody</p>
+      <h2>Up and running in a few minutes</h2>
+      <p class="sub">You need Python 3.10 or newer and a GPU from the last eight years. The first run sets up a private environment, which is about a 400 MB download.</p>
+    </div>
+    <div class="install">
+      <div class="box">
+        <h3>Windows</h3>
+        <p>Clone or download the repository, then double-click <code>Blackbody.bat</code>.</p>
+<pre><code>git clone https://github.com/gjnail/blackbody.git
+cd blackbody
+Blackbody.bat</code></pre>
+      </div>
+      <div class="box">
+        <h3>macOS and Linux</h3>
+        <p>The same code runs from source. It has not been tested on these systems yet, so reports are welcome.</p>
+<pre><code>git clone https://github.com/gjnail/blackbody.git
+cd blackbody
+./blackbody.sh</code></pre>
+      </div>
+    </div>
+    <p style="margin-top:22px"><a class="btn btn-primary" href="getting-started.html">Install guide</a> <a class="btn btn-secondary" href="tutorial.html" style="margin-left:8px">Tutorial</a></p>
+  </section>
+</main>
+
+{{footer}}

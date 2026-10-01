@@ -5,7 +5,8 @@
 // foam, on a dry one it is gone; everything is gone when it leaves the box.
 //
 // A: position (cells), life left (s)
-// B: velocity (m/s), class (0 spray, 1 foam, 2 bubble)
+// B: velocity (m/s), class (0 spray, 1 foam, 2 bubble; negative: a steam bubble in boiling liquid,
+//    -radius in mm, moved by liq_steam.wgsl)
 //!include common.wgsl
 //!include liq_common.wgsl
 
@@ -30,6 +31,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
   var a = A[i];
   if (a.w <= 0.0) { return; }
   var b = B[i];
+  if (b.w < 0.0) { return; }   // a steam bubble (liq_steam.wgsl moves those)
   let n = gdim(U.g);
   let nf = vec3<f32>(n);
   let dt = U.g.bc.w;

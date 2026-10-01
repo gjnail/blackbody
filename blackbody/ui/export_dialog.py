@@ -30,7 +30,7 @@ class ExportDialog(QDialog):
         self.doc = doc
         sc = doc.scene
         self.setWindowTitle('Render')
-        self.setMinimumWidth(620)
+        self.setMinimumWidth(700)
         s = QSettings()
         v = QVBoxLayout(self)
         v.setSpacing(10)
@@ -64,6 +64,11 @@ class ExportDialog(QDialog):
         self.exr_layers.setToolTip('emission, glow, heat (for distortion) and depth layers in the same file, plus light (fire light on the ground and colliders), holdout and scorch mattes')
         row(self.exr, self.exr_comp, self.exr_float, self.exr_layers)
 
+        self.deep = QCheckBox('Fire element · deep EXR sequence')
+        self.deep.setToolTip('Deep OpenEXR for deep compositing (Nuke DeepRead): up to 8 samples per pixel, each with its colour, '
+                             'alpha and depth, so the fire and smoke merge correctly with other deep renders. Embers are not included.')
+        row(self.deep, QLabel('RGBA · Z · ZBack'))
+
         self.png = QCheckBox('Fire element · PNG sequence')
         self.png.setToolTip('RGBA with alpha, for editors and motion graphics.')
         self.png_bits = QComboBox()
@@ -95,6 +100,12 @@ class ExportDialog(QDialog):
         self.vdb = QCheckBox('Volume · OpenVDB sequence')
         self.vdb.setToolTip('density, temperature, flame, fuel and vel grids for Blender, Houdini, Maya, Unreal…')
         row(self.vdb, QLabel('density · temperature · flame · fuel · vel'))
+
+        self.mesh = QCheckBox('Liquid surface · USD')
+        self.mesh.setToolTip('The water surface as a polygon mesh for lighting and rendering in Blender, Houdini, Maya or '
+                             'Omniverse: one USD file with the mesh (points, normals, velocities for motion blur) on '
+                             'every frame, and the spray, foam and bubbles as point clouds.')
+        row(self.mesh, QLabel('mesh · velocities · spray · foam · bubbles'))
         v.addWidget(box)
 
         # where -----------------------------------------------------------------------------------------
@@ -185,9 +196,15 @@ class ExportDialog(QDialog):
         self.mov.setChecked(s.value('export/mov', False, type=bool) and self.mov.isEnabled())
         self.comp.setChecked(s.value('export/comp', bool(sc.footage), type=bool))
         self.vdb.setChecked(s.value('export/vdb', False, type=bool))
+        self.deep.setChecked(s.value('export/deep', False, type=bool) and sc.kind in ('fire', 'liquid'))
+        self.deep.setEnabled(sc.kind in ('fire', 'liquid'))
+        if sc.kind == 'liquid':
+            self.deep.setText('Liquid element · deep EXR sequence')
+        self.mesh.setChecked(s.value('export/mesh', False, type=bool) and sc.kind in ('liquid', 'both'))
+        self.mesh.setEnabled(sc.kind in ('liquid', 'both'))
         i = self.comp_profile.findData(s.value('export/comp_profile', 'prores422hq'))
         self.comp_profile.setCurrentIndex(max(0, i))
-        for w in (self.exr, self.png, self.mov, self.comp, self.vdb, self.folder, self.name):
+        for w in (self.exr, self.deep, self.png, self.mov, self.comp, self.vdb, self.mesh, self.folder, self.name):
             (w.toggled if isinstance(w, QCheckBox) else w.textChanged).connect(self._update_labels)
         self.comp_profile.currentIndexChanged.connect(self._update_labels)
         self._update_labels()
@@ -215,6 +232,8 @@ class ExportDialog(QDialog):
             layers = ('emission', 'glow', 'heat', 'depth', 'surface') if self.exr_layers.isChecked() else ()
             out.append(Output('exr', str(folder / name / f'{name}.####.exr'), 'element', layers=layers,
                               compression=self.exr_comp.currentData(), half=not self.exr_float.isChecked()))
+        if self.deep.isChecked():
+            out.append(Output('deep', str(folder / f'{name}_deep' / f'{name}.deep.####.exr'), 'element'))
         if self.png.isChecked():
             out.append(Output('png', str(folder / f'{name}_png' / f'{name}.####.png'), 'element', bits=self.png_bits.currentData(),
                               alpha_mode=self.png_alpha.currentData()))
@@ -226,12 +245,15 @@ class ExportDialog(QDialog):
             out.append(Output('video', str(folder / f'{name}_comp{ext}'), 'composite', prof, audio=self.comp_audio.isChecked()))
         if self.vdb.isChecked():
             out.append(Output('vdb', str(folder / f'{name}_vdb' / f'{name}.####.vdb')))
+        if self.mesh.isChecked() and self.mesh.isEnabled():
+            out.append(Output('mesh', str(folder / f'{name}_liquid.usdc')))
         return out
 
     def _accept(self):
         s = QSettings()
         s.setValue('export/folder', self.folder.text())
-        for k, w in (('exr', self.exr), ('png', self.png), ('mov', self.mov), ('comp', self.comp), ('vdb', self.vdb)):
+        for k, w in (('exr', self.exr), ('deep', self.deep), ('png', self.png), ('mov', self.mov), ('comp', self.comp),
+                     ('vdb', self.vdb), ('mesh', self.mesh)):
             s.setValue(f'export/{k}', w.isChecked())
         s.setValue('export/comp_profile', self.comp_profile.currentData())
         if self.last.value() < self.first.value():

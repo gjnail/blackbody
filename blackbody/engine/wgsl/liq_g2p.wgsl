@@ -19,7 +19,8 @@ struct Params {
   c: vec4<f32>,  // collision radius (cells), deceleration of liquid touching solids (m/s^2), density below which particles fly free, density at which they follow the grid
   w0: vec4<f32>, // whitewater: particles per second at full potential, minimum speed (m/s), turbulence weight, crest weight
   w1: vec4<f32>, // whitewater: capacity (0 = off), life (s), step seed, rest density (particles)
-  m: vec4<f32>,  // damping (1/s, settling during pre-roll)
+  m: vec4<f32>,  // damping (1/s, settling during pre-roll), open water level (cells, < 0 off), cooling (1/s),
+                 // the open sides the liquid may leave through under the level (bits -x, +x, -z, +z)
 };
 
 @group(0) @binding(0) var<storage, read_write> parts: array<Particle>;
@@ -35,6 +36,8 @@ struct Params {
 @group(0) @binding(10) var<storage, read_write> wctr: array<atomic<u32>>;
 @group(0) @binding(11) var nrm: texture_3d<f32>;
 @group(0) @binding(12) var kappa: texture_3d<f32>;
+@group(0) @binding(13) var ocn_t: texture_2d<f32>;
+//!include liq_level.wgsl
 //!include noise.wgsl
 
 fn ramp(x: f32, lo: f32, hi: f32) -> f32 { return clamp((x - lo) / max(hi - lo, 1e-6), 0.0, 1.0); }
@@ -52,7 +55,14 @@ fn emit_whitewater(i: u32, x: vec3<f32>, v: vec3<f32>, gu: vec4<f32>, gv: vec4<f
   let om = vec3<f32>(gw.z - gv.w, gu.w - gw.y, gv.y - gu.z) / h;
   // both measured against the speed per cell, so the thresholds hold at any scale and resolution
   let q = h / max(sp, 1e-3);
-  let ta = max(ramp(-div * q, 0.3, 1.2), 0.5 * ramp(length(om) * q, 0.8, 2.5));
+  // air is trapped only where there is air: at the surface, not deep in the liquid, where it is full for
+  // cells above (fast water shearing past a reef or the floor, a vortex deep down: those made bubbles
+  // at the sea floor that rose and flecked a breaking wave's face with foam); and shear along a solid
+  // is the wall's boundary layer, not churning (the impact term still counts there)
+  let above = min(interp_cell(dens, x + vec3<f32>(0.0, 2.0, 0.0), n).x, interp_cell(dens, x + vec3<f32>(0.0, 4.0, 0.0), n).x);
+  let near_air = 1.0 - smoothstep(0.75, 0.95, above / U.w1.w);
+  let off_wall = smoothstep(1.0, 2.5, interp_cell(sdf, x, n).x);
+  let ta = max(ramp(-div * q, 0.3, 1.2), 0.5 * ramp(length(om) * q, 0.8, 2.5) * off_wall) * near_air;
   var wc = 0.0;
   let rho = interp_cell(dens, x, n).x / U.w1.w;
   if (rho < 0.9) {
@@ -80,8 +90,12 @@ fn emit_whitewater(i: u32, x: vec3<f32>, v: vec3<f32>, gu: vec4<f32>, gv: vec4<f
 }
 @group(1) @binding(0) var<uniform> U: Params;
 
-fn open_side(axis: i32, lo: bool) -> bool {
+fn open_side(axis: i32, lo: bool, p: vec3<f32>) -> bool {
   if (axis == 1) { return select(U.g.bc.y, U.g.bc.z, lo) > 0.5; }
+  // under the open water: held in, except where the sea or a current carries it out
+  let bit = u32(axis) + select(1u, 0u, lo);   // -x 0, +x 1, -z 2, +z 3
+  if (((u32(U.m.w + 0.5) >> (bit + 4u)) & 1u) == 1u) { return false; }   // a flume's wall, all the way up
+  if (U.m.y >= 0.0 && p.y < level_at(p.xz) && ((u32(U.m.w + 0.5) >> bit) & 1u) == 0u) { return false; }
   return U.g.bc.x > 0.5;
 }
 
@@ -90,7 +104,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
   let i = lin_id(id, nwg);
   if (i >= u32(U.k.x)) { return; }
   var P = parts[i];
-  if (P.p.w < 0.5) { return; }
+  if (!alive(P)) { return; }
   let n = gdim(U.g);
   let nf = vec3<f32>(n);
   let dt = U.g.bc.w;
@@ -103,13 +117,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
   let gw = interp_comp(vnew, x, 2u, n);
   let pic = vec3<f32>(gu.x, gv.x, gw.x);
   let old = vec3<f32>(interp_val(vold, x, 0u, n), interp_val(vold, x, 1u, n), interp_val(vold, x, 2u, n));
-  var v = mix(pic, P.v.xyz + (pic - old), U.k.y) * exp(-U.m.x * dt);
+  var v = mix(pic, P.v + (pic - old), U.k.y) * exp(-U.m.x * dt);
   let sp = length(v);
   if (sp > U.k.w) { v *= U.k.w / sp; }
   let ap = U.k.z;
-  P.cx = vec4<f32>(gu.yzw * ap, 0.0);
-  P.cy = vec4<f32>(gv.yzw * ap, 0.0);
-  P.cz = vec4<f32>(gw.yzw * ap, 0.0);
+  apic_set(&P, gu.yzw * ap, gv.yzw * ap, gw.yzw * ap);
 
   if (U.w1.x > 0.0) { emit_whitewater(i, x, v, gu, gv, gw, n); }
 
@@ -147,7 +159,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
   var dead = false;
   for (var a = 0; a < 3; a++) {
     if (p[a] < rc) {
-      if (open_side(a, true)) {
+      if (open_side(a, true, p)) {
         if (p[a] < 0.0) { dead = true; }
       } else {
         p[a] = rc;
@@ -155,7 +167,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
       }
     }
     if (p[a] > nf[a] - rc) {
-      if (open_side(a, false)) {
+      if (open_side(a, false, p)) {
         if (p[a] > nf[a]) { dead = true; }
       } else {
         p[a] = nf[a] - rc;
@@ -164,16 +176,34 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
     }
   }
   if (!(all(abs(p) < vec3<f32>(1.0e6)) && all(abs(v) < vec3<f32>(1.0e6)))) { dead = true; }
+  // open water: liquid heaped above the level at the edge of the box runs off over it (not over a
+  // wave flume's walls: a crest shoaling or breaking along them, or a run-up against them, stands
+  // above the sea's own surface, and skimmed off there the box drained with every wave)
+  if (U.m.y >= 0.0 && U.g.bc.x > 0.5 && p.y > level_at(p.xz) + 0.5) {
+    let fw = u32(U.m.w + 0.5) >> 4u;
+    let big = 1.0e6;
+    let side = min(min(select(p.x, big, (fw & 1u) != 0u), select(nf.x - p.x, big, (fw & 2u) != 0u)),
+                   min(select(p.z, big, (fw & 4u) != 0u), select(nf.z - p.z, big, (fw & 8u) != 0u)));
+    if (side < 0.75) { dead = true; }
+  }
 
   if (dead) {
-    P.p.w = 0.0;
+    P.p.w = -1.0;
     parts[i] = P;
     let k = atomicAdd(&ctr[C_FREE], 1);
     freelist[u32(k)] = i;
     return;
   }
-  P.p = vec4<f32>(p, 1.0);
-  P.v = vec4<f32>(v, P.v.w + dt);
+  P.p = vec4<f32>(p, P.p.w + dt);
+  P.v = v;
+  if (U.m.z > 0.0) {
+    // heat leaves through the surface (to the air and by glowing) and into the ground; the inside
+    // only cools through the liquid around it
+    let rho_here = interp_cell(dens, p, n).x / U.w1.w;
+    var expose = 0.08 + 0.92 * (1.0 - smoothstep(0.55, 0.95, rho_here));
+    if (U.g.bc.z < 0.5 && p.y < 1.5) { expose = max(expose, 0.6); }
+    set_heat(&P, heat_of(P) * exp(-U.m.z * expose * dt));
+  }
   parts[i] = P;
   let cc = clamp(vec3<i32>(floor(p)), vec3<i32>(0), n - vec3<i32>(1));
   atomicAdd(&cellcount[u32(cc.x + n.x * (cc.y + n.y * cc.z))], 1u);

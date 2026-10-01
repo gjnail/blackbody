@@ -1,0 +1,589 @@
+"""Building blocks for making a scene from scratch: fire and liquid sources, objects, fabric, lights
+and forces, each a few ready-set emitters, colliders, fabrics or lights (and sometimes a scene-wide
+setting) that can be added to any scene.
+
+Values come from the presets, where they were checked against real fires and liquids. Generic
+sources (`scales`) are sized for a 2 m box and scale with the scene's box; real objects (a torch, a
+hose nozzle, a curtain) keep their real size, and the box grows to fit them. Adding a liquid to a fire
+scene (or fire to a liquid scene) turns it into a fire-and-liquid scene, so the two meet.
+"""
+from __future__ import annotations
+
+import copy
+import math
+from dataclasses import dataclass, field
+
+from .model import Scene
+from .params import defaults
+
+REF_WIDTH = 2.0   # the box width the scaling blocks are sized for
+
+
+@dataclass
+class Component:
+    key: str
+    name: str
+    group: str
+    tip: str
+    glyph: str
+    need: str = 'any'          # 'fire', 'liquid', 'lava' or 'any': what the scene must simulate
+    objects: list = field(default_factory=list)   # [(kind, dict)]: kind emitter / collider / light / fabric
+    scene: dict = field(default_factory=dict)     # {section: {key: value}} set when added
+    scales: bool = False       # sized for a 2 m box: scaled to the scene's box
+    room: tuple = (0.0, 0.0, 0.0)   # space it needs around its base: half width, height, half depth (m)
+    pick: str = ''             # 'mesh': ask for a file for the first object
+
+
+def _E(**kw):
+    return ('emitter', kw)
+
+
+def _C(**kw):
+    return ('collider', kw)
+
+
+def _L(**kw):
+    return ('light', kw)
+
+
+def _F(**kw):
+    return ('fabric', kw)
+
+
+SPARKS = {'embers': {'enabled': True, 'rate': 1500.0, 'count': 32768, 'lifetime': 0.9, 'life_jitter': 0.7, 'launch': 14.0,
+                     'spread': 1.2, 'direction': (1.0, -0.2, 0.0), 'cone': 12.0, 'drag': 0.35, 'gravity': 9.81, 'turbulence': 0.5,
+                     'temperature': 2300.0, 'cooling': 1.6, 'size_min': 0.0006, 'size_max': 0.0025, 'brightness': 1.8,
+                     'fade_in': 0.0, 'bounce': 0.35, 'friction': 0.3}}
+
+COMPONENTS = [
+    # -- fire ---------------------------------------------------------------------------------------------
+    Component('burner', 'Fire', 'Fire', 'A patch of burning fuel on the ground: the basic flame. Drag it out, '
+              'make it bigger with its square handle.', 'flame', 'fire', scales=True, room=(0.8, 2.6, 0.8),
+              objects=[_E(name='Fire', shape='cylinder', position=(0.0, 0.04, 0.0), size=(0.3, 0.04, 0.3), fuel=12.0, temperature=0.45,
+                          noise_freq=2.5, noise_rise=1.5)]),
+    Component('campfire', 'Campfire', 'Fire', 'Two burning logs crossed over a coal bed, as in the Campfire preset.', 'flame', 'fire',
+              scales=True, room=(0.9, 3.0, 0.9),
+              objects=[_E(name='Log A', shape='capsule', position=(-0.42, 0.07, -0.18), end=(0.4, 0.07, 0.2), size=(0.08, 0.08, 0.08),
+                          fuel=10.0, temperature=0.45, noise_rise=1.5),
+                       _E(name='Log B', shape='capsule', position=(-0.35, 0.09, 0.25), end=(0.38, 0.09, -0.22), size=(0.08, 0.08, 0.08),
+                          fuel=10.0, temperature=0.45, noise_rise=1.5, seed=3),
+                       _E(name='Coal bed', shape='cylinder', position=(0.0, 0.04, 0.0), size=(0.34, 0.04, 0.34), fuel=8.0,
+                          temperature=0.4, noise_rise=1.5, seed=7)]),
+    Component('pool', 'Fuel pool', 'Fire', 'A pool of burning petrol or oil: a wide, smoky flame.', 'flame', 'fire', scales=True,
+              room=(1.2, 3.2, 1.2),
+              objects=[_E(name='Fuel pool', shape='cylinder', position=(0.0, 0.03, 0.0), size=(0.65, 0.03, 0.55), fuel=12.0,
+                          smoke=1.5, noise_freq=1.6, noise_rise=1.5)]),
+    Component('line', 'Fire line', 'Fire', 'A burning line along the ground: a trail of fuel, a grass-fire front.', 'flame', 'fire',
+              scales=True, room=(1.2, 2.0, 0.6),
+              objects=[_E(name='Fire line', shape='capsule', position=(-0.8, 0.05, 0.0), end=(0.8, 0.05, 0.0), size=(0.07, 0.07, 0.07),
+                          fuel=12.0, noise_freq=2.5)]),
+    Component('torch', 'Torch', 'Fire', 'A hand-held torch head in mid-air, 1 m up (real size).', 'flame', 'fire',
+              room=(0.3, 1.8, 0.3),
+              objects=[_E(name='Torch', shape='cylinder', position=(0.0, 1.0, 0.0), size=(0.055, 0.06, 0.055), fuel=18.0,
+                          temperature=0.5, noise_freq=14.0, noise_rise=1.25, noise=0.7)]),
+    Component('gas', 'Gas burner', 'Fire', 'A blue gas ring, 15 cm across (real size). Turn the base glow up in Shading for the blue.',
+              'flame', 'fire', room=(0.2, 0.4, 0.2),
+              objects=[_E(name='Gas ring', shape='ring', position=(0.0, 0.02, 0.0), size=(0.075, 0.008, 0.075), fuel=30.0,
+                          temperature=0.6, velocity=(0.0, 0.6, 0.0), vel_blend=0.3, noise=0.4, noise_freq=40.0, embers=False)]),
+    Component('fireball', 'Fireball', 'Fire', 'A burst of fuel that goes up in a rolling fireball at the start of the shot.', 'flame',
+              'fire', scales=True, room=(1.6, 3.0, 1.6),
+              objects=[_E(name='Fireball', shape='sphere', position=(0.0, 0.3, 0.0), size=(0.18, 0.14, 0.18), fuel=25.0, temperature=1.2,
+                          radial=4.0, vel_blend=0.5, noise_freq=4.0, contrast=1.2, start=0.0, stop=0.2, fade_in=0.02, fade_out=0.12)],
+              scene={'combustion': {'expansion': 2.0}}),
+    Component('jet', 'Flame jet', 'Fire', 'A jet of burning fuel shot sideways, like a flamethrower, curling up as it burns.',
+              'flame', 'fire', scales=True, room=(1.6, 1.6, 0.5),
+              objects=[_E(name='Flame jet', shape='capsule', position=(-0.8, 0.5, 0.0), end=(-0.67, 0.51, 0.0), size=(0.022, 0.022, 0.022),
+                          fuel=120.0, temperature=0.9, velocity=(8.0, 0.5, 0.0), vel_blend=1.0, noise=0.5, noise_freq=12.0)]),
+    Component('whirl', 'Fire whirl', 'Fire', 'A pool fire with the air spinning around it, which twists the flames into a column.',
+              'flame', 'fire', scales=True, room=(1.0, 3.2, 1.0),
+              objects=[_E(name='Fire whirl', shape='cylinder', position=(0.0, 0.04, 0.0), size=(0.36, 0.04, 0.36), fuel=14.0,
+                          temperature=0.5, swirl=2.5, swirl_width=7.0, noise_freq=2.5)]),
+    Component('colour', 'Coloured flame', 'Fire', 'A flame tinted by a metal salt: copper green. Change its Colourant colour for others.',
+              'flame', 'fire', scales=True, room=(0.4, 1.2, 0.4),
+              objects=[_E(name='Coloured flame', shape='cylinder', position=(0.0, 0.03, 0.0), size=(0.12, 0.03, 0.12), fuel=20.0,
+                          temperature=0.5, color_amount=8.0, color=(0.08, 1.0, 0.35), noise_freq=8.0, embers=False)]),
+    Component('burnable', 'Burnable block', 'Fire', 'A block that catches fire where flames touch it, burns and spreads over itself '
+              '(turns on Spreading fire). Put a fire next to it.', 'cube', 'fire', scales=True, room=(0.6, 2.0, 0.6),
+              objects=[_C(name='Burnable block', shape='box', position=(0.45, 0.25, 0.0), size=(0.25, 0.25, 0.25), burnable=True)],
+              scene={'spread': {'enabled': True}}),
+    Component('armchair', 'Armchair', 'Fire', 'A burnable armchair (a built-in mesh) with a small fire on its seat (turns on Spreading fire).',
+              'cube', 'fire', room=(0.8, 2.4, 0.8),
+              objects=[_C(name='Armchair', shape='mesh', mesh='builtin:armchair.obj', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0),
+                          burnable=True),
+                       _E(name='Seat fire', shape='sphere', position=(0.0, 0.5, 0.1), size=(0.12, 0.06, 0.12), fuel=12.0, temperature=0.6,
+                          stop=2.0, fade_out=0.5)],
+              scene={'spread': {'enabled': True}}),
+    # -- smoke, steam and sparks --------------------------------------------------------------------------------
+    Component('smoke', 'Smoke', 'Smoke, steam & sparks', 'Smouldering smoke with no flame: a smoke column, a smoke machine.', 'cloud', 'fire',
+              scales=True, room=(0.8, 3.2, 0.8),
+              objects=[_E(name='Smoke', shape='cylinder', position=(0.0, 0.05, 0.0), size=(0.25, 0.05, 0.25), fuel=0.0, temperature=0.8,
+                          smoke=6.0, noise_freq=4.0, embers=False)]),
+    Component('steam', 'Steam vent', 'Smoke, steam & sparks', 'Steam blowing up out of a vent: clear at the vent, clouding as it cools.',
+              'cloud', 'fire', scales=True, room=(0.6, 3.2, 0.6),
+              objects=[_E(name='Steam vent', shape='cylinder', position=(0.0, 0.1, 0.0), size=(0.06, 0.04, 0.06), fuel=0.0,
+                          temperature=0.1, velocity=(0.0, 3.0, 0.0), vel_blend=1.0, vapour=550.0, noise=0.3, embers=False)]),
+    Component('kettle', 'Kettle steam', 'Smoke, steam & sparks', 'A wisp of steam from a kettle spout (real size).', 'cloud', 'fire',
+              room=(0.3, 0.8, 0.25),
+              objects=[_E(name='Spout', shape='sphere', position=(0.0, 0.25, 0.0), size=(0.01, 0.01, 0.01), fuel=0.0, temperature=0.055,
+                          velocity=(0.5, 1.2, 0.0), vel_blend=0.8, vapour=590.0, noise=0.2, embers=False)]),
+    Component('sparks', 'Sparks', 'Smoke, steam & sparks', 'A shower of hot metal sparks, as from an angle grinder. This sets how every '
+              'ember in the scene flies: fast, under full gravity, bouncing off the floor.', 'sparks', 'fire', room=(1.5, 1.2, 0.8),
+              objects=[_E(name='Sparks', shape='sphere', position=(-0.6, 0.8, 0.0), size=(0.01, 0.01, 0.01), fuel=0.0, temperature=0.0,
+                          noise=0.0, embers=True)],
+              scene=SPARKS),
+    # -- liquids ------------------------------------------------------------------------------------------
+    Component('pour', 'Pour', 'Liquids', 'A stream of water pouring from a spout 80 cm up, as from a jug.', 'drop', 'liquid',
+              room=(0.7, 1.0, 0.5),
+              scales=True, objects=[_E(name='Pour', shape='cylinder', position=(-0.3, 0.8, 0.0), size=(0.03, 0.02, 0.03), velocity=(0.9, -0.3, 0.0),
+                          vel_blend=1.0, noise=0.0, embers=False)]),
+    Component('hose', 'Hose jet', 'Liquids', 'A hose jet aimed sideways at 7 m/s. Point it with its Velocity.', 'drop', 'liquid',
+              room=(1.2, 1.2, 0.6),
+              scales=True, objects=[_E(name='Hose', shape='sphere', position=(-0.8, 0.55, 0.0), size=(0.018, 0.018, 0.018), velocity=(7.0, 1.0, 0.0),
+                          vel_blend=1.0, noise=0.0, embers=False, jitter=0.03)]),
+    Component('fountain', 'Fountain', 'Liquids', 'A jet straight up from the ground that breaks up and rains back down.', 'drop', 'liquid',
+              room=(0.6, 1.5, 0.6),
+              scales=True, objects=[_E(name='Fountain', shape='cylinder', position=(0.0, 0.06, 0.0), size=(0.022, 0.03, 0.022), velocity=(0.0, 4.8, 0.0),
+                          vel_blend=1.0, noise=0.0, embers=False, jitter=0.04)]),
+    Component('block', 'Block of water', 'Liquids', 'A block of water that is there at the start and collapses: a dam break.', 'drop',
+              'liquid', scales=True, room=(0.8, 0.8, 0.6),
+              objects=[_E(name='Water', shape='box', position=(-0.5, 0.25, 0.0), size=(0.25, 0.25, 0.3), noise=0.0, embers=False,
+                          liquid_mode='fill', start=0.0)]),
+    Component('throw', 'Thrown water', 'Liquids', 'A bucketful of water thrown through the air.', 'drop', 'liquid', room=(1.2, 1.0, 0.6),
+              scales=True, objects=[_E(name='Thrown water', shape='sphere', position=(-0.9, 0.75, 0.0), size=(0.2, 0.1, 0.1), velocity=(2.4, 0.9, 0.0),
+                          radial=0.7, noise=0.0, start=0.05, embers=False, liquid_mode='fill')]),
+    Component('flow', 'Waterfall', 'Liquids', 'A sheet of water flowing off a ledge.', 'drop', 'liquid', room=(1.0, 1.7, 0.6),
+              scales=True, objects=[_E(name='Flow', shape='box', position=(-0.9, 1.56, 0.0), size=(0.18, 0.04, 0.38), velocity=(1.2, 0.0, 0.0),
+                          vel_blend=1.0, noise=0.0, embers=False),
+                       _C(name='Ledge', shape='box', position=(-0.7, 0.75, 0.0), size=(0.4, 0.75, 0.55))]),
+    Component('pond', 'Pond', 'Liquids', 'Still water filling the bottom of the box, 25 cm deep, for things to splash into.', 'waves',
+              'liquid', room=(0.0, 0.5, 0.0), scene={'liquid': {'water_level': 0.25, 'settle': True}}),
+    Component('rain', 'Rain', 'Weather', 'Rain falling over the whole box (a heavy shower). Rain on a fire puts it out.', 'weather',
+              'liquid', scene={'liquid': {'rain': 25.0}}),
+    Component('ink', 'Ink', 'Liquids', 'A drip of ink that clouds in the water. Change its Dye colour.', 'drop', 'liquid',
+              room=(0.3, 0.6, 0.3),
+              scales=True, objects=[_E(name='Ink', shape='sphere', position=(0.0, 0.45, 0.0), size=(0.006, 0.01, 0.006), velocity=(0.0, -0.8, 0.0),
+                          vel_blend=1.0, noise=0.0, start=0.3, stop=1.3, embers=False, dye=(0.02, 0.03, 0.12), dye_amount=120.0,
+                          dye_cloud=0.25)]),
+    Component('lava', 'Lava', 'Liquids', 'Molten rock pouring out of a vent: glowing, crusting over as it cools, boiling any water it meets.',
+              'lava', 'lava', room=(1.2, 0.8, 0.8),
+              scales=True, objects=[_E(name='Lava', shape='box', position=(-0.8, 0.05, 0.0), size=(0.12, 0.05, 0.2), velocity=(0.6, 0.0, 0.0),
+                          vel_blend=1.0, noise=0.0, embers=False)]),
+    Component('snow', 'Snow', 'Weather', 'Snow falling on the scene and lying on the ground.', 'snow', 'liquid',
+              scene={'weather': {'precip': 'snow'}}),
+    Component('sleet', 'Sleet', 'Weather', 'Ice pellets bouncing off the ground.', 'weather', 'liquid',
+              scene={'weather': {'precip': 'sleet'}}),
+    Component('hail', 'Hail', 'Weather', 'Hailstones that bounce, roll and pile up.', 'weather', 'liquid',
+              scene={'weather': {'precip': 'hail', 'size': 0.018}}),
+    Component('freezing', 'Freezing rain', 'Weather', 'Rain that freezes where it lands, glazing everything in ice.', 'weather',
+              'liquid', scene={'weather': {'precip': 'freezing_rain'}}),
+    # -- objects ------------------------------------------------------------------------------------------------------------------
+    Component('box', 'Box', 'Objects', 'A solid box the fire or water flows around. In your shot it hides what is behind it.', 'cube',
+              scales=True, room=(0.4, 0.5, 0.4),
+              objects=[_C(name='Box', shape='box', position=(0.6, 0.2, 0.0), size=(0.2, 0.2, 0.2))]),
+    Component('ball', 'Ball', 'Objects', 'A solid sphere.', 'cube', scales=True, room=(0.4, 0.5, 0.4),
+              objects=[_C(name='Ball', shape='sphere', position=(0.6, 0.2, 0.0), size=(0.2, 0.2, 0.2))]),
+    Component('pillar', 'Pillar', 'Objects', 'A solid cylinder standing on the ground.', 'cube', scales=True, room=(0.3, 1.2, 0.3),
+              objects=[_C(name='Pillar', shape='cylinder', position=(0.6, 0.5, 0.0), size=(0.1, 0.5, 0.1))]),
+    Component('wall', 'Wall', 'Objects', 'A wall behind the effect: smoke pools against it, water hits it.', 'cube', scales=True,
+              room=(1.0, 1.4, 0.1),
+              objects=[_C(name='Wall', shape='box', position=(0.0, 0.6, -0.7), size=(0.9, 0.6, 0.04))]),
+    Component('room', 'Room with a door', 'Objects', 'A closed room (hollow walls) with a door cut in one side: fire inside starves '
+              'of air and flares when it gets out. Turn on tracked air in Combustion for that.', 'cube', scales=True,
+              room=(1.1, 1.6, 1.0),
+              objects=[_C(name='Room', shape='box', position=(0.0, 0.8, 0.0), size=(0.9, 0.8, 0.8), hollow=0.08,
+                          opening=(0.1, 0.55, 0.25), opening_at=(0.85, -0.25, 0.0), holdout=False)]),
+    Component('car', 'Car body', 'Objects', 'A car-sized block (4.4 m long, real size).', 'cube', room=(2.6, 2.0, 1.2),
+              objects=[_C(name='Car body', shape='box', position=(0.0, 0.72, 0.0), size=(2.2, 0.72, 0.95))]),
+    Component('crate', 'Floating crate', 'Objects', 'A wooden crate that floats, bobs and drifts on the water.', 'cube', 'liquid',
+              room=(0.3, 0.8, 0.3),
+              objects=[_C(name='Crate', shape='box', position=(0.0, 0.6, 0.0), size=(0.12, 0.12, 0.12), yaw=20.0, floating=True,
+                          density=550.0)]),
+    Component('stone', 'Falling stone', 'Objects', 'A stone dropped from 60 cm: it splashes and sinks.', 'cube', 'liquid',
+              room=(0.3, 0.8, 0.3),
+              objects=[_C(name='Stone', shape='sphere', position=(0.0, 0.6, 0.0), size=(0.07, 0.07, 0.07), floating=True,
+                          density=2600.0)]),
+    Component('hill', 'Hillside', 'Objects', 'A built-in hillside (8 m across) for fire to climb or water to run down.', 'cube',
+              room=(4.2, 3.6, 4.2),
+              objects=[_C(name='Hillside', shape='mesh', mesh='builtin:hillside.png', position=(0.0, 0.0, 0.0), size=(8.0, 3.2, 8.0))]),
+    Component('basin', 'Pond basin', 'Objects', 'A built-in pond basin with sloping banks (3.2 m across).', 'cube',
+              room=(1.7, 0.6, 1.3),
+              objects=[_C(name='Banks', shape='mesh', mesh='builtin:pond_basin.png', position=(0.0, 0.0, 0.0), size=(3.2, 0.4, 2.4))]),
+    Component('logs', 'Firewood', 'Objects', 'A built-in pile of firewood logs (a solid mesh).', 'cube', room=(0.6, 0.6, 0.6),
+              objects=[_C(name='Firewood', shape='mesh', mesh='builtin:firewood.obj', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0))]),
+    Component('mesh', 'Your mesh…', 'Objects', 'Any OBJ or STL model, a numbered mesh sequence, a USD mesh or a greyscale heightfield '
+              'image (terrain).', 'cube', pick='mesh',
+              objects=[_C(name='Mesh', shape='mesh', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0))]),
+    # -- fabric -------------------------------------------------------------------------------------------------------------
+    Component('curtain', 'Curtain', 'Fabric', 'A cotton curtain hanging from a rail (real size). It blows in the air and burns.',
+              'fabric', room=(0.8, 2.4, 0.9),
+              objects=[_F(name='Curtain', width=1.2, height=2.0, position=(0.0, 1.2, -0.6), pins='top', material='cotton',
+                          colour=(0.62, 0.12, 0.1))]),
+    Component('flag', 'Flag', 'Fabric', 'A nylon flag held along one side, streaming in the wind (give the scene some wind).', 'fabric',
+              room=(1.6, 2.6, 0.8),
+              objects=[_F(name='Flag', width=1.5, height=1.0, position=(0.75, 2.2, 0.0), pins='side', material='nylon',
+                          colour=(0.75, 0.08, 0.06), detail=40)]),
+    Component('banner', 'Banner', 'Fabric', 'A banner hung by its top corners.', 'fabric', room=(1.2, 2.4, 0.9),
+              objects=[_F(name='Banner', width=2.0, height=0.8, position=(0.0, 2.2, -0.8), pins='top_corners', material='polyester',
+                          colour=(0.85, 0.82, 0.75))]),
+    Component('sheet', 'Falling sheet', 'Fabric', 'A sheet dropped flat from 1.5 m: it drapes over whatever is under it.', 'fabric',
+              room=(1.0, 1.8, 1.0),
+              objects=[_F(name='Sheet', width=1.6, height=1.6, orientation='lying', position=(0.0, 1.5, 0.0), pins='none',
+                          material='cotton', colour=(0.82, 0.8, 0.76))]),
+    Component('towel', 'Wet towel', 'Fabric', 'A soaked tea towel: it drips, steams over a fire and will not burn until it dries.',
+              'fabric', room=(0.5, 1.4, 0.5),
+              objects=[_F(name='Wet towel', width=0.5, height=0.7, position=(0.0, 1.2, 0.0), pins='top', material='cotton',
+                          colour=(0.85, 0.85, 0.8), wetness=1.0)]),
+    Component('canopy', 'Canopy', 'Fabric', 'A cloth held up by its four corners, sagging in the middle.', 'fabric',
+              room=(1.0, 2.4, 1.0),
+              objects=[_F(name='Canopy', width=1.6, height=1.6, orientation='lying', position=(0.0, 2.0, 0.0), pins='corners',
+                          material='canvas', colour=(0.78, 0.74, 0.62))]),
+    Component('tablecloth', 'Tablecloth', 'Fabric', 'A tablecloth dropped onto a table: it drapes over the edges.', 'fabric',
+              room=(0.9, 1.4, 0.9),
+              objects=[_F(name='Tablecloth', width=1.4, height=1.4, orientation='lying', position=(0.0, 1.0, 0.0), pins='none',
+                          material='linen', colour=(0.9, 0.88, 0.82)),
+                       _C(name='Table', shape='box', position=(0.0, 0.37, 0.0), size=(0.45, 0.37, 0.45))]),
+    Component('cloth_mesh', 'Your cloth mesh…', 'Fabric', 'Any OBJ model simulated as cloth: a shirt, a tent, a sail.', 'mesh',
+              pick='mesh', objects=[_F(name='Cloth', shape='mesh', position=(0.0, 1.0, 0.0), pins='none')]),
+    # -- light and air ---------------------------------------------------------------------------------------------------------
+    Component('lamp', 'Lamp', 'Lights & air', 'A bare bulb in the set, 2 m up: it lights the smoke and the smoke shadows it.', 'bulb',
+              scales=True, objects=[_L(name='Lamp', kind='point', position=(1.2, 2.0, 0.8), intensity=130.0, temperature=2700.0,
+                          colour=(1.0, 1.0, 1.0))]),
+    Component('spot', 'Spotlight', 'Lights & air', 'A stage spot aimed down at the effect: its beam shows in the smoke.', 'bulb',
+              scales=True, objects=[_L(name='Spotlight', kind='spot', position=(1.5, 3.0, 1.0), direction=(-0.45, -0.8, -0.3), intensity=20000.0,
+                          cone=18.0, colour=(1.0, 0.95, 0.88))]),
+    Component('window', 'Window light', 'Lights & air', 'Soft light from a window to one side (an area light).', 'bulb',
+              scales=True, objects=[_L(name='Window', kind='area', position=(-2.0, 1.6, 0.5), direction=(1.0, -0.2, 0.0), intensity=3000.0,
+                          radius=0.6, colour=(0.85, 0.9, 1.0))]),
+    Component('wind', 'Wind', 'Weather', 'A steady breeze blowing to screen right. Turn it in Motion › Wind (or Liquid › Wind).', 'wind',
+              scene={'motion': {'wind_speed': 1.5}, 'liquid': {'wind_speed': 4.0}, 'atmosphere': {'wind': 8.0}}),
+    Component('vortex', 'Vortex', 'Lights & air', 'Air spinning around a vertical axis: it twists smoke and flame into a column.', 'wind',
+              'fire', scales=True, room=(0.8, 2.0, 0.8),
+              objects=[_E(name='Vortex', shape='cylinder', position=(0.0, 0.05, 0.0), size=(0.3, 0.05, 0.3), fuel=0.0, temperature=0.0,
+                          swirl=2.5, swirl_width=6.0, noise=0.0, embers=False)]),
+]
+
+# the tile pictures (ui/icons.GLYPHS); blocks not listed keep the one they were made with
+GLYPHS = {'campfire': 'logs', 'pool': 'pool', 'line': 'line', 'torch': 'torch', 'gas': 'ring', 'fireball': 'burst', 'jet': 'jet',
+          'whirl': 'spiral', 'burnable': 'crate', 'steam': 'steam', 'kettle': 'steam', 'pour': 'pour', 'hose': 'jet',
+          'fountain': 'fountain', 'block': 'crate', 'flow': 'waves', 'pond': 'waves', 'ball': 'ball', 'pillar': 'pillar',
+          'wall': 'wall', 'room': 'house', 'car': 'car', 'crate': 'crate', 'stone': 'ball', 'hill': 'hill', 'basin': 'hill',
+          'logs': 'logs', 'mesh': 'mesh', 'flag': 'flag', 'banner': 'flag', 'spot': 'spot', 'window': 'window', 'vortex': 'spiral'}
+for _c in COMPONENTS:
+    _c.glyph = GLYPHS.get(_c.key, _c.glyph)
+
+BY_KEY = {c.key: c for c in COMPONENTS}
+GROUPS = ['Fire', 'Smoke, steam & sparks', 'Liquids', 'Fabric', 'Weather', 'Objects', 'Lights & air']
+
+# Making a scene from scratch: (label, box width in metres)
+SCALES = {'small': ('Tabletop', 0.6), 'person': ('Person-sized', 2.0), 'large': ('Car or room', 6.0), 'huge': ('Building', 20.0)}
+KINDS = {'fire': 'Fire and smoke', 'liquid': 'Liquid', 'both': 'Fire and liquid', 'cloud': 'Sky and clouds'}
+KIND_BADGES = {'fire': 'Fire and smoke', 'liquid': 'Liquid', 'both': 'Fire and liquid', 'cloud': 'Sky'}
+
+
+def has_liquid(scene):
+    """Whether a scene has any liquid in it: a source, standing water, rain, snow or something floating."""
+    if scene.kind == 'fire':
+        return False
+    if scene.kind == 'both':
+        return any(e.get('emits') in ('liquid', 'lava') for e in scene.emitters) or scene.data['liquid']['water_level'] > 0
+    return bool(scene.emitters or scene.data['liquid']['water_level'] > 0 or scene.data['liquid']['rain'] > 0
+                or scene.data['weather']['precip'] != 'none' or any(c.get('floating') for c in scene.colliders))
+
+
+def has_fire(scene):
+    """Whether a scene has any fire, smoke or steam source in it."""
+    if scene.kind == 'fire':
+        return bool(scene.emitters)
+    if scene.kind == 'both':
+        return any(e.get('emits', 'fire') == 'fire' for e in scene.emitters)
+    return False
+
+
+def target_kind(scene, comp):
+    """What the scene must simulate to take a block: the least it can be. An empty scene becomes whatever
+    the first source needs; fire and liquid together make a fire-and-liquid scene. None if it cannot."""
+    kind, need = scene.kind, comp.need
+    if kind == 'cloud':
+        return kind if comp.key in IN_SKY else None
+    if need == 'any' or kind == need or kind == 'both':
+        return kind
+    if need == 'lava':
+        return 'both'
+    if kind == 'fire' and need == 'liquid' and not has_fire(scene):
+        return 'liquid'
+    if kind == 'liquid' and need == 'fire' and not has_liquid(scene):
+        return 'fire'
+    return 'both'
+
+
+def _liquid_look(scene):
+    """Light a scene that has just become a liquid one as the liquid scenes are lit (sky and sun for glints),
+    unless its lighting was already changed."""
+    lt = scene.data['lighting']
+    base = defaults('lighting')
+    if all(lt[k] == base[k] for k in ('ambient', 'sun_on')):
+        lt.update(ambient=(0.55, 0.62, 0.72), sun_on=True, sun_azimuth=-40.0, sun_elevation=35.0)
+    scene.data['liquid']['wall_drag'] = max(scene.data['liquid']['wall_drag'], 3.0)
+    scene.data['water']['backdrop'] = round(max(1.5, 2.0 * scene_width(scene)), 2)
+
+
+IN_SKY = {'hill', 'mesh', 'wind'}   # a sky is kilometres across: only terrain and wind make sense in one
+
+
+def scene_kind_for(kind, need, key=None):
+    """The kind a scene must become to take a block that needs `need` (or None if it cannot)."""
+    if kind == 'cloud':
+        return kind if key in IN_SKY else None
+    if need == 'any' or kind == need or kind == 'both':
+        return kind
+    if need == 'lava':
+        return 'both'
+    return 'both'   # fire into a liquid scene, a liquid into a fire scene
+
+
+def scene_width(scene):
+    """How big the effect is meant to be (m), from the size of its turbulence, which new_scene and the
+    presets set by the size of the fire. Unlike the box, it does not change as blocks make the box grow."""
+    tf = float(scene.data['motion']['turb_freq'])
+    box = scene.domain_size()[0] * 1.2
+    return min((5.0 / max(tf, 1e-3)) ** (1 / 0.9), box) if tf > 0 else box
+
+
+def _scale_factor(scene):
+    return min(max(scene_width(scene) / REF_WIDTH, 0.05), 50.0)
+
+
+def _extent(kind, d):
+    """Where an object reaches (fire-local min and max corners), roughly."""
+    import numpy as np
+    p = np.asarray(d.get('position', (0.0, 0.0, 0.0)), float)
+    if kind == 'emitter' or kind == 'collider':
+        s = np.abs(np.asarray(d.get('size', (0.1, 0.1, 0.1)), float))
+        if d.get('shape') == 'mesh' and str(d.get('mesh', '')).endswith('.png'):
+            s = s * np.array([0.5, 1.0, 0.5])   # a heightfield's size is its full width, height and depth, from the ground
+            return p - s * np.array([1, 0, 1]), p + s
+        if d.get('shape') == 'mesh':
+            s = s * 0.5   # a model's size is a scale: take it as about a metre across
+        lo, hi = p - s, p + s
+        if d.get('shape') == 'capsule' and 'end' in d:
+            e = np.asarray(d['end'], float)
+            lo, hi = np.minimum(lo, e - s), np.maximum(hi, e + s)
+        return lo, hi
+    if kind == 'fabric':
+        w, h = float(d.get('width', 1.0)), float(d.get('height', 1.0))
+        if d.get('orientation') == 'lying':
+            r = np.array([w / 2, 0.05, h / 2])
+            return p - r, p + r
+        return p - np.array([w / 2, h / 2, 0.1]), p + np.array([w / 2, h / 2, 0.1])   # a panel's position is its middle
+    return p, p
+
+
+def convert_kind(scene: Scene, kind):
+    """Turn a scene into another kind, keeping what each emitter emits."""
+    old = scene.kind
+    if old == kind:
+        return
+    if kind == 'both':
+        for e in scene.emitters:
+            if old == 'liquid':
+                e['emits'] = 'liquid'
+    scene.data['domain']['kind'] = kind
+
+
+def add(scene: Scene, key, at=None, mesh=None):
+    """Add a building block to the scene. `at` is a fire-local ground point (x, z) to put its base on.
+    Returns ([(kind, index)], [notes for the user]). Raises ValueError if the scene cannot take it."""
+    comp = BY_KEY[key]
+    notes = []
+    target = target_kind(scene, comp)
+    if target is None:
+        raise ValueError(f'{comp.name} cannot go in a sky scene: skies are kilometres across. Start a fire or liquid scene for it '
+                         '(Create › Start from scratch).')
+    if target != scene.kind:
+        was = scene.kind
+        empty = not (scene.emitters or scene.colliders or scene.fabrics)
+        convert_kind(scene, target)
+        if empty:   # nothing in it yet: the box takes the shape and grid that kind of simulation wants
+            _domain_for(scene, target, round(scene_width(scene), 3))
+        if target in ('liquid', 'both') and was == 'fire':
+            _liquid_look(scene)
+        if target == 'both':
+            notes.append('Fire and liquid now simulate together in this scene.')
+    f = _scale_factor(scene) if comp.scales else 1.0
+    objs = copy.deepcopy(comp.objects)
+    if comp.pick == 'mesh':
+        if not mesh:
+            raise ValueError('No mesh chosen.')
+        from pathlib import Path
+        objs[0][1]['mesh'] = mesh
+        objs[0][1]['name'] = Path(mesh.split('#')[0]).stem.rstrip('.#_') or objs[0][1].get('name', 'Mesh')
+    anchor = None
+    for kind, d in objs:
+        if 'position' in d:
+            anchor = (d['position'][0] * f, d['position'][2] * f)
+            break
+    dx = dz = 0.0
+    if at is not None and anchor is not None:
+        dx, dz = at[0] - anchor[0], at[1] - anchor[1]
+    elif at is not None:
+        anchor = (0.0, 0.0)
+    added = []
+    lists = {'emitter': scene.emitters, 'collider': scene.colliders, 'light': scene.lights, 'fabric': scene.fabrics}
+    for kind, d in objs:
+        d = dict(d)
+        for k in ('position', 'end'):
+            if k in d:
+                v = d[k]
+                d[k] = (v[0] * f + dx, v[1] * f, v[2] * f + dz)
+        if f != 1.0:
+            if 'size' in d and not (d.get('shape') == 'mesh'):
+                d['size'] = tuple(x * f for x in d['size'])
+            if kind == 'collider' and d.get('hollow'):
+                d['hollow'] = d['hollow'] * f
+                d['opening'] = tuple(x * f for x in d.get('opening', (0, 0, 0)))
+                d['opening_at'] = tuple(x * f for x in d.get('opening_at', (0, 0, 0)))
+            if kind == 'emitter' and d.get('noise_freq'):
+                d['noise_freq'] = d['noise_freq'] / f
+            if kind == 'emitter' and 'velocity' in d:
+                d['velocity'] = tuple(x * math.sqrt(f) for x in d['velocity'])   # Froude scaling: the same arc at any size
+            if kind == 'emitter' and d.get('radial'):
+                d['radial'] = d['radial'] * math.sqrt(f)
+            if kind == 'light':
+                d['intensity'] = d.get('intensity', 2000.0) * f * f   # as bright at the effect from f times as far
+                d['radius'] = d.get('radius', 0.1) * f
+        if kind == 'emitter' and scene.kind == 'both':
+            d['emits'] = {'fire': 'fire', 'liquid': 'liquid', 'lava': 'lava'}.get(comp.need, 'fire')
+        if kind == 'emitter' and (comp.need in ('liquid', 'lava') or d.get('vapour')) and 'size' in d:
+            # a source smaller than the grid's cells pours next to nothing: at least about one cell across
+            dom = scene.data['domain']
+            cell = max(scene.domain_size()) / max(16.0, dom['resolution'] * dom['preview_scale'])
+            small = [x for x in d['size'] if x < cell]
+            if small:
+                d['size'] = tuple(max(x, cell) for x in d['size'])
+                notes.append(f'{d.get("name", comp.name)} is made {2 * cell * 100:.0f} cm across, two cells of the simulation grid, '
+                             'so it pours properly; raise Domain › Voxels for a finer grid and a finer source.')
+        names = {o['name'] for o in lists[kind]}
+        base, n = d.get('name', comp.name), 2
+        while d.get('name', base) in names:
+            d['name'] = f'{base} {n}'
+            n += 1
+        i = {'emitter': scene.add_emitter, 'collider': scene.add_collider, 'light': scene.add_light, 'fabric': scene.add_fabric}[kind](**d)
+        added.append((kind, i))
+    # scene-wide settings that come with it (only the sections the scene has)
+    from .params import applies
+    for sec, vals in comp.scene.items():
+        if not applies(sec, None, scene.kind):
+            continue
+        for k, v in vals.items():
+            if applies(sec, k, scene.kind):
+                scene.set((sec, k), v)
+    if comp.scene.get('spread', {}).get('enabled') and comp.need == 'fire':
+        notes.append('Spreading fire is on: fire spreads over anything marked Burnable.')
+    # grow the box to fit (it keeps its cell count, so detail drops a little)
+    grown = _fit_box(scene, [(k, lists[k][i]) for k, i in added], comp, f, (anchor[0] + dx, anchor[1] + dz) if anchor else (0.0, 0.0))
+    if grown:
+        notes.append(f'The simulation box grew to {grown[0]:.2g} × {grown[1]:.2g} × {grown[2]:.2g} m to fit it.')
+    return added, notes
+
+
+def _fit_box(scene, objs, comp, f, base):
+    import numpy as np
+    sx, sy, sz = scene.domain_size()
+    need = np.array([sx / 2, sy, sz / 2])
+    for kind, d in objs:
+        if kind == 'light':
+            continue   # a light may stand outside the box: it lights it from there
+        lo, hi = _extent(kind, d)
+        need = np.maximum(need, [max(abs(lo[0]), abs(hi[0])) * 1.1, hi[1] * 1.08, max(abs(lo[2]), abs(hi[2])) * 1.1])
+    rx, ry, rz = (x * f for x in comp.room)
+    if rx or ry or rz:
+        need = np.maximum(need, [abs(base[0]) + rx, ry, abs(base[1]) + rz])
+    new = (float(need[0] * 2), float(need[1]), float(need[2] * 2))
+    new = tuple(max(round(n + 0.005, 2), o) if n > o * 1.01 else o for n, o in zip(new, (sx, sy, sz)))
+    if new == (sx, sy, sz):
+        return None
+    d = scene.data['domain']
+    d['size_x'], d['size_y'], d['size_z'] = new
+    return new
+
+
+def new_scene(kind='auto', scale='person'):
+    """An empty scene to build in: the box, solver and look set up for the kind and size of effect. 'auto'
+    leaves the kind to what is added first (it starts as the light gas solver, which also moves fabric)."""
+    if kind == 'auto':
+        s = new_scene('fire', scale)
+        s.name = 'New scene'
+        return s
+    if kind == 'cloud':
+        from . import presets
+        s = presets.make('cumulus_day')
+        s.name = 'Sky'
+        s.preset = None
+        return s
+    w = SCALES[scale][1]
+    s = Scene()
+    s.emitters = []
+    s.name = {'fire': 'New fire', 'liquid': 'New liquid', 'both': 'New fire and liquid'}[kind]
+    _domain_for(s, kind, w)
+    m = s.data['motion']
+    m['turb_freq'] = round(5.0 / w ** 0.9, 3)   # also how big the scene is meant to be (scene_width)
+    if kind in ('fire', 'both'):
+        # the scale of the turbulence and detail follow the size of the fire (the presets' values, by size)
+        m['disturb_block'] = round(0.02 * w, 4)
+        m['puffing'] = 0.6
+        s.data['shading']['detail_freq'] = round(6.0 / w, 3)
+        s.data['embers']['turb_freq'] = round(4.0 / w ** 0.9, 3)
+        s.data['lighting']['light_spread'] = round(0.18 * w, 3)
+    if kind in ('liquid', 'both'):
+        s.data['lighting'].update(ambient=(0.55, 0.62, 0.72), sun_on=True, sun_azimuth=-40.0, sun_elevation=35.0)
+        s.data['liquid']['wall_drag'] = 3.0
+        s.data['water']['backdrop'] = round(max(1.5, 4.0 * w), 2)
+    return s
+
+
+def _domain_for(s, kind, w):
+    """The box, grid, pre-roll and camera for a kind of simulation of an effect w metres across."""
+    d = s.data['domain']
+    d['kind'] = kind
+    if kind == 'fire':
+        d['size_x'], d['size_y'], d['size_z'] = w, round(w * 1.6, 3), w
+        d['resolution'] = 128
+        d['preroll'] = 1.5
+        d['substeps_max'] = 12
+    elif kind == 'liquid':
+        d['size_x'], d['size_y'], d['size_z'] = w, round(w * 0.6, 3), round(w * 0.8, 3)
+        d['resolution'] = 160
+        d['preroll'] = 0.0
+        d['substeps_max'] = 12
+        d['cfl'] = 1.5
+    else:
+        d['size_x'], d['size_y'], d['size_z'] = w, round(w * 1.3, 3), round(w * 0.8, 3)
+        d['resolution'] = 144
+        d['preroll'] = 1.0
+        d['substeps_max'] = 12
+        d['cfl'] = 1.5
+    c = s.data['camera']
+    h = d['size_y']
+    c['distance'] = round(max(h * 1.8, w * 1.6), 3)
+    c['target_y'] = round(h * 0.4, 3)
+    c['near'] = round(max(0.002, 0.01 * w), 4)
+    if not (s.footage or s.track):   # with a shot, its matched angle and placement stay
+        c['pitch'] = 6.0 if kind == 'fire' else 16.0
+        c['anchor_x'], c['anchor_y'] = 0.5, 0.86 if kind == 'fire' else 0.72
+
+
+def fresh_defaults_check():
+    """(for tests) every block's settings are real settings."""
+    from .params import param
+    for c in COMPONENTS:
+        for kind, d in c.objects:
+            for k in d:
+                param(kind, k)
+        for sec, vals in c.scene.items():
+            for k in vals:
+                param(sec, k)
+    return True
+
+
+__all__ = ['Component', 'COMPONENTS', 'BY_KEY', 'GROUPS', 'SCALES', 'KINDS', 'add', 'new_scene', 'scene_kind_for',
+           'convert_kind']

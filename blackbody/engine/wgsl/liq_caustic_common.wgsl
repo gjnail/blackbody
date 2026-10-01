@@ -8,6 +8,10 @@ struct CParams {
   sun: vec4<f32>,     // toward the key light (grid space, unit), index of refraction
   absorb: vec4<f32>,  // absorption (1/m, rgb), murk extinction (1/m)
   lvl: vec4<f32>,     // water level (grid cells), open water on, _, blend width at the sides (cells)
+  org: vec4<f32>,     // grid corner (fire-local m)
+  ocn: vec4<f32>,     // sea waves on, 1/swell tile, 1/chop tile (1/m), water level (m)
+  ocn2: vec4<f32>,    // _, _, crest bound (m), _
+  ocx: array<vec4<f32>, 14>,   // the sea's layers (ocn_sample.wgsl)
 };
 
 fn box_range_c(ro: vec3<f32>, rd: vec3<f32>, n: vec3<f32>) -> vec2<f32> {
@@ -20,6 +24,20 @@ fn box_range_c(ro: vec3<f32>, rd: vec3<f32>, n: vec3<f32>) -> vec2<f32> {
   return vec2<f32>(t0, t1);
 }
 
+// How far p (grid cells) is inside the box from its nearest side the open water flows through (a
+// flume's walls do not count: the simulation holds the water right up to them).
+fn sea_side_in(p: vec3<f32>) -> f32 {
+  let big = 1.0e6;
+  let s = U.ocx[13];
+  // (a side the sea flows through counts; past a mirrored flume wall (-1), the far edge of its mirror
+  // image; a wall the simulation holds the water right up to, not at all)
+  let lx = select(select(big, p.x + U.n.x, abs(s.x + 1.0) < 0.5), p.x, s.x > 0.5);
+  let hx = select(select(big, 2.0 * U.n.x - p.x, abs(s.y + 1.0) < 0.5), U.n.x - p.x, s.y > 0.5);
+  let lz = select(select(big, p.z + U.n.z, abs(s.z + 1.0) < 0.5), p.z, s.z > 0.5);
+  let hz = select(select(big, 2.0 * U.n.z - p.z, abs(s.w + 1.0) < 0.5), U.n.z - p.z, s.w > 0.5);
+  return min(min(lx, hx), min(lz, hz));
+}
+
 fn phi_c(p: vec3<f32>) -> f32 {
   let n = U.n.xyz;
   var s = textureSampleLevel(surf_t, lin, p / n, 0.0).x / U.nf.w;
@@ -27,7 +45,10 @@ fn phi_c(p: vec3<f32>) -> f32 {
   if (U.lvl.y > 0.5) {
     s = max(s, d.y);
     let e = min(min(p.x, n.x - p.x), min(p.z, n.z - p.z));
-    return mix(p.y - U.lvl.x, s, smoothstep(0.0, U.lvl.w, e));
+    let w = smoothstep(1.5, U.lvl.w + 1.5, e);
+    if (w >= 1.0) { return s; }
+    let lvl = U.lvl.x + ocean_eta(U.org.xz + p.xz * U.n.w, 0.0) / U.n.w;
+    return mix(p.y - lvl, s, w);
   }
   return max(s, max(d.x, max(d.y, d.z)));
 }

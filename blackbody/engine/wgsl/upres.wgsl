@@ -41,6 +41,15 @@ fn trace(p: vec3<f32>, k: f32) -> vec3<f32> {
   return p + k * v1;
 }
 
+// The velocity the fine grid moves with, at its cell centres (m/s): written out with VDB exports.
+@compute @workgroup_size(8, 8, 4)
+fn velocity(@builtin(global_invocation_id) id: vec3<u32>) {
+  let n = U.g.n.xyz;
+  let c = vec3<i32>(id);
+  if (any(c >= vec3<i32>(n))) { return; }
+  textureStore(dst, c, vec4<f32>(fine_vel(vec3<f32>(c) + 0.5), 0.0));
+}
+
 @compute @workgroup_size(8, 8, 4)
 fn sl(@builtin(global_invocation_id) id: vec3<u32>) {
   let n = U.g.n.xyz;

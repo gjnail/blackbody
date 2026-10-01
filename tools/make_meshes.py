@@ -1,6 +1,9 @@
-"""Write the built-in example meshes (blackbody/assets/meshes/*.obj), built from overlapping boxes.
-Overlaps are fine: Blackbody decides inside and outside by winding number, not by a clean surface."""
+"""Write the built-in example meshes (blackbody/assets/meshes): an armchair built from overlapping
+boxes (overlaps are fine: Blackbody decides inside and outside by winding number, not by a clean
+surface), and a hillside heightfield (a 16-bit greyscale PNG, read as terrain)."""
 from pathlib import Path
+
+import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'blackbody' / 'assets' / 'meshes'
@@ -34,10 +37,28 @@ def boxes_obj(boxes, title):
     return '\n'.join(lines) + '\n'
 
 
+def hillside(size=192, seed=3):
+    """A slope rising toward the back (-z, the top of the image) with a gully and some lumps, 0..1."""
+    rng = np.random.default_rng(seed)
+    y, x = np.mgrid[0:size, 0:size] / (size - 1.0)     # y: 0 at the top edge (back), 1 at the front
+    back = 1.0 - y
+    h = 0.08 + 0.85 * back ** 1.3                        # steepening toward the top of the hill
+    h -= 0.12 * np.exp(-((x - 0.62) / 0.08) ** 2) * back  # a gully running up the slope
+    for _ in range(40):                                  # lumps: rocks and bushes under the grass
+        cx, cy, r, a = rng.random(), rng.random(), 0.02 + 0.06 * rng.random(), 0.01 + 0.03 * rng.random()
+        h += a * np.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (r * r))
+    h -= h.min()
+    return h / h.max()
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     (OUT / 'armchair.obj').write_text(boxes_obj(ARMCHAIR, 'armchair'), encoding='utf-8')
     print('wrote', OUT / 'armchair.obj')
+    from PIL import Image
+    img = (hillside() * 65535 + 0.5).astype(np.uint16)
+    Image.fromarray(img).save(OUT / 'hillside.png')
+    print('wrote', OUT / 'hillside.png')
 
 
 if __name__ == '__main__':

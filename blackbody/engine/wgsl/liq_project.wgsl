@@ -9,7 +9,7 @@ struct Params {
   g: Grid,
   k: vec4<f32>,   // surface density (particles), rest density (particles), _, minimum theta
   k2: vec4<f32>,  // _, surface tension sigma / rho * dt (m^3/s)
-  k3: vec4<f32>,  // open water level (cells, < 0 off), gravity * dt (m/s)
+  k3: vec4<f32>,  // open water level (cells, < 0 off)
 };
 
 @group(0) @binding(0) var vel: texture_3d<f32>;
@@ -19,12 +19,16 @@ struct Params {
 @group(0) @binding(4) var dens: texture_3d<f32>;
 @group(0) @binding(5) var dst: texture_storage_3d<rgba32float, write>;
 @group(0) @binding(6) var kappa: texture_3d<f32>;
+@group(0) @binding(7) var ocn_t: texture_2d<f32>;
+//!include liq_level.wgsl
 @group(1) @binding(0) var<uniform> U: Params;
 
 // 0 air, 1 liquid, 2 solid; outside the grid: air if that boundary is open, else solid
 fn ctype(c: vec3<i32>, n: vec3<i32>) -> i32 {
   if (!in_grid(c, n)) {
     var open = U.g.bc.x;
+    if (U.k3.x >= 0.0 && f32(c.y) + 0.5 < level_at(vec2<f32>(c.xz) + vec2<f32>(0.5))) { open = 0.0; }   // under the open water
+    if (flume_wall(c, n, U.k3.y)) { open = 0.0; }                                                       // a flume's wall
     if (c.y < 0) { open = U.g.bc.z; }
     if (c.y >= n.y) { open = U.g.bc.y; }
     return select(2, 0, open > 0.5);
@@ -72,21 +76,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let ca = c - e;
     let ta = ctype(ca, n);
     let tb = ctype(c, n);
-    // open side under the water level: the still water's pressure half a cell out
-    let yc = f32(c.y) + 0.5;
-    if (k != 1u && U.k3.x >= 0.0 && U.g.bc.x > 0.5 && yc < U.k3.x && (c[k] == 0 || c[k] == n[k])) {
-      let xl = U.k3.y * (U.k3.x - yc) * U.g.n.w;
-      if (c[k] == 0 && tb == 1) {
-        v[k] -= ((xp(c) - xl) / 0.5) * ih;
-        nm |= 1u << k;
-        continue;
-      }
-      if (c[k] == n[k] && ta == 1) {
-        v[k] -= ((xl - xp(ca)) / 0.5) * ih;
-        nm |= 1u << k;
-        continue;
-      }
-    }
     if (ta == 1 && tb == 1) {
       v[k] -= (xp(c) - xp(ca)) * ih;
       nm |= 1u << k;

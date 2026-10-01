@@ -39,6 +39,7 @@ class EngineWorker(QThread):
     jobProgress = Signal(float, str, object)  # fraction, text, preview QImage or None
     jobDone = Signal(object, bool, str)      # written files, cancelled, error text
     stillDone = Signal(object, str)          # final-quality frame arrays, error text
+    status = Signal(str, float)              # what holds up the next frame: text, fraction (-1 unknown, -2 an error)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -52,12 +53,14 @@ class EngineWorker(QThread):
         self.live = True
         self.footage = None
         self.engine = None
+        self._hold = None       # (settings key, FootageHoldout) for the scene's holdout matte and depth pass
         self._need = True
         self._refined = False
         self._shown = None
         self._job_cancel = threading.Event()
         self._last_cache = None
         self._last_progress = 0.0
+        self._load_seq = 0      # which scene load (Document.load_seq) the engine is on
 
     # -- API for the GUI thread -------------------------------------------------------------------
 
@@ -76,8 +79,10 @@ class EngineWorker(QThread):
     def run(self):
         try:
             from ..engine.engine import Engine
-            self.engine = Engine()
-            g = self.engine.gpu
+            from ..engine.gpu import GPU
+            g = GPU()
+            g.on_compile = self._compiling
+            self.engine = Engine(g)
             self.ready.emit({'name': g.name, 'backend': g.backend})
         except Exception as ex:
             self.failed.emit(f'{ex}\n\n{traceback.format_exc()}')
@@ -121,6 +126,7 @@ class EngineWorker(QThread):
             except Exception as ex:
                 log.exception('render failed')
                 self.message.emit(f'Render failed: {ex}')
+                self.status.emit(f'This frame could not be simulated or drawn:\n{ex}', -2.0)
                 self.playing = False
                 self._need = False
                 self._refined = True
@@ -129,6 +135,13 @@ class EngineWorker(QThread):
         if kind == 'scene':
             self.scene = value
             self._need = True
+            seq = getattr(value, 'load_seq', 0)
+            if seq != self._load_seq:   # a different scene (preset, file): nothing of the last one is on screen
+                self._load_seq = seq
+                self._shown = None
+                self._last_cache = None
+                self.cacheChanged.emit([])
+                self.status.emit('Setting up the simulation', -1.0)
         elif kind == 'frame':
             if value != self.frame or self._shown != value:
                 self.frame = int(value)
@@ -182,6 +195,28 @@ class EngineWorker(QThread):
             self.footage = None
             self.footageInfo.emit({'error': str(ex), 'path': path})
 
+    def _holdout(self, frame):
+        """(matte, depth) from the footage holdout settings for a frame, or None."""
+        sc = self.scene
+        c = sc.data['composite']
+        key = (c.get('holdout_matte'), c.get('holdout_depth'), c.get('matte_channel'), c.get('matte_invert'),
+               (sc.footage or {}).get('offset', 0), sc.start, sc.path)
+        if not (c.get('holdout_matte') or c.get('holdout_depth')) or sc.kind == 'liquid':
+            return None
+        if self._hold is None or self._hold[0] != key:
+            from ..io.holdout import FootageHoldout
+            if self._hold is not None:
+                self._hold[1].close()
+            self._hold = (key, FootageHoldout(sc))
+            for e in self._hold[1].errors:
+                self.message.emit(f'Holdout: {e}')
+        h = self._hold[1]
+        try:
+            return h.read(frame) if h.active else None
+        except Exception as ex:
+            self.message.emit(f'Holdout: {ex}')
+            return None
+
     def _plate(self, frame):
         if self.footage is None or not self.scene.footage:
             return None
@@ -192,6 +227,10 @@ class EngineWorker(QThread):
 
     def _interrupted(self):
         return not self._q.empty()
+
+    def _compiling(self, source_file):
+        """GPU.on_compile: a kernel is about to compile (seconds to minutes when its shader is new to the driver)."""
+        self.status.emit(f'Compiling GPU shaders: {source_file.rsplit("/", 1)[-1]}', -1.0)
 
     def _progress(self, frac, frame):
         now = time.perf_counter()
@@ -205,12 +244,13 @@ class EngineWorker(QThread):
         eng.prepare(sc, final=False, soft=self.live)
         if frame not in eng.cache and eng.sim_frame != frame:
             far = eng.sim_frame is None or frame < eng.sim_frame or frame - eng.sim_frame > 2
+            # a long catch-up (pre-roll, a jump) gives way to the UI even while playing, so Pause and edits work
             ok = eng.simulate_to(sc, frame, progress=self._progress if far else None,
-                                 cancelled=self._interrupted if not self.playing else None)
-            if far:
-                self.simProgress.emit(1.0, frame)
+                                 cancelled=self._interrupted if (far or not self.playing) else None)
             if not ok:
                 return False
+            if far:
+                self.simProgress.emit(1.0, frame)
         W, H = sc.output_size()
         q = 1.0 if refine else self.quality
         w, h = max(16, int(W * q)), max(16, int(H * q))
@@ -218,13 +258,19 @@ class EngineWorker(QThread):
         wants_plate = self.mode == 'composite' or (sc.kind == 'liquid' and self.mode == 'fire')
         plate = self._plate(frame) if wants_plate else None
         fit = plate_fit(self.footage.width, self.footage.height, W, H) if plate is not None else (1.0, 1.0)
+        # the refined frame gets motion blur too (from the velocity cached with the frame)
         eng.render(sc, frame, (w, h), mode=self.mode, final=False, samples=4 if refine else 1,
-                   motion_blur=False, plate=plate, plate_fit=fit)
+                   motion_blur=refine and bool(sc.data['render']['motion_blur']), plate=plate, plate_fit=fit,
+                   holdout=self._holdout(frame))
         img = to_qimage(eng.display_image())
         self._shown = frame
         st = eng.stats()
         st['refined'] = refine
         st['preview'] = (w, h)
+        # colliders the liquid moves, where the simulation put them (drawn there in the viewer)
+        st['floats'] = eng.floating_overrides(frame) if sc.kind in ('liquid', 'both') else None
+        st['frame'] = frame
+        st['load_seq'] = getattr(sc, 'load_seq', 0)
         self.frameReady.emit(img, frame, st)
         frames = eng.cache.frames()
         if frames != self._last_cache:
@@ -256,7 +302,7 @@ class EngineWorker(QThread):
             fit = plate_fit(self.footage.width, self.footage.height, W, H) if plate is not None else (1.0, 1.0)
             eng.render(sc, spec['frame'], (W, H), mode=spec.get('mode', 'composite'), final=True,
                        samples=sc.data['render']['aa_samples'], motion_blur=sc.data['render']['motion_blur'],
-                       plate=plate, plate_fit=fit)
+                       plate=plate, plate_fit=fit, holdout=self._holdout(spec['frame']))
             result = {'display': eng.display_image(), 'aov': eng.aovs(), 'linear': eng.linear_comp(),
                       'frame': spec['frame'], 'path': spec.get('path'), 'mode': spec.get('mode', 'composite')}
             self.stillDone.emit(result, '')

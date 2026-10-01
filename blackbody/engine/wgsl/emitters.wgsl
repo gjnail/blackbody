@@ -13,12 +13,46 @@ struct Emitter {
   g: vec4<f32>,    // swirl: speed at the core edge (m/s), axis x, axis z (world m), core radius (m)
   k: vec4<f32>,    // swirl reach (m), swirl base height (m), rotation about y (radians), douse rate (1/s)
   col: vec4<f32>,  // colourant released per second (rgb), water vapour in the released gas (g/m^3)
-  m0: vec4<f32>,   // mesh: bounding box min, atlas z offset (negative: no mesh)
-  m1: vec4<f32>,   // mesh: bounding box max; w = surface depth (m, 0 = solid)
-  m2: vec4<f32>,   // mesh: grid dims (cells); w = weight when picking an emitter for embers
+  m0: vec4<f32>,   // mesh or volume: bounding box min, atlas z offset (negative: none)
+  m1: vec4<f32>,   // mesh: bounding box max; w = surface depth (m, 0 = solid). Volume: w = has a temperature layer
+  m2: vec4<f32>,   // mesh or volume: grid dims (cells); w = weight when picking an emitter for embers
+  s: vec4<f32>,    // deforming mesh: next frame's atlas z offset (negative: none), blend, frames per second;
+                   // w = volume mode (1 releases at its rates, 2 fills the box once, 3 keeps it topped up)
 };
 
-// Shape ids: 0 ellipsoid, 1 box, 2 cylinder (vertical), 3 capsule, 4 ring (horizontal torus), 5 cone, 6 mesh.
+// Shape ids: 0 ellipsoid, 1 box, 2 cylinder (vertical), 3 capsule, 4 ring (horizontal torus), 5 cone, 6 mesh,
+// 7 volume (the density of a VDB, io/volume.py, in the mesh atlas: layer 0 density, layer 1 temperature).
+
+// A volume's field at q (its own frame, metres before scaling), trilinear; zero outside it.
+fn field_at(q: vec3<f32>, m0: vec4<f32>, m1: vec4<f32>, m2: vec4<f32>, layer: i32) -> f32 {
+  if (m0.w < 0.0) { return 0.0; }
+  let cell = (m1.xyz - m0.xyz) / max(m2.xyz, vec3<f32>(1.0));
+  let t = (q - m0.xyz) / cell - vec3<f32>(0.5);
+  if (any(t < vec3<f32>(-0.5)) || any(t > m2.xyz - vec3<f32>(0.5))) { return 0.0; }
+  let dims = vec3<i32>(m2.xyz);
+  let i0 = vec3<i32>(floor(t));
+  let f = t - floor(t);
+  let z = i32(m0.w) + layer * dims.z;
+  let c00 = mix(atlas_at(i0, dims, z), atlas_at(i0 + vec3<i32>(1, 0, 0), dims, z), f.x);
+  let c10 = mix(atlas_at(i0 + vec3<i32>(0, 1, 0), dims, z), atlas_at(i0 + vec3<i32>(1, 1, 0), dims, z), f.x);
+  let c01 = mix(atlas_at(i0 + vec3<i32>(0, 0, 1), dims, z), atlas_at(i0 + vec3<i32>(1, 0, 1), dims, z), f.x);
+  let c11 = mix(atlas_at(i0 + vec3<i32>(0, 1, 1), dims, z), atlas_at(i0 + vec3<i32>(1, 1, 1), dims, z), f.x);
+  return max(mix(mix(c00, c10, f.y), mix(c01, c11, f.y), f.z), 0.0);
+}
+
+fn volume_local(e: Emitter, w: vec3<f32>) -> vec3<f32> {
+  return yaw_to_local(w - e.a.xyz, e.k.z) / max(e.b.xyz, vec3<f32>(1e-4));
+}
+
+// A Volume emitter's density at world point w (about 1 where the volume is densest).
+fn volume_density(e: Emitter, w: vec3<f32>) -> f32 {
+  return field_at(volume_local(e, w), e.m0, e.m1, e.m2, 0);
+}
+
+// Its temperature (scaled the same way), or its density when it has none.
+fn volume_heat(e: Emitter, w: vec3<f32>) -> f32 {
+  return field_at(volume_local(e, w), e.m0, e.m1, e.m2, select(0, 1, e.m1.w > 0.5));
+}
 fn emitter_sdf(e: Emitter, w: vec3<f32>) -> f32 {
   let shape = i32(e.a.w + 0.5);
   if (shape == 3) {
@@ -28,9 +62,15 @@ fn emitter_sdf(e: Emitter, w: vec3<f32>) -> f32 {
     return length(q - ba * t) - e.b.x;
   }
   if (shape == 6) {
-    let d = placed_mesh_sdf(w, e.a.xyz, e.b.xyz, e.k.z, e.m0, e.m1, e.m2);
+    let d = placed_mesh_sdf(w, e.a.xyz, e.b.xyz, e.k.z, e.m0, e.m1, e.m2, e.s);
     if (e.m1.w > 0.0) { return abs(d) - e.m1.w; }
     return d;
+  }
+  if (shape == 7) {
+    // inside where the volume is at least a quarter as dense as its densest; about a cell's worth of
+    // distance per unit of density
+    let cell = (e.m1.xyz - e.m0.xyz) / max(e.m2.xyz, vec3<f32>(1.0)) * max(e.b.xyz, vec3<f32>(1e-4));
+    return (0.25 - min(volume_density(e, w), 1.0)) * 4.0 * min(cell.x, min(cell.y, cell.z));
   }
   let q = yaw_to_local(w - e.a.xyz, e.k.z);
   if (shape == 0) {
@@ -64,6 +104,7 @@ fn emitter_sdf(e: Emitter, w: vec3<f32>) -> f32 {
 
 // Soft shape mask in [0, 1].
 fn emitter_mask(e: Emitter, w: vec3<f32>, h: f32) -> f32 {
+  if (i32(e.a.w + 0.5) == 7) { return min(volume_density(e, w), 1.0); }
   let soft = max(e.b.w, 0.75 * h);
   let d = emitter_sdf(e, w);
   if (d >= soft) { return 0.0; }

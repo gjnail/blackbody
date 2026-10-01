@@ -13,7 +13,7 @@ struct Params {
   g: Grid,
   k: vec4<f32>,   // surface density (particles), rest density (particles), volume correction (per step), minimum theta
   k2: vec4<f32>,  // density ratio above which the volume correction acts, surface tension sigma / rho * dt (m^3/s)
-  k3: vec4<f32>,  // open water level (cells, < 0 off), gravity * dt (m/s)
+  k3: vec4<f32>,  // open water level (cells, < 0 off), the sides that are walls all the way up (bits -x, +x, -z, +z)
 };
 
 @group(0) @binding(0) var vel: texture_3d<f32>;
@@ -24,6 +24,8 @@ struct Params {
 @group(0) @binding(4) var out_type: texture_storage_3d<r32float, write>;
 @group(0) @binding(5) var out_co: texture_storage_3d<rg32float, write>;
 @group(0) @binding(6) var out_r: texture_storage_3d<r32float, write>;
+@group(0) @binding(8) var ocn_t: texture_2d<f32>;
+//!include liq_level.wgsl
 @group(1) @binding(0) var<uniform> U: Params;
 
 fn dir6(i: i32) -> vec3<i32> {
@@ -32,18 +34,13 @@ fn dir6(i: i32) -> vec3<i32> {
   return d;
 }
 
-// Pressure (scaled like x) of the open water outside the sides at the height of cell c: at rest
-// under the level, so the liquid in the box meets still water there instead of air.
-fn level_x(c: vec3<i32>) -> f32 {
-  let y = f32(c.y) + 0.5;
-  if (U.k3.x < 0.0 || U.g.bc.x < 0.5 || y >= U.k3.x) { return -1.0; }
-  return U.k3.y * (U.k3.x - y) * U.g.n.w;
-}
-
+// Past an open side under the open water level there is more still water: it holds the liquid in
+// like a wall (waves are calmed before they reach it, and liquid above the level spills over).
 fn outside_open(q: vec3<i32>, n: vec3<i32>) -> bool {
   if (q.y < 0) { return U.g.bc.z > 0.5; }
   if (q.y >= n.y) { return U.g.bc.y > 0.5; }
-  return U.g.bc.x > 0.5;
+  if (flume_wall(q, n, U.k3.y)) { return false; }
+  return U.g.bc.x > 0.5 && !(U.k3.x >= 0.0 && f32(q.y) + 0.5 < level_at(vec2<f32>(q.xz) + vec2<f32>(0.5)));
 }
 
 @compute @workgroup_size(8, 8, 4)
@@ -70,13 +67,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   for (var i = 0; i < 6; i++) {
     let q = c + dir6(i);
     if (!in_grid(q, n)) {
-      if (outside_open(q, n)) {
-        diag += 2.0;  // p = 0 on the open boundary face (or the open water's pressure there)
-        if (q.y >= 0 && q.y < n.y) {
-          let xl = level_x(c);
-          if (xl >= 0.0) { jump += 2.0 * xl; }
-        }
-      }
+      if (outside_open(q, n)) { diag += 2.0; }  // p = 0 on the open boundary face
       continue;
     }
     if (textureLoad(sdf, q, 0).x < 0.0) { continue; }

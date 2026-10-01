@@ -359,10 +359,11 @@ def test_liquid_water_puts_fire_out(engine):
     s = engine.solver
     s.configure(s.dims, s.h, s.origin, dict(sc.features(), water=True, vapour=True, aux=True))
     engine.sim_frame = None
-    assert s.water is not None and s.water.format == 'r32float' and s.water.size == tuple(s.dims)
+    # (x = the share of the cell that is water; y, z, w: soaked fuel, steam off it, char smoke: both_wet.wgsl)
+    assert s.water is not None and s.water.format == 'rgba16float' and s.water.size == tuple(s.dims)
     nx, ny, nz = s.dims
-    wet = np.zeros((nz, ny, nx, 1), np.float32)
-    wet[:, : ny // 3] = 1.0                      # the lower third of the box flooded
+    wet = np.zeros((nz, ny, nx, 4), np.float16)
+    wet[:, : ny // 3, :, 0] = 1.0                # the lower third of the box flooded
     engine.simulate_to(sc, sc.start, cache=False)
     s.gpu.upload(s.water, wet)
     for f in range(sc.start + 1, sc.start + 25):
@@ -452,7 +453,7 @@ def test_holdout_hides_the_fire_behind_it(engine):
         aov = engine.aovs()
         alphas[hold] = aov['beauty'][..., 3].astype(np.float32)
         if hold:
-            cover = aov['surface'][..., 3].astype(np.float32)
+            cover = aov['mask'][..., 2].astype(np.float32)
     behind = cover > 0.5
     assert behind.sum() > 100
     assert alphas[False][behind].max() > 0.3, 'without the holdout the fire shows there'

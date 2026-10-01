@@ -1,0 +1,55 @@
+# Troubleshooting and limits
+
+What to do when something goes wrong, and what Blackbody does not do (yet).
+
+## Troubleshooting
+
+- **The wrong GPU is used:** set `BLACKBODY_GPU` to part of the GPU's name (for example `3090`) and/or `BLACKBODY_BACKEND` to `Vulkan`, `D3D12` or `Metal`. `blackbody info` lists what is available.
+
+- **The engine does not start:** update the graphics driver.
+
+- **Out of GPU memory:** lower *Voxels (longest side)* or *Final resolution*.
+
+- **Footage will not open:** anything FFmpeg decodes should work. Image sequences are found from any one numbered file.
+
+- **Footage missing after moving a project:** Blackbody looks for the clip at its saved path, then at the same place relative to the project, then next to the project file. If none of those has it, File › Import footage relinks it; the fire, camera and track are kept.
+
+## Limitations
+
+- Tested on Windows 11 with an NVIDIA RTX 3090 (Vulkan). macOS and Linux use the same code from source, but have not been tested.
+
+- Colour management: sRGB, Rec.709, Linear and ACEScg footage and Standard, AgX filmic, ACES fit and Raw views are built in, and OCIO configs are read for displays, views, looks and colour spaces. The viewer's OCIO view is a LUT (within about 1/255 of the exact transform); renders use OCIO itself.
+
+- The tracker follows one point in 2D. Shots with strong perspective change need a camera track (.chan).
+
+- `.chan` import is tested with generated files, not with exports from each package.
+
+- A fast-moving collider deletes the smoke it sweeps into rather than compressing it. A burnable collider's burn is laid out around its size at the start; animating its *Size* stretches the burn.
+
+- Fire light on surfaces is shadowed along one ray toward the centre of the fire, so a surface lit by two fires far apart gets one shadow. The ground is a flat plane at the fire's base unless a depth pass or a terrain collider describes it. Holdouts are only as good as the colliders, matte or depth pass you give them.
+
+- Deep EXR: a thin wisp that only a later anti-aliasing pass catches gets a sample of its own only while the pixel has fewer than its 8 samples; after that it joins the nearest one. A pixel's embers are one sample at the nearest ember's depth; one behind nearly opaque flame (as the flat image still shows it) sits at the front of that flame.
+
+- A growing box grows but never shrinks during a simulation, and each growth reads the whole state back from the GPU (a fraction of a second). Farm renders from a disk cache cannot write VDBs (those need the live simulation).
+
+- Volumes: the velocity in a VDB is not read (the smoke starts still and the simulation moves it), a sequence changes from one frame to the next without blending, and a volume is averaged down to at most twice Domain › *Mesh detail* cells a side (96 to 192). VDBs that use Zstd compression or bit shuffling, and non-float grids other than vectors, are not read. Volume emitters feed the fire, not liquid sources.
+
+- USD import: points become blobs, not particles. Portal and geometry lights are not imported, and a light's texture, IES profile and shadow settings are ignored. USD frame numbers are taken as Blackbody frame numbers.
+
+- Fabric: up to 16 fabrics. In water the cloth is moved by the water but does not move it (it makes no waves and does not hold the flow back), and the water sees it through its drawn layer, so cloth outside the picture is not seen refracted or reflected in the water. Its shadows come from the light volume (half the simulation's resolution): soft close up, and a sheet thinner than a light cell shades a little round its edges. The flames of burning fabric are the fire's own (from the fuel the cloth gives off, at the fire's cell size), not a thin sheet of flame on the cloth itself; ash flakes are drawn a few to each burnt-off point of the cloth and do not land and pile up as ash. The fire's radiation on cloth is not shadowed (cloth behind cloth, or behind an object, is lit as if nothing were in the way), and glowing lava does not radiate on it. Drops dripping off wet cloth do not make ripples or splashes in a liquid or wet the ground, the water cloth soaks up is not taken out of the liquid, and cloth in hot water is not warmed by it. Stiff materials at fine detail can need more than the four constraint passes to reach their full stiffness, so they drape slightly softer than measured.
+
+- Lights in the set: the smoke's shadow on them comes from the light volume, so it is as soft as a cell of that volume (the beam itself is sharp). How much a light brightens or darkens the footage is judged against the Lighting settings, not measured from the footage. A beam shows only where there is smoke or steam: clear air is clear.
+
+- Detail upres adds detail the simulation did not compute: the fine grid follows the simulated air plus noise, so its small swirls are plausible rather than simulated.
+
+- Heat expansion makes a fireball shrink as it cools, which is real, but it looks smaller than one tuned with *Gas expansion* alone.
+
+- Tracked air and flame fronts model a room starving and igniting again when air gets in, and a flame front running through gas that is already mixed. The burst of a real backdraft is gentler here: how fast the incoming air mixes with the smoke is modelled as a diffusion, and the smoke's fuel can only burn as fast as air reaches it.
+
+- A swirl core narrower than about six cells (a small dust devil) is under-resolved and spreads out instead of forming a column.
+
+- Liquids: a light object sitting in a thin film can stick until water seeps under it. Very high viscosity (lava) is approximate: a fixed number of Jacobi sweeps diffuses the velocity less than an exact solve. With a water level, a big wave that reaches the box's side is calmed rather than carrying on; keep the box a little wider than the action. The narrow band carries the deep water on the grid without advecting it, which suits ponds, lakes and wakes, not a deep, fast current. Streams and sheets thinner than about two cells break up early; raise the resolution or keep the box tight. A cell counts as solid when its centre is inside a collider, so where a collider's flat top is just above a cell's centre, the sliver of that cell over it holds water the pressure solve does not see: a stream poured onto it piles up there (and, with heat on, freezes there) until it bursts out. Put such a top on a cell boundary or just under a cell's centre. Surface tension is reliable down to about a centimetre: millimetre drops shed a fine mist and small puddles spread thinner than they should (the contact angle still wets or beads the right way). Two liquids share one index of refraction and one viscosity; a dye differs only in colour and cloudiness. The sea's waves shorter than about twelve cells are drawn on the box's surface rather than simulated. The narrow band keeps the volume as water flows in and out of the deep liquid (a closed box sloshing for ten seconds holds within a few percent), but the deep water keeps its velocity rather than being carried along by the flow, so the sea presets simulate all of the water; keep it off for surf and floods. A surge or bore that runs through the box can show a faint outline at the box's edges from high above. The mirrors past a wave tank's sides repeat the box's water once each way; past that, the open sea. Past the box the sea shoals and breaks over the bed only in the render (the breaking itself is simulated in the box), and the open water's waves travel at the speed for the sea's depth everywhere. Whitecaps and foam are statistical: they do not know about the simulation's own splashes past the box. A following box drops what it leaves behind: past it, a wake carries on only as the open water's waves and foam. *Hits the footage* sees only what the camera sees: what is hidden behind the footage's surfaces is a slab a fixed depth thick. Rain streaks are a fresh set each frame, which reads as rain, not as the same drops falling. Heat and phase changes use water's properties (only the freezing and boiling points can be changed); ice bodies are rigid pieces that do not crack or break apart, and ice pieces touching each other freeze into one; a steam bubble or a vapour film is smaller than a cell, so film boiling lifts the water by about a cell and the bubbles do not merge into big domes; millimetre drops spread into films rather than beading (the surface-tension limit above), so Leidenfrost drops dancing on a hot pan need very fine cells; steam shows only with fire and liquid in the box. Spray finer than a cell is taken as 2 mm drops only where a cell is mostly air, so water thrown on a coarse grid, which the grid still sees as a sheet, gives off less vapour than the fine spray of a real throw (a smaller box, or finer cells, brings it closer). A collider holds its surface at its temperature however much heat it takes, and has one temperature all over: frozen ground or a rock that would warm as water freezes onto it is best set near the freezing point.
+
+- Weather: precipitation is simulated over the *Area*; past it only the haze of the fall shows. Snow lies on the topmost surfaces seen from above (the ground and the colliders' tops), not under overhangs. Hail and pellets land on the colliders' own shapes in the liquid's box, and on the surfaces seen from above past it. In a fire-and-liquid box the precipitation is carried by the scene's wind, not by the fire's air. Each falling piece stands for itself: a heavy shower over a big area needs a higher *Particle limit*. The snow cover is drawn over the shot after the liquid, so the water's reflections show the colliders under it bare: in a snow scene, set *Water › Stand-in colour* snow-grey, as *Snow on a pond* does.
+
+- Clouds: the air is Boussinesq (incompressible, with its density varying only in buoyancy), which suits clouds up to the tropopause. The microphysics is bulk (each kind of water a single amount per cell, its sizes implied): a single cloud's rain and hail rates are of the right order, not those of a particular storm. A cell is a few hundred metres: clouds smaller than a few cells are drawn with detail added, not simulated, and a cloud's own small eddies are not resolved. The box's open sides take in the background air, so a storm that fills the box goes on being fed; make the box wide enough for the anvil. With no cap, an unstable sounding convects everywhere at once.

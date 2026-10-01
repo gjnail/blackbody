@@ -2,16 +2,17 @@
 from __future__ import annotations
 
 import math
+import time
 
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QMenu, QWidget
 
 from ..engine import camera as cam
 from . import theme
 
-MODE_NAMES = {'composite': 'Composite', 'fire': 'Fire over black', 'alpha': 'Alpha', 'emission': 'Emission',
+MODE_NAMES = {'composite': 'Composite', 'fire': 'Effect over black', 'alpha': 'Alpha', 'emission': 'Emission',
               'heat': 'Heat (haze)', 'depth': 'Depth', 'temperature': 'Temperature'}
 
 
@@ -23,19 +24,37 @@ def _circle(center, radius_vec_a, radius_vec_b, n=48):
 _MESH_EDGES = {}
 
 
-def mesh_edges(path, limit=900):
-    """A sample of a mesh's edges (k, 2, 3), in mesh units, cached per file; None if it cannot be read."""
-    import os
+def _heightfield_edges(path, n=20):
+    """A coarse grid over a heightfield image (the terrain's outline in the viewer)."""
+    from ..engine.mesh import _read_grey
+    img = _read_grey(path)
+    ys = np.linspace(0, img.shape[0] - 1, n).astype(int)
+    xs = np.linspace(0, img.shape[1] - 1, n).astype(int)
+    hgt = 0.02 + img[np.ix_(ys, xs)]
+    u = np.linspace(-0.5, 0.5, n)
+    pts = np.stack([np.broadcast_to(u[None, :], (n, n)), hgt, np.broadcast_to(u[:, None], (n, n))], -1)
+    segs = [np.stack([pts[:, :-1], pts[:, 1:]], 2).reshape(-1, 2, 3), np.stack([pts[:-1], pts[1:]], 2).reshape(-1, 2, 3)]
+    return np.concatenate(segs)
+
+
+def mesh_edges(path, limit=900, frame=None):
+    """A sample of a mesh's edges (k, 2, 3), in mesh units, cached per source (and frame, for a mesh
+    that deforms); None if it cannot be read."""
+    from ..engine.mesh import IMAGE_EXTS, MeshLibrary, load_mesh, mesh_deforms, split_source
     try:
-        key = (path, os.path.getmtime(path))
+        key = (path, MeshLibrary._stamp(path), int(frame) if (frame is not None and mesh_deforms(path)) else None)
     except OSError:
         return None
     hit = _MESH_EDGES.get(path)
     if hit is not None and hit[0] == key:
         return hit[1]
     try:
-        from ..engine.mesh import load_mesh
-        v, t = load_mesh(path)
+        from pathlib import Path
+        if Path(split_source(path)[0]).suffix.lower() in IMAGE_EXTS:
+            segs = _heightfield_edges(path)
+            _MESH_EDGES[path] = (key, segs)
+            return segs
+        v, t = load_mesh(path, key[2])
     except Exception:
         return None
     e = np.sort(np.concatenate([t[:, [0, 1]], t[:, [1, 2]], t[:, [2, 0]]]), axis=1)
@@ -47,6 +66,57 @@ def mesh_edges(path, limit=900):
     return segs
 
 
+_VOLUME_BOXES = {}
+
+
+def volume_box(source, frame=None):
+    """The part of a Volume emitter's field that holds anything (its own frame, metres), or None; read
+    once per file (the engine's own read fills the same disk cache)."""
+    from ..engine.mesh import MeshLibrary
+    from ..io.volume import field_source, is_field, load_field
+    src = source if is_field(source) else field_source(source)
+    try:
+        key = (src, MeshLibrary._stamp(src))
+    except OSError:
+        return None
+    if key not in _VOLUME_BOXES:
+        try:
+            g, _ = load_field(src, frame, 96)
+            _VOLUME_BOXES[key] = (g.mesh_min, g.mesh_max)
+        except Exception:
+            _VOLUME_BOXES[key] = None
+    return _VOLUME_BOXES[key]
+
+
+def fabric_lines(sc, i, frame):
+    """The outline of fabric i where it is placed (its rest shape), with its pins marked."""
+    f = sc.fabrics[i]
+    g = lambda k: sc.get(('fabric', i, k), frame)
+    p = np.asarray(g('position'), float)
+    yaw = float(g('yaw'))
+    if f['shape'] == 'mesh':
+        segs = mesh_edges(sc.mesh_path(f['mesh'])) if f['mesh'] else None
+        if segs is None:
+            return shape_lines('sphere', p, (0.1, 0.1, 0.1))
+        return [p + _rot_y(seg * np.asarray(f['scale'], float), yaw) for seg in segs]
+    w, h = float(f['width']) / 2, float(f['height']) / 2
+    if f['orientation'] == 'lying':
+        c = np.array([[-w, 0, -h], [w, 0, -h], [w, 0, h], [-w, 0, h], [-w, 0, -h]])
+        top = c[2:4]
+    else:
+        c = np.array([[-w, -h, 0], [w, -h, 0], [w, h, 0], [-w, h, 0], [-w, -h, 0]])
+        top = c[2:4]
+    out = [p + _rot_y(c, yaw)]
+    pins = {'top': [top], 'side': [np.array([c[0], c[3]])], 'top_corners': [top[:1], top[1:]],
+            'corners': [c[k:k + 1] for k in range(4)]}.get(f['pins'], [])
+    for seg in pins:
+        for q in seg:
+            out.append(p + _rot_y(np.array([q + [0, 0.04, 0], q - [0, 0.04, 0]]), yaw))
+        if len(seg) == 2:
+            out.append(p + _rot_y(np.array(seg) + [0, 0.02, 0], yaw))
+    return out
+
+
 def _rot_y(pts, yaw_deg):
     """Rotate object-space offsets about y into fire-local space (matches the solver's rotation)."""
     a = np.radians(yaw_deg)
@@ -55,15 +125,22 @@ def _rot_y(pts, yaw_deg):
     return np.stack([c * q[..., 0] + s * q[..., 2], q[..., 1], -s * q[..., 0] + c * q[..., 2]], axis=-1)
 
 
-def shape_lines(shape, pos, size, end=None, yaw=0.0, mesh=None):
+def shape_lines(shape, pos, size, end=None, yaw=0.0, mesh=None, frame=None):
     """Polylines (lists of Nx3 arrays) outlining an emitter or collider shape in fire-local space."""
     p = np.asarray(pos, float)
     s = np.asarray(size, float)
     if shape == 'mesh':
-        segs = mesh_edges(mesh) if mesh else None
+        segs = mesh_edges(mesh, frame=frame) if mesh else None
         if segs is None:
             return shape_lines('sphere', pos, (0.1, 0.1, 0.1))
         return [p + _rot_y(seg * s, yaw) for seg in segs]
+    if shape == 'volume':
+        box = volume_box(mesh, frame) if mesh else None
+        if box is None:
+            return shape_lines('sphere', pos, (0.1, 0.1, 0.1))
+        lo, hi = np.asarray(box[0], float) * s, np.asarray(box[1], float) * s
+        c = 0.5 * (lo + hi)
+        return [p + _rot_y(line, yaw) for line in shape_lines('box', c, 0.5 * (hi - lo))]
     if shape != 'capsule' and yaw:
         return [p + _rot_y(line - p, yaw) for line in shape_lines(shape, pos, size, end)]
     X, Y, Z = np.eye(3)
@@ -110,7 +187,18 @@ class Viewport(QWidget):
         self.zoom = 1.0
         self.pan = QPointF(0, 0)
         self.guides = True
+        self.show_stats = False
+        self.mode_labels = {}   # the view's name for this kind of simulation (main window)
+        self.drop_hint = None   # text shown while a file is dragged over the window
+        self.drop_point = None  # where a dragged building block would land
         self.sim_msg = ''
+        # what holds up the next frame (UI.set_busy), shown as a card over the viewer: (text, fraction) or None
+        self.busy = None
+        self.loading = None     # name of a scene that has no frame on screen yet
+        self._busy_since = 0.0
+        self._busy_anim = QTimer(self)
+        self._busy_anim.setInterval(50)
+        self._busy_anim.timeout.connect(self.update)
         self._drag = None
         self._hover = None
         self.setMouseTracking(True)
@@ -128,7 +216,48 @@ class Viewport(QWidget):
     def set_frame_image(self, img: QImage, frame, stats):
         self.image = img
         self.stats = stats
+        self.loading = None
+        self.set_busy(None)
         self.update()
+
+    def begin_load(self, name):
+        """A different scene replaced the last: drop its picture and show what the engine is doing
+        until the new scene's first frame is in."""
+        self.image = None
+        self.stats = {}
+        self.loading = name
+        self.busy = None
+        self.set_busy('Setting up the simulation', -1.0)
+
+    def set_busy(self, text, frac=-1.0):
+        """What holds up the next frame (None when nothing). A short wait shows nothing; one that
+        lasts, or any wait for a scene just loaded, shows a card with its progress."""
+        if not text:
+            self.busy = None
+            self._busy_anim.stop()
+            self.update()
+            return
+        if self.busy is None or self.busy[1] == -2.0:
+            self._busy_since = time.monotonic()
+        self.busy = (text, float(frac))
+        if frac == -2.0:   # an error: nothing moves on the card
+            self._busy_anim.stop()
+        elif not self._busy_anim.isActive():
+            self._busy_anim.start()
+        self.update()
+
+    def set_drop_hint(self, text, marker=False):
+        if text != self.drop_hint:
+            self.drop_hint = text
+            if not marker:
+                self.drop_point = None
+            self.update()
+
+    def set_drop_point(self, gp):
+        """Where a building block dragged over the viewer would land (fire-local x, z on the ground), or None."""
+        if gp != self.drop_point:
+            self.drop_point = gp
+            self.update()
 
     # -- geometry -----------------------------------------------------------------------------------------
 
@@ -195,7 +324,76 @@ class Viewport(QWidget):
             except Exception:
                 pass
             p.restore()
+        self._paint_busy(p, r)
         self._paint_hud(p, r)
+        self._paint_hints(p, r)
+
+    def _paint_busy(self, p, r):
+        if self.busy is None:
+            return
+        text, frac = self.busy
+        waited = time.monotonic() - self._busy_since
+        error = frac == -2.0
+        if self.loading is None and not error and waited < 0.6:
+            return
+        head =('Could not show ' + (self.loading or 'this frame')) if error else (
+            f'Loading {self.loading}' if self.loading else 'Working')
+        note = None
+        if error:
+            note = 'Try another preset, or Simulation › Restart simulation. The details are in the status bar too.'
+        elif text.startswith('Compiling GPU shaders'):
+            note = ('Your graphics driver compiles each shader the first time it sees it (after an install or an update). '
+                    'The big ones can take several minutes; after that they start at once.')
+        elif text.startswith('Pre-roll'):
+            note = 'So the effect is already going at the first frame. It is cached: you only wait once.'
+        cw = min(460.0, max(260.0, r.width() - 40))
+        f_head = QFont(p.font())
+        f_head.setPointSizeF(11)
+        f_head.setBold(True)
+        f_body = QFont(p.font())
+        f_body.setPointSizeF(9)
+        flags = Qt.TextWordWrap | Qt.AlignLeft | Qt.AlignTop
+        p.setFont(f_body)
+        body_r = p.boundingRect(QRectF(0, 0, cw - 32, 400), flags, text)
+        note_r = p.boundingRect(QRectF(0, 0, cw - 32, 400), flags, note) if note else QRectF()
+        ch = 14 + 26 + body_r.height() + 10 + (0 if error else 14) + (note_r.height() + 4 if note else 0) + 10
+        card = QRectF(r.center().x() - cw / 2, r.center().y() - ch / 2, cw, ch)
+        p.save()
+        p.setRenderHint(QPainter.Antialiasing, True)
+        p.setPen(QPen(QColor(theme.BAD if error else theme.LINE), 1))
+        p.setBrush(QColor(24, 24, 27, 238))
+        p.drawRoundedRect(card, 6, 6)
+        x, y = card.x() + 16, card.y() + 14
+        p.setFont(f_head)
+        p.setPen(QColor(theme.BAD if error else theme.TEXT))
+        p.drawText(QRectF(x, y, cw - 32 - 50, 22), Qt.AlignLeft | Qt.AlignVCenter, head)
+        if not error:
+            p.setFont(f_body)
+            p.setPen(QColor(theme.MUTED))
+            m, sec = divmod(int(waited), 60)
+            p.drawText(QRectF(x, y, cw - 32, 22), Qt.AlignRight | Qt.AlignVCenter, f'{m}:{sec:02d}')
+        y += 26
+        p.setFont(f_body)
+        p.setPen(QColor(theme.TEXT))
+        p.drawText(QRectF(x, y, cw - 32, body_r.height()), flags, text)
+        y += body_r.height() + 10
+        if not error:
+            bar = QRectF(x, y, cw - 32, 4)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(theme.FIELD))
+            p.drawRoundedRect(bar, 2, 2)
+            p.setBrush(QColor(theme.ACCENT))
+            if frac >= 0:
+                p.drawRoundedRect(QRectF(bar.x(), bar.y(), bar.width() * min(max(frac, 0.0), 1.0), 4), 2, 2)
+            else:   # unknown length: a segment sweeping across
+                seg = bar.width() * 0.25
+                t = (waited * 0.6) % 1.0
+                p.drawRoundedRect(QRectF(bar.x() + (bar.width() + seg) * t - seg, bar.y(), seg, 4).intersected(bar), 2, 2)
+            y += 14
+        if note:
+            p.setPen(QColor(theme.MUTED))
+            p.drawText(QRectF(x, y, cw - 32, note_r.height()), flags, note)
+        p.restore()
 
     def _poly(self, p, cs, fire, pts, pen):
         px, ok = self._project_local(cs, fire, pts)
@@ -249,16 +447,42 @@ class Viewport(QWidget):
             is_sel = sel == ('emitter', i)
             pen = QPen(QColor(theme.ACCENT) if is_sel else QColor(255, 170, 90, 140), 1.6 if is_sel else 1.0)
             self._lines(p, cs, fire, shape_lines(em['shape'], g('position'), g('size'), g('end'), g('yaw'),
-                                                 sc.mesh_path(em['mesh'])), pen)
+                                                 sc.item_source(em) if em['shape'] == 'volume' else sc.mesh_path(em['mesh']),
+                                                 self.doc.frame - em.get('mesh_offset', 0.0)), pen)
+        for i, l in enumerate(sc.lights):
+            if not l['enabled']:
+                continue
+            g = lambda k, i=i: sc.get(('light', i, k), self.doc.frame)
+            is_sel = sel == ('light', i)
+            col = QColor(255, 220, 120, 240 if is_sel else 150)
+            pen = QPen(col, 1.6 if is_sel else 1.0)
+            pos = np.asarray(g('position'), float)
+            r = max(float(l['radius']), 0.05)
+            lines = shape_lines('sphere', pos, (r, r, r))
+            if l['kind'] in ('spot', 'area'):
+                aim = np.asarray(g('direction'), float)
+                aim = aim / max(float(np.linalg.norm(aim)), 1e-9)
+                lines.append(np.stack([pos, pos + aim * max(0.5, 5 * r)]))
+            self._lines(p, cs, fire, lines, pen)
+        for i, f in enumerate(sc.fabrics):
+            if not f['enabled']:
+                continue
+            is_sel = sel == ('fabric', i)
+            pen = QPen(QColor(150, 210, 255, 240 if is_sel else 130), 1.6 if is_sel else 1.0, Qt.DashLine)
+            self._lines(p, cs, fire, fabric_lines(sc, i, self.doc.frame), pen)
+        floats = self.stats.get('floats') if self.stats.get('frame') == self.doc.frame else None
         for i, c in enumerate(sc.colliders):
             if not c['enabled']:
                 continue
-            g = lambda k: sc.get(('collider', i, k), self.doc.frame)
+            ov = (floats or {}).get(i) if c.get('floating') else None
+            g = (lambda k, ov=ov, i=i: (tuple(ov['pos']) if k == 'position' else math.degrees(ov['rot_y']))
+                 if ov is not None and k in ('position', 'yaw') else sc.get(('collider', i, k), self.doc.frame))
             is_sel = sel == ('collider', i)
             col = QColor(255, 140, 80) if c.get('burnable') else QColor(120, 190, 255)
             col.setAlpha(230 if is_sel else 120)
             pen = QPen(col, 1.6 if is_sel else 1.0)
-            self._lines(p, cs, fire, shape_lines(c['shape'], g('position'), g('size'), None, g('yaw'), sc.mesh_path(c['mesh'])), pen)
+            self._lines(p, cs, fire, shape_lines(c['shape'], g('position'), g('size'), None, g('yaw'), sc.mesh_path(c['mesh']),
+                                                 self.doc.frame - c.get('mesh_offset', 0.0)), pen)
             op = np.asarray(g('opening'), float)
             if (op > 0).all():  # the doorway or window cut through it
                 at = np.asarray(g('position'), float) + _rot_y(np.asarray(g('opening_at'), float), g('yaw'))
@@ -312,34 +536,82 @@ class Viewport(QWidget):
         st = self.stats
         f = QFont(theme.mono_font(8.5))
         p.setFont(f)
-        lines = [f'{MODE_NAMES.get(self.mode, self.mode)}   frame {self.doc.frame}']
-        if st:
+        lines = [f'{self.mode_labels.get(self.mode) or MODE_NAMES.get(self.mode, self.mode)}  ·  frame {self.doc.frame}']
+        if st and self.show_stats:
             dims = st.get('dims') or (0, 0, 0)
             lines.append(f'{dims[0]}×{dims[1]}×{dims[2]} voxels · {st.get("cell_mm", 0):.1f} mm · {st.get("substeps", 0)} substeps')
             if st.get('kind') == 'liquid':
                 ww = st.get('whitewater', 0)
                 lines.append(f'{st.get("particles", 0) / 1e6:.2f} M particles · '
                              + (f'{ww / 1e3:.0f} k whitewater' if ww >= 10000 else f'{ww} whitewater'))
-                if st.get('particle_limit'):
-                    lines.append('particle limit reached: sources are held back (Liquid › Particle limit, advanced)')
             lines.append(f'sim {st.get("sim_ms", 0):.0f} ms · render {st.get("render_ms", 0):.0f} ms · max {st.get("max_speed", 0):.1f} m/s')
             if st.get('refined'):
                 lines.append('refined (4 samples)')
-        if self.sim_msg:
-            lines.append(self.sim_msg)
-        p.setPen(QColor(0, 0, 0, 160))
-        y = 18
+        if st.get('particle_limit'):
+            lines.append('particle limit reached: sources are held back (Liquid › Particle limit, advanced)')
+        fm = p.fontMetrics()
+        w = max(fm.horizontalAdvance(ln) for ln in lines) + 20
+        h = 15 * len(lines) + 10
+        box = QRectF(10, 10, w, h)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(12, 12, 14, 170))
+        p.drawRoundedRect(box, 6, 6)
+        p.setPen(QColor(230, 230, 232, 225))
+        y = box.y() + 17
         for ln in lines:
-            p.drawText(QPointF(13, y + 1), ln)
-            y += 15
-        p.setPen(QColor(230, 230, 232, 220))
-        y = 18
-        for ln in lines:
-            p.drawText(QPointF(12, y), ln)
+            p.drawText(QPointF(box.x() + 10, y), ln)
             y += 15
         W, H = self.out_size()
-        p.setPen(QColor(255, 255, 255, 90))
+        p.setPen(QColor(255, 255, 255, 80))
         p.drawText(QPointF(r.right() - 90, r.bottom() + 14), f'{W}×{H}')
+
+    def _paint_hints(self, p, r):
+        """While a file is dragged over the window: where it goes. With no footage: how to bring some in."""
+        if self.drop_hint:
+            p.save()
+            p.setPen(QPen(QColor(theme.ACCENT), 2, Qt.DashLine))
+            p.setBrush(QColor(255, 122, 47, 28))
+            p.drawRoundedRect(QRectF(self.rect()).adjusted(8, 8, -8, -8), 12, 12)
+            if self.drop_point is not None:
+                try:
+                    cs, fire, _ = self.camstate()
+                    c = np.array([self.drop_point[0], 0.0, self.drop_point[1]])
+                    rad = max(self.doc.scene.domain_size()[0] * 0.08, 0.02)
+                    ring = _circle(c, np.array([rad, 0, 0]), np.array([0, 0, rad]), 48)
+                    self._lines(p, cs, fire, [ring], QPen(QColor(theme.ACCENT), 2.0))
+                    self._lines(p, cs, fire, [np.stack([c - [rad * 1.6, 0, 0], c + [rad * 1.6, 0, 0]]),
+                                              np.stack([c - [0, 0, rad * 1.6], c + [0, 0, rad * 1.6]])], QPen(QColor(theme.ACCENT), 1.0))
+                    px, ok = self._project_local(cs, fire, [c])
+                    if ok[0]:
+                        q = self.to_widget(px[0])
+                        self._pill(p, QPointF(q.x(), q.y() - 34), self.drop_hint, strong=True)
+                        p.restore()
+                        return
+                except Exception:
+                    pass
+            self._pill(p, QPointF(self.width() / 2, self.height() / 2), self.drop_hint, strong=True)
+            p.restore()
+            return
+        sc = self.doc.scene
+        if (self.busy is None and self.image is not None and sc.kind != 'cloud' and not sc.emitters and not sc.colliders
+                and not sc.fabrics and not (sc.kind != 'fire' and (sc.data['liquid']['water_level'] > 0 or sc.data['liquid']['rain'] > 0))):
+            self._pill(p, QPointF(r.center().x(), r.center().y()), 'An empty scene · add fire, water or objects from Create, on the left',
+                       strong=True)
+        if self.busy is None and self.image is not None and not self.doc.scene.footage and not self.doc.footage_info:
+            self._pill(p, QPointF(r.center().x(), r.top() + 22), 'No footage yet · drop a clip here, or Import footage (Ctrl+I)')
+
+    def _pill(self, p, c, text, strong=False):
+        f = QFont(theme.font(10.5 if strong else 9.0, QFont.DemiBold if strong else QFont.Normal))
+        p.setFont(f)
+        fm = p.fontMetrics()
+        w = fm.horizontalAdvance(text) + 28
+        h = fm.height() + (16 if strong else 10)
+        box = QRectF(c.x() - w / 2, c.y() - h / 2, w, h)
+        p.setPen(QPen(QColor(theme.ACCENT if strong else theme.LINE_HI), 1))
+        p.setBrush(QColor(20, 20, 23, 235 if strong else 200))
+        p.drawRoundedRect(box, h / 2, h / 2)
+        p.setPen(QColor(theme.TEXT if strong else theme.MUTED))
+        p.drawText(box, Qt.AlignCenter, text)
 
     # -- hit testing ------------------------------------------------------------------------------------------
 
@@ -362,7 +634,7 @@ class Viewport(QWidget):
         sc = self.doc.scene
         cs, fire, _ = self.camstate()
         best, bd = None, 12.0
-        for kind, items in (('emitter', sc.emitters), ('collider', sc.colliders)):
+        for kind, items in (('emitter', sc.emitters), ('collider', sc.colliders), ('light', sc.lights), ('fabric', sc.fabrics)):
             for i, it in enumerate(items):
                 if not it['enabled']:
                     continue
@@ -391,6 +663,9 @@ class Viewport(QWidget):
         if it['shape'] == 'mesh':
             segs = mesh_edges(sc.mesh_path(it['mesh']))
             ext = (np.abs(segs).reshape(-1, 3).max(0) if segs is not None else np.full(3, 0.5)) * size
+        elif it['shape'] == 'volume':
+            box = volume_box(sc.item_source(it)) if it.get('volume') else None
+            ext = (np.maximum(np.abs(box[0]), np.abs(box[1])) if box is not None else np.full(3, 0.5)) * size
         elif it['shape'] == 'sphere' and kind == 'collider':
             ext = np.full(3, size[0])
         elif it['shape'] in ('cylinder', 'cone') or (it['shape'] == 'sphere'):
@@ -449,7 +724,7 @@ class Viewport(QWidget):
                               'size0': np.asarray(sc.get((kind, i, 'size'), self.doc.frame), float),
                               'a0': None if gp is None else math.atan2(gp[2] - c[2], gp[0] - c[0])}
             elif isinstance(hit, tuple):
-                self.doc.select(hit)
+                self.doc.select(hit, force=True)
                 kind, i = hit
                 sc = self.doc.scene
                 p0 = np.asarray(sc.get((kind, i, 'position'), self.doc.frame), float)
@@ -587,7 +862,7 @@ class Viewport(QWidget):
         add = m.addMenu('Add emitter')
         from .panels import add_collider, add_emitter
         for shape, label in (('sphere', 'Sphere'), ('cylinder', 'Disc'), ('box', 'Box'), ('capsule', 'Line'), ('ring', 'Ring'), ('cone', 'Cone'),
-                             ('mesh', 'Mesh…')):
+                             ('mesh', 'Mesh…'), ('volume', 'Volume (VDB)…')):
             add.addAction(label, lambda s=shape: add_emitter(self.doc, s, self))
         m.addAction('Add collider box', lambda: self.doc.add_collider('box'))
         m.addAction('Add mesh collider…', lambda: add_collider(self.doc, 'mesh', self))

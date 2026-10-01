@@ -12,7 +12,9 @@
 const FX_F: f32 = 65536.0;   // pressure sums
 const FX_T: f32 = 4096.0;    // moment sums (cells x pressure)
 const FX_V: f32 = 1024.0;    // velocity sums (m/s)
-const SLOT: u32 = 12u;       // i32 per body and substep
+const SLOT: u32 = 16u;       // i32 per body and substep:
+// 0-2 pressure force, 3-5 its moment about the centre, 6-8 liquid velocity sum, 9 its count,
+// 10 cells with nothing liquid under them, 11 pressure beside those, 12 its count, 13 solid cells
 
 struct Params {
   g: Grid,
@@ -44,10 +46,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let body = U.col[u32(U.r0.w)];
   let h = U.g.n.w;
   if (col_sdf(body, world_of(U.g, vec3<f32>(c) + vec3<f32>(0.5))) >= 0.0) { return; }
-  add(11u, 1.0, 1.0);  // solid cells of the body
+  add(13u, 1.0, 1.0);  // solid cells of the body
   let centre = (body.a.xyz - U.g.org.xyz) / h;
   var f = vec3<f32>(0.0);
-  var tq = 0.0;
+  var tq = vec3<f32>(0.0);
   var vs = vec3<f32>(0.0);
   var nv = 0.0;
   for (var i = 0; i < 6; i++) {
@@ -61,7 +63,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let ff = -vec3<f32>(d) * x;   // pressure pushes into the body
     f += ff;
     let r = vec3<f32>(c) + vec3<f32>(0.5) + 0.5 * vec3<f32>(d) - centre;
-    tq += r.z * ff.x - r.x * ff.z;
+    tq += cross(r, ff);
     vs += mac_vel(vel, vec3<f32>(q) + vec3<f32>(0.5), n);
     nv += 1.0;
   }
@@ -77,7 +79,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     exposed = tb < 0.5 || (tb > 1.5 && col_sdf(body, world_of(U.g, vec3<f32>(below) + vec3<f32>(0.5))) >= 0.0);
   }
   if (exposed) {
-    add(8u, 1.0, 1.0);
+    add(10u, 1.0, 1.0);
     for (var layer = 0; layer < 2; layer++) {
       let base = select(c, below, layer == 1);
       if (base.y < 0) { continue; }
@@ -89,8 +91,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         if (!in_grid(q, n)) { continue; }
         let tt = textureLoad(T, q, 0).x;
         if (tt < 0.5 || tt > 1.5) { continue; }
-        add(9u, textureLoad(X, q, 0).x, FX_F);
-        add(10u, 1.0, 1.0);
+        add(11u, textureLoad(X, q, 0).x, FX_F);
+        add(12u, 1.0, 1.0);
       }
     }
   }
@@ -98,9 +100,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   add(0u, f.x, FX_F);
   add(1u, f.y, FX_F);
   add(2u, f.z, FX_F);
-  add(3u, tq, FX_T);
-  add(4u, vs.x, FX_V);
-  add(5u, vs.y, FX_V);
-  add(6u, vs.z, FX_V);
-  add(7u, nv, 1.0);
+  add(3u, tq.x, FX_T);
+  add(4u, tq.y, FX_T);
+  add(5u, tq.z, FX_T);
+  add(6u, vs.x, FX_V);
+  add(7u, vs.y, FX_V);
+  add(8u, vs.z, FX_V);
+  add(9u, nv, 1.0);
 }

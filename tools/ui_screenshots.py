@@ -56,6 +56,7 @@ def main():
     win = MainWindow(w)
     win.resize(1680, 980)
     win.show()
+    win.doc.set_playing(False)   # the app plays on start; these screenshots want still, refined frames
     got = []
     w.frameReady.connect(lambda img, f, st: got.append((f, st.get('refined'))))
     pump(app, 30, until=lambda: any(r for _, r in got))

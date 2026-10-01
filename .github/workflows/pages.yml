@@ -1,0 +1,40 @@
+name: Website
+
+# Builds the site (site/ + the guides in docs/) with tools/build_site.py and publishes it to GitHub Pages
+# (https://gjnail.github.io/blackbody/) whenever the site, the guides or their media change on main.
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", "docs/**", "tools/build_site.py", "blackbody/assets/presets/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install markdown==3.9
+      - run: python tools/build_site.py
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v5

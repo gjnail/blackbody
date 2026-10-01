@@ -3,10 +3,18 @@
 // aux (optional): x = share of the air's oxygen used up (0 = fresh air), y = water vapour above the
 //   air's own (g/m^3), z = condensed water (g/m^3, for latent heat). chem (optional): rgb = flame colourant.
 // burn (optional): the burnable floor; burn_obj + slots: burnable colliders (see burn_common.wgsl).
-// water (optional): share of each cell filled with liquid water (from a liquid simulation in the same box).
+// water (optional): liquid water from a liquid simulation in the same box (both_wet.wgsl): x = share of
+//   the cell filled with it, y = how soaked the fuel is, z = steam boiling off a hot wet fuel bed (g/m^3/s),
+//   w = smoke from a doused bed still charring (1/s).
 //
 // The same kernel runs on the finer upres grid (lo.x = how many times finer): there it reads the
 // optional fields from the simulation grid and writes only the scalars.
+//
+// Premixed flame fronts: fuel that has already mixed with air (thin enough that mixing does not
+// limit it) catches from a hot neighbour and burns through the cell in about (cell / flame speed)
+// seconds, however cold it is. That is how a flame runs back through a spilled-fuel vapour cloud or
+// through a smoke-filled room when air gets in (a backdraft), instead of creeping at the speed heat
+// spreads. Soot stains: smoke next to the floor or the box's closed sides leaves soot there (stain).
 //!include common.wgsl
 //!include noise.wgsl
 //!include meshsdf.wgsl
@@ -25,9 +33,13 @@ struct Params {
   wet: vec4<f32>,    // vapour on (1/0), steam per unit of heat removed, water per unit of fuel burned, vapour mixing (1/s)
   surf: vec4<f32>,   // burning surfaces: fuel (1/s), heat, smoke (1/s), smoulder smoke (1/s)
   feat: vec4<f32>,   // colourant on, surfaces on, air mixing (turbulent diffusivity, m^2/s), boiling point of water (field temperature)
-  wat: vec4<f32>,    // water on (1/0), how fast a cell full of water puts fire out (1/s), _, _
+  wat: vec4<f32>,    // water on (1/0), how fast a cell full of water puts fire out (1/s), fuel kept to its total (1/0), _
   therm: vec4<f32>,  // heat expansion (share of physical), air temperature (K), flame minus air temperature (K), latent heat (field temperature per g/m^3)
-  lo: vec4<f32>,     // x = cells of this grid per simulation cell (1, or the upres factor), y = air's own vapour (g/m^3)
+  lo: vec4<f32>,     // x = cells of this grid per simulation cell (1, or the upres factor), y = air's own vapour (g/m^3),
+                     // z = premixed flame speed (m/s, 0 = off), w = soot stain rate (1/s, 0 = off)
+  wx: vec4<f32>,     // water in the box: steam's share of the gas where flames start to starve and where they
+                     // go out (mole fractions), steam swelling (share of physical), steam smothers without
+                     // water in the box too (1/0: wet fabric steaming, cloth.py)
   cnt: vec4<f32>,    // emitter count, sponge width (cells), sponge strength (1/s), _
   em: array<Emitter, MAX_EMITTERS>,
   ccnt: vec4<f32>,   // collider count
@@ -47,6 +59,8 @@ struct Params {
 @group(0) @binding(10) var water: texture_3d<f32>;
 @group(0) @binding(11) var burn_obj: texture_3d<f32>;
 @group(0) @binding(12) var<storage, read> slots: array<BurnSlot>;
+@group(0) @binding(13) var stain: texture_storage_3d<r32float, read_write>;  // soot deposited on surfaces
+@group(0) @binding(14) var<storage, read> fuel_tot: array<f32>;  // total fuel before and after advection (fuel_sum.wgsl)
 @group(1) @binding(0) var<uniform> U: Params;
 
 fn kelvin_of(T: f32) -> f32 { return U.therm.y + U.therm.z * max(T, 0.0); }
@@ -65,6 +79,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let s = textureLoad(src, c, 0);
   var T = s.x;
   var F = s.y;
+  if (main_grid && U.wat.z > 0.5 && fuel_tot[1] > 1e-6) {
+    // advection added fuel that was never released: take it back out evenly
+    F *= clamp(fuel_tot[0] / fuel_tot[1], 0.8, 1.0);
+  }
   var S = s.z;
   var Fl = s.w;
   let T0 = T;
@@ -94,13 +112,33 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let wp = world_of(U.g, vec3<f32>(c) + 0.5);
 
   var removed = 0.0;  // heat taken out by extinguishing emitters and water
+  var made = 0.0;     // steam made this step (g/m^3), which swells the gas
+  // liquid water sharing the box: soaked fuel no longer burns off its bed (both_wet.wgsl)
+  var wt = vec4<f32>(0.0);
+  if (U.wat.x > 0.5) { wt = textureLoad(water, cl, 0); }
+  let dry = 1.0 - clamp(wt.y, 0.0, 1.0);
   let cnt = i32(U.cnt.x);
   for (var i = 0; i < cnt; i++) {
     let e = U.em[i];
+    let vol = i32(e.a.w + 0.5) == 7;
+    if (vol && e.s.w > 1.5) {
+      // a volume that fills the box (once, in the step at its start time) or keeps it topped up (every
+      // step while it is on): the smoke, fuel and heat it holds, as they are (a second's worth of its rates
+      // where it is densest), not a rate
+      let m = volume_density(e, wp);
+      if (m > 0.0) {
+        F = max(F, e.d.x * m * dry);
+        S = max(S, e.d.z * m);
+        T = max(T, e.d.y * volume_heat(e, wp) * dry);
+        ch = vec4<f32>(max(ch.rgb, e.col.rgb * m), ch.w);
+        ax.y = max(ax.y, e.col.w * min(m, 1.0));
+      }
+      continue;
+    }
     let w = emitter_weight(e, wp, h, time);
     if (w > 0.0) {
-      F += e.d.x * w * dt;
-      T = max(T, e.d.y * w);
+      F += e.d.x * w * dt * dry;
+      T = max(T, e.d.y * select(w, volume_heat(e, wp), vol) * dry);
       S += e.d.z * w * dt;
       ch = vec4<f32>(ch.rgb + e.col.rgb * (w * dt), ch.w);
       ax.y = max(ax.y, e.col.w * w);
@@ -124,7 +162,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
   // liquid water in the cell works like a hose: it smothers fuel and flame and boils away the heat
   if (U.wat.x > 0.5) {
-    let wf = clamp(textureLoad(water, cl, 0).x, 0.0, 1.0);
+    let wf = clamp(wt.x, 0.0, 1.0);
     if (wf > 0.0) {
       let q = exp(-U.wat.y * wf * dt);
       let boil = U.feat.w;
@@ -135,6 +173,19 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       F *= q;
       Fl *= q;
     }
+    // a hot, wet fuel bed boils its water off as steam at the boiling point, and chars
+    if (wt.z > 0.0) {
+      // it leaves the bed as pure steam at 100 C (about 590 g/m^3): a volume st / 590 of it mixes with the
+      // gas here, which it displaces (the swelling carries the extra volume away), so the gas takes the
+      // mixture's temperature and water, and where the steam is most of the gas it is at 100 C, flames or not
+      let st = wt.z * dt;
+      let a = st / 590.0;
+      let q_air = U.lo.y;
+      ax.y = (q_air + max(ax.y, 0.0) + st) / (1.0 + a) - q_air;
+      T = (T + U.feat.w * a) / (1.0 + a);
+      made += st;
+    }
+    S += max(wt.w, 0.0) * dt;
   }
 
   // burning and smouldering surfaces release fuel, heat and smoke into the air next to them:
@@ -161,6 +212,31 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let rich = max(U.comb3.x, 1e-3);
   let oxy = 1.0 / (1.0 + (F / rich) * (F / rich));
   var burned = F * (1.0 - exp(-U.comb.y * dt)) * lit * oxy;
+  if (U.lo.z > 0.0 && F > 1e-4 && lit < 0.999) {
+    // premixed flame front: catches from a hot neighbour (see the notes at the top)
+    var tn = 0.0;
+    for (var i = 0; i < 6; i++) {
+      let o = select(-1, 1, (i & 1) == 1);
+      let a = i >> 1;
+      let q = c + vec3<i32>(select(0, o, a == 0), select(0, o, a == 1), select(0, o, a == 2));
+      if (!in_grid(q, vec3<i32>(n))) { continue; }
+      tn = max(tn, textureLoad(src, q, 0).x);
+    }
+    let front = smoothstep(ign * 0.7, ign * 1.3 + 1e-4, tn) * (1.0 - lit);
+    burned += F * (1.0 - exp(-U.lo.z / h * dt)) * front * oxy;
+  }
+  if ((U.wat.x > 0.5 || U.wx.w > 0.5) && wet_on) {
+    // steam smothers: it dilutes the air feeding the flame, which falls off as steam passes about a
+    // quarter of the gas and goes out by about half (how water mist puts fires out, beyond cooling)
+    let mol = 101325.0 / (8.314 * max(kelvin_of(T), 250.0));
+    let smothered = smoothstep(U.wx.x, U.wx.y, max(ax.y, 0.0) / 18.0 / mol);
+    burned *= 1.0 - smothered;
+    // what a smothered bed still gives off does not burn: it condenses into the white-grey smoke of a
+    // doused fire (the tar in it) instead of hanging about as fuel waiting for a flame
+    let tar = F * (1.0 - exp(-2.0 * smothered * dt));
+    F -= tar;
+    S += tar * 0.35;
+  }
   if (tracked) {
     // tracked air: flames die once most of the oxygen is used (real flames go out below ~13% O2),
     // and burning can never use more oxygen than is left
@@ -174,6 +250,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   S += burned * U.comb.w;
   Fl = Fl * exp(-dt / max(U.comb2.y, 1e-3)) + burned * U.comb2.x;
   ax.y += burned * U.wet.z + removed * U.wet.y;
+  made += removed * U.wet.y;
 
   // cooling: exponential mixing loss plus radiative loss (exact step of dT/dt = -k T^4)
   T = T * exp(-U.decay.x * dt);
@@ -213,6 +290,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (U.therm.x > 0.0) {
     ex += U.therm.x * (T - T0) * U.therm.z / (max(kelvin_of(0.5 * (T + T0)), 1.0) * max(dt, 1e-6));
   }
+  if (U.wx.z > 0.0 && made > 0.0) {
+    // water flashing to steam swells about 1700 times: the steam made this step pushes the gas out
+    let rho_steam = 18.0 * 101325.0 / (8.314 * max(kelvin_of(T), 373.0));   // g/m^3 of pure steam
+    ex += U.wx.z * made / rho_steam / max(dt, 1e-6);
+  }
   ex = clamp(ex, -U.comb3.y, U.comb3.y);
 
   // sponge layer: gas fades out as it nears an open boundary, so the domain edge never shows;
@@ -232,7 +314,18 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
 
-  if (textureLoad(sdf, c, 0).x < 0.0) {
+  let solid_here = textureLoad(sdf, c, 0).x < 0.0;
+  if (main_grid && U.lo.w > 0.0 && !solid_here && S > 1e-4) {
+    // soot sticks to the floor and the box's closed top and sides (colliders keep theirs in their own
+    // frames, stain_obj.wgsl, so it moves with them)
+    let side = c.x == 0 || c.z == 0 || c.x == i32(n.x) - 1 || c.z == i32(n.z) - 1;
+    let wall = (c.y == 0 && U.g.bc.z < 0.5) || (c.y == i32(n.y) - 1 && U.g.bc.y < 0.5) || (side && U.g.bc.x < 0.5);
+    if (wall) {
+      let st = textureLoad(stain, c).x;
+      textureStore(stain, c, vec4<f32>(st + U.lo.w * S * (1.0 + max(T, 0.0)) * dt, 0.0, 0.0, 0.0));
+    }
+  }
+  if (solid_here) {
     T = 0.0; F = 0.0; S = 0.0; Fl = 0.0; ex = 0.0;
     ax = vec4<f32>(0.0);
     ch = vec4<f32>(0.0);

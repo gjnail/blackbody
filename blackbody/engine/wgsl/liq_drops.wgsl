@@ -10,7 +10,7 @@ struct Params {
   n: vec4<f32>,        // grid dims, metres per cell
   org: vec4<f32>,      // grid corner (fire-local m), amount (opacity scale)
   res: vec4<f32>,      // width, height, shutter (s), focal length (px)
-  size: vec4<f32>,     // droplet size (m), min width (px), index of refraction, _
+  size: vec4<f32>,     // droplet size (m), min width (px), index of refraction, rainbow
   eye: vec4<f32>,      // camera position (world), _
   sky: vec4<f32>,      // sky light (rgb), _
   sun: vec4<f32>,      // key light (rgb)
@@ -37,6 +37,21 @@ fn hash1(x: u32) -> f32 {
   var s = x * 747796405u + 2891336453u;
   s = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
   return f32((s >> 22u) ^ s) * (1.0 / 4294967296.0);
+}
+
+// Sunlight a cloud of water drops sends back toward the eye along view direction v (unit, world),
+// relative to the key light: the primary bow about 42 degrees from the point opposite the sun, red
+// outside and violet inside, the fainter secondary near 51 degrees with its colours reversed, and
+// the brighter sky inside the primary (light leaving the drops at every angle under the bow's).
+fn rainbow(v: vec3<f32>, to_sun: vec3<f32>) -> vec3<f32> {
+  let a = degrees(acos(clamp(dot(v, -to_sun), -1.0, 1.0)));
+  let p1 = vec3<f32>(42.2, 41.3, 40.6);
+  let p2 = vec3<f32>(50.4, 51.4, 53.0);
+  let d1 = (vec3<f32>(a) - p1) / 0.75;
+  let d2 = (vec3<f32>(a) - p2) / 0.9;
+  let bow = exp(-0.5 * d1 * d1) + 0.35 * exp(-0.5 * d2 * d2);
+  let inner = 0.12 * smoothstep(40.5, 30.0, a) * smoothstep(0.0, 8.0, a);
+  return bow + vec3<f32>(inner);
 }
 
 fn fresnel_d(cosi: f32, ior: f32) -> f32 {
@@ -103,12 +118,14 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   o.alpha = cover;
   o.col = U.sky.rgb * 0.55 * cover;
   o.glint = U.sun.rgb * (reflect_glint + forward) * cover * (0.6 + 0.8 * hash1(ii * 747796405u + 3u));
+  if (U.size.w > 0.0) { o.col += U.sun.rgb * rainbow(view, l) * (0.6 * U.size.w * cover); }
   return o;
 }
 
 struct FOut {
   @location(0) beauty: vec4<f32>,
   @location(1) emit: vec4<f32>,
+  @location(2) mask: vec4<f32>,
 };
 
 @fragment
@@ -123,5 +140,6 @@ fn fs(i: VOut) -> FOut {
   var o: FOut;
   o.beauty = vec4<f32>((i.col + i.glint) * f, i.alpha * f);
   o.emit = vec4<f32>(i.glint * f, 0.0);
+  o.mask = vec4<f32>(0.0, 0.0, 0.0, i.alpha * f);
   return o;
 }

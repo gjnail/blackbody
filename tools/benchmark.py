@@ -65,6 +65,10 @@ def feature_cases(res):
     yield 'heat expansion', with_(lambda s: s.data['combustion'].update(thermal_expansion=1.0))
     yield 'multiple scattering off', with_(lambda s: s.data['shading'].update(multiple_scattering=0.0))
     yield 'surface light off', with_(lambda s: s.data['composite'].update(surface_light=0.0))
+    yield 'surface shadows off', with_(lambda s: s.data['composite'].update(surface_shadows=0.0))
+    yield 'flame fronts + heavy fuel', with_(lambda s: s.data['combustion'].update(flame_speed=4.0, fuel_weight=0.5))
+    yield 'soot stains', with_(lambda s: s.data['combustion'].update(soot_stain=0.3))
+    yield 'growing box', with_(lambda s: s.data['domain'].update(grow=True, grow_limit=2.0, size_x=1.0, size_z=1.0))
 
 
 def main():

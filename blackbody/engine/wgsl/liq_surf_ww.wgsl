@@ -2,7 +2,7 @@
 // class's density on the surface grid (slots 8, 9, 10 of each node's accumulator). Foam fades out
 // over the last quarter of its life.
 
-const FX_K: f32 = 16777216.0;
+const FX_K: f32 = 1048576.0;     // 2^20: room for thousands of overlapping kernels in a node without overflowing
 const ACC_STRIDE: u32 = 12u;
 
 fn lin_id(gid: vec3<u32>, nwg: vec3<u32>) -> u32 {
