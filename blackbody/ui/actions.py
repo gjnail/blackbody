@@ -278,6 +278,32 @@ def make_fall(win, i, on=True, at_frame=False):
     doc.set_playing(True)
 
 
+BREAKS_INTO = [('voronoi', 'Chunks'), ('bricks', 'Bricks'), ('shards', 'Shards (glass)'), ('splinters', 'Splinters (wood)')]
+
+
+def make_breakable(win, i, on=True, fracture=None):
+    """Make object i breakable (cut beforehand into pieces that come apart where it is hit hard enough), in the
+    pattern its material breaks into unless given; on=False makes it whole again."""
+    doc = win.doc
+    d = doc.scene.colliders[i]
+    out = {}
+
+    def fn(s):
+        out['notes'] = C.make_breakable(s, i, on=on, fracture=fracture)
+    doc.edit(f'{"Make" if on else "Stop"} {d["name"]} {"breakable" if on else "breaking"}', fn)
+    c = doc.scene.colliders[i]
+    notes = ' '.join(out.get('notes') or [])
+    if on and c.get('breakable'):
+        into = dict(BREAKS_INTO).get(c.get('fracture'), 'pieces').lower()
+        _say(win, f'{d["name"]} breaks into {into} where something hits it hard enough. Throw something at it, drop it, '
+                  f'or Make it fall. {notes}'.strip())
+    elif on:
+        _say(win, notes or f'{d["name"]} cannot break.')
+    else:
+        _say(win, f'{d["name"]} is whole again.')
+    doc.set_playing(True)
+
+
 def make_temperature(win, i, celsius):
     doc = win.doc
 
@@ -468,6 +494,18 @@ def fill_menu(m: QMenu, win, sel, path_mode=None):
                 'ball')
             act(f'Drop it at this frame ({doc.frame})', lambda: make_fall(win, i, at_frame=True),
                 'Held where it is until this frame, then it falls', 'ball')
+        if d.get('breakable'):
+            act('Stop it breaking', lambda: make_breakable(win, i, on=False), 'It stays whole', 'stop')
+        else:
+            mesh = d.get('shape') == 'mesh'
+            a = act('Make it breakable', lambda: make_breakable(win, i), 'Cut into pieces that come apart where it is hit hard '
+                    'enough: bricks for brick, shards for glass, splinters for wood, chunks for the rest', 'burst', enabled=not mesh)
+            if mesh:
+                a.setToolTip('Meshes cannot break yet: boxes, balls and cylinders can')
+            sub = m.addMenu(icons.glyph_icon('burst', theme.MUTED, 16), 'Make it break into')
+            sub.setEnabled(not mesh)
+            for key, label in BREAKS_INTO:
+                sub.addAction(label, lambda k=key: make_breakable(win, i, fracture=k))
         act('Make it float', lambda: make_float(win, i, 500.0), 'It floats on the water (a pond is added if there is none)', 'waves')
         act('Make it sink', lambda: make_float(win, i, 2500.0), 'It falls in the water and sinks', 'drop')
         act('Make it hot (300 °C)', lambda: make_temperature(win, i, 300.0), 'Water on it boils', 'flame')
@@ -557,6 +595,8 @@ def quick_actions(win, sel):
         out += [('Set on fire', 'flame', lambda: _guard(win, lambda: set_on_fire(win, 'collider', i))),
                 ('Stop falling', 'stop', lambda: make_fall(win, i, on=False)) if d.get('dynamic') else
                 ('Fall', 'ball', lambda: make_fall(win, i)),
+                ('Whole', 'stop', lambda: make_breakable(win, i, on=False)) if d.get('breakable') else
+                ('Breakable', 'burst', lambda: make_breakable(win, i)),
                 ('Float', 'waves', lambda: make_float(win, i, 500.0)), ('Hot', 'flame', lambda: make_temperature(win, i, 300.0))]
     elif kind == 'fabric':
         out += [('Set on fire', 'flame', lambda: _guard(win, lambda: set_on_fire(win, 'fabric', i))),

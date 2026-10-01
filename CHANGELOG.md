@@ -33,6 +33,9 @@ Notable changes to Blackbody. The format follows
 - Make it fall and Drop it at this frame on any object (right-click it, the Fall chip on its page, or Ctrl+K), and
   Stop it falling. Falling things are drawn and picked where the simulation has them in the viewer, tilted as they
   tumble, and outlined in green. In Build, liquid scenes show objects in their materials instead of grey stand-ins.
+- Make it breakable and Make it break into (Chunks, Bricks, Shards, Splinters) on any box, ball or cylinder
+  (right-click it or the Breakable chip on its page), and Stop it breaking. Once it has broken, the viewer no longer
+  draws or picks it as the whole object.
 
 - Layers: several effects in one shot (a campfire in front, a waterfall behind), each its own simulation with its own
   box and scale, composited back to front in the viewer, renders and the command line.

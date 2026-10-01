@@ -1303,7 +1303,9 @@ class Viewport(QWidget):
         for i, c in enumerate(sc.colliders):
             if not c['enabled']:
                 continue
-            ov = (floats or {}).get(i) if (c.get('floating') or c.get('dynamic')) else None
+            ov = (floats or {}).get(i) if (c.get('floating') or c.get('dynamic') or c.get('breakable')) else None
+            if ov is not None and float(ov['pos'][1]) < -1e3:
+                continue   # broken: its pieces are what is there now
             g = (lambda k, ov=ov, i=i: (tuple(ov['pos']) if k == 'position' else math.degrees(ov['rot_y']))
                  if ov is not None and k in ('position', 'yaw') else sc.get(('collider', i, k), self.doc.frame))
             is_sel = ('collider', i) in chosen
@@ -1725,7 +1727,9 @@ class Viewport(QWidget):
             for i, it in enumerate(items):
                 if not it['enabled']:
                     continue
-                ov = (floats or {}).get(i) if kind == 'collider' and (it.get('floating') or it.get('dynamic')) else None
+                ov = (floats or {}).get(i) if kind == 'collider' and (it.get('floating') or it.get('dynamic') or it.get('breakable')) else None
+                if ov is not None and float(ov['pos'][1]) < -1e3:
+                    continue   # broken into pieces
                 where = ov['pos'] if ov is not None else sc.get((kind, i, 'position'), self.doc.frame)   # where it fell to
                 px, ok = self._project_local(cs, fire, [where])
                 if ok[0]:
