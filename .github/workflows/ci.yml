@@ -40,7 +40,7 @@ jobs:
           python -m blackbody settings > settings.txt
           grep -q "motion.buoyancy" settings.txt
       - name: Tests that need no GPU
-        run: python -m pytest -q tests/test_scene.py tests/test_io.py tests/test_camera.py tests/test_tracker.py
+        run: python -m pytest -q tests/test_scene.py tests/test_io.py tests/test_camera.py tests/test_tracker.py tests/test_solids.py
       - name: Website builds
         if: runner.os == 'Linux'
         run: python tools/build_site.py

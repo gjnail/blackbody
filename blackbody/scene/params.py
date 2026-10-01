@@ -7,6 +7,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .materials import FLOOR_OPTIONS
+from .materials import OPTIONS as MATERIAL_OPTIONS
+
 
 @dataclass(frozen=True)
 class Param:
@@ -575,6 +578,12 @@ SECTIONS = {
         C('atmos_colour', 'Haze colour', (0.55, 0.6, 0.7), tip='Colour of the haze when it is not taken from the footage (scene-linear).', group='Atmosphere'),
         B('grain_match', 'Match footage noise', True, tip='Measure the noise in the footage (how strong it is at each brightness, how coloured and how coarse) and give the fire the same, so the fire is no cleaner than the picture around it. Grain adds film grain on top.', group='Match'),
         F('grain', 'Grain', 0.0, 0.0, 1.0, '', 2, tip='Film grain on the fire, on top of the noise matched from the footage (Match footage noise).', group='Match'),
+        E('backdrop', 'Backdrop', 'stage', (('stage', 'Floor and sky'), ('colour', 'Background colour')),
+          tip='Without footage: a floor out to the horizon (with the ground on) under a sky in the ambient light of Lighting '
+          '(or the environment HDRI), lit by the fire, the key light and the lamps; or a flat background colour.', group='No footage'),
+        E('floor', 'Floor', 'concrete', FLOOR_OPTIONS, tip='What the floor is made of, without footage.', group='No footage'),
+        C('floor_tint', 'Floor tint', (1.0, 1.0, 1.0), tip='Multiplies the colours of the floor. White leaves them as they are.',
+          group='No footage'),
         C('bg', 'Background', (0.0, 0.0, 0.0), group='No footage'),
         B('bg_checker', 'Checkerboard', False, group='No footage'),
     ],
@@ -680,10 +689,35 @@ COLLIDER_PARAMS = [
     V('opening', 'Opening size', (0.0, 0.0, 0.0), 0.0, 10.0, 'm', anim=True, decimals=3, tip='Half size of a box cut out of the collider: a door, a window, a vent. Keyframe it to open a door. 0 is none.', group='Walls and openings'),
     V('opening_at', 'Opening at', (0.0, 0.0, 0.0), -20.0, 20.0, 'm', anim=True, decimals=3, tip='Centre of the opening, measured from the collider\'s centre in its own frame (it turns with the collider).', group='Walls and openings'),
     B('holdout', 'Hides fire', True, tip='The object blocks the view of fire behind it, as the real object in your footage would. Turn off for helper colliders that are not in the shot.', group='Rendering'),
+    E('look', 'Look', 'auto', (('auto', 'Automatic'), ('cg', 'CG'), ('footage', 'In the footage')),
+      tip='CG draws it in its material, lit by the fire, the sky, the key light and the lamps, with shadows. In the footage '
+      'leaves it to the real object in your footage: it only hides the fire behind it. Automatic is CG without footage, '
+      'and for things that fall or float (they are not in the footage).', group='Rendering'),
+    B('own_colour', 'Own colour', False, tip='Draw it in its own colour instead of the colour of its material (CG look).', group='Rendering'),
+    C('colour', 'Colour', (0.6, 0.6, 0.6), tip='Its colour with Own colour on (scene-linear).', group='Rendering'),
     B('burnable', 'Burnable', False, tip='With Spreading fire on, this object catches where hot gas touches it and fire spreads across its surface: a curtain, furniture, a wooden wall. It can move while it burns.', group='Burning'),
     F('temperature', 'Temperature', 20.0, -200.0, 1500.0, '°C', 0, tip='Temperature of the object surface, for a liquid with Heat and phase changes on: a hot plate 150 to 250, a stove 400, a red-hot steel bar 800, ice-cold metal -20, dry ice -78, liquid nitrogen -196. Water boils on it, dances on its vapour past about 210, or freezes onto it.', group='Heat'),
-    B('floating', 'Floats', False, tip='The liquid moves it: it floats or sinks, bobs, drifts with the flow and turns. It stays upright (it turns only about the vertical). Its keyframes set only where it starts.', group='Liquid'),
-    F('density', 'Density', 600.0, 20.0, 8000.0, 'kg/m³', 0, tip='Mass per volume of a floating object. Below the liquid\'s density it floats: pine 500, oak 750, ice 920, plastic 950; above it sinks: stone 2600, steel 7800.', group='Liquid', log=True),
+    B('dynamic', 'Falls', False, tip='A free rigid body: it falls, tumbles, slides, bounces and knocks into other things, and the gas and '
+      'the water push it. A blast blows a light one away, and in a liquid it floats or sinks by its density. Its keys set only where '
+      'it starts.', group='Physics'),
+    E('material', 'Material', 'wood', MATERIAL_OPTIONS, tip='What it is made of: how heavy, slippery, bouncy and strong it is, '
+      'and how it looks as a CG object.', group='Physics'),
+    F('density', 'Density', 0.0, 0.0, 8000.0, 'kg/m³', 0, tip='Mass per volume. 0 uses the material\'s. Below the liquid\'s density it '
+      'floats (pine 500, oak 750, ice 920, plastic 950); above it sinks (stone 2600, steel 7800). A hollow thing weighs less than its '
+      'material: a cardboard box 120, a plastic crate 200.', group='Physics'),
+    F('friction', 'Friction', -1.0, -1.0, 1.5, '', 2, tip='How it grips what it slides on, as a Coulomb coefficient: ice 0.05, '
+      'wood 0.45, rubber 0.9. -1 uses the material\'s.', group='Physics', hard_lo=-1.0),
+    F('bounce', 'Bounce', -1.0, -1.0, 0.95, '', 2, tip='How much of its speed comes back off a hard floor (restitution): clay 0, '
+      'brick 0.15, wood 0.35, a rubber ball 0.8. -1 uses the material\'s.', group='Physics', hard_lo=-1.0, hard_hi=0.95),
+    V('start_velocity', 'Thrown at', (0.0, 0.0, 0.0), -50.0, 50.0, 'm/s', tip='Its velocity when the simulation starts, '
+      'such as a thrown ball or a launched crate. A falling object with keys also starts at the speed its keys give it.', group='Physics'),
+    V('start_spin', 'Spinning at', (0.0, 0.0, 0.0), -720.0, 720.0, '°/s', tip='Its spin about each axis when the simulation starts.',
+      group='Physics', advanced=True),
+    F('release', 'Falls from', 0.0, -10.0, 60.0, 's', 2, tip='Seconds from the first frame when it is let go. Until then it is held '
+      'where its keys put it, so it can be carried, lifted or placed and then dropped. Negative values let it go during the '
+      'pre-roll, so it has already landed when the shot starts.', group='Physics'),
+    B('floating', 'Floats', False, tip='The liquid moves it: it floats or sinks by its density, bobs, drifts with the flow, tips and '
+      'turns. Falls does the same, and also lets it fall through the air. Its keyframes set only where it starts.', group='Liquid'),
 ]
 
 # Lights in the set (lamps, street lights, stage spots, windows): they light the smoke and steam, and

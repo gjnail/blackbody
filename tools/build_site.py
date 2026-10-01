@@ -29,6 +29,7 @@ GUIDES = [
     ('Start here', 'tutorial', 'Tutorial: your first shot'),
     ('Fire', 'fire', 'Fire, smoke and sparks'),
     ('Fire', 'fabric', 'Fabric and burning cloth'),
+    ('Things', 'physics', 'Things that fall'),
     ('Water', 'liquids', 'Liquids'),
     ('Water', 'ocean', 'The sea, surf and rivers'),
     ('Water', 'lava', 'Lava, and fire with water'),
@@ -45,11 +46,11 @@ GUIDES = [
 GUIDE_SLUGS = {g[1] for g in GUIDES}
 
 # the gallery's filters: preset category -> filter
-FILTERS = [('all', 'All'), ('fire', 'Fire and smoke'), ('water', 'Water'), ('sea', 'The sea'),
+FILTERS = [('all', 'All'), ('fire', 'Fire and smoke'), ('things', 'Things that fall'), ('water', 'Water'), ('sea', 'The sea'),
            ('heat', 'Ice and steam'), ('weather', 'Weather and sky')]
 CATEGORY_FILTER = {'Fires': 'fire', 'Small flames': 'fire', 'Explosions': 'fire', 'Smoke': 'fire', 'Sparks': 'fire',
                    'Steam': 'fire', 'Liquids': 'water', 'Fire and liquid': 'water', 'Sea': 'sea',
-                   'Ice and steam': 'heat', 'Weather': 'weather', 'Sky and weather': 'weather'}
+                   'Ice and steam': 'heat', 'Weather': 'weather', 'Sky and weather': 'weather', 'Things that fall': 'things'}
 
 NAV = [('tutorial', 'Tutorial', 'tutorial.html'), ('guides', 'Guides', 'guides.html'),
        ('presets', 'Presets', 'presets.html'), ('github', 'GitHub', REPO)]

@@ -26,7 +26,8 @@ FRAMES = {'campfire': 60, 'bonfire': 72, 'torch': 48, 'candle': 48, 'gas_ring': 
           'open_ocean': 60, 'storm_sea': 72, 'calm_lake': 48, 'harbour_chop': 60, 'beach_break': 96, 'shore_break': 96, 'reef_barrel': 40,
           'big_wave': 80, 'tsunami': 216, 'tidal_bore': 72, 'river_rocks': 72,
           'ice_cubes': 110, 'ice_melt': 60, 'pond_freeze': 72, 'frozen_pour': 96, 'boiling_pot': 48, 'hot_plate': 36, 'steaming_pool': 72,
-          'boiling_throw': 36, 'snow_pond': 36, 'hail_pond': 240, 'cumulus_day': 300, 'thunderstorm': 600, 'lava_sea': 84, 'lava_quench': 56, 'lava_grass': 96}
+          'boiling_throw': 36, 'snow_pond': 36, 'hail_pond': 240, 'cumulus_day': 300, 'thunderstorm': 600, 'lava_sea': 84, 'lava_quench': 56, 'lava_grass': 96,
+          'tower_knockdown': 15, 'crates_in_fire': 110}
 
 # presets shown over an old lava field instead of paving slabs
 FIELD_PLATES = {'lava'}
@@ -259,7 +260,9 @@ def main():
             eng.render(sc, f, (W, H), mode='composite', final=not args.draft, samples=args.samples, motion_blur=True,
                        plate=plate)
         else:
-            eng.render(sc, f, (W, H), mode=args.mode, final=not args.draft, samples=args.samples, motion_blur=True)
+            # (one on the stage shows it: its floor, sky and objects are in the composite)
+            mode = 'composite' if sc.data['composite'].get('backdrop') == 'stage' else args.mode
+            eng.render(sc, f, (W, H), mode=mode, final=not args.draft, samples=args.samples, motion_blur=True)
         img = eng.display_image()
         Image.fromarray(np.ascontiguousarray(img[..., :3])).save(out / f'{name}.png')
         st = eng.stats()

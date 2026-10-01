@@ -19,7 +19,9 @@ from .cloth import STEPS_PER_SECOND
 from .gpu import Uniforms
 from .liquid import LiquidSolver
 from .liquid_float import Floats
+from .solids import Solids, attached
 from .liquid_render import LiquidRenderer, LiquidView
+from . import stage as stage_mod
 from .renderer import INPUT_TRANSFORMS
 
 log = logging.getLogger('blackbody.liquid')
@@ -67,6 +69,8 @@ class LiquidEngine:
         L.set_colliders(scene.colliders_gpu(scene.start))
         self._prepare_weather(scene, final)
         if self.cloth.configure(scene.fabric_specs()):
+            changed = True
+        if self.solids.configure(scene, (dims, h, origin)):
             changed = True
         if self.kind != 'liquid':
             self.kind = 'liquid'
@@ -237,17 +241,15 @@ class LiquidEngine:
         # surface tension can demand more substeps than the domain allows: stability comes first
         hi = min(40, max(d['substeps_max'], L.capillary_substeps(fdt)))
         n = L.substeps_for(fdt, cfl=d['cfl'], lo=d['substeps_min'], hi=hi)
-        if not self._floats_ready:
-            self._floats = Floats.from_scene(scene, frame - 1, self.solver.meshes)
-            self._floats_ready = True
-        floats = self._floats
-        if floats:
-            floats.set_statics(scene, frame)
-        moving = scene.colliders_animated() or bool(floats)
+        # rigid bodies (falling and floating objects) move through the frame first, pushed by the liquid as it
+        # was measured over the frame before; the liquid then sees them where they are at each substep
+        solids = self.solids if self.solids.active else None
+        poses = solids.advance(scene, frame, fdt, n) if solids else None
+        moving = scene.colliders_animated() or bool(solids)
         filled = getattr(self, '_filled', None)
         if filled is None:
             filled = self._filled = set()
-        shift = self._follow_shift(scene, frame - 1, floats)
+        shift = self._follow_shift(scene, frame - 1, solids)
         wprm = scene.weather_params(frame) if (self._wx_on and self.weather is not None) else None
         cloth = self.cloth.active
         if cloth:
@@ -261,21 +263,22 @@ class LiquidEngine:
             if shift != (0, 0):
                 L.shift(b, *shift, prm)
             self._footage_solid(b, scene, frame)
-            if floats:
+            regions = solids.regions(scene) if solids else []
+            if regions:
                 L.clear_float(b)
             for i in range(n):
                 fs = frame - 1 + (i + 0.5) / n
                 srcs = scene.sources_gpu(fs, filled)
-                ov = floats.overrides(fdt * (i + 0.5) / n) if floats else None
-                cols = scene.colliders_gpu(fs, ov) if moving else None
+                cols = scene.colliders_gpu(fs, poses[i] if poses else None) if moving else None
                 prm.clock = scene.seconds(fs)
                 if tide:
                     prm.water_level = scene.liquid_level(fs)   # a tide: the level at each substep
                 L.step(b, fdt / n, prm, srcs, cols)
-                if floats:
-                    L.float_forces(b, floats.regions(scene), i, fdt / n)
+                if regions:
+                    L.float_forces(b, regions, i, fdt / n)
                 if cloth:
-                    self.cloth.step(b, None, fdt / n, scene.fabrics_at(fs + 0.5 / n), cprm, clook,
+                    carried = attached(scene, 'fabric', poses[i] if poses else None)
+                    self.cloth.step(b, None, fdt / n, scene.fabrics_at(fs + 0.5 / n, moved=carried), cprm, clook,
                                     list(cols) if cols is not None else list(L.colliders or []), self.solver.meshes,
                                     steps=cloth_steps, liquid=L)
                 if wprm is not None:
@@ -288,9 +291,8 @@ class LiquidEngine:
         if wprm is not None:
             self.weather.measure()
             self._weather_surface_ready()
-        if floats:
-            floats.step(L.read_float(len(floats.bodies), n), fdt, n, L.h, prm.rho, L.origin, L.dims,
-                        ground=bool(d['ground']), walls=not d['open_sides'])
+        if regions:
+            solids.liquid_measures(L.read_float(len(regions), n), fdt, n, L.h, prm.rho)
         self.sim_frame = frame
         self.last_substeps = n
         self.last_step_ms = (time.perf_counter() - t0) * 1000.0
@@ -399,8 +401,8 @@ class LiquidEngine:
         band = self.liquid.read_band()
         if band is not None:
             entry['band'] = band
-        if self._floats:
-            entry['floats'] = self._floats.state()
+        if self.solids.active:
+            entry['solids'] = self.solids.state()
         if self._olayer is not None and self._olayer.on:
             entry['sea_layer'] = self._olayer.read()
         if self._wx_on and self.weather is not None:
@@ -415,14 +417,19 @@ class LiquidEngine:
         return entry
 
     def floating_overrides(self, frame):
-        """Where the liquid has moved the floating colliders by `frame` (None if it has none or the
-        frame is neither live nor cached)."""
-        if self.sim_frame == frame and self._floats:
-            return self._floats.overrides()
+        """Where the rigid bodies (falling and floating objects) are at `frame`, as Scene.colliders_gpu
+        overrides: None if there are none, or the frame is neither live nor cached. Any kind of scene."""
+        solids = getattr(self, 'solids', None)
+        if self.sim_frame == frame and solids is not None and solids.active:
+            return solids.overrides()
         entry = self.cache.get(frame) if self.cache is not None else None
+        if entry is not None and entry.get('solids'):
+            return Solids.overrides_from(entry['solids'])
         if entry is not None and entry.get('floats'):
-            return Floats.overrides_from(entry['floats'])
+            return Floats.overrides_from(entry['floats'])   # (a cache from before rigid bodies)
         return None
+
+    body_overrides = floating_overrides
 
     def _liquid_view(self, scene, frame):
         L = self.liquid
@@ -511,9 +518,19 @@ class LiquidEngine:
         t = scene.seconds(frame)
         ground = scene.data['domain']['ground']
         LR = self.liquid_r
+        # the set drawn in CG behind and under the liquid (stage.py): the liquid takes it as its footage
+        footage = plate is not None
+        objects = look.colliders_look != 'shaded'
+        stage_on = stage_mod.wanted(scene, footage, mode, objects=objects)
+        p_transform, p_gain = INPUT_TRANSFORMS.get(comp.plate_transform, 0), comp.plate_gain
+        standins = stage_mod.standin_colours(scene)
 
         drop_shutter = scene.data['render']['shutter_angle'] / 360.0 / scene.fps if motion_blur else 0.0
         lamps = scene.lamps(frame) if hasattr(scene, 'lamps') else []
+        if any(l['child'][0] == 'light' for l in getattr(scene, 'links', None) or []):
+            carried = attached(scene, 'light', self.floating_overrides(frame))
+            if carried:
+                lamps = scene.lamps(frame, moved=carried)
 
         wview = self._weather_view(scene, frame, live, None if live else self.cache.get(frame))
         cloth, clook = self._cloth_for_liquid(scene, frame, live, final, look)
@@ -527,8 +544,9 @@ class LiquidEngine:
                                 light_gain=2.0 ** look.exposure, fire_lights=False, lamp_count=nlamps)
                 lay = self.cloth.layer(b)
             LR.march(b, vol, cs, fire, look, comp, (fw, fh), plate=ptex, plate_fit=plate_fit,
-                     plate_transform=INPUT_TRANSFORMS.get(comp.plate_transform, 0), plate_gain=comp.plate_gain,
-                     jitter=jit, seed=s, shutter=shutter, ground=ground, time=t, lamps=lamps, cloth=lay)
+                     plate_transform=p_transform, plate_gain=p_gain,
+                     jitter=jit, seed=s, shutter=shutter, ground=ground, time=t, lamps=lamps, cloth=lay,
+                     standins=standins)
             if wview is not None:
                 self.weather_r.cover(b, wview, cs, fire, look, (fw, fh))
             LR.drops(b, vol, cs, fire, look, (fw, fh), jitter=jit, shutter=drop_shutter)
@@ -539,6 +557,19 @@ class LiquidEngine:
 
         r._ensure_fire(fw, fh)
         with self.gpu.batch() as b:
+            stage = None
+            if stage_on:
+                light = stage_mod.water_light(look, comp)
+                light.lamps = r.pack_lamps(lamps)
+                if LR.env_tex is not None and look.environment:
+                    light.env, light.env_rotation = LR.env_tex, float(look.env_rotation)
+                    light.env_strength = float(look.env_strength) * 2.0 ** float(look.exposure)
+                size = r.plate_size if footage else (W, H)
+                stage = ptex = self.stage.draw(b, r, scene, cs, fire, vol.colliders, vol.meshes, light, comp, size,
+                                               plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage,
+                                               ground_y=vol.origin[1], frame=frame, objects=objects,
+                                               floor=not look.bottomless)
+                p_transform, p_gain = INPUT_TRANSFORMS['linear'], 1.0
             LR.build(b, vol, look)
             LR.sea(b, vol, look)
             LR.caustics(b, vol, look, fire)
@@ -566,7 +597,7 @@ class LiquidEngine:
             r.bloom(b, comp.bloom_radius)
             hz = LR.lava_haze(b, vol, look, cs, fire, comp, time=t)
             r.composite(b, (W, H), comp, time=t, frame=frame, plate_fit=plate_fit, liquid=True, liquid_haze=hz,
-                        hfov=cs.hfov)
+                        hfov=cs.hfov, stage=stage)
             LR.lens_drops(b, look, (W, H), time=t)
         self.last_render_ms = (time.perf_counter() - t0) * 1000.0
         return cs

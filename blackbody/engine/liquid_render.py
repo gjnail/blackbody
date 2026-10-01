@@ -16,7 +16,7 @@ import numpy as np
 from . import camera as cam
 from .gpu import BU, GPU, SS, Uniforms, ceil_div, groups_1d, load_wgsl
 from .liquid import PACKED_BYTES, WW_PACKED_BYTES
-from .solver import pack_colliders
+from .solver import MAX_COLLIDERS, pack_colliders
 
 SLAB_NODES = 8 << 20   # surface-grid nodes per accumulation slab
 
@@ -814,10 +814,12 @@ class LiquidRenderer:
 
     def march(self, b, view: LiquidView, camstate: cam.CameraState, fire: cam.FireXform, look: WaterLook, comp, size,
               plate=None, plate_fit=(1.0, 1.0), plate_transform=0, plate_gain=1.0, jitter=(0.0, 0.0), seed=0.0,
-              shutter=0.0, ground=True, time=0.0, lamps=(), fire_lights=None, fire_gain=(0.0, 0.0, 0.0), cloth=None):
+              shutter=0.0, ground=True, time=0.0, lamps=(), fire_lights=None, fire_gain=(0.0, 0.0, 0.0), cloth=None,
+              standins=None):
         """lamps: the set's lights (Scene.lamps); fire_lights: (buffer, count buffer) of the point lights
         standing in for the fire (Renderer.lights), whose power times fire_gain is in key-light units;
-        cloth: the fabric drawn for this pass (Cloth.layer), seen in front of the liquid and through it."""
+        cloth: the fabric drawn for this pass (Cloth.layer), seen in front of the liquid and through it;
+        standins: per collider, its own stand-in colour (r, g, b, 1) or (0, 0, 0, 0) for the look's (stage.standin_colours)."""
         w, h = size
         r = self.renderer
         r._ensure_fire(w, h)
@@ -875,6 +877,9 @@ class LiquidRenderer:
         u.v4(1.0 if matte_on else 0.0, 1.0 if depth_on else 0.0, DEPTH_KINDS.get(comp.depth_kind, 0), comp.depth_scale)
         u.v4(*plate_fit, 0.0, 0.0)
         pack_colliders(u, view.colliders, view.meshes)
+        rows = list(standins or [])[:MAX_COLLIDERS]
+        for i in range(MAX_COLLIDERS):
+            u.v4(*(rows[i] if i < len(rows) else (0.0, 0.0, 0.0, 0.0)))
         atlas = view.meshes.atlas if view.meshes is not None else self._no_atlas
         if self.gbuf is None or self.gbuf.size < w * h * 48:
             if self.gbuf is not None:

@@ -64,6 +64,9 @@ CLIPS = {
     'kettle_steam': clip('kettle_steam', 1.5, 96),
     'backdraft': clip('backdraft', 2.0, 144, plate='ground', plate_args=NIGHT_CONCRETE, dyaw=4.0, set={'composite': LIT}),
     'spot_fires': clip('spot_fires', 2.0, 120, plate='ground', plate_args=NIGHT, set={'composite': LIT}),
+    # ---- things that fall (on the stage: no plate) --------------------------------------------------------------
+    'tower_knockdown': clip('tower_knockdown', 0.0, 96, dyaw=8.0, push=0.06),
+    'crates_in_fire': clip('crates_in_fire', 0.0, 144, dyaw=6.0, set={'composite': LIT}),
     # ---- water ----------------------------------------------------------------------------------------------
     'floating': clip('floating', 0.2, 96, plate='ground', plate_args=DAY_PEBBLES),
     'ink_tank': clip('ink_tank', 0.3, 120, plate='ground', plate_args=DAY_FINE, dyaw=8.0),

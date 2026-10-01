@@ -3,6 +3,7 @@
   "tutorial": {"image": "tutorial/00_result.png", "blurb": "A whole shot in 30 minutes: footage, placing, matching, tracking, keyframes and rendering."},
   "fire": {"image": "media/video/campfire.jpg", "blurb": "Fire presets, puffing and swirl, sparks, colour, steam, spreading fire, rooms, flame fronts and meshes."},
   "fabric": {"image": "media/video/fabric_curtain.jpg", "blurb": "Curtains, flags and towels from real fabrics: blowing, burning through, soaking and steaming."},
+  "physics": {"image": "media/video/tower_knockdown.jpg", "blurb": "Objects that fall, tumble, stack and bounce, in real materials, pushed by the smoke and the water, drawn in CG on a stage or in your footage."},
   "liquids": {"image": "media/video/rock_splash_slowmo.jpg", "blurb": "Sources, floating objects, viscosity, dye, whitewater, the refractive look, rain and underwater."},
   "ocean": {"image": "media/video/storm_sea.jpg", "blurb": "Open water to the horizon, an FFT ocean, whitecaps, beaches and surf, tsunamis, bores and rivers."},
   "lava": {"image": "media/video/lava.jpg", "blurb": "Molten lava that glows and crusts, and fire, water and lava together in one box."},

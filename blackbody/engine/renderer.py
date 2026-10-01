@@ -696,19 +696,21 @@ class Renderer:
         self.glow_tex = self.up[min(3, n - 2)] if n > 2 else self.bloom_tex
 
     def composite(self, b, out_size, comp: CompParams, time=0.0, frame=0, plate_fit=(1.0, 1.0), liquid=False,
-                  liquid_haze=False, hfov=None):
+                  liquid_haze=False, hfov=None, stage=None):
         """liquid_haze: the liquid traced its own heat haze into self.opl (a molten liquid's hot air:
         LiquidRenderer.lava_haze), which bends the liquid element as well as the footage behind it.
-        hfov: the camera's (for the haze's bend), when no fire was marched."""
+        hfov: the camera's (for the haze's bend), when no fire was marched.
+        stage: the stage (Stage.draw: scene-linear, with the footage under it) in place of the footage."""
         w, h = out_size
         self._ensure_out(w, h)
-        has_plate = self.plate is not None
+        has_plate = self.plate is not None or stage is not None
         haze_on = comp.haze > 0.0 and ((liquid is not True and self._haze_src is not None) or liquid_haze)
         if haze_on and not liquid_haze:
             self._heat_haze(b, comp)
         u = (Uniforms()
              .v4(w, h, 1.0 if has_plate else 0.0, VIEW_MODES.get(comp.mode, 0))
-             .v4(comp.plate_gain, INPUT_TRANSFORMS.get(comp.plate_transform, 0), *plate_fit)
+             .v4(1.0 if stage is not None else comp.plate_gain,
+                 INPUT_TRANSFORMS['linear'] if stage is not None else INPUT_TRANSFORMS.get(comp.plate_transform, 0), *plate_fit)
              .v4(comp.fire_gain, comp.smoke_opacity, comp.bloom, comp.light_cast)
              .v4(comp.haze, 0.0, 0.0, time)
              .v4(comp.saturation, comp.grain, frame, comp.knee)
@@ -717,13 +719,13 @@ class Renderer:
              .v4(*comp.tint, 1.0)
              .v4(2.0 if liquid == 'both' else (1.0 if liquid else 0.0))
              .v4(comp.surface_light, comp.scorch)
-             .v4(comp.soot, comp.wet)
+             .v4(comp.soot, comp.wet, 1.0 if stage is not None else 0.0)
              .v4(self._shaper_lo, self._shaper_hi, 1.0 if self.lut_plate_log else 0.0, self.lut_size))
         noise, haze = self.plate_stats(comp) if has_plate else (None, None)
         u.v4(min(max(comp.highlight_white, 0.0), 0.9))
         # Koschmieder: at the visibility distance the air leaves 2% of the contrast
         u.v4(*(haze if haze is not None else comp.atmos_colour), 3.912 / comp.visibility if comp.visibility > 0 else 0.0)
-        if noise is not None:
+        if noise is not None and self.plate is not None:
             # grain size in output pixels (measured in footage pixels)
             u.v4(1.0, noise.size * w / max(self.plate_size[0] * plate_fit[0], 1e-6))
             for c in range(3):
@@ -740,7 +742,7 @@ class Renderer:
         if hfov is None:
             hfov = self._haze_src[1].hfov if self._haze_src is not None else math.radians(54.0)
         u.v4(0.5 * w / math.tan(0.5 * hfov), 1.0 if haze_on else 0.0, 1.0 if liquid_haze else 0.0)
-        plate = self.plate if has_plate else self._black
+        plate = stage if stage is not None else (self.plate if has_plate else self._black)
         surf, mask, lamp_surf = (self._black,) * 3 if liquid is True else (self.surf, self.mask, self.lamp_surf)
         b.run(self.k_comp, [plate, self.beauty, self.emit, self.aux, self.bloom_tex, self.glow_tex, self.gpu.linear,
                             self.disp, self.lin, surf, mask, self.lut_view or self._lut_none,

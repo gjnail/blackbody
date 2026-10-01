@@ -219,11 +219,11 @@ COMPONENTS = [
     Component('crate', 'Floating crate', 'Objects', 'A wooden crate that floats, bobs and drifts on the water.', 'cube', 'liquid',
               room=(0.3, 0.8, 0.3),
               objects=[_C(name='Crate', shape='box', position=(0.0, 0.6, 0.0), size=(0.12, 0.12, 0.12), yaw=20.0, floating=True,
-                          density=550.0)]),
+                          material='wood')]),
     Component('stone', 'Falling stone', 'Objects', 'A stone dropped from 60 cm: it splashes and sinks.', 'cube', 'liquid',
               room=(0.3, 0.8, 0.3),
               objects=[_C(name='Stone', shape='sphere', position=(0.0, 0.6, 0.0), size=(0.07, 0.07, 0.07), floating=True,
-                          density=2600.0)]),
+                          material='stone')]),
     Component('hill', 'Hillside', 'Objects', 'A built-in hillside (8 m across) for fire to climb or water to run down.', 'cube',
               room=(4.2, 3.6, 4.2),
               objects=[_C(name='Hillside', shape='mesh', mesh='builtin:hillside.png', position=(0.0, 0.0, 0.0), size=(8.0, 3.2, 8.0))]),
@@ -241,6 +241,45 @@ COMPONENTS = [
     Component('mesh', 'Your mesh…', 'Objects', 'Any OBJ or STL model, a numbered mesh sequence, a USD mesh or a greyscale heightfield '
               'image (terrain).', 'cube', pick='mesh',
               objects=[_C(name='Mesh', shape='mesh', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0))]),
+    # -- things that fall (engine/solids.py: real size, in every kind of scene) ------------------------------------------------
+    Component('drop_box', 'Falling box', 'Things that fall', 'A 30 cm wooden box dropped from 1.2 m: it lands on a corner, '
+              'tumbles and settles. Smoke and water push it; set its material for a heavier or bouncier one.', 'crate',
+              room=(0.5, 1.4, 0.5),
+              objects=[_C(name='Box', shape='box', position=(0.0, 1.2, 0.0), size=(0.15, 0.15, 0.15), yaw=30.0, dynamic=True,
+                          material='wood', start_spin=(40.0, 0.0, 25.0))]),
+    Component('bouncy_ball', 'Bouncy ball', 'Things that fall', 'A rubber ball dropped from 1.5 m: it bounces, lower each time.',
+              'ball', room=(0.4, 1.7, 0.4),
+              objects=[_C(name='Rubber ball', shape='sphere', position=(0.0, 1.5, 0.0), size=(0.06, 0.06, 0.06), dynamic=True,
+                          material='rubber', own_colour=True, colour=(0.7, 0.12, 0.05))]),
+    Component('boulder', 'Falling boulder', 'Things that fall', 'A 1 m granite boulder dropped from 3 m: about 1.4 tonnes. It '
+              'flattens what it lands on and blasts the smoke or the water aside.', 'ball', room=(0.8, 3.8, 0.8),
+              objects=[_C(name='Boulder', shape='sphere', position=(0.0, 3.0, 0.0), size=(0.5, 0.5, 0.5), dynamic=True,
+                          material='stone')]),
+    Component('cannonball', 'Thrown ball', 'Things that fall', 'A 20 cm steel ball thrown sideways at 7 m/s: aim it at a tower '
+              'of blocks or a stack of crates.', 'ball', room=(0.4, 1.2, 0.4),
+              objects=[_C(name='Steel ball', shape='sphere', position=(0.0, 0.9, 0.0), size=(0.1, 0.1, 0.1), dynamic=True,
+                          material='steel', start_velocity=(7.0, 1.0, 0.0))]),
+    Component('drum', 'Steel drum', 'Things that fall', 'A standing 200 litre steel drum (empty: 20 kg). It tips over when '
+              'something hits it.', 'pillar', room=(0.4, 1.0, 0.4),
+              objects=[_C(name='Drum', shape='cylinder', position=(0.0, 0.44, 0.0), size=(0.29, 0.44, 0.29), dynamic=True,
+                          material='steel', density=170.0, own_colour=True, colour=(0.05, 0.12, 0.32))]),
+    Component('dominoes', 'Domino run', 'Things that fall', 'Ten big wooden dominoes in a row, the first one flicked over: each '
+              'knocks the next down.', 'wall', room=(1.4, 0.4, 0.2),
+              # (the flick: turning about its foot at 160 degrees a second, so its middle moves at 34 cm/s)
+              objects=[_C(name=f'Domino {k + 1}', shape='box', position=(-1.2 + 0.16 * k, 0.12, 0.0), size=(0.02, 0.12, 0.06),
+                          dynamic=True, material='wood',
+                          **({'start_spin': (0.0, 0.0, -160.0), 'start_velocity': (0.34, 0.06, 0.0)} if k == 0 else {}))
+                       for k in range(10)]),
+    Component('tower', 'Tower of blocks', 'Things that fall', 'Six 20 cm wooden blocks stacked 1.2 m high. Throw a ball at it, '
+              'or put it on a moving collider.', 'wall', room=(0.3, 1.3, 0.3),
+              objects=[_C(name=f'Block {k + 1}', shape='box', position=(0.0, 0.1 + 0.2 * k, 0.0), size=(0.1, 0.1, 0.1),
+                          yaw=(7.0 if k % 2 else -4.0), dynamic=True, material='wood') for k in range(6)]),
+    Component('crate_stack', 'Stack of crates', 'Things that fall', 'Six 50 cm crates stacked three, two, one. Knock out the '
+              'bottom one, or push the stack with a moving collider.', 'crate', room=(0.9, 1.6, 0.4),
+              objects=[_C(name=f'Crate {k + 1}', shape='box', position=pos, size=(0.25, 0.25, 0.25), dynamic=True,
+                          material='wood', density=150.0)
+                       for k, pos in enumerate(((-0.52, 0.25, 0.0), (0.0, 0.25, 0.0), (0.52, 0.25, 0.0), (-0.26, 0.75, 0.0),
+                                                (0.26, 0.75, 0.0), (0.0, 1.25, 0.0)))]),
     # -- fabric -------------------------------------------------------------------------------------------------------------
     Component('curtain', 'Curtain', 'Fabric', 'A cotton curtain hanging from a rail (real size). It blows in the air and burns.',
               'fabric', room=(0.8, 2.4, 0.9),
@@ -331,7 +370,7 @@ def _values(v):
     """The values a setting takes: its keys' if it is animated."""
     from .anim import Curve
     return [k[1] for k in v.keys] if isinstance(v, Curve) else [v]
-GROUPS = ['Fire', 'Smoke, steam & sparks', 'Liquids', 'Fabric', 'Weather', 'Forces', 'Objects', 'Lights']
+GROUPS = ['Fire', 'Smoke, steam & sparks', 'Liquids', 'Fabric', 'Weather', 'Forces', 'Objects', 'Things that fall', 'Lights']
 
 # Making a scene from scratch: (label, box width in metres)
 SCALES = {'small': ('Tabletop', 0.6), 'person': ('Person-sized', 2.0), 'large': ('Car or room', 6.0), 'huge': ('Building', 20.0)}
@@ -705,6 +744,29 @@ def turn_into(scene: Scene, i, key):
         e['emits'] = {'fire': 'fire', 'liquid': 'liquid', 'lava': 'lava'}.get(comp.need, 'fire')
     if comp.need in ('liquid', 'lava') and 'velocity' not in src:
         e['velocity'] = (0.0, -0.5, 0.0)
+    return notes
+
+
+def make_dynamic(scene: Scene, i, on=True, release=0.0):
+    """Make object (collider) i fall (Make it fall, in the viewer's menus): a free rigid body that falls,
+    tumbles, slides and bounces, pushed by the smoke and the water and knocking into other things. Its keys now
+    set only where it starts; it is let go `release` seconds after the first frame. on=False keeps it where its
+    keys put it again. Returns notes for the user."""
+    c = scene.colliders[i]
+    notes = []
+    c['dynamic'] = bool(on)
+    if not on:
+        c['floating'] = False
+        return notes
+    c['release'] = float(release)
+    c['holdout'] = True   # it is a real thing in the shot
+    if c['shape'] == 'mesh':
+        notes.append(f'{c["name"]} falls as its convex hull: hollows and dents in it do not catch on things.')
+    if float(c.get('hollow', 0.0) or 0.0) > 0.0:
+        notes.append(f'{c["name"]} falls as a solid: a hollow thing falls like a full one of its weight (lower its density).')
+    from ..engine.solver import MAX_COLLIDERS
+    if sum(1 for d in scene.colliders if d['enabled']) > MAX_COLLIDERS:
+        notes.append(f'Only the first {MAX_COLLIDERS} objects take part in the simulation.')
     return notes
 
 

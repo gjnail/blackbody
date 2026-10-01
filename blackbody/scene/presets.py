@@ -687,12 +687,76 @@ PRESETS = {
                  stop=1.0, fade_out=0.3),
         ],
     },
+    # -- things that fall (engine/solids.py) ----------------------------------------------------------------------------
+    'tower_knockdown': {
+        'name': 'Knocking down a tower', 'category': 'Things that fall', 'size': '1.2 m tower',
+        'blurb': 'A bowling ball thrown into a tower of wooden blocks beside a run of dominoes, on the stage in sunlight: '
+                 'the blocks tumble and bounce, the dominoes fall in turn. Objects with Falls on, drawn in their materials.',
+        'render': {'end': 96},
+        'domain': {'size_x': 5.2, 'size_y': 2.4, 'size_z': 2.6, 'resolution': 64, 'preroll': 0.0},
+        'composite': {'backdrop': 'stage', 'floor': 'boards'},
+        'lighting': {'sun_on': True, 'sun_intensity': 3.0, 'sun_elevation': 35.0, 'sun_azimuth': -40.0, 'ambient_intensity': 2.5},
+        'camera': {'distance': 5.2, 'target_y': 0.45, 'pitch': 14, 'yaw': 20, 'focal_mm': 35},
+        'emitters': [],
+        'colliders': [dict(name=f'Block {k + 1}', shape='box', position=(0.6, 0.1 + 0.2 * k, 0.0), size=(0.1, 0.1, 0.1),
+                           yaw=(7.0 if k % 2 else -4.0), dynamic=True, material='wood') for k in range(6)]
+                     + [dict(name='Bowling ball', shape='sphere', position=(-2.2, 0.9, 0.0), size=(0.109, 0.109, 0.109), dynamic=True,
+                             material='plastic', density=1300.0, own_colour=True, colour=(0.02, 0.05, 0.25),
+                             start_velocity=(5.5, 2.0, 0.0))]
+                     + [dict(name=f'Domino {k + 1}', shape='box', position=(-1.1 + 0.16 * k, 0.12, 0.9), size=(0.02, 0.12, 0.06),
+                             dynamic=True, material='wood',
+                             **({'start_spin': (0.0, 0.0, -160.0), 'start_velocity': (0.34, 0.06, 0.0), 'release': 0.6} if k == 0 else {}))
+                        for k in range(9)],
+    },
+    'crates_in_fire': {
+        'name': 'Crates into a fire', 'category': 'Things that fall', 'size': '1 m campfire',
+        'blurb': 'Three wooden crates dropped onto a campfire one after another: they land on the burning logs, shove '
+                 'the smoke aside, catch and burn. Burnable objects with Falls on, and Spreading fire.',
+        'render': {'end': 144},
+        'domain': {'size_x': 2.6, 'size_y': 3.2, 'size_z': 2.4, 'resolution': 144, 'preroll': 2.0, 'time_scale': 1.4,
+                   'substeps_max': 12},
+        'combustion': {'burn_rate': 5.0, 'heat': 0.6, 'soot': 0.35, 'cooling': 2.2, 'flame_life': 0.08},
+        'motion': {'puffing': 0.6, 'buoyancy': 5.5, 'turbulence': 3.0, 'turb_freq': 2.5, 'vorticity': 1.6, 'disturbance': 2.0,
+                   'disturb_block': 0.04},
+        'spread': {'enabled': True, 'ground': False, 'coverage': 1.0, 'burn_time': 10.0, 'fuel': 8.0, 'heat': 0.5, 'smoke': 1.0,
+                   'catch_temp': 0.3, 'catch_time': 0.4, 'creep': 0.05, 'smoulder': 4.0},
+        'shading': {'flame_k': 1650, 'max_k': 2250, 'smoke_density': 2.5, 'smoke_albedo': (0.5, 0.49, 0.48), 'coal_bed': 1.0,
+                    'coal_height': 0.08, 'flame_threshold': 0.1, 'flame_sharpness': 3.2, 'flame_absorption': 10.0,
+                    'soot_glow': 0.1, 'detail': 0.5},
+        # dusk: a low, weak sun and a dim blue sky, the fire lighting the crates
+        'lighting': {'sun_on': True, 'sun_intensity': 0.6, 'sun_azimuth': -60.0, 'sun_elevation': 8.0,
+                     'ambient': (0.32, 0.38, 0.5), 'ambient_intensity': 0.5},
+        'composite': {'backdrop': 'stage', 'floor': 'dirt'},
+        'embers': {'rate': 70, 'launch': 1.6, 'lifetime': 2.2},
+        'camera': {'distance': 4.4, 'target_y': 0.75, 'pitch': 10, 'yaw': 18, 'anchor_x': 0.5, 'anchor_y': 0.75, 'focal_mm': 35},
+        'colliders': [
+            dict(name='Firewood', shape='mesh', mesh='builtin:firewood.obj', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0)),
+            # (slatted crates: light, rough, and they hardly bounce)
+            dict(name='Crate 1', shape='box', position=(0.1, 0.8, 0.05), size=(0.15, 0.15, 0.15), yaw=20.0, dynamic=True,
+                 material='wood', density=300.0, friction=0.8, bounce=0.05, burnable=True, release=0.3),
+            dict(name='Crate 2', shape='box', position=(-0.3, 1.0, 0.2), size=(0.15, 0.15, 0.15), yaw=-35.0, dynamic=True,
+                 material='wood', density=300.0, friction=0.8, bounce=0.05, burnable=True, release=1.3),
+            dict(name='Crate 3', shape='box', position=(0.3, 1.2, -0.22), size=(0.15, 0.15, 0.15), yaw=60.0, dynamic=True,
+                 material='wood', density=300.0, friction=0.8, bounce=0.05, burnable=True, release=2.3),
+        ],
+        'emitters': [
+            dict(noise_rise=1.5, name='Log A', shape='capsule', position=(-0.42, 0.08, -0.10), end=(0.10, 0.15, 0.02),
+                 size=(0.09, 0.09, 0.09), fuel=10, temperature=0.45),
+            dict(noise_rise=1.5, name='Log B', shape='capsule', position=(0.38, 0.08, -0.22), end=(-0.06, 0.17, 0.05),
+                 size=(0.09, 0.09, 0.09), fuel=10, temperature=0.45, seed=3),
+            dict(noise_rise=1.5, name='Log C', shape='capsule', position=(0.16, 0.07, 0.42), end=(-0.02, 0.18, -0.06),
+                 size=(0.08, 0.08, 0.08), fuel=9, temperature=0.45, seed=5),
+            dict(noise_rise=1.5, name='Coal bed', shape='cylinder', position=(0.0, 0.04, 0.0), size=(0.36, 0.04, 0.36),
+                 fuel=8, temperature=0.4, seed=7),
+        ],
+    },
 }
 
 ORDER = ['campfire', 'bonfire', 'torch', 'candle', 'gas_ring', 'pool_fire', 'fire_line', 'fireball', 'flamethrower',
          'vehicle_fire', 'smoke_plume', 'fire_whirl', 'waved_torch', 'hose_douse', 'grass_fire', 'spot_fires', 'hillside_fire',
          'curtain_fire', 'fabric_curtain', 'wet_towels', 'armchair_fire', 'room_fire', 'backdraft', 'flash_fire', 'gas_cloud', 'coloured_flames', 'road_flare',
-         'grinder_sparks', 'fireworks', 'car_through_smoke', 'flag_wind', 'kettle_steam', 'steam_vent']
+         'grinder_sparks', 'fireworks', 'car_through_smoke', 'flag_wind', 'kettle_steam', 'steam_vent',
+         'crates_in_fire', 'tower_knockdown']
 
 
 def make(name: str, fps=None, start=None) -> Scene:
@@ -707,9 +771,36 @@ def make(name: str, fps=None, start=None) -> Scene:
         length = r['end'] - r['start']
         r['start'], r['end'] = int(start), int(start) + length
     _apply(s, spec)
+    for c, cs in zip(s.colliders, spec.get('colliders', [])):
+        if 'material' not in cs and c['name'] in MATERIAL_BY_NAME:
+            m = MATERIAL_BY_NAME[c['name']]
+            c['material'] = m[0]
+            if len(m) > 1:
+                c['own_colour'], c['colour'] = True, m[1]
+    # (the presets' looks were made on the flat background; a preset can ask for the stage)
+    if 'backdrop' not in spec.get('composite', {}):
+        s.data['composite']['backdrop'] = 'colour'
     s.name = spec['name']
     s.preset = name
     return s
+
+
+# What the presets' objects are made of, by name (unless the preset says), with a colour of their own
+MATERIAL_BY_NAME = {
+    'Rock': ('stone',), 'Stone': ('stone',), 'Boulder': ('stone',), 'Boulder 2': ('stone',), 'Rock downstream': ('stone',),
+    'Ledge': ('stone',), 'Slab': ('stone',), 'Shore': ('stone', (0.05, 0.05, 0.055)),
+    'Crate': ('wood',), 'Post': ('wood',), 'Post 2': ('wood',), 'Palm': ('wood',), 'Firewood': ('wood',), 'Door': ('wood',),
+    'Ball': ('plastic',), 'Buoy': ('plastic',), 'Barrel': ('plastic', (0.04, 0.12, 0.45)),
+    'Wall': ('plaster',), 'Room': ('plaster',), 'Step': ('concrete',), 'Hotel': ('concrete',), 'House': ('plaster',),
+    'Block': ('concrete',),
+    'Hull': ('painted', (0.75, 0.75, 0.72)), 'Car body': ('painted', (0.06, 0.07, 0.08)), 'Car': ('painted', (0.4, 0.42, 0.45)),
+    'Pot': ('steel',), 'Pot base': ('steel',), 'Plate 150 C': ('steel', (0.12, 0.12, 0.13)),
+    'Plate 300 C': ('steel', (0.12, 0.12, 0.13)), 'Rail': ('steel',), 'Pole': ('steel',),
+    'Curtain': ('fabric',), 'Armchair': ('fabric', (0.25, 0.14, 0.08)),
+    'Bank': ('earth',), 'Bank 2': ('earth',), 'Banks': ('earth',), 'Hillside': ('earth', (0.09, 0.1, 0.05)),
+    'Coast': ('earth',), 'Coast_wide': ('earth',), 'Beach': ('earth', (0.45, 0.38, 0.27)),
+    'Dry ice': ('ceramic', (0.85, 0.87, 0.9)),
+}
 
 
 def apply_to(scene: Scene, name: str, keep_camera=True, keep_render=True):

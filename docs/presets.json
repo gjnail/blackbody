@@ -231,6 +231,20 @@
   "blurb": "A pipe venting steam into freezing air: a dense white column that billows and thins as it rises."
  },
  {
+  "key": "crates_in_fire",
+  "name": "Crates into a fire",
+  "category": "Things that fall",
+  "size": "1 m campfire",
+  "blurb": "Three wooden crates dropped onto a campfire one after another: they land on the burning logs, shove the smoke aside, catch and burn. Burnable objects with Falls on, and Spreading fire."
+ },
+ {
+  "key": "tower_knockdown",
+  "name": "Knocking down a tower",
+  "category": "Things that fall",
+  "size": "1.2 m tower",
+  "blurb": "A bowling ball thrown into a tower of wooden blocks beside a run of dominoes, on the stage in sunlight: the blocks tumble and bounce, the dominoes fall in turn. Objects with Falls on, drawn in their materials."
+ },
+ {
   "key": "water_pour",
   "name": "Pouring water",
   "category": "Liquids",

@@ -9,8 +9,9 @@ datas = [
     ('blackbody/assets/blackbody.png', 'blackbody/assets'),
 ]
 datas += collect_data_files('wgpu')
-binaries = collect_dynamic_libs('wgpu') + collect_dynamic_libs('av') + collect_dynamic_libs('OpenEXR')
-hidden = collect_submodules('blackbody') + collect_submodules('wgpu.backends') + ['OpenEXR']
+binaries = (collect_dynamic_libs('wgpu') + collect_dynamic_libs('av') + collect_dynamic_libs('OpenEXR')
+            + collect_dynamic_libs('mujoco'))
+hidden = collect_submodules('blackbody') + collect_submodules('wgpu.backends') + ['OpenEXR', 'mujoco']
 excludes = ['tkinter', 'matplotlib', 'scipy', 'pandas', 'IPython', 'pytest']
 
 a = Analysis(['tools/launch_gui.py'], pathex=['.'], binaries=binaries, datas=datas, hiddenimports=hidden,

@@ -20,11 +20,13 @@ import numpy as np
 from . import camera as cam
 from .cloth import STEPS_PER_SECOND, Cloth
 from .embers import Embers
-from .gpu import GPU, TU, Uniforms
+from .gpu import GPU, TU, Uniforms, groups_1d
 from .both_engine import BothEngine
 from .cloud_engine import CloudEngine
 from .liquid_engine import LiquidEngine
 from .renderer import Renderer, SurfaceInputs
+from . import stage as stage_mod
+from .solids import Solids, attached
 from .solver import Solver
 
 log = logging.getLogger('blackbody.engine')
@@ -127,6 +129,9 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
         self.renderer = Renderer(self.gpu)
         self.embers = Embers(self.gpu)
         self.cloth = Cloth(self.gpu)
+        self.solids = Solids()     # rigid bodies: objects that fall, tumble and float (MuJoCo)
+        self._air_bufs = None
+        self._stage = None         # the set drawn in CG (stage.py), made when first needed
         self.cache = FrameCache(cache_bytes)
         self.sim_frame = None
         self.sig = None
@@ -170,6 +175,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
         elif scene.kind == 'both':
             out = self._prepare_both(scene, final, soft)
         elif scene.kind == 'cloud':
+            self.solids.clear()   # a sky kilometres across: no falling objects in it
             out = self._prepare_cloud(scene, final, soft)
         else:
             out = self._prepare_fire(scene, final, soft)
@@ -209,6 +215,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
         self.solver.set_colliders(scene.colliders_gpu(scene.start))
         if self.cloth.configure(scene.fabric_specs()):
             changed = True
+        if self.solids.configure(scene, (dims, h, origin)):
+            changed = True
         self.solver.cloth_hook = self.cloth.hook if self.cloth.active else None
         if changed or final != self.final or self.sig is None:
             self.sig = sig
@@ -226,6 +234,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
         return None
 
     def reset(self):
+        self.solids.reset()
         if self.kind == 'liquid':
             self._reset_liquid()
             self.sim_frame = None
@@ -274,7 +283,13 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
         look = scene.look(frame)
         n = self.solver.substeps_for(fdt, cfl=d['cfl'], lo=d['substeps_min'], hi=scene.substep_cap(frame, self.solver.h))
         cam_g = self._cam_grid(scene, frame) if ep.enabled else (0.0, 0.0, 0.0)
-        moving = scene.colliders_animated()
+        # rigid bodies move first through the frame (with the air's drag from the frame before); the gas then
+        # sees them where they are at each substep
+        poses = None
+        if self.solids.active:
+            self._air_for_solids()
+            poses = self.solids.advance(scene, frame, fdt, n)
+        moving = scene.colliders_animated() or poses is not None
         # deforming meshes: the frames either side of this step in the atlas
         self.solver.set_meshes(scene.mesh_items(frame - 1), d['mesh_resolution'])
         cloth = self.cloth.active
@@ -286,16 +301,17 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
             for i in range(n):
                 # emitters and colliders move within the frame, so fast ones leave a continuous trail
                 fs = frame - 1 + (i + 0.5) / n
-                ems = scene.emitters_gpu(fs, substeps=n)
-                cols = scene.colliders_gpu(fs) if moving else None
+                carried = poses[i] if poses else None   # (things attached to falling objects go with them)
+                ems = scene.emitters_gpu(fs, substeps=n, moved=attached(scene, 'emitter', carried))
+                cols = scene.colliders_gpu(fs, carried) if moving else None
                 self.solver.step(b, fdt / n, prm, ems, cols)
                 if cloth:
                     # fabric moves in the air just stepped, then spreads onto the gas for the next substep
-                    self.cloth.step(b, self.solver, fdt / n, scene.fabrics_at(fs + 0.5 / n), prm, look,
-                                    self.solver.colliders, self.solver.meshes, steps=cloth_steps)
+                    self.cloth.step(b, self.solver, fdt / n, scene.fabrics_at(fs + 0.5 / n, moved=attached(scene, 'fabric', carried)),
+                                    prm, look, self.solver.colliders, self.solver.meshes, steps=cloth_steps)
                     self.cloth.splat(b, self.solver, look)
                 if ep.enabled:
-                    ember_ems = scene.emitters_gpu(fs, embers_only=True)
+                    ember_ems = scene.emitters_gpu(fs, embers_only=True, moved=attached(scene, 'emitter', carried))
                     if ember_ems or self.embers.count:
                         self.embers.step(b, self.solver, ep, ember_ems, fdt / n, cam_g, look.smoke_density, look.ambient_k)
         self.solver.measure()
@@ -317,6 +333,26 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
             old = s.dims
             s.grow(lo, hi)
             log.info('Domain grew from %s to %s cells', old, s.dims)
+
+    def _air_for_solids(self):
+        """The gas velocity at every rigid body, for the air's drag on it (a blast blows light things away)."""
+        pts = self.solids.sample_points()
+        n = len(pts)
+        if n == 0 or self.kind not in ('fire', 'both') or not self.solver.dims:
+            return
+        s, g = self.solver, self.gpu
+        if self._air_bufs is None or self._air_bufs[0] < n:
+            cap = max(16, n)
+            self._air_bufs = (cap, g.buffer(cap * 16, 'solid-points'), g.buffer(cap * 16, 'solid-air'))
+        cap, pb, vb = self._air_bufs
+        p4 = np.zeros((cap, 4), np.float32)
+        p4[:n, :3] = pts
+        g.write_buffer(pb, p4)
+        k = g.kernel('solids_air.wgsl', ['tex3d', 'smp', 'rbuf', 'buf'], workgroup=(64, 1, 1))
+        with g.batch() as b:
+            b.run(k, [s.vel[0], g.linear, pb, vb], Uniforms().v4(*s.origin, s.h).v4(*s.dims, n), groups=groups_1d(n))
+        out = np.frombuffer(g.read_buffer(vb, n * 16), np.float32).reshape(n, 4)
+        self.solids.set_air(np.nan_to_num(out[:, :3]))
 
     def snapshot(self, scene=None):
         if self.kind == 'liquid':
@@ -354,6 +390,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
             if c is not None:
                 for k, v in c.items():
                     entry['cloth_' + k] = v
+        if self.solids.active:
+            entry['solids'] = self.solids.state()
         return entry
 
     def simulate_to(self, scene, frame, progress=None, cancelled=None, cache=True):
@@ -412,7 +450,9 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
                 s.base = base
             s.set_meshes(scene.mesh_items(c), scene.data['domain']['mesh_resolution'])
             s.colliders = []
-            s.set_colliders(scene.colliders_gpu(c))
+            if self.solids.active and not self.solids.load_state(entry.get('solids')):
+                continue   # the objects changed since: this checkpoint cannot carry on
+            s.set_colliders(scene.colliders_gpu(c, self.solids.overrides() if self.solids.active else None))
             s.load_state(st)
             if 'ember_state' in entry:
                 self.embers.load_state(entry['ember_state'])
@@ -533,7 +573,11 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
         """The surfaces around the fire at `frame`: colliders in the shot (from the scene, so animated ones
         are where they are at this frame), the ground, and the burn state saved with the frame."""
         s = self.solver
-        cols = s._slotted(scene.colliders_gpu(frame))
+        cols = s._slotted(scene.colliders_gpu(frame, self.floating_overrides(frame)))
+        clear = stage_mod.see_through(scene)
+        if clear:
+            import dataclasses
+            cols = [dataclasses.replace(c, holdout=False) if i in clear else c for i, c in enumerate(cols)]
         spread = bool(scene.data['spread']['enabled'])
         return SurfaceInputs(
             colliders=cols, meshes=s.meshes, burn=vol.burn, burn_obj=vol.burn_obj,
@@ -621,6 +665,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
         look = scene.look(frame, final)
         look.vapour = bool(vol.aux) and self.solver.features.get('vapour', False)
         look.colourant = bool(vol.chem)
+        self._carried_lamps(scene, frame, look)
         if plate is not None and scene.data['lighting'].get('ambient_from_footage', True):
             look.ambient = self.footage_ambient(plate, scene, frame)
         comp = scene.comp(frame, mode)
@@ -662,9 +707,21 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
         if cloth:
             self.cloth.prepare_light(r.light_dims_for(vol.dims))
 
+        footage = plate is not None
+        stage_on = stage_mod.wanted(scene, footage, mode)
+
         with self.gpu.batch() as b:
             r.light(b, vol, look, fire, t, occluder=self.cloth.occlusion if cloth else None,
                     colliders=surfaces.colliders, meshes=surfaces.meshes)
+            stage = None
+            if stage_on:
+                light = stage_mod.fire_light(scene, frame, look, comp)
+                light.lamps = r._lamps_on
+                self._stage_env(scene, light)
+                size = r.plate_size if footage else (W, H)
+                stage = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, size,
+                                        plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage, vol=vol,
+                                        ground_y=vol.origin[1], frame=frame)
             if samples == 1:
                 lim = cloth_pass(b, 0, (0.0, 0.0))
                 r.march(b, vol, cs, fire, look, (fw, fh), seed=base_seed, shutter=shutter, ground=ground, time=t,
@@ -699,9 +756,31 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
                 self.embers.draw(b, r, cs, fire, ep, look, (fw, fh), scene.fps)
             r.defocus(b, comp, cs, fire)
             r.bloom(b, comp.bloom_radius)
-            r.composite(b, (W, H), comp, time=t, frame=frame, plate_fit=plate_fit)
+            r.composite(b, (W, H), comp, time=t, frame=frame, plate_fit=plate_fit, stage=stage)
         self.last_render_ms = (time.perf_counter() - t0) * 1000.0
         return cs
+
+    def _carried_lamps(self, scene, frame, look):
+        """Lights attached to falling or floating objects, where those are at `frame`."""
+        if any(l['child'][0] == 'light' for l in getattr(scene, 'links', None) or []):
+            carried = attached(scene, 'light', self.floating_overrides(frame))
+            if carried:
+                look.lamps = scene.lamps(frame, moved=carried)
+
+    @property
+    def stage(self):
+        if self._stage is None:
+            self._stage = stage_mod.Stage(self.gpu)
+        return self._stage
+
+    def _stage_env(self, scene, light):
+        """The environment HDRI (Lighting) behind the stage, and its light as the sky's."""
+        lt = scene.data['lighting']
+        tex = self.stage.environment(lt.get('environment', ''))
+        if tex is None:
+            return
+        light.env, light.env_rotation, light.env_strength = tex, float(lt.get('env_rotation', 0.0)), float(lt.get('env_strength', 1.0))
+        light.sky = tuple(c * light.env_strength for c in self.stage.env_sky)
 
     def display_image(self):
         return self.renderer.read_display()

@@ -19,7 +19,8 @@ struct Params {
   liq: vec4<f32>,    // x = 1 liquid element (aux.x multiplies the footage: wet ground, shadow; haze only its own),
                      //     2 fire and liquid (fire aux, with aux.w the liquid's multiplier on the footage)
   srf: vec4<f32>,    // fire light on surfaces (strength), scorch (strength), _, _
-  sw: vec4<f32>,     // soot (strength), wet surfaces (strength), _, _
+  sw: vec4<f32>,     // soot (strength), wet surfaces (strength), the plate is the stage (1/0: its alpha is how much
+                     //   of the pixel is CG, already lit by the fire and the lamps), _
   oc: vec4<f32>,     // OCIO LUTs: log shaper low and high (log2), footage LUT uses the shaper (1/0), LUT size
   hl: vec4<f32>,     // Standard view: highlights to white (channel crosstalk, 0..0.9), _, _, _
   atm: vec4<f32>,    // atmosphere: haze colour (linear rgb), extinction (1/m; 0 is clear air)
@@ -234,10 +235,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
   var back = U.bg.rgb;
   var plate_lin = vec3<f32>(0.0);  // the footage as decoded, before the fire lights or scorches it
+  var cg = 0.0;                    // how much of the pixel is the stage's CG (lit already)
   if (U.res.z > 0.5) {
     let puv = (uv + off - vec2<f32>(0.5)) * U.plate.zw + vec2<f32>(0.5);
-    back = decode_plate(textureSampleLevel(plate, lin, puv, 0.0).rgb) * U.plate.x;
+    let pt = textureSampleLevel(plate, lin, puv, 0.0);
+    back = decode_plate(pt.rgb) * U.plate.x;
     plate_lin = back;
+    if (U.sw.z > 0.5) { cg = clamp(pt.a, 0.0, 1.0); }
   } else if (U.view.y > 0.5) {
     let cs = max(U.view.z, 4.0);
     let chk = (i32(floor(f32(px.x) / cs)) + i32(floor(f32(px.y) / cs))) & 1;
@@ -251,14 +255,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   back = back * (1.0 - clamp(mk.w * U.sw.x, 0.0, 1.0) * 0.85);   // soot on walls, ceilings and the ground
   back = back * (1.0 - clamp(sl.a * U.sw.y, 0.0, 1.0) * 0.45);   // soaked surfaces go darker
   // lights in the set: CG lights brighten the footage (softly limited far up), smoke shadows real ones
-  let lc = textureSampleLevel(lamp_surf, lin, euv, 0.0).rgb;
+  let lc = textureSampleLevel(lamp_surf, lin, euv, 0.0).rgb * (1.0 - cg);
   let lup = max(lc, vec3<f32>(0.0));
   back = back * max(vec3<f32>(1.0) + lup / (vec3<f32>(1.0) + lup / 16.0) + min(lc, vec3<f32>(0.0)), vec3<f32>(0.0));
-  let ls = sl.rgb * tint * U.fire.x * U.srf.x;
+  let ls = sl.rgb * tint * U.fire.x * U.srf.x * (1.0 - cg);
   back = back + back * ls / (vec3<f32>(1.0) + 0.25 * ls);  // a soft shoulder: at most about 4x the footage
 
   // the fire lights the scene around it
-  let spill = gw * tint * U.fire.x * U.fire.w;
+  let spill = gw * tint * U.fire.x * U.fire.w * (1.0 - cg);
   var lit = back + back * spill;
   if (liquid) { lit = back * x.x; }
   if (both) { lit = lit * x.w; }

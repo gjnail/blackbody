@@ -1,6 +1,6 @@
 # Presets
 
-Blackbody comes with 79 presets. Click one in the app's Effects panel to load it into your shot; every one is an ordinary scene you can change and save as your own. On the website the gallery plays a clip of each one that has one: <https://gjnail.github.io/blackbody/presets.html>.
+Blackbody comes with 81 presets. Click one in the app's Effects panel to load it into your shot; every one is an ordinary scene you can change and save as your own. On the website the gallery plays a clip of each one that has one: <https://gjnail.github.io/blackbody/presets.html>.
 
 ## Fire and smoke
 
@@ -39,6 +39,13 @@ Blackbody comes with 79 presets. Click one in the app's Effects panel to load it
 | <img src="../blackbody/assets/presets/flag_wind.png" width="200" alt=""> | **Flag in smoky wind**<br>1.5 m flag | A nylon flag on a pole streams and flutters in a gusting wind while the smoke of a fire upwind blows past it; the flag stirs the smoke behind it. The flag is a Fabric held by one side: change its material, size or the wind. |
 | <img src="../blackbody/assets/presets/kettle_steam.png" width="200" alt=""> | **Kettle steam**<br>spout plume | Steam from a kettle spout: clear right at the spout, clouding over as it cools, then evaporating as it mixes into the room. |
 | <img src="../blackbody/assets/presets/steam_vent.png" width="200" alt=""> | **Steam vent**<br>6 m plume, cold day | A pipe venting steam into freezing air: a dense white column that billows and thins as it rises. |
+
+## Things that fall
+
+| | Preset | Notes |
+|---|---|---|
+| <img src="../blackbody/assets/presets/crates_in_fire.png" width="200" alt=""> | **Crates into a fire**<br>1 m campfire | Three wooden crates dropped onto a campfire one after another: they land on the burning logs, shove the smoke aside, catch and burn. Burnable objects with Falls on, and Spreading fire. |
+| <img src="../blackbody/assets/presets/tower_knockdown.png" width="200" alt=""> | **Knocking down a tower**<br>1.2 m tower | A bowling ball thrown into a tower of wooden blocks beside a run of dominoes, on the stage in sunlight: the blocks tumble and bounce, the dominoes fall in turn. Objects with Falls on, drawn in their materials. |
 
 ## Water
 

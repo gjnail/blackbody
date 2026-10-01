@@ -8,6 +8,23 @@ Notable changes to Blackbody. The format follows
 
 ### Added
 
+- Things that fall: any object can be a rigid body (Physics › Falls). It drops, tumbles, slides, bounces, stacks and
+  knocks other things over, in fire, liquid and fire-and-liquid scenes alike (MuJoCo integrates it). The gas's drag
+  pushes it (a blast, an updraft, the wind), it floats or sinks in water, a burnable one keeps burning as it falls, and
+  emitters, lights and fabric pins attached to it go along. Falls from (when it is let go), Thrown at and Spinning at.
+- Materials for objects (wood, stone, concrete, brick, steel, aluminium, glass, ice, plastic, rubber, ceramic,
+  cardboard, foam, painted metal, plaster, fabric, earth), with handbook density, friction and bounce; Density,
+  Friction and Bounce override them.
+- Things that fall blocks in Create: a falling box, a bouncy ball, a boulder, a thrown steel ball, a steel drum, a
+  domino run, a tower of blocks and a stack of crates. Presets: Knocking down a tower, Crates into a fire.
+- The stage: without footage, a floor out to the horizon (concrete, boards, tiles, dirt, grass, sand, a 1 m checker or
+  studio grey) under a sky in the scene's ambient light or HDRI, with objects drawn in CG in their materials. They are
+  lit by the key light with soft shadows, the sky, the fire with shadows and the lights in the set, and glass and ice
+  refract. Composite › Backdrop chooses it or the flat background colour (presets and saved scenes keep their colour).
+- CG objects in footage: an object's Look (Automatic, CG or In the footage). A CG one goes over the footage lit by
+  the shot's light, with its shadows on the real ground, hidden behind the footage's depth pass and matte.
+- Fixed mesh objects hold falling things on their real shape (between the logs of a pile, on stairs).
+
 - Layers: several effects in one shot (a campfire in front, a waterfall behind), each its own simulation with its own
   box and scale, composited back to front in the viewer, renders and the command line.
 - Roto: shapes drawn around what is in front of the effect, keyed over the shot, hide the effect behind them.

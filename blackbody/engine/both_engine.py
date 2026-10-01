@@ -39,10 +39,11 @@ import time
 import numpy as np
 
 from . import camera as cam
+from . import stage as stage_mod
+from .solids import attached
 from .cloth import STEPS_PER_SECOND
 from .gpu import TU, Uniforms
 from .liquid import LiquidSolver
-from .liquid_float import Floats
 from .liquid_render import LiquidRenderer, LiquidView, liquid_top_of
 from .renderer import BB_DEFINES, INPUT_TRANSFORMS
 from .solver import MAX_COLLIDERS, pack_emitters
@@ -118,6 +119,8 @@ class BothEngine:
         self._prepare_weather(scene, final)   # precipitation (weather.py)
         # fabric: in the air and the fire (it burns, and feeds the fire) and in the water (it soaks: cloth.py)
         if self.cloth.configure(scene.fabric_specs()):
+            changed = True
+        if self.solids.configure(scene, (dims, h, origin)):
             changed = True
         self.solver.cloth_hook = self.cloth.hook if self.cloth.active else None
         lava_on = scene.has_lava()
@@ -290,13 +293,14 @@ class BothEngine:
         if V is not None:
             n = max(n, V.substeps_for(fdt, cfl=d['cfl'], lo=d['substeps_min'], hi=hi))
         cam_g = self._cam_grid(scene, frame) if ep.enabled else (0.0, 0.0, 0.0)
-        if not self._floats_ready:
-            self._floats = Floats.from_scene(scene, frame - 1, self.solver.meshes)
-            self._floats_ready = True
-        floats = self._floats
-        if floats:
-            floats.set_statics(scene, frame)
-        moving = scene.colliders_animated() or bool(floats)
+        # rigid bodies move through the frame first (pushed by the air and the water as they were), then the gas
+        # and the liquid see them where they are at each substep
+        solids = self.solids if self.solids.active else None
+        poses = None
+        if solids:
+            self._air_for_solids()
+            poses = solids.advance(scene, frame, fdt, n)
+        moving = scene.colliders_animated() or bool(solids)
         wprm = scene.weather_params(frame) if (self._wx_on and self.weather is not None) else None
         filled = getattr(self, '_filled', None)
         if filled is None:
@@ -313,13 +317,13 @@ class BothEngine:
         cloth_steps = max(1, int(math.ceil(fdt * STEPS_PER_SECOND / n)))
         with self.gpu.batch() as b:
             self._footage_solid(b, scene, frame)
-            if floats:
+            regions = solids.regions(scene) if solids else []
+            if regions:
                 L.clear_float(b)
             for i in range(n):
                 fs = frame - 1 + (i + 0.5) / n
                 dt = fdt / n
-                ov = floats.overrides(fdt * (i + 0.5) / n) if floats else None
-                cols = scene.colliders_gpu(fs, ov) if moving else None
+                cols = scene.colliders_gpu(fs, poses[i] if poses else None) if moving else None
                 lprm.clock = scene.seconds(fs)
                 srcs = scene.sources_gpu(fs, filled)
                 if V is not None:
@@ -338,11 +342,12 @@ class BothEngine:
                     L.step(b, dt, lprm, srcs, None)
                 else:
                     L.step(b, dt, lprm, srcs, cols)
-                if floats:
-                    L.float_forces(b, floats.regions(scene), i, dt)
+                if regions:
+                    L.float_forces(b, regions, i, dt)
                 if wprm is not None:
                     self._step_weather(b, scene, frame, wprm, fs, dt, moving)
-                ems = scene.emitters_gpu(fs, substeps=n)
+                carried = poses[i] if poses else None   # (things attached to falling objects go with them)
+                ems = scene.emitters_gpu(fs, substeps=n, moved=attached(scene, 'emitter', carried))
                 if V is not None:
                     self._lava_meets(b, scene, prm, dt, lava_k)
                 if self.solver.water is not None:
@@ -351,12 +356,12 @@ class BothEngine:
                 self.solver.step(b, dt, prm, ems, cols)
                 if cloth:
                     # fabric moves in the air and the water just stepped, then spreads onto the gas
-                    self.cloth.step(b, self.solver, dt, scene.fabrics_at(fs + 0.5 / n), prm, look,
+                    self.cloth.step(b, self.solver, dt, scene.fabrics_at(fs + 0.5 / n, moved=attached(scene, 'fabric', carried)), prm, look,
                                     list(cols) if cols is not None else self.solver.colliders, self.solver.meshes,
                                     steps=cloth_steps, liquid=L)
                     self.cloth.splat(b, self.solver, look)
                 if ep.enabled:
-                    ember_ems = scene.emitters_gpu(fs, embers_only=True)
+                    ember_ems = scene.emitters_gpu(fs, embers_only=True, moved=attached(scene, 'emitter', carried))
                     if ember_ems or self.embers.count:
                         self.embers.step(b, self.solver, ep, ember_ems, dt, cam_g, look.smoke_density, look.ambient_k)
             L.pack(b)
@@ -372,9 +377,8 @@ class BothEngine:
             self._weather_surface_ready()
         if V is not None:
             V.measure()
-        if floats:
-            floats.step(L.read_float(len(floats.bodies), n), fdt, n, L.h, lprm.rho, L.origin, L.dims,
-                        ground=bool(d['ground']), walls=not d['open_sides'])
+        if regions:
+            solids.liquid_measures(L.read_float(len(regions), n), fdt, n, L.h, lprm.rho)
         self.sim_frame = frame
         self.last_substeps = n
         self.last_step_ms = (time.perf_counter() - t0) * 1000.0
@@ -472,6 +476,7 @@ class BothEngine:
         look = scene.look(frame, final)
         look.vapour = bool(vol.aux) and self.solver.features.get('vapour', False)
         look.colourant = bool(vol.chem)
+        self._carried_lamps(scene, frame, look)
         wlook = scene.water_look(frame, final)
         wlook.rain, wlook.rain_drop = self._rain(scene, frame)
         klook = scene.lava_look(frame, final) if kv is not None else None
@@ -525,13 +530,21 @@ class BothEngine:
             self.cloth.prepare_light(r.light_dims_for(vol.dims))
             look.time = t
         T = self._both
-        fp_u = (Uniforms().v4(fw, fh).v4(1.0 if ptex is not None else 0.0, INPUT_TRANSFORMS.get(comp.plate_transform, 0), *plate_fit)
-                .v4(comp.plate_gain, comp.fire_gain, comp.smoke_opacity).v4(*comp.bg))
+        # the set drawn in CG behind and under it all (stage.py), in place of the footage
+        footage = plate is not None
+        objects = wlook.colliders_look != 'shaded'
+        stage_on = stage_mod.wanted(scene, footage, mode, objects=objects)
+        p_transform, p_gain = INPUT_TRANSFORMS.get(comp.plate_transform, 0), comp.plate_gain
+        if stage_on:
+            p_transform, p_gain = INPUT_TRANSFORMS['linear'], 1.0
+        standins = stage_mod.standin_colours(scene)
+        fp_u = (Uniforms().v4(fw, fh).v4(1.0 if (ptex is not None or stage_on) else 0.0, p_transform, *plate_fit)
+                .v4(p_gain, comp.fire_gain, comp.smoke_opacity).v4(*comp.bg))
         size = (fw, fh, 1)
 
         # the fire lights the liquid as it lights the footage around it (composite.wgsl): its point lights,
         # scaled as the footage's light is (relative to the light already on it)
-        lamps = scene.lamps(frame) if hasattr(scene, 'lamps') else []
+        lamps = look.lamps
         fire_lit, fire_gain = False, None
         if comp.surface_light > 0.0:
             sd = cam.sun_direction(wlook.sun_azimuth, wlook.sun_elevation)
@@ -563,7 +576,8 @@ class BothEngine:
                 water_plate = T['kp']
             LR.march(b, lv, cs, fire, wlook, comp, (fw, fh), plate=water_plate, plate_fit=(1.0, 1.0),
                      plate_transform=INPUT_TRANSFORMS['linear'], plate_gain=1.0, jitter=jit, seed=s, shutter=lshutter,
-                     ground=ground, time=t, lamps=lamps, fire_lights=fire_lights, fire_gain=fire_gain, cloth=lay)
+                     ground=ground, time=t, lamps=lamps, fire_lights=fire_lights, fire_gain=fire_gain, cloth=lay,
+                     standins=standins)
             if wview is not None:
                 self.weather_r.cover(b, wview, cs, fire, wlook, (fw, fh))
             LR.drops(b, lv, cs, fire, wlook, (fw, fh), jitter=jit, shutter=drop_shutter)
@@ -602,6 +616,18 @@ class BothEngine:
                 VR.build(b, kv, klook)
             r.light(b, vol, look, fire, t, emit=glow if kv is not None else None,
                     occluder=self.cloth.occlusion if cloth else None, colliders=surfaces.colliders, meshes=surfaces.meshes)
+            stage = None
+            if stage_on:
+                light = stage_mod.water_light(wlook, comp, look)
+                light.lamps = r._lamps_on
+                if LR.env_tex is not None and wlook.environment:
+                    light.env, light.env_rotation = LR.env_tex, float(wlook.env_rotation)
+                    light.env_strength = float(wlook.env_strength) * 2.0 ** float(wlook.exposure)
+                ssize = r.plate_size if footage else (W, H)
+                stage = ptex = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, ssize,
+                                               plate_fit=plate_fit, samples=samples, shutter=lshutter, footage=footage,
+                                               vol=vol, ground_y=vol.origin[1], frame=frame, objects=objects,
+                                               floor=not wlook.bottomless)
             if samples == 1:
                 one(b, (0.0, 0.0), base_seed)
             else:
@@ -626,7 +652,7 @@ class BothEngine:
                 self.embers.draw(b, r, cs, fire, ep, look, (fw, fh), scene.fps)
             r.defocus(b, comp, cs, fire)
             r.bloom(b, comp.bloom_radius)
-            r.composite(b, (W, H), comp, time=t, frame=frame, plate_fit=plate_fit, liquid='both')
+            r.composite(b, (W, H), comp, time=t, frame=frame, plate_fit=plate_fit, liquid='both', stage=stage)
             LR.lens_drops(b, wlook, (W, H), time=t)
         self.last_render_ms = (time.perf_counter() - t0) * 1000.0
         return cs

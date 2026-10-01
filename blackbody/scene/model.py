@@ -281,29 +281,35 @@ class Scene:
                 colour=tuple(float(x) for x in d['colour']), self_collide=bool(d['self_collide'])))
         return out[:MAX_FABRICS]
 
-    def fabrics_at(self, frame):
-        """Where the enabled fabrics' pins are at `frame` (fractional frames allowed)."""
+    def fabrics_at(self, frame, moved=None):
+        """Where the enabled fabrics' pins are at `frame` (fractional frames allowed). moved: fabric index ->
+        {position, yaw} for fabrics pinned to a falling or floating object (engine/solids.py attached)."""
         from ..engine.cloth import MAX_FABRICS, FabricPlace
         out = []
         t = self.seconds(frame)
+        moved = moved or {}
         for i, d in enumerate(self.fabrics):
             if not d['enabled'] or (d['shape'] == 'mesh' and not d['mesh']):
                 continue
-            g = lambda k: self.get(('fabric', i, k), frame)
+            mv = moved.get(i)
+            g = lambda k: mv[k] if (mv is not None and k in mv) else self.get(('fabric', i, k), frame)
             rel = float(d['release'])
             out.append(FabricPlace(pos=tuple(float(x) for x in g('position')), yaw=math.radians(g('yaw')),
                                    scale=tuple(float(x) for x in d['scale']) if d['shape'] == 'mesh' else (1.0, 1.0, 1.0),
                                    released=d['pins'] == 'none' or (rel >= 0.0 and t >= rel)))
         return out[:MAX_FABRICS]
 
-    def lamps(self, frame):
+    def lamps(self, frame, moved=None):
         """The enabled lights at `frame` for the renderer: fire-local position (m), unit aim, linear colour
-        times intensity (lux at 1 m), radius (m), kind, cone cosines and whether smoke shadows them."""
+        times intensity (lux at 1 m), radius (m), kind, cone cosines and whether smoke shadows them.
+        moved: light index -> {position, direction} for lights carried by a falling or floating object."""
         out = []
+        moved = moved or {}
         for i, d in enumerate(self.lights):
             if not d['enabled']:
                 continue
-            g = lambda k: self.get(('light', i, k), frame)
+            mv = moved.get(i)
+            g = lambda k: mv[k] if (mv is not None and k in mv) else self.get(('light', i, k), frame)
             col = np.asarray(d['colour'], float)
             if d['temperature'] > 0:
                 from ..engine.lut import blackbody_lut
@@ -456,10 +462,13 @@ class Scene:
             env *= 1.0 - _smoothstep(e['stop'], e['stop'] + max(e['fade_out'], 1e-3), t)
         return env
 
-    def emitters_gpu(self, frame, embers_only=False, substeps=6):
+    def emitters_gpu(self, frame, embers_only=False, substeps=6, moved=None):
         """Emitters at `frame`, which may be fractional (the solver evaluates them every substep so
         fast-moving emitters leave a continuous trail). substeps: how many steps the frame is taken in, so
-        that steering the gas (puffing) is as firm per frame however many there are."""
+        that steering the gas (puffing) is as firm per frame however many there are. moved: emitter index ->
+        {position, end, yaw, velocity} for emitters carried by a falling or floating object (engine/solids.py
+        attached), in place of their keys."""
+        moved = moved or {}
         out = []
         master = self.v('combustion', 'fuel_scale', frame)
         seed = self.data['domain']['seed']
@@ -471,7 +480,8 @@ class Scene:
                 continue
             if both and e.get('emits') in ('liquid', 'lava'):
                 continue
-            g = lambda k: self.get(('emitter', i, k), frame)
+            mv = moved.get(i)
+            g = lambda k: mv[k] if (mv is not None and k in mv) else self.get(('emitter', i, k), frame)
             fill = e['shape'] == 'volume' and e.get('volume_mode', 'fill') == 'fill'
             if e['shape'] == 'volume' and e.get('volume_mode') == 'hold' and embers_only:
                 continue
@@ -488,6 +498,8 @@ class Scene:
             motion = np.asarray(self.rate(('emitter', i, 'position'), frame), float)
             if e['shape'] == 'capsule':
                 motion = 0.5 * (motion + np.asarray(self.rate(('emitter', i, 'end'), frame), float))
+            if mv is not None:
+                motion = np.asarray(mv['velocity'], float)
             speed = float(np.linalg.norm(motion))
             inherit = float(e['inherit'])
             vel = np.asarray(g('velocity'), float) + inherit * motion
@@ -601,7 +613,8 @@ class Scene:
         """Indices and densities (kg/m^3) of the colliders the liquid moves."""
         if self.kind == 'fire':
             return []
-        return [(i, float(c['density'])) for i, c in enumerate(self.colliders) if c['enabled'] and c.get('floating')]
+        from .materials import resolved
+        return [(i, resolved(c)['density']) for i, c in enumerate(self.colliders) if c['enabled'] and c.get('floating')]
 
     def liquid_params(self, frame):
         from ..engine.liquid import LiquidParams
@@ -1084,6 +1097,8 @@ class Scene:
                     s.data[sec][k] = _from_json_value(param(sec, k), v)
                 except KeyError:
                     pass  # parameter from a newer or older version
+        if 'composite' in d.get('sections', {}) and 'backdrop' not in d['sections']['composite']:
+            s.data['composite']['backdrop'] = 'colour'   # (saved before the stage: the flat background it was made on)
         if 'emitters' in d:
             s.emitters = []
             for e in d['emitters']:

@@ -97,6 +97,7 @@ struct Params {
   hold2: vec4<f32>,     // footage fit scale (x, y)
   ccnt: vec4<f32>,      // collider count
   col: array<Collider, MAX_COLLIDERS>,
+  calb: array<vec4<f32>, MAX_COLLIDERS>,   // a stand-in's own colour (rgb; w = 1: use it): things that fall or float, in their material
 };
 
 @group(0) @binding(0) var surf_t: texture_3d<f32>;
@@ -808,13 +809,29 @@ fn ground_shade(pg: vec3<f32>, lg: vec3<f32>) -> f32 {
   return m;
 }
 
+// The collider nearest grid point p (in the shot), or -1.
+fn solid_id(p: vec3<f32>) -> i32 {
+  let w = U.org.xyz + p * U.n.w;
+  let wm = U.org.xyz + mir(p) * U.n.w;
+  var best = 1.0e9;
+  var id = -1;
+  for (var i = 0; i < i32(U.ccnt.x); i++) {
+    if (U.col[i].y.w < 0.5) { continue; }
+    let d = min(col_sdf(U.col[i], w), col_sdf(U.col[i], wm));
+    if (d < best) { best = d; id = i; }
+  }
+  return id;
+}
+
 // What a collider shows at grid point p seen along d: its own pixels in the footage, or a plain grey
-// stand-in.
+// stand-in (in its material's colour, for one that falls or floats).
 fn stand_in(p: vec3<f32>, d: vec3<f32>, lg: vec3<f32>) -> vec3<f32> {
   if (U.org.w > 0.5 || U.plate.x < 0.5) {
     let nn = solid_n(p);
     let nw = to_world_dir(nn);
-    let albedo = select(vec3<f32>(0.3), U.ocx[12].rgb, U.ocx[12].w > 0.5);   // the stand-in colour (sand for a sea bed)
+    var albedo = select(vec3<f32>(0.3), U.ocx[12].rgb, U.ocx[12].w > 0.5);   // the stand-in colour (sand for a sea bed)
+    let id = solid_id(p);
+    if (id >= 0 && U.calb[id].w > 0.5) { albedo = U.calb[id].rgb; }
     var e = sky(nw) * (0.55 + 0.45 * nw.y) + U.sun.rgb * max(dot(nn, lg), 0.0);
     if (lava_on()) { e += lava_light_at(U.org.xyz + p * U.n.w, nn); }   // a molten liquid's glow (liq_lava.wgsl)
     return albedo * e;
