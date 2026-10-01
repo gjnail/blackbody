@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem privately
+    url: https://github.com/gjnail/blackbody/security/advisories/new
+    about: A file that makes Blackbody run code, or write or delete files it shouldn't.
+  - name: Ask a question or show your work
+    url: https://github.com/gjnail/blackbody/discussions
+    about: How do I get this look? Here's a shot I made. Questions and showcases go in Discussions.

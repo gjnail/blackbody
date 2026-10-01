@@ -111,6 +111,7 @@ def footer():
       <a href="guides.html">Guides</a>
       <a href="presets.html">Presets</a>
       <a href="{REPO}">Source</a>
+      <a href="{REPO}/blob/main/CHANGELOG.md">Changelog</a>
       <a href="{REPO}/issues">Report a problem</a>
       <a href="https://ko-fi.com/gnail">Support on Ko-fi</a>
     </nav>

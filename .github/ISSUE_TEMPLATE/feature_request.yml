@@ -1,0 +1,30 @@
+name: Feature request
+description: An effect, a control or an output that would help your shots
+labels: [enhancement]
+body:
+  - type: textarea
+    id: shot
+    attributes:
+      label: What are you trying to make?
+      description: Describe the shot or the problem first, before a solution.
+    validations:
+      required: true
+  - type: textarea
+    id: reference
+    attributes:
+      label: Reference
+      description: Links to real footage, photos or measurements of the effect help most.
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?
+      description: A new setting, preset, building block, output, or something else.
+  - type: dropdown
+    id: pipeline
+    attributes:
+      label: Where does the result go?
+      options:
+        - Straight into an edit (composite or element with alpha)
+        - Compositing (Nuke, After Effects, Fusion, Resolve)
+        - A 3D package (OpenVDB, USD, meshes)
+        - Something else

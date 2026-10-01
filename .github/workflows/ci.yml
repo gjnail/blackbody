@@ -1,0 +1,46 @@
+name: CI
+
+# GitHub's machines have no GPU, so this checks what runs without one on Windows, macOS and Linux: the
+# dependencies install, every module compiles, the command line answers, the GPU-free tests pass, and the
+# website builds. Run the full test suite (pytest -q) on a machine with a GPU before a pull request.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest markdown==3.9
+      - name: Compile every module
+        run: python -m compileall -q blackbody tools tests
+      - name: Command line
+        shell: bash
+        run: |
+          python -m blackbody --version
+          python -m blackbody presets > presets.txt
+          test "$(grep -c . presets.txt)" -ge 79
+          python -m blackbody settings > settings.txt
+          grep -q "motion.buoyancy" settings.txt
+      - name: Tests that need no GPU
+        run: python -m pytest -q tests/test_scene.py tests/test_io.py tests/test_camera.py tests/test_tracker.py
+      - name: Website builds
+        if: runner.os == 'Linux'
+        run: python tools/build_site.py

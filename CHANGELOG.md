@@ -1,6 +1,18 @@
 # Changelog
 
-## 1.0.0 (2026-09-30)
+Notable changes to Blackbody. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
+[semantic versioning](https://semver.org/).
+
+## [Unreleased]
+
+### Added
+
+- Contributor guide, code of conduct, security policy, issue and pull request
+  templates, and CI that checks Windows, macOS and Linux.
+- Ko-fi links in the README and on the website.
+
+## [1.0.0] - 2026-09-30
 
 This is the first public version.
 
@@ -13,4 +25,8 @@ This is the first public version.
 - **Fabric:** cloth made from ten real materials. It burns through, soaks, drips and steams.
 - **Into your footage:** holdouts, fire light on the footage, the lens and its haze, noise matching, lights in the set, OCIO, a 2D tracker, camera tracks, and USD and VDB import.
 - **Outputs:** composites, ProRes 4444 and PNG elements, multi-layer and deep EXR, OpenVDB, and USD and OBJ meshes. The command line can share a disk cache across a render farm.
+- **The app:** an Effects panel of presets, a Create tab of building blocks to start a scene from scratch, an Essentials page, a search across all settings, and an animation editor.
 - **79 presets**, plus a tutorial, guides and a website.
+
+[Unreleased]: https://github.com/gjnail/blackbody/compare/21e8050...HEAD
+[1.0.0]: https://github.com/gjnail/blackbody/commit/21e8050

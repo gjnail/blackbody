@@ -175,7 +175,9 @@ pytest -q
 
 ## Contributing
 
-Bug reports, footage that breaks it, and pull requests are welcome: [open an issue](https://github.com/gjnail/blackbody/issues). The guides live in [`docs/`](docs) as Markdown, and the website is built from them by `tools/build_site.py`. So a change to a feature and to its guide can go in the same pull request.
+Bug reports, footage that breaks it, physics checks and pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) has the rules for changes to the simulation, how to build and test, and the source layout. The guides live in [`docs/`](docs) as Markdown, and the website is built from them, so a change to a feature and to its guide can go in the same pull request. Questions and finished shots go in [Discussions](https://github.com/gjnail/blackbody/discussions).
+
+Please report anything that could make Blackbody run code from a file, or write or delete files it shouldn't, privately. [SECURITY.md](SECURITY.md) says how. Participation is covered by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Support
 

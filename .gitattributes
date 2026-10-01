@@ -1,0 +1,15 @@
+# Text files are stored with LF and checked out with the platform's line endings, except the launchers,
+# which need theirs on every platform.
+* text=auto
+*.sh text eol=lf
+*.bat text eol=crlf
+*.png binary
+*.jpg binary
+*.gif binary
+*.mp4 binary
+*.ico binary
+*.woff2 binary
+*.exr binary
+*.vdb binary
+*.hdr binary
+*.npy binary

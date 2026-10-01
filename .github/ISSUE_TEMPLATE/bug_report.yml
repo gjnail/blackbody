@@ -1,0 +1,66 @@
+name: Bug report
+description: Something doesn't work, crashes, or renders wrong
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report! If a file can make Blackbody run code, or write or delete files
+        it shouldn't, please report it privately instead (see SECURITY.md).
+
+        Only attach footage you have the right to share. A saved project (.bbfire) or the name
+        of the preset usually shows the problem just as well.
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options: [Windows 11, Windows 10, macOS, Linux, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: info
+    attributes:
+      label: GPU and version
+      description: The output of `python -m blackbody info` (or `blackbody-cli info`), and the commit you run.
+      render: text
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Fire, smoke, sparks or steam
+        - Liquids
+        - The sea, surf or rivers
+        - Lava, or fire with water
+        - Ice, boiling or evaporation
+        - Weather or clouds
+        - Fabric
+        - Fitting it into footage (holdouts, light, lens, colour)
+        - Tracking, camera tracks or USD/VDB import
+        - Outputs and rendering (EXR, VDB, video)
+        - Command line or render farm
+        - The app (Effects, Create, Properties, viewer, timeline)
+        - Speed or memory
+        - Something else
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: For a look or behaviour that seems wrong, a screenshot or a short clip helps.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Load the Campfire preset ...
+        2. Set Motion › Wind speed to ...
+  - type: textarea
+    id: log
+    attributes:
+      label: Error message or log
+      description: Anything the app or the command line printed. On a crash, the text in the error dialog.
+      render: text
