@@ -717,7 +717,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
 
         footage = plate is not None
         pieces = self.piece_poses(frame)   # (broken things: drawn, and holding out what is behind them, in every view)
-        stage_on = stage_mod.wanted(scene, footage, mode) or bool(pieces)
+        ropes = self.rope_poses(frame)
+        stage_on = stage_mod.wanted(scene, footage, mode) or bool(pieces) or bool(ropes)
         r.hold_stage = None
 
         with self.gpu.batch() as b:
@@ -731,7 +732,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine):
                 size = r.plate_size if footage else (W, H)
                 stage = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, size,
                                         plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage, vol=vol,
-                                        ground_y=vol.origin[1], frame=frame, pieces=pieces)
+                                        ground_y=vol.origin[1], frame=frame, pieces=pieces, ropes=ropes)
                 if self.stage.has_pieces:   # the march stops at the pieces too
                     r.hold_stage = self.stage.hold
                     r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])

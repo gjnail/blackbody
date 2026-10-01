@@ -445,6 +445,17 @@ class LiquidEngine:
             return st['pieces']
         return None
 
+    def rope_poses(self, frame):
+        """The ropes and springs at `frame`: {collider index: Solids.rope_poses entry}, or None."""
+        solids = getattr(self, 'solids', None)
+        if self.sim_frame == frame and solids is not None and solids.joints:
+            return solids.rope_poses() or None
+        entry = self.cache.get(frame) if self.cache is not None else None
+        st = entry.get('solids') if entry is not None else None
+        if isinstance(st, dict) and st.get('ropes'):
+            return st['ropes']
+        return None
+
     def _liquid_view(self, scene, frame):
         L = self.liquid
         ppc = int(scene.data['liquid']['ppc'])
@@ -536,7 +547,8 @@ class LiquidEngine:
         footage = plate is not None
         objects = look.colliders_look != 'shaded'
         pieces = self.piece_poses(frame)   # (broken things: drawn, and holding out what is behind them, in every view)
-        stage_on = stage_mod.wanted(scene, footage, mode, objects=objects) or bool(pieces)
+        ropes = self.rope_poses(frame)
+        stage_on = stage_mod.wanted(scene, footage, mode, objects=objects) or bool(pieces) or bool(ropes)
         r.hold_stage = None
         p_transform, p_gain = INPUT_TRANSFORMS.get(comp.plate_transform, 0), comp.plate_gain
         standins = stage_mod.standin_colours(scene)
@@ -584,7 +596,7 @@ class LiquidEngine:
                 stage = ptex = self.stage.draw(b, r, scene, cs, fire, vol.colliders, vol.meshes, light, comp, size,
                                                plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage,
                                                ground_y=vol.origin[1], frame=frame, objects=objects,
-                                               floor=not look.bottomless, pieces=pieces)
+                                               floor=not look.bottomless, pieces=pieces, ropes=ropes)
                 if self.stage.has_pieces:   # the liquid is hidden behind the pieces, and sees them as solid
                     r.hold_stage = self.stage.hold
                     r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])

@@ -545,7 +545,8 @@ class BothEngine:
         footage = plate is not None
         objects = wlook.colliders_look != 'shaded'
         pieces = self.piece_poses(frame)   # (broken things: drawn, and holding out what is behind them, in every view)
-        stage_on = stage_mod.wanted(scene, footage, mode, objects=objects) or bool(pieces)
+        ropes = self.rope_poses(frame)
+        stage_on = stage_mod.wanted(scene, footage, mode, objects=objects) or bool(pieces) or bool(ropes)
         r.hold_stage = None
         p_transform, p_gain = INPUT_TRANSFORMS.get(comp.plate_transform, 0), comp.plate_gain
         if stage_on:
@@ -640,7 +641,7 @@ class BothEngine:
                 stage = ptex = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, ssize,
                                                plate_fit=plate_fit, samples=samples, shutter=lshutter, footage=footage,
                                                vol=vol, ground_y=vol.origin[1], frame=frame, objects=objects,
-                                               floor=not wlook.bottomless, pieces=pieces)
+                                               floor=not wlook.bottomless, pieces=pieces, ropes=ropes)
                 if self.stage.has_pieces:   # the fire and the liquids stop at the pieces
                     r.hold_stage = self.stage.hold
                     r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])

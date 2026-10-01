@@ -61,6 +61,27 @@ The *Things that fall* blocks include a brick wall, a glass pane in its frame, a
 
 ![Ball through a brick wall](media/gif/wall_smash.gif "Ball through a brick wall: a 260 kg steel ball punches through, the bricks above cave in and the dust rolls out.")
 
+## Joints and ropes
+
+*Joined by* (Properties › *Joint*) holds an object to another object or to a fixed point. An object with a joint falls (it needs no *Falls*).
+
+- **A rope** holds it at its length: it hangs and swings, goes slack when it is thrown up or knocked toward where it hangs from, and is caught again with a jolt. *Rope length* is how long it is (0: as long as it is at the start). *Rope is* draws it as a rope or a steel cable, hanging in a curve when it is slack, and *Thickness* is how thick.
+- **A spring** pulls it back toward its length at rest (*Rope length*) with *Spring stiffness* newtons for every metre it is stretched. A weight on a spring bounces with the period 2π√(m/k) and settles stretched by its weight over the stiffness.
+- **A hinge** lets it turn about one line only (*Hinge axis*, in its own frame, through *Joint on it*): a door, a gate, a lid, a seesaw, a wheel on its axle.
+- **A ball joint** lets it turn any way about one point (*Joint on it*): a pendulum on a rod, a sign hanging from a bracket.
+
+Where it is held:
+
+- *Joined to* is the name of the object at the other end: a beam, a crane's jib, a moving arm it is carried by, or another falling thing (two crates tied together). Empty, it hangs from *Anchor*, a fixed point.
+- *Joint on it* is where it is held, in its own frame ((0, 0, 0) is its middle). A rope or a spring held at its middle is tied where its surface faces the other end: the top of a ball hanging from above. *Joint on the other* is where the rope or the spring is tied on the object it is joined to.
+- A hinged or ball-jointed object spins about its joint when it is given *Spinning at*: a door pushed open turns about its hinges.
+- *Joint friction* slows a hinge or a ball joint down: at 0 it swings for ever, at 0.5 a door settles in a couple of seconds.
+- *Breaks at* is the force it gives way at. A rope snaps when it is jerked harder than that (a weight that falls before its rope catches it pulls several times its weight), and a hinge tears out of a door too heavy for it.
+
+The *Ropes and hinges* blocks are a wrecking ball on a crane, a rope swing, a door on hinges in its frame, a hanging lamp (its light swings with it), a weight on a spring and a seesaw that flips a ball into the air. Preset: *Wrecking ball*, through a brick wall.
+
+![Wrecking ball](media/gif/wrecking_ball.gif "Wrecking ball: a 900 kg ball on a crane's cable swings down into a brick wall at 6 m/s and bursts through it.")
+
 ## How they look
 
 Without footage, objects are drawn in CG in their materials (wood, stone, brick and so on), lit in the same light as the smoke: the key light with soft shadows, the sky (darker in corners and under things), the fire's own light with shadows, and the lights in the set. Glass and ice are clear: you see the fire and the set through them, bent, and the sky in them. *Own colour* draws one in a colour of its own.
@@ -78,7 +99,9 @@ CG objects go over the footage lit by the shot's light, and their shadows darken
 ## Limits
 
 - A scene holds up to 16 objects in all, falling or not (a broken one's pieces do not count: there can be hundreds).
-- A mesh cannot break yet, and there are no hinges, ropes or chains yet.
+- A mesh cannot break yet.
+- A rope or a spring passes through things in its way: only its ends are held (it does not wrap round a post), and it
+  weighs nothing. Each object has one joint; hang a chain as links, each joined to the one above.
 - The strengths are effective ones, set so that things break as they look like they should: a joint feels the whole
   impact spread over its face, where a real brittle thing breaks at the tiny point it is hit.
 - A falling mesh collides as its convex hull: its hollows and dents are filled in.

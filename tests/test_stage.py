@@ -52,3 +52,19 @@ def test_cg_objects_go_over_the_footage_with_their_shadows(engine):
     assert np.allclose(away, grey, atol=0.01)
     ground = st[120:178, :, :3][~cg[120:178]]
     assert ground.min() < 0.8 * grey                  # its shadow on the footage's ground
+
+
+def test_a_rope_is_drawn_from_its_anchor_down_to_what_hangs_on_it(engine):
+    """A steel cable from a fixed point down to a ball: drawn as a thin upright line over the stage, and held out of
+    the fire and the liquid behind it (the stage's hold: its distance from the camera)."""
+    s = scene_of(dict(name='Ball', shape='sphere', position=(0.0, 0.3, 0.0), size=(0.12, 0.12, 0.12), material='steel',
+                      joint='rope', joint_anchor=(0.0, 1.6, 0.0), rope_look='cable', rope_thickness=0.04))
+    engine.invalidate()
+    engine.prepare(s, final=False)
+    engine.simulate_to(s, s.start, cache=False)
+    engine.render(s, s.start, (320, 180))
+    hold = engine.gpu.read(engine.stage.hold).astype(np.float32)[..., 1]
+    ys, xs = np.nonzero(hold > 0.0)
+    assert len(ys) > 30
+    assert np.ptp(ys) > 40 and np.ptp(xs) < 12          # a thin upright line
+    assert abs(float(np.median(hold[ys, xs])) - 4.0) < 0.6   # about as far off as the ball (4 m)

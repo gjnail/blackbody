@@ -122,6 +122,7 @@ class Body:
     held: bool = False          # held by its keys last step
     throw: np.ndarray = field(default_factory=lambda: np.zeros(3))   # Thrown at (m/s), given when it is let go
     spin: np.ndarray = field(default_factory=lambda: np.zeros(3))    # Spinning at (rad/s, world axes)
+    pivot: np.ndarray = None    # the fixed point a hinge or a ball joint turns it about (world), if any: it spins about that
 
 
 MORTAR = 0.3e6          # Pa: mortar in tension, the glue between the bricks of a wall
@@ -150,12 +151,109 @@ class PieceSet:
     spin: np.ndarray = field(default_factory=lambda: np.zeros(3))
 
 
+ROPE_BOUNCE = 0.3       # the share of its speed a falling thing keeps when its rope snaps taut
+SPRING_DAMPING = 0.05   # a spring's damping ratio (with the object on its end)
+HINGE_SPAN = 0.05       # m: a hinge's two pins are at least this far apart
+
+
+@dataclass
+class Joint:
+    """A rope, spring, hinge or ball joint holding an object that falls (Properties › Joint): a MuJoCo tendon between
+    two sites (a rope: a limit on its length; a spring: its stiffness), or connect constraints (a ball joint: one at
+    its pivot; a hinge: two, at its pins along its axis)."""
+    index: int                  # the collider it holds
+    kind: str                   # rope, spring, hinge, ball
+    body: str                   # the MuJoCo body it is on (the object, or the piece of a breakable it is tied to)
+    other: str = ''             # and the one at its other end ('': the world)
+    sites: tuple = ()           # its sites: (on it, on the other) for a rope, spring or ball joint, two such pairs for a hinge
+    eqs: tuple = ()             # its connect constraints (hinge, ball)
+    tendon: str = ''            # its tendon (rope, spring)
+    length: float = 0.0         # the rope's length, or the spring's at rest (m)
+    strength: float = 0.0       # the force that breaks it (N); 0: it never breaks
+    axis: np.ndarray = None     # a hinge's axis in its body's frame
+    friction: float = 0.0       # how fast a hinge's or ball joint's turning dies away (1/s)
+    radius: float = 0.0125      # the rope's (or the spring's wire's) radius, for drawing (m)
+    look: int = 0               # ropes.ROPE, CABLE or SPRING
+    broken: bool = False
+    bid: int = -1               # MuJoCo ids, once compiled: its body, the other's (0: the world), sites, constraints, tendon
+    oid: int = 0
+    other_free: bool = False    # the other end is on a body that moves freely (it takes the joint's friction back)
+    sids: tuple = ()
+    eids: tuple = ()
+    tid: int = -1
+
+
 _FRACTURES = {}
 
 
 def breaks(c):
     """Whether collider c is breakable (a mesh cannot be cut yet)."""
     return bool(c.get('breakable')) and c.get('shape') != 'mesh'
+
+
+def joined(c):
+    """Collider c's joint kind ('rope', 'spring', 'hinge', 'ball'), or None."""
+    k = c.get('joint', 'none')
+    return k if k in ('rope', 'spring', 'hinge', 'ball') else None
+
+
+def falls(c):
+    """Whether collider c moves as a rigid body that falls: Falls is ticked, or it hangs on a joint."""
+    return bool(c.get('dynamic')) or joined(c) is not None
+
+
+def surface_toward(shape, size, u, hull=None):
+    """The point of a shape's surface (its own frame) straight out from its middle along unit vector u."""
+    s = np.abs(np.asarray(size, float))
+    u = np.asarray(u, float)
+    if shape == 'sphere':
+        return u * s[0]
+    if shape == 'mesh' and hull is not None and len(hull):
+        return u * max(float((np.asarray(hull, float) @ u).max()), 0.0)
+    if shape == 'cylinder':
+        r = math.hypot(u[0], u[2])
+        t = min(s[1] / abs(u[1]) if abs(u[1]) > 1e-9 else np.inf, s[0] / r if r > 1e-9 else np.inf)
+    else:
+        with np.errstate(divide='ignore'):
+            t = float(np.min(np.where(np.abs(u) > 1e-9, s / np.maximum(np.abs(u), 1e-12), np.inf)))
+    return u * (t if np.isfinite(t) else 0.0)
+
+
+def joint_ends(c, cg, other=None, hull=None):
+    """Where a joint's two ends start (world points): (on the object, at the other end). c: the collider; cg: its
+    ColliderGPU at the start; other: the ColliderGPU of the object it is joined to (None: Anchor, a fixed point).
+    A hinge or a ball joint has both ends at its pivot (Joint on it); a rope or a spring is tied at Joint on it, or
+    where the object's surface faces the other end, to Anchor or to Joint on the other."""
+    pos = np.asarray(cg.pos, float)
+    R = q_rot(xyzw(_quat_mul_wxyz(wxyz(cg.quat), _yaw_wxyz(float(cg.rot_y)))))
+    at = np.asarray(c.get('joint_at', (0.0, 0.0, 0.0)), float)
+    if joined(c) not in ('rope', 'spring'):
+        P = pos + R @ at
+        return P, P.copy()
+    if other is not None:
+        Ro = q_rot(xyzw(_quat_mul_wxyz(wxyz(other.quat), _yaw_wxyz(float(other.rot_y)))))
+        B = np.asarray(other.pos, float) + Ro @ np.asarray(c.get('joint_to_at', (0.0, 0.0, 0.0)), float)
+    else:
+        B = np.asarray(c.get('joint_anchor', (0.0, 2.0, 0.0)), float)
+    if np.allclose(at, 0.0):
+        u = R.T @ (B - pos)
+        nu = float(np.linalg.norm(u))
+        if nu > 1e-9:
+            at = surface_toward(c['shape'], cg.size, u / nu, hull)
+    return pos + R @ at, B
+
+
+def extent_along(shape, size, axis, hull=None):
+    """How far a shape reaches from its middle along unit vector `axis` (its own frame)."""
+    s = np.abs(np.asarray(size, float))
+    a = np.abs(np.asarray(axis, float))
+    if shape == 'sphere':
+        return float(s[0])
+    if shape == 'mesh' and hull is not None and len(hull):
+        return float(np.abs(np.asarray(hull, float) @ np.asarray(axis, float)).max())
+    if shape == 'cylinder':
+        return float(a[1] * s[1] + math.hypot(a[0], a[2]) * s[0])
+    return float(a @ s)
 
 
 def fractured(c, size, hollow=0.0):
@@ -200,6 +298,9 @@ class Solids:
         self.substep_pieces = []   # their pieces at each substep of the last frame (advance)
         self.breaks = []           # (time, world point, area) of every bond that broke, for dust and debris
         self._w = None             # the welds' data, flattened (_index_welds)
+        self.joints: list[Joint] = []   # ropes, springs, hinges and ball joints
+        self.snaps = []            # (time, collider index) of every joint that broke
+        self._tendon0 = None       # the tendons' limits, stiffness and damping as built (a broken one has them taken away)
 
     # -- set up --------------------------------------------------------------------------------
 
@@ -209,12 +310,13 @@ class Solids:
 
     @staticmethod
     def wanted(scene):
-        """Indices of the colliders that move by themselves: Falls, or Floats in a liquid."""
+        """Indices of the colliders that move by themselves: Falls (or hangs on a joint), breakable, or Floats in a
+        liquid."""
         out = []
         for i, c in enumerate(scene.colliders):
             if not c['enabled']:
                 continue
-            if c.get('dynamic') or breaks(c) or (c.get('floating') and scene.kind in ('liquid', 'both')):
+            if falls(c) or breaks(c) or (c.get('floating') and scene.kind in ('liquid', 'both')):
                 out.append(i)
         return out
 
@@ -237,6 +339,7 @@ class Solids:
         self.model = self.data = None
         self.bodies, self.mocap, self.key = [], [], None
         self.sets, self.breaks, self._w = [], [], None
+        self.joints, self.snaps, self._tendon0 = [], [], None
         self.started = False
         self._last = {}
         return changed
@@ -283,7 +386,7 @@ class Solids:
             strength = (MORTAR if c.get('fracture') == 'bricks' else r['strength']) * float(c.get('strength', 1.0))
             q0 = _quat_mul_wxyz(wxyz(cg.quat), _yaw_wxyz(float(cg.rot_y)))
             R0 = q_rot(xyzw(q0))
-            dynamic = bool(c.get('dynamic'))
+            dynamic = falls(c)
             ps = PieceSet(index=i, frac=frac, names=[], size=tuple(float(x) for x in cg.size), hollow=float(cg.hollow),
                           throw=np.asarray(c.get('start_velocity', (0.0, 0.0, 0.0)), float) if dynamic else np.zeros(3),
                           spin=np.radians(np.asarray(c.get('start_spin', (0.0, 0.0, 0.0)), float)) if dynamic else np.zeros(3),
@@ -377,6 +480,195 @@ class Solids:
                        area=np.array([r[3] for r in rows], float), strength=np.array([r[4] for r in rows], float),
                        collider=np.array([r[5] for r in rows], np.int64), lookup=lookup, over=np.zeros(len(rows), np.int64))
 
+    def _build_joints(self, scene, spec, by_index, bodies, sets, mocap, k, dt):
+        """The objects' ropes, springs, hinges and ball joints (Properties › Joint): sites on the two bodies, and a
+        tendon or connect constraints between them. Returns the Joints (their MuJoCo ids are found once compiled)."""
+        import mujoco
+        from .ropes import CABLE, ROPE, SPRING
+        out = []
+        free = {bd.index: (f'body{n}', bd) for n, bd in enumerate(bodies)}
+        pieces = {ps.index: ps for ps in sets}
+        by_name = {}
+        for j, c in enumerate(scene.colliders):
+            by_name.setdefault(c['name'], j)
+        for j, c in enumerate(scene.colliders):
+            by_name.setdefault(c['name'].strip().lower(), j)
+        world = ('', False, np.zeros(3), np.eye(3))
+
+        def turn(cg):
+            return q_rot(xyzw(_quat_mul_wxyz(wxyz(cg.quat), _yaw_wxyz(float(cg.rot_y)))))
+
+        def mass(j):
+            c = scene.colliders[j]
+            if j in free:
+                return free[j][1].density * free[j][1].volume
+            return resolved(c)['density'] * shape_volume(c['shape'], by_index[j].size)
+
+        def carrier(j, near):
+            """The MuJoCo body that carries collider j at world point `near`, and where it starts: (name ('': the
+            world), whether it moves freely, its position, its rotation). A breakable's is the piece nearest."""
+            cg = by_index[j]
+            pos, R = np.asarray(cg.pos, float), turn(cg)
+            if j in free:
+                return free[j][0], True, pos, R
+            if j in pieces:
+                ps = pieces[j]
+                cents = pos + np.array([p.centroid for p in ps.frac.pieces]) @ R.T
+                n = int(np.argmin(np.linalg.norm(cents - near, axis=1)))
+                return ps.names[n], True, cents[n], R
+            if j in mocap:
+                return f'mocap{j}', False, pos, q_rot(xyzw(_yaw_wxyz(float(cg.rot_y))))
+            return world
+
+        def site(on, P, name):
+            body, _f, bpos, bR = on
+            s = (spec.body(body) if body else spec.worldbody).add_site()
+            s.name = name
+            s.pos = list(map(float, bR.T @ (np.asarray(P, float) - bpos)))
+            return name
+
+        for i in sorted(set(free) | set(pieces)):
+            c = scene.colliders[i]
+            kind = joined(c)
+            if kind is None or i not in by_index:
+                continue
+            cg = by_index[i]
+            R = turn(cg)
+            to = str(c.get('joint_to', '') or '').strip()
+            j = None
+            if to:
+                j = by_name.get(to, by_name.get(to.lower()))
+                if j is None or j == i or not scene.colliders[j]['enabled'] or j not in by_index:
+                    why = 'itself' if j == i else (f'{to}, which is turned off' if j is not None else f'{to}: there is no such object')
+                    self.warnings.append(f'{c["name"]} is joined to {why}; it is held by a fixed point instead.')
+                    j = None
+            hull = free[i][1].hull if i in free else None
+            P, B = joint_ends(c, cg, by_index[j] if j is not None else None, hull)
+            me = carrier(i, P)
+            ot = carrier(j, B) if j is not None else world
+            if kind in ('hinge', 'ball') and i in free and not ot[1]:
+                free[i][1].pivot = P.copy()
+            tag = f'joint{i}'
+            jt = Joint(index=i, kind=kind, body=me[0], other=ot[0], other_free=ot[1],
+                       strength=float(c.get('joint_break', 0.0) or 0.0), friction=float(c.get('joint_friction', 0.2)),
+                       radius=0.5 * float(c.get('rope_thickness', 0.025)),
+                       look=SPRING if kind == 'spring' else (CABLE if c.get('rope_look') == 'cable' else ROPE))
+            if kind in ('rope', 'spring'):
+                sa, sb = site(me, P, f'{tag}a'), site(ot, B, f'{tag}b')
+                dist = float(np.linalg.norm(B - P))
+                L = float(c.get('rope_length', 0.0) or 0.0)
+                L = L if L > 0.0 else dist
+                t = spec.add_tendon()
+                t.name = tag
+                t.wrap_site(sa)
+                t.wrap_site(sb)
+                if kind == 'rope':
+                    t.limited = mujoco.mjtLimited.mjLIMITED_TRUE
+                    t.range = [0.0, max(L, 1e-4)]
+                    t.solref_limit = [-k, -2.0 * damping_ratio(ROPE_BOUNCE) * math.sqrt(k)]
+                    if L < 0.98 * dist:
+                        self.warnings.append(f'{c["name"]}: its rope ({L:.2f} m) is shorter than the {dist:.2f} m to where it is '
+                                             f'tied: it is yanked in at the start.')
+                else:
+                    m1 = mass(i)
+                    mu = m1 * mass(j) / (m1 + mass(j)) if (j is not None and ot[1]) else m1
+                    ks = float(c.get('spring_k', 500.0))
+                    most = mu * (0.5 / dt) ** 2       # (stiffer than the step can follow)
+                    if ks > most:
+                        self.warnings.append(f'{c["name"]}: its spring is too stiff for something so light; it is '
+                                             f'{most:.0f} N/m instead.')
+                        ks = most
+                    t.stiffness = [ks, 0.0, 0.0]
+                    t.springlength = [L, L]
+                    t.damping = [2.0 * SPRING_DAMPING * math.sqrt(ks * mu), 0.0, 0.0]
+                jt.sites, jt.tendon, jt.length = (sa, sb), tag, L
+            else:
+                pins = [P]
+                if kind == 'hinge':
+                    ax = np.asarray(c.get('joint_axis', (0.0, 1.0, 0.0)), float)
+                    na = float(np.linalg.norm(ax))
+                    ax = ax / na if na > 1e-9 else np.array([0.0, 1.0, 0.0])
+                    half = max(extent_along(c['shape'], cg.size, ax, hull), HINGE_SPAN)
+                    axw = R @ ax
+                    pins = [P + half * axw, P - half * axw]
+                    jt.axis = me[3].T @ axw
+                sites, eqs = [], []
+                for n, Q in enumerate(pins):
+                    s1, s2 = site(me, Q, f'{tag}p{n}'), site(ot, Q, f'{tag}q{n}')
+                    e = spec.add_equality()
+                    e.type = mujoco.mjtEq.mjEQ_CONNECT
+                    e.objtype = mujoco.mjtObj.mjOBJ_SITE
+                    e.name = f'{tag}e{n}'
+                    e.name1, e.name2 = s1, s2
+                    e.solref = [-k, -2.0 * math.sqrt(k)]
+                    sites += [s1, s2]
+                    eqs.append(e.name)
+                jt.sites, jt.eqs = tuple(sites), tuple(eqs)
+            out.append(jt)
+        return out
+
+    def _break_joints(self):
+        """Snap the ropes and springs pulled, and tear out the hinges and ball joints loaded, past their Breaks at."""
+        import mujoco
+        live = [jt for jt in self.joints if jt.strength > 0.0 and not jt.broken]
+        if not live:
+            return
+        m, d = self.model, self.data
+        n = d.nefc
+        typ, ids, F = d.efc_type[:n], d.efc_id[:n], d.efc_force[:n]
+        for jt in live:
+            if jt.kind == 'rope':
+                f = float(F[(typ == mujoco.mjtConstraint.mjCNSTR_LIMIT_TENDON) & (ids == jt.tid)].sum())
+            elif jt.kind == 'spring':
+                f = abs(float(m.tendon_stiffness[jt.tid]) * (float(d.ten_length[jt.tid]) - jt.length))
+            else:
+                eq = typ == mujoco.mjtConstraint.mjCNSTR_EQUALITY
+                f = sum(float(np.linalg.norm(F[eq & (ids == e)])) for e in jt.eids)
+            if f > jt.strength:
+                self._snap(jt)
+                self.snaps.append((self.time, jt.index))
+
+    def _snap(self, jt):
+        """Joint jt is broken from now on."""
+        m, d = self.model, self.data
+        if jt.kind == 'rope':
+            m.tendon_limited[jt.tid] = 0
+        elif jt.kind == 'spring':
+            m.tendon_stiffness[jt.tid] = 0.0
+            m.tendon_damping[jt.tid] = 0.0
+        else:
+            d.eq_active[list(jt.eids)] = 0
+        jt.broken = True
+
+    def _unsnap_all(self):
+        """Every joint whole again (as built)."""
+        if self._tendon0 is not None and self.model is not None:
+            m = self.model
+            m.tendon_limited[:], m.tendon_stiffness[:], m.tendon_damping[:] = self._tendon0
+        for jt in self.joints:
+            jt.broken = False
+
+    def rope_poses(self):
+        """The ropes and springs as they are now, for drawing (ropes.rope_points): {collider index: dict(a, b (3,): its
+        ends, on the object and at the other end, va, vb (3,): their velocities, length (m; a spring's at rest),
+        radius (m), look (ropes.ROPE, CABLE, SPRING), broken (0 or 1))}."""
+        import mujoco
+        out = {}
+        if self.data is None:
+            return out
+        m, d = self.model, self.data
+        v6 = np.zeros(6)
+        for jt in self.joints:
+            if jt.kind not in ('rope', 'spring'):
+                continue
+            ends = []
+            for s in jt.sids[:2]:
+                mujoco.mj_objectVelocity(m, d, mujoco.mjtObj.mjOBJ_SITE, s, v6, 0)
+                ends += [d.site_xpos[s].copy(), v6[3:].copy()]
+            out[jt.index] = dict(a=ends[0], va=ends[1], b=ends[2], vb=ends[3], length=np.float32(jt.length),
+                                 radius=np.float32(jt.radius), look=np.float32(jt.look), broken=np.float32(jt.broken))
+        return out
+
     def _break(self):
         """Break the welds whose joint is overloaded (BREAK_STEPS steps running): pulled apart harder than its strength over
         its area, sheared harder than that plus the friction of what presses it together, or bent past what its
@@ -393,13 +685,12 @@ class Solids:
         eqm = d.efc_type[:n] == mujoco.mjtConstraint.mjCNSTR_EQUALITY
         if not eqm.any():
             return
-        F = d.efc_force[:n][eqm].reshape(-1, 6)
-        E = d.efc_id[:n][eqm].reshape(-1, 6)[:, 0]
-        rows = W['lookup'][E]
-        ok = rows >= 0
-        rows, F = rows[ok], F[ok]
-        if len(rows) == 0:
+        ids = d.efc_id[:n][eqm]
+        weld = W['lookup'][ids] >= 0      # (a hinge's or a ball joint's connect constraints have 3 rows: _break_joints)
+        if not weld.any():
             return
+        F = d.efc_force[:n][eqm][weld].reshape(-1, 6)
+        rows = W['lookup'][ids[weld].reshape(-1, 6)[:, 0]]
         R = d.xmat[W['body'][rows]].reshape(-1, 3, 3)
         nw = np.einsum('bij,bj->bi', R, W['normal'][rows])
         f = F[:, :3]
@@ -552,7 +843,7 @@ class Solids:
                 smallest = min(smallest, float(size[0]) if shape in ('sphere', 'cylinder') else float(size.min()))
             # objects that fall are held until their release (by default the shot's first frame, so the pre-roll
             # that gets a fire going does not drop them); floating objects of older scenes are free from the start
-            release = scene.start + float(c.get('release', 0.0)) * scene.fps if c.get('dynamic') else None
+            release = scene.start + float(c.get('release', 0.0)) * scene.fps if falls(c) else None
             bodies.append(Body(index=i, shape=shape, size=size, density=r['density'], friction=r['friction'],
                                bounce=r['bounce'], volume=max(vol, 1e-9), area=area, hull=hull, release=release))
         for i in idx:
@@ -564,6 +855,12 @@ class Solids:
                     ext = pc.verts.max(0) - pc.verts.min(0)
                     smallest = min(smallest, 0.5 * float(np.sort(ext)[1]), 2.0 * float(ext.min()))
         dt = min(max(0.1 * smallest, MIN_DT), MAX_DT)
+        # a spring's swing takes a dozen steps at least (its stiffness is integrated explicitly)
+        for bd in bodies:
+            c = scene.colliders[bd.index]
+            if joined(c) == 'spring':
+                w_n = math.sqrt(max(float(c.get('spring_k', 500.0)), 1e-6) / max(bd.density * bd.volume, 1e-6))
+                dt = max(min(dt, 0.5 / w_n), MIN_DT)
         spec.option.timestep = dt
         k = (0.6 / dt) ** 2   # as stiff as the step allows (about 0.6 radian of the contact's spring per step)
 
@@ -653,12 +950,14 @@ class Solids:
                 parts = [(cg.shape, size, np.zeros(3), None)]
             if i in moving:
                 parent = w.add_body()
+                parent.name = f'mocap{i}'
                 parent.mocap = True
                 parent.pos = list(map(float, cg.pos))
                 parent.quat = _yaw_wxyz(yaw)
                 mocap.append(i)
-            for shape, hs, centre, mesh in parts:
+            for n_part, (shape, hs, centre, mesh) in enumerate(parts):
                 g = fixed_geom(w if i not in moving else parent, shape, hs, mesh)
+                g.name = f'fixed{i}_{n_part}'
                 if i in moving:
                     g.pos = list(map(float, centre))
                 else:
@@ -686,9 +985,19 @@ class Solids:
             contact(g, bd.friction, bd.bounce, roll=bd.shape in ('sphere', 'cylinder'))
             bd.fb = self._float_body(bd, cg)
         sets = self._build_pieces(scene, spec, w, idx, by_index, contact, fixed_geom, k)
+        joints = self._build_joints(scene, spec, by_index, bodies, sets, mocap, k, dt)
         self.model = spec.compile()
         self.data = mujoco.MjData(self.model)
         m = self.model
+        for jt in joints:
+            jt.bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, jt.body)
+            jt.oid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, jt.other) if jt.other else 0
+            jt.sids = tuple(mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, s) for s in jt.sites)
+            jt.eids = tuple(mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_EQUALITY, e) for e in jt.eqs)
+            jt.tid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_TENDON, jt.tendon) if jt.tendon else -1
+        self.joints = joints
+        self.snaps = []
+        self._tendon0 = (m.tendon_limited.copy(), m.tendon_stiffness.copy(), m.tendon_damping.copy())
         for n, bd in enumerate(bodies):
             bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, f'body{n}')
             bd.body_id = bid
@@ -719,18 +1028,40 @@ class Solids:
             bd.throw, bd.spin = v0.copy(), w0.copy()
             cg = by_index[bd.index]
             v0 = v0 + np.asarray(cg.vel, float)
+            if bd.pivot is not None:   # (on a hinge or a ball joint: it turns about that)
+                v0 = v0 + np.cross(w0, np.asarray(cg.pos, float) - bd.pivot)
             d.qvel[bd.vadr:bd.vadr + 3] = v0
             # free joint angular velocity is in the body's own frame
             R = q_rot(xyzw(d.qpos[bd.qadr + 3:bd.qadr + 7]))
             d.qvel[bd.vadr + 3:bd.vadr + 6] = R.T @ w0
         mujoco.mj_forward(m, d)
         # things that start inside each other are thrown apart when they are let go
+        # (and things that start inside something fixed are pushed out)
         owner = {int(m.geom_bodyid[g]): bd for bd in bodies for g in range(m.ngeom) if int(m.geom_bodyid[g]) == bd.body_id}
+        fixed = {}
+        for g in range(m.ngeom):
+            nm = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or ''
+            if nm.startswith('fixed'):
+                fixed[g] = int(nm[5:].split('_')[0])
         seen = set()
         for k in range(d.ncon):
             con = d.contact[k]
             a, b = owner.get(int(m.geom_bodyid[con.geom1])), owner.get(int(m.geom_bodyid[con.geom2]))
-            if a is None or b is None or a is b or con.dist > -0.02 * float(min(a.size.min(), b.size.min())) - 1e-3:
+            if a is None and b is not None:
+                a, b, g_other = b, None, int(con.geom1)
+            else:
+                g_other = int(con.geom2)
+            if a is None or a is b:
+                continue
+            if b is None:
+                j = fixed.get(g_other)
+                if j is None or con.dist > -0.02 * float(a.size.min()) - 1e-3 or ('in', a.index, j) in seen:
+                    continue
+                seen.add(('in', a.index, j))
+                self.warnings.append(f'{scene.colliders[a.index]["name"]} starts inside {scene.colliders[j]["name"]}: it is pushed '
+                                     f'out when it is let go.')
+                continue
+            if con.dist > -0.02 * float(min(a.size.min(), b.size.min())) - 1e-3:
                 continue
             pair = tuple(sorted((a.index, b.index)))
             if pair not in seen:
@@ -743,7 +1074,8 @@ class Solids:
         self.time = 0.0
         self.started = False
         self._last = self._poses()
-        log.info('Rigid bodies: %d free, %d keyframed, step %.2f ms', len(bodies), len(self.mocap), dt * 1e3)
+        log.info('Rigid bodies: %d free, %d keyframed, %d joints, step %.2f ms', len(bodies), len(self.mocap), len(joints),
+                 dt * 1e3)
 
     @staticmethod
     def _z_onto(n):
@@ -869,6 +1201,8 @@ class Solids:
         self.data.xfrc_applied[:] = 0.0
         self.data.eq_active[:] = self.model.eq_active0
         self.breaks = []
+        self.snaps = []
+        self._unsnap_all()
         if self._w is not None:
             self._w['over'][:] = 0
         for ps in self.sets:
@@ -892,6 +1226,8 @@ class Solids:
             if bd.held and bd not in held:
                 # let go: it carries on at its keys' speed, plus the throw and spin it was given
                 d.qvel[bd.vadr:bd.vadr + 3] += bd.throw
+                if bd.pivot is not None:   # (on a hinge or a ball joint: it turns about that)
+                    d.qvel[bd.vadr:bd.vadr + 3] += np.cross(bd.spin, d.qpos[bd.qadr:bd.qadr + 3] - bd.pivot)
                 R = q_rot(xyzw(d.qpos[bd.qadr + 3:bd.qadr + 7]))
                 d.qvel[bd.vadr + 3:bd.vadr + 6] += R.T @ bd.spin
             bd.held = bd in held
@@ -1012,6 +1348,36 @@ class Solids:
                 t += (mass / m_tot) * (t_hyd + 0.5 * t_dyn) - (0.3 + 6.0 * sub) * (I_w @ omega)
             d.xfrc_applied[bid, :3] = f
             d.xfrc_applied[bid, 3:] = t
+        self._joint_friction()
+
+    def _joint_friction(self):
+        """Hinges and ball joints resist turning: a torque against the turning of one side against the other, that
+        slows it down at the rate their Joint friction gives (per second)."""
+        import mujoco
+        m, d = self.model, self.data
+        v6 = np.zeros(6)
+        for jt in self.joints:
+            if jt.broken or jt.kind not in ('hinge', 'ball') or jt.friction <= 0.0:
+                continue
+            b = jt.bid
+            mujoco.mj_objectVelocity(m, d, mujoco.mjtObj.mjOBJ_BODY, b, v6, 0)
+            w = v6[:3].copy()
+            if jt.other_free:
+                mujoco.mj_objectVelocity(m, d, mujoco.mjtObj.mjOBJ_BODY, jt.oid, v6, 0)
+                w -= v6[:3]
+            Ri = d.ximat[b].reshape(3, 3)
+            Iw = Ri @ np.diag(m.body_inertia[b]) @ Ri.T
+            r = d.xipos[b] - d.site_xpos[jt.sids[0]]          # from the pivot (a hinge's pin) to its centre of mass
+            if jt.kind == 'hinge':
+                ax = d.xmat[b].reshape(3, 3) @ jt.axis
+                rp = r - ax * float(r @ ax)
+                inertia = float(ax @ Iw @ ax) + float(m.body_mass[b]) * float(rp @ rp)   # about the hinge's line
+                tau = -jt.friction * inertia * ax * float(w @ ax)
+            else:
+                tau = -jt.friction * ((Iw + float(m.body_mass[b]) * (float(r @ r) * np.eye(3) - np.outer(r, r))) @ w)
+            d.xfrc_applied[b, 3:] += tau
+            if jt.other_free:
+                d.xfrc_applied[jt.oid, 3:] -= tau
 
     def advance(self, scene, frame, fdt, substeps):
         """Move every body through frame `frame` (fdt seconds of simulation). Returns, for each of the
@@ -1039,6 +1405,7 @@ class Solids:
             mujoco.mj_step(m, d)
             self._keep_in_box()
             self._break()
+            self._break_joints()
             t += h
             self.time += h
         while mi < len(marks):
@@ -1145,7 +1512,9 @@ class Solids:
                                                                 for x in bd.hydro) for bd in self.bodies],
                     held={str(bd.index): bool(bd.held) for bd in self.bodies},
                     eq_active=d.eq_active.copy(), over=None if self._w is None else self._w['over'].copy(),
-                    pieces={int(k): {kk: np.asarray(vv, np.float32) for kk, vv in v.items()} for k, v in self.piece_poses().items()})
+                    pieces={int(k): {kk: np.asarray(vv, np.float32) for kk, vv in v.items()} for k, v in self.piece_poses().items()},
+                    joints=[bool(jt.broken) for jt in self.joints],
+                    ropes={int(k): {kk: np.asarray(vv, np.float32) for kk, vv in v.items()} for k, v in self.rope_poses().items()})
 
     def load_state(self, st):
         """Carry on from a saved state (state()). False if it does not fit the current model."""
@@ -1168,6 +1537,11 @@ class Solids:
             self.data.eq_active[:] = ea
         if self._w is not None and st.get('over') is not None and np.shape(st['over']) == self._w['over'].shape:
             self._w['over'][:] = st['over']
+        self._unsnap_all()
+        for jt, broken in zip(self.joints, st.get('joints') or []):
+            if broken:
+                self._snap(jt)
+        self.snaps = []
         self.started = True
         self._last = self._poses()
         return True

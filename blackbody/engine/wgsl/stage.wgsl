@@ -40,6 +40,8 @@
 const PI: f32 = 3.14159265;
 const FLOOR: i32 = 100;
 const PIECE: i32 = 1000;   // a hit on piece k has id PIECE + k
+const ROPE_ROW: i32 = 16;  // = MAX_COLLIDERS: the material rows of ropes (then steel cables and springs) follow the objects'
+const MAT_ROWS: u32 = 18u;
 
 struct Mat {
   c: vec4<f32>,   // albedo (linear rgb), roughness
@@ -76,7 +78,7 @@ struct Params {
   pn: vec4<f32>,        // its dims (cells), pieces (count)
   ccnt: vec4<f32>,      // objects (count), _
   col: array<Collider, MAX_COLLIDERS>,
-  mat: array<Mat, MAX_COLLIDERS>,
+  mat: array<Mat, MAT_ROWS>,
 };
 
 @group(0) @binding(0) var atlas: texture_3d<f32>;       // mesh distance fields (meshsdf.wgsl)
@@ -95,7 +97,9 @@ struct Params {
 @group(0) @binding(13) var lut_plate: texture_3d<f32>;  // OCIO: footage colour space -> scene-linear
 @group(0) @binding(14) var out_plate: texture_storage_2d<rgba16float, write>;
 // pieces: a = centre (fire-local m), planes (count); q = orientation (x y z w); v = velocity (m/s), first plane;
-// o = spin (rad/s, world), material row; r = its centre in the object's frame before it broke, bounding radius
+// o = spin (rad/s, world), material row; r = its centre in the object's frame before it broke, bounding radius.
+// A segment of a rope or a spring (material row ROPE_ROW on) is a prism along its y axis, its first planes round
+// its sides; its r = strands (0: a plain wire), its middle's distance along the rope (m), twist (radii per turn), _.
 struct PieceG { a: vec4<f32>, q: vec4<f32>, v: vec4<f32>, o: vec4<f32>, r: vec4<f32> };
 @group(0) @binding(15) var<storage, read> PC: array<PieceG>;
 @group(0) @binding(16) var<storage, read> PL: array<vec4<f32>>;   // n, d in the piece's frame (n . x <= d); a cut face's n is 2 long
@@ -745,6 +749,45 @@ fn background(rd: vec3<f32>, px: vec2<f32>) -> vec3<f32> {
   return U.bg.rgb;
 }
 
+// A rope or a spring's wire at a hit on segment kp: round (its normal from its axis, not its flat sides), the rope
+// twisted from strands that catch the light on their crowns and are dark in the grooves between them.
+fn rope_surface(s0: Surf, kp: u32, pose: array<vec4<f32>, 2>, pl: vec4<f32>, row: i32, fw: f32) -> Surf {
+  var s = s0;
+  let P = PC[kp];
+  let m = U.mat[row];
+  let qi = vec4<f32>(-pose[1].xyz, pose[1].w);
+  let ql = quat_rotate(qi, s.p - pose[0].xyz);
+  let rad = max(PL[u32(P.v.w)].w, 1e-5);
+  var nl = normalize(pl.xyz);
+  let side = abs(nl.y) < 0.5;
+  if (side) { nl = normalize(vec3<f32>(ql.x, 0.0, ql.z)); }
+  var shade = 1.0;
+  let strands = P.r.x;
+  if (strands > 0.5 && side) {
+    let ang = atan2(ql.z, ql.x);
+    let along = ql.y + P.r.y;
+    let pitch = max(P.r.z * rad, 1e-4);
+    let ph = strands * (ang - 6.2831853 * along / pitch);
+    // (faded out where a pixel is wider than a strand)
+    let fade = clamp(2.0 - fw * strands / (3.0 * rad), 0.0, 1.0);
+    let crown = 0.5 + 0.5 * cos(ph);
+    shade = mix(0.82, 0.5 + 0.5 * sqrt(crown), fade);
+    let tang = vec3<f32>(-sin(ang), 0.0, cos(ang));
+    let grad = normalize(tang * (strands / rad) - vec3<f32>(0.0, 6.2831853 * strands / pitch, 0.0));
+    nl = normalize(nl - grad * (0.45 * sin(ph) * fade));
+    if (m.d.x < 0.5) {   // fibres
+      shade *= 0.85 + 0.3 * fnoise(vec3<f32>(ang * rad, along, 0.0) * (60.0 / rad), fw * 60.0 / rad);
+    }
+  }
+  s.n = quat_rotate(pose[1], nl);
+  let metal = clamp(m.d.x, 0.0, 1.0);
+  let base = m.c.rgb * shade;
+  s.rough = clamp(m.c.w, 0.02, 1.0);
+  s.alb = min(base, vec3<f32>(0.95)) * (1.0 - metal);
+  s.f0 = mix(vec3<f32>(0.04), min(base, vec3<f32>(1.0)), metal);
+  return s;
+}
+
 // The surface at a hit: where, which way it faces, and its material there.
 fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
   var s: Surf;
@@ -768,6 +811,7 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
     let cut = length(pl.xyz) > 1.5;
     s.n = quat_rotate(pose[1], normalize(pl.xyz));
     let row = i32(P.o.w + 0.5);
+    if (row >= ROPE_ROW) { return rope_surface(s, kp, pose, pl, row, fw); }
     let m = U.mat[row];
     // the pattern runs on through the pieces as it did through the whole object
     let qi = vec4<f32>(-pose[1].xyz, pose[1].w);

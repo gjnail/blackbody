@@ -732,6 +732,33 @@ COLLIDER_PARAMS = [
       'edges (a pane in its frame), or nothing (it stands on its own weight).', group='Breaking'),
     I('fracture_seed', 'Pattern seed', 0, 0, 9999, tip='Another number gives another pattern of pieces.', group='Breaking',
       advanced=True),
+    E('joint', 'Joined by', 'none', (('none', 'Nothing'), ('rope', 'A rope'), ('hinge', 'A hinge'), ('ball', 'A ball joint'),
+                                       ('spring', 'A spring')),
+      tip='What holds it to another object or to a fixed point: a rope (it hangs, swings and goes slack), a hinge (a door, a '
+      'lid, a seesaw), a ball joint (it swings any way about a point) or a spring. An object with a joint falls.', group='Joint'),
+    Param('joint_to', 'Joined to', 'str', '', tip='The name of the object it is joined to. Empty: a fixed point in the world '
+          '(Anchor).', group='Joint'),
+    V('joint_at', 'Joint on it', (0.0, 0.0, 0.0), -10.0, 10.0, 'm', tip='Where on this object the joint is, in its own frame: '
+      '(0, 0, 0) is its middle. A rope or a spring joined at its middle is tied where it meets the object’s surface.',
+      group='Joint'),
+    V('joint_anchor', 'Anchor', (0.0, 2.0, 0.0), -1000.0, 1000.0, 'm', tip='The fixed point a rope or a spring hangs from when '
+      'it is not joined to an object.', group='Joint'),
+    V('joint_to_at', 'Joint on the other', (0.0, 0.0, 0.0), -10.0, 10.0, 'm', tip='Where a rope or a spring is tied on the '
+      'object it is joined to, in that object’s own frame.', group='Joint'),
+    V('joint_axis', 'Hinge axis', (0.0, 1.0, 0.0), -1.0, 1.0, tip='The line a hinge turns about, in the object’s own '
+      'frame: (0, 1, 0) for a door, (1, 0, 0) for a seesaw or a lid.', group='Joint'),
+    F('rope_length', 'Rope length', 0.0, 0.0, 100.0, 'm', 2, tip='How long the rope is (a spring: how long it is at rest). '
+      '0: as long as it is from end to end at the start.', group='Joint'),
+    E('rope_look', 'Rope is', 'rope', (('rope', 'Rope'), ('cable', 'Steel cable')), tip='What the rope is drawn as.',
+      group='Joint'),
+    F('rope_thickness', 'Thickness', 0.025, 0.002, 0.2, 'm', 3, tip='How thick the rope, or the spring’s wire, is.',
+      group='Joint'),
+    F('spring_k', 'Spring stiffness', 500.0, 1.0, 1.0e6, 'N/m', 0, tip='How hard the spring pulls per metre it is stretched.',
+      group='Joint', log=True),
+    F('joint_friction', 'Joint friction', 0.2, 0.0, 10.0, '', 2, tip='How much a hinge or a ball joint resists turning: 0 '
+      'swings for ever, 1 settles in a second or two.', group='Joint', advanced=True),
+    F('joint_break', 'Breaks at', 0.0, 0.0, 1.0e7, 'N', 0, tip='The pull that snaps the rope or the spring, or tears the hinge '
+      'out. 0: it never breaks.', group='Joint'),
     B('floating', 'Floats', False, tip='The liquid moves it: it floats or sinks by its density, bobs, drifts with the flow, tips and '
       'turns. Falls does the same, and also lets it fall through the air. Its keyframes set only where it starts.', group='Liquid'),
 ]

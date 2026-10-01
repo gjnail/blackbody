@@ -31,6 +31,9 @@ NOT_DRAWN, IN_FOOTAGE, CG = 0, 1, 2
 SUN_SHARPNESS = 24.0     # the key light's soft shadows: 1 / tan of its angular radius (about 2.4 degrees)
 HORIZON_FADE = 150.0     # m: far off, the floor fades into the sky at the horizon over this distance
 INPUT_LINEAR = 2         # composite.wgsl input transform: scene-linear
+ROPE_ROW = MAX_COLLIDERS  # the material rows after the objects': rope (manila), then steel (cables, springs)
+ROPE_LOOKS = (((0.456, 0.305, 0.127), 0.85, 0.0), ((0.55, 0.56, 0.57), 0.4, 1.0))   # (colour, roughness, metal)
+STRANDS = {0: (3.0, 7.0), 1: (6.0, 9.0), 2: (0.0, 0.0)}   # ropes.ROPE, CABLE, SPRING: strands, twist (radii per turn)
 
 
 def drawn(c, footage):
@@ -42,7 +45,8 @@ def drawn(c, footage):
         return CG
     if look == 'footage':
         return IN_FOOTAGE
-    return IN_FOOTAGE if footage and not (c.get('dynamic') or c.get('floating') or c.get('breakable')) else CG
+    moves = c.get('dynamic') or c.get('floating') or c.get('breakable') or c.get('joint', 'none') != 'none'
+    return IN_FOOTAGE if footage and not moves else CG
 
 
 def looks(scene, footage):
@@ -62,7 +66,7 @@ def standin_colours(scene):
     (r, g, b, 1), or (0, 0, 0, 0): things that fall or float, and objects set to CG, in their material's colour."""
     out = []
     for c in [c for c in scene.colliders if c['enabled']][:MAX_COLLIDERS]:
-        own = c.get('dynamic') or c.get('floating') or c.get('look') == 'cg'
+        own = c.get('dynamic') or c.get('floating') or c.get('joint', 'none') != 'none' or c.get('look') == 'cg'
         colour = tuple(c['colour']) if c.get('own_colour') else material(c.get('material', 'wood')).colour
         out.append((*colour, 1.0) if own else (0.0, 0.0, 0.0, 0.0))
     return out
@@ -164,17 +168,21 @@ class Stage:
         return b
 
     @staticmethod
-    def piece_arrays(scene, pieces, shutter=0.0):
-        """The pieces of broken objects for the shader: (pieces (n, 5, 4), planes (p, 4), grid corner, cell size,
-        grid dims, cells (g, 2) uint32, list uint32), or None. pieces: {collider index: Solids.piece_poses entry}."""
+    def piece_arrays(scene, pieces, shutter=0.0, ropes=None, ground_y=None):
+        """The pieces of broken objects and the segments of ropes and springs, for the shader: (pieces (n, 5, 4),
+        planes (p, 4), grid corner, cell size, grid dims, cells (g, 2) uint32, list uint32), or None.
+        pieces: {collider index: Solids.piece_poses entry}; ropes: {collider index: Solids.rope_poses entry};
+        ground_y: the ground's height (a snapped rope hangs down to it)."""
+        from .ropes import num, prism_planes, rope_points, segments
         from .solids import fractured
         enabled = [i for i, c in enumerate(scene.colliders) if c['enabled']][:MAX_COLLIDERS]
         row_of = {ci: r for r, ci in enumerate(enabled)}
         P, PL, centres, radii = [], [], [], []
+        first = 0
         for ci, pose in (pieces or {}).items():
             if ci not in row_of or ci >= len(scene.colliders):
                 continue
-            frac = fractured(scene.colliders[ci], pose['size'], float(pose.get('hollow', 0.0)))
+            frac = fractured(scene.colliders[ci], pose['size'], num(pose.get('hollow', 0.0)))
             n = min(len(frac.pieces), len(pose['pos']))
             for k in range(n):
                 pc = frac.pieces[k]
@@ -184,11 +192,29 @@ class Stage:
                 rad = float(np.linalg.norm(pc.verts - pc.centroid, axis=1).max())
                 pos = np.asarray(pose['pos'][k], float)
                 vel = np.asarray(pose['vel'][k], float)
-                P.append([[*pos, len(pl)], [*np.asarray(pose['quat'][k], float)], [*vel, sum(len(x) for x in PL)],
+                P.append([[*pos, len(pl)], [*np.asarray(pose['quat'][k], float)], [*vel, first],
                           [*np.asarray(pose['omega'][k], float), row_of[ci]], [*pc.centroid, rad]])
                 PL.append(pl)
+                first += len(pl)
                 centres.append(pos)
                 radii.append(rad + float(np.linalg.norm(vel)) * 0.5 * shutter)
+        # ropes and springs: straight segments along them (their r: strands, distance along it, twist, radius)
+        for ci, rope in (ropes or {}).items():
+            pts, vel = rope_points(rope, ground=ground_y)
+            if len(pts) < 2:
+                continue
+            look = int(round(num(rope['look'])))
+            row = ROPE_ROW + (0 if look == 0 else 1)
+            strands, twist = STRANDS.get(look, (0.0, 0.0))
+            rad = max(num(rope['radius']), 1e-4)
+            for centre, quat, v, half, along in segments(pts, vel, rad):
+                pl = prism_planes(rad, half)
+                bound = math.hypot(half, rad)
+                P.append([[*centre, len(pl)], [*quat], [*v, first], [0.0, 0.0, 0.0, row], [strands, along, twist, bound]])
+                PL.append(pl)
+                first += len(pl)
+                centres.append(centre)
+                radii.append(bound + float(np.linalg.norm(v)) * 0.5 * shutter)
         if not P:
             return None
         P = np.asarray(P, np.float32)
@@ -264,7 +290,7 @@ class Stage:
 
     def draw(self, b, r, scene, camstate, fire, colliders, meshes, light: StageLight, comp, size, plate_fit=(1.0, 1.0),
              samples=1, shutter=0.0, footage=False, vol=None, ground_y=0.0, frame=0, objects=True, floor=True,
-             pieces=None):
+             pieces=None, ropes=None):
         """Draw the stage into self.tex (size: the plate's, footage or output) and return it.
         r: the Renderer (its footage plate and holdouts, light volume, fire lights and lamp buffer);
         colliders: the objects as the solver has them (ColliderGPU, moving ones where they are this frame);
@@ -272,7 +298,8 @@ class Stage:
         ground_y: the ground's height (fire-local m: the bottom of the simulation box);
         objects: draw the CG objects (else they only shade the floor: a liquid scene's grey stand-ins);
         floor: draw the floor (not under bottomless water);
-        pieces: the pieces of broken objects, {collider index: Solids.piece_poses entry}."""
+        pieces: the pieces of broken objects, {collider index: Solids.piece_poses entry};
+        ropes: the ropes and springs, {collider index: Solids.rope_poses entry}."""
         g = self.gpu
         pw, ph = int(size[0]), int(size[1])
         self._ensure(pw, ph)
@@ -346,7 +373,7 @@ class Stage:
              .v4(1.0 if env is not None else 0.0, math.radians(light.env_rotation), light.env_strength, 0.0)
              .v4(r._shaper_lo, r._shaper_hi, 1.0 if r.lut_plate_log else 0.0, r.lut_size)
              .v4(*centre, radius))
-        pa = self.piece_arrays(scene, pieces, shutter) if pieces else None
+        pa = self.piece_arrays(scene, pieces, shutter, ropes, ground_y) if (pieces or ropes) else None
         self.has_pieces = pa is not None
         if pa is not None:
             P, PL, glo, gcell, gdims, GC, GL = pa
@@ -363,6 +390,8 @@ class Stage:
                 u.v4(*colour, rough).v4(metal, clear, pattern, dr).v4(*inside, ior)
             else:
                 u.v4().v4().v4()
+        for colour, rough, metal in ROPE_LOOKS:
+            u.v4(*colour, rough).v4(metal, 0.0, 0.0, float(CG)).v4(*colour, 1.5)
         black = r._black
         b.run(self.k, [meshes.atlas if meshes is not None else r._empty_r32,
                        r.L0 if vol_on else r._empty, r.L1 if vol_on else r._empty, r.E if vol_on else r._empty,

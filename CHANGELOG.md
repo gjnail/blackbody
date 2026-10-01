@@ -30,6 +30,12 @@ Notable changes to Blackbody. The format follows
   Hundreds of pieces, drawn on the stage and in footage, hiding the fire and the liquid behind them; the gas and the
   water flow round them and are pushed by them; dust where they break. Blocks: brick wall, glass pane, concrete
   pillar, wooden crate, vase. Presets: Ball through a brick wall, Stone through a window, Vase off a table.
+- Ropes, springs, hinges and ball joints (Properties › Joint): an object hangs on a rope (it swings, goes slack and
+  is caught with a jolt), bounces on a spring, turns on a hinge or swings about a ball joint, from a fixed point or
+  from another object (a beam, a crane's jib, a moving arm, another falling thing). Ropes and steel cables are drawn
+  hanging in a curve when slack, springs as coils; they snap, and hinges tear out, past Breaks at. Ropes and hinges
+  blocks: wrecking ball, rope swing, door on hinges, hanging lamp, weight on a spring, seesaw. Preset: Wrecking ball.
+- A warning names a falling thing that starts inside something fixed (it is pushed out when it is let go).
 - Make it fall and Drop it at this frame on any object (right-click it, the Fall chip on its page, or Ctrl+K), and
   Stop it falling. Falling things are drawn and picked where the simulation has them in the viewer, tilted as they
   tumble, and outlined in green. In Build, liquid scenes show objects in their materials instead of grey stand-ins.

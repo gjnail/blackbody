@@ -727,6 +727,31 @@ PRESETS = {
                  material='steel', start_velocity=(0.0, 0.6, 5.0), release=0.25),
         ],
     },
+    'wrecking_ball': {
+        'name': 'Wrecking ball', 'category': 'Things that fall', 'size': '2 m wall',
+        'blurb': 'A 900 kg wrecking ball on a crane\N{RIGHT SINGLE QUOTATION MARK}s cable swings down into a brick wall at 6 m/s '
+                 'and bursts through it in a cloud of dust. An object joined to the crane by a rope (Properties › Joint) '
+                 'and a breakable box in Bricks.',
+        'render': {'end': 96},
+        'domain': {'size_x': 8.0, 'size_y': 6.0, 'size_z': 4.4, 'resolution': 96, 'preroll': 0.0},
+        'shading': {'smoke_albedo': (0.62, 0.57, 0.5), 'smoke_density': 0.8},
+        'motion': {'buoyancy': 0.5, 'turbulence': 1.5, 'vorticity': 1.0},
+        'composite': {'backdrop': 'stage', 'floor': 'dirt'},
+        'lighting': {'sun_on': True, 'sun_intensity': 3.0, 'sun_elevation': 35.0, 'sun_azimuth': -130.0, 'ambient_intensity': 2.5},
+        'camera': {'distance': 11.5, 'target_y': 2.5, 'pitch': 5, 'yaw': 25, 'focal_mm': 35},
+        'emitters': [],
+        'colliders': [
+            dict(name='Brick wall', shape='box', position=(0.62, 0.75, 0.0), size=(1.0, 0.75, 0.06), yaw=90.0, material='brick',
+                 breakable=True, fracture='bricks'),
+            dict(name='Crane mast', shape='box', position=(0.0, 2.7, -1.6), size=(0.12, 2.7, 0.12), material='steel',
+                 own_colour=True, colour=(0.75, 0.5, 0.04)),
+            dict(name='Crane jib', shape='box', position=(0.0, 5.45, -0.75), size=(0.1, 0.1, 0.95), material='steel',
+                 own_colour=True, colour=(0.75, 0.5, 0.04)),
+            dict(name='Wrecking ball', shape='sphere', position=(-3.727, 2.740, 0.0), size=(0.3, 0.3, 0.3), material='steel',
+                 joint='rope', joint_to='Crane jib', joint_to_at=(0.0, -0.1, 0.75), rope_length=4.25, rope_look='cable',
+                 rope_thickness=0.03, release=0.3),
+        ],
+    },
     'window_smash': {
         'name': 'Stone through a window', 'category': 'Things that fall', 'size': '1 m pane',
         'blurb': 'A stone thrown through a pane of window glass held in its frame: it punches a hole, shards break away '
@@ -817,7 +842,7 @@ ORDER = ['campfire', 'bonfire', 'torch', 'candle', 'gas_ring', 'pool_fire', 'fir
          'vehicle_fire', 'smoke_plume', 'fire_whirl', 'waved_torch', 'hose_douse', 'grass_fire', 'spot_fires', 'hillside_fire',
          'curtain_fire', 'fabric_curtain', 'wet_towels', 'armchair_fire', 'room_fire', 'backdraft', 'flash_fire', 'gas_cloud', 'coloured_flames', 'road_flare',
          'grinder_sparks', 'fireworks', 'car_through_smoke', 'flag_wind', 'kettle_steam', 'steam_vent',
-         'crates_in_fire', 'tower_knockdown', 'wall_smash', 'window_smash', 'vase_drop']
+         'crates_in_fire', 'tower_knockdown', 'wall_smash', 'wrecking_ball', 'window_smash', 'vase_drop']
 
 
 def make(name: str, fps=None, start=None) -> Scene:

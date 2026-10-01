@@ -304,6 +304,54 @@ COMPONENTS = [
               objects=[_C(name='Vase', shape='cylinder', position=(0.0, 1.3, 0.0), size=(0.1, 0.17, 0.1), hollow=0.008,
                           material='ceramic', own_colour=True, colour=(0.12, 0.25, 0.55), dynamic=True, breakable=True,
                           pieces=40, start_spin=(90.0, 0.0, 40.0))]),
+    # -- ropes, springs and hinges (engine/solids.py Joint) -------------------------------------------------------------
+    Component('wrecking_ball', 'Wrecking ball', 'Ropes and hinges', 'A 900 kg steel ball on a crane\N{RIGHT SINGLE QUOTATION MARK}s cable, '
+              'pulled back and let go: it swings through at 6 m/s. Put a brick wall at the bottom of its swing.', 'ball',
+              room=(4.2, 5.6, 1.1),
+              objects=[_C(name='Crane mast', shape='box', position=(0.0, 2.7, -0.9), size=(0.12, 2.7, 0.12), material='steel',
+                          own_colour=True, colour=(0.75, 0.5, 0.04)),
+                       _C(name='Crane jib', shape='box', position=(0.0, 5.45, -0.4), size=(0.1, 0.1, 0.62), material='steel',
+                          own_colour=True, colour=(0.75, 0.5, 0.04)),
+                       _C(name='Wrecking ball', shape='sphere', position=(-3.727, 2.740, 0.0), size=(0.3, 0.3, 0.3), material='steel',
+                          joint='rope', joint_to='Crane jib', joint_to_at=(0.0, -0.1, 0.4), rope_length=4.25, rope_look='cable',
+                          rope_thickness=0.03)]),
+    Component('rope_swing', 'Rope swing', 'Ropes and hinges', 'A wooden disc seat on a 2.6 m rope from a branch, pulled back '
+              'and let go.', 'ball', room=(1.6, 3.4, 0.3),
+              objects=[_C(name='Branch', shape='box', position=(0.0, 3.2, 0.0), size=(0.9, 0.07, 0.07), material='wood'),
+                       _C(name='Swing seat', shape='cylinder', position=(-1.3125, 0.857, 0.0), size=(0.18, 0.025, 0.18), material='wood',
+                          joint='rope', joint_to='Branch', joint_to_at=(0.0, -0.07, 0.0), rope_length=2.6, rope_thickness=0.03)]),
+    Component('door_hinged', 'Door on hinges', 'Ropes and hinges', 'A door in its frame, pushed open: it swings on its hinges and '
+              'slows to a stop. Smoke and water push it; a blast slams it.', 'wall', room=(0.6, 2.2, 1.0),
+              objects=[_C(name='Door', shape='box', position=(0.0, 1.015, 0.0), size=(0.44, 1.0, 0.02), material='painted',
+                          own_colour=True, colour=(0.55, 0.12, 0.08), joint='hinge', joint_at=(-0.44, 0.0, 0.0),
+                          joint_axis=(0.0, 1.0, 0.0), joint_friction=0.5, start_spin=(0.0, 75.0, 0.0)),
+                       _C(name='Door frame left', shape='box', position=(-0.5, 1.035, 0.0), size=(0.03, 1.035, 0.05), material='wood'),
+                       _C(name='Door frame right', shape='box', position=(0.5, 1.035, 0.0), size=(0.03, 1.035, 0.05), material='wood'),
+                       _C(name='Door frame top', shape='box', position=(0.0, 2.1, 0.0), size=(0.53, 0.03, 0.05), material='wood')]),
+    Component('hanging_lamp', 'Hanging lamp', 'Ropes and hinges', 'A lamp on a 75 cm flex from the ceiling, swaying: its light '
+              'swings with it through the smoke.', 'bulb', room=(0.5, 2.7, 0.5),
+              objects=[_C(name='Lamp shade', shape='cylinder', position=(0.0, 1.75, 0.0), size=(0.16, 0.07, 0.16), material='painted',
+                          own_colour=True, colour=(0.08, 0.25, 0.14), joint='rope', joint_to='Ceiling rose',
+                          joint_to_at=(0.0, -0.02, 0.0), rope_look='cable', rope_thickness=0.006, start_velocity=(0.8, 0.0, 0.3)),
+                       _C(name='Ceiling rose', shape='box', position=(0.0, 2.6, 0.0), size=(0.06, 0.02, 0.06), material='painted'),
+                       _L(name='Lamp light', kind='point', position=(0.0, 1.66, 0.0), intensity=130.0, temperature=2700.0,
+                          colour=(1.0, 1.0, 1.0))],
+              links=[{'child': ['light', 'Lamp light'], 'parent': ['collider', 'Lamp shade'], 'offset': [0.0, -0.09, 0.0]}]),
+    Component('spring_weight', 'Weight on a spring', 'Ropes and hinges', 'A 38 kg steel weight bouncing on a spring under a bracket, '
+              'once a second.', 'drop', room=(0.3, 2.4, 0.2),
+              objects=[_C(name='Weight', shape='box', position=(0.0, 1.05, 0.0), size=(0.1, 0.06, 0.1), material='steel',
+                          joint='spring', joint_to='Bracket', joint_to_at=(0.0, -0.04, 0.0), rope_length=0.6, spring_k=1500.0,
+                          rope_thickness=0.01),
+                       _C(name='Bracket', shape='box', position=(0.0, 2.2, 0.0), size=(0.25, 0.04, 0.12), material='steel')]),
+    Component('seesaw', 'Seesaw', 'Ropes and hinges', 'A plank on a pivot with a rubber ball on one end; a steel ball dropped on '
+              'the other end flips it into the air.', 'wall', room=(1.3, 1.7, 0.3),
+              objects=[_C(name='Plank', shape='box', position=(0.0, 0.43, 0.0), size=(1.2, 0.025, 0.15), material='wood',
+                          joint='hinge', joint_at=(0.0, -0.025, 0.0), joint_axis=(0.0, 0.0, 1.0), joint_friction=0.1),
+                       _C(name='Pivot', shape='box', position=(0.0, 0.2, 0.0), size=(0.08, 0.2, 0.2), material='wood'),
+                       _C(name='Rubber ball', shape='sphere', position=(-1.05, 0.52, 0.0), size=(0.065, 0.065, 0.065), dynamic=True,
+                          material='rubber', own_colour=True, colour=(0.7, 0.12, 0.05)),
+                       _C(name='Steel ball', shape='sphere', position=(1.0, 1.5, 0.0), size=(0.12, 0.12, 0.12), dynamic=True,
+                          material='steel')]),
     # -- fabric -------------------------------------------------------------------------------------------------------------
     Component('curtain', 'Curtain', 'Fabric', 'A cotton curtain hanging from a rail (real size). It blows in the air and burns.',
               'fabric', room=(0.8, 2.4, 0.9),
@@ -394,7 +442,8 @@ def _values(v):
     """The values a setting takes: its keys' if it is animated."""
     from .anim import Curve
     return [k[1] for k in v.keys] if isinstance(v, Curve) else [v]
-GROUPS = ['Fire', 'Smoke, steam & sparks', 'Liquids', 'Fabric', 'Weather', 'Forces', 'Objects', 'Things that fall', 'Lights']
+GROUPS = ['Fire', 'Smoke, steam & sparks', 'Liquids', 'Fabric', 'Weather', 'Forces', 'Objects', 'Things that fall',
+          'Ropes and hinges', 'Lights']
 
 # Making a scene from scratch: (label, box width in metres)
 SCALES = {'small': ('Tabletop', 0.6), 'person': ('Person-sized', 2.0), 'large': ('Car or room', 6.0), 'huge': ('Building', 20.0)}
@@ -651,7 +700,7 @@ def add(scene: Scene, key, at=None, mesh=None):
     renamed = {}
     for kind, d in objs:
         d = dict(d)
-        for k in ('position', 'end'):
+        for k in ('position', 'end', 'joint_anchor'):
             if k in d:
                 v = d[k]
                 if isinstance(v, Curve):
@@ -661,6 +710,13 @@ def add(scene: Scene, key, at=None, mesh=None):
         if f != 1.0:
             if 'size' in d and not (d.get('shape') == 'mesh'):
                 d['size'] = tuple(x * f for x in d['size'])
+            if kind == 'collider' and d.get('joint', 'none') != 'none':
+                for k in ('joint_at', 'joint_to_at'):
+                    if k in d:
+                        d[k] = tuple(x * f for x in d[k])
+                for k in ('rope_length', 'rope_thickness'):
+                    if k in d:
+                        d[k] = d[k] * f
             if kind == 'collider' and d.get('hollow'):
                 d['hollow'] = d['hollow'] * f
                 d['opening'] = tuple(x * f for x in d.get('opening', (0, 0, 0)))
@@ -697,6 +753,10 @@ def add(scene: Scene, key, at=None, mesh=None):
              'fabric': scene.add_fabric}[kind](**{k: v for k, v in d.items() if k not in curves})
         lists[kind][i].update(curves)
         added.append((kind, i))
+    for kind, i in added:   # its joints, to its objects as they are named here
+        c = lists[kind][i]
+        if kind == 'collider' and c.get('joint_to') and ('collider', c['joint_to']) in renamed:
+            c['joint_to'] = renamed[('collider', c['joint_to'])]
     for l in comp.links:   # its attachments, between the objects as they are named here
         c, p = tuple(l['child']), tuple(l['parent'])
         if c in renamed and p in renamed:
@@ -781,6 +841,9 @@ def make_dynamic(scene: Scene, i, on=True, release=0.0):
     c['dynamic'] = bool(on)
     if not on:
         c['floating'] = False
+        if c.get('joint', 'none') != 'none':
+            c['joint'] = 'none'
+            notes.append(f'{c["name"]} is no longer joined to anything.')
         return notes
     c['release'] = float(release)
     c['holdout'] = True   # it is a real thing in the shot
@@ -791,6 +854,72 @@ def make_dynamic(scene: Scene, i, on=True, release=0.0):
     from ..engine.solver import MAX_COLLIDERS
     if sum(1 for d in scene.colliders if d['enabled']) > MAX_COLLIDERS:
         notes.append(f'Only the first {MAX_COLLIDERS} objects take part in the simulation.')
+    return notes
+
+
+JOINTS = [('rope', 'A rope'), ('spring', 'A spring'), ('hinge', 'A hinge'), ('ball', 'A ball joint')]
+
+
+def add_joint(scene: Scene, i, kind='rope', to=None, on=True):
+    """Hang object (collider) i on a rope or a spring, or put it on a hinge or a ball joint (Hang it on a rope, Hinge it,
+    Join it to..., in the viewer's menus): to object `to` (an index) or, without one, to a fixed point. It falls from
+    then on, held by its joint. A rope or a spring goes up 1.5 m from its top; a hinge goes along a box's side (a
+    door) or its back edge if it is flat (a lid), through the middle of anything else (a wheel); a ball joint is at
+    its top. on=False takes the joint away (it still falls). Returns notes for the user."""
+    import numpy as np
+    from ..engine.solids import surface_toward
+    c = scene.colliders[i]
+    if not on or kind in (None, 'none'):
+        c['joint'] = 'none'
+        return [f'{c["name"]} is no longer joined to anything: it falls freely.']
+    if kind not in dict(JOINTS):
+        raise ValueError(f'No such joint: {kind}')
+    notes = []
+    c['joint'] = kind
+    c['dynamic'] = True
+    c['holdout'] = True
+    c.setdefault('release', 0.0)
+    pos = np.asarray(scene.get(('collider', i, 'position'), scene.start), float)
+    size = np.abs(np.asarray(scene.get(('collider', i, 'size'), scene.start), float))
+    top = float(size[0]) if c['shape'] == 'sphere' else float(size[1])
+    if c['shape'] == 'mesh':
+        top = float(size[1]) * 0.5
+    other = None
+    if to is not None and 0 <= to < len(scene.colliders) and to != i:
+        other = scene.colliders[to]
+        c['joint_to'] = other['name']
+    else:
+        c['joint_to'] = ''
+    c['rope_length'] = 0.0
+    if kind in ('rope', 'spring'):
+        c['joint_at'] = (0.0, 0.0, 0.0)          # (where its surface faces the other end)
+        if other is not None:
+            op = np.asarray(scene.get(('collider', to, 'position'), scene.start), float)
+            osz = np.abs(np.asarray(scene.get(('collider', to, 'size'), scene.start), float))
+            yaw = np.radians(float(scene.get(('collider', to, 'yaw'), scene.start)))
+            cy, sy = np.cos(yaw), np.sin(yaw)
+            d = pos - op
+            u = np.array([cy * d[0] - sy * d[2], d[1], sy * d[0] + cy * d[2]])   # (into its own frame)
+            n = float(np.linalg.norm(u))
+            c['joint_to_at'] = tuple(float(x) for x in (surface_toward(other['shape'], osz, u / n) if n > 1e-9 else np.zeros(3)))
+            notes.append(f'{c["name"]} hangs on a {kind} from {other["name"]}.')
+        else:
+            c['joint_anchor'] = (float(pos[0]), float(pos[1] + top + 1.5), float(pos[2]))
+            notes.append(f'{c["name"]} hangs on a {kind} from a point 1.5 m above it: move Anchor (Properties › Joint) to hang '
+                         'it from somewhere else, or join it to an object.')
+    elif kind == 'hinge':
+        if c['shape'] == 'box' and size[1] <= min(size[0], size[2]):
+            c['joint_at'], c['joint_axis'] = (0.0, 0.0, -float(size[2])), (1.0, 0.0, 0.0)          # a lid, a flap
+        elif c['shape'] == 'box':
+            c['joint_at'], c['joint_axis'] = ((-float(size[0]), 0.0, 0.0) if size[0] >= size[2] else (0.0, 0.0, -float(size[2])),
+                                              (0.0, 1.0, 0.0))                                        # a door, a gate
+        else:
+            c['joint_at'], c['joint_axis'] = (0.0, 0.0, 0.0), (0.0, 1.0, 0.0)                        # a wheel, a turntable
+        notes.append(f'{c["name"]} turns on a hinge{" on " + other["name"] if other is not None else ""}: give it a push '
+                     '(Physics › Spinning at), or let something knock it.')
+    else:
+        c['joint_at'] = (0.0, top, 0.0)
+        notes.append(f'{c["name"]} swings on a ball joint at its top{" on " + other["name"] if other is not None else ""}.')
     return notes
 
 
