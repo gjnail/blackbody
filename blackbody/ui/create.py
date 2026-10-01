@@ -3,30 +3,34 @@ size, then add building blocks (scene/components.py): click one to add it, or dr
 to put it down where you drop it."""
 from __future__ import annotations
 
-from PySide6.QtCore import QMimeData, QPoint, QRectF, QSettings, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QDrag, QFont, QPainter, QPen
-from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QScrollArea, QSizePolicy,
-                               QStackedWidget, QToolButton, QVBoxLayout, QWidget)
+from pathlib import Path
 
-from ..scene import components
+from PySide6.QtCore import QMimeData, QPoint, QRectF, QSettings, QSize, QStandardPaths, Qt, QUrl, Signal
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QColor, QDrag, QFont, QPainter, QPen
+from PySide6.QtWidgets import (QAbstractButton, QButtonGroup, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu,
+                               QMessageBox, QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QToolButton, QVBoxLayout, QWidget)
+
+from ..scene import blocks, components
 from . import icons, theme
 from .library import FlowLayout
 from .params import guard_wheel
 
 MIME = 'application/x-blackbody-component'
 GROUP_COLOURS = {'Fire': theme.ACCENT, 'Smoke, steam & sparks': '#c9c9d1', 'Liquids': '#6fb6ff', 'Fabric': '#d59cff',
-                 'Weather': '#a8e0ff', 'Forces': '#9fe0c8', 'Objects': '#9fb0c4', 'Lights': '#ffdc78'}
+                 'Weather': '#a8e0ff', 'Forces': '#9fe0c8', 'Objects': '#9fb0c4', 'Lights': '#ffdc78', 'Mine': '#f0c674'}
 GROUP_HINTS = {'Fire': 'Sources of flame, and things that burn.', 'Smoke, steam & sparks': 'Smoke, steam and sparks without flame.',
                'Liquids': 'Water, honey, ink and lava: sources, standing water. With fire in the scene too, the two meet.',
                'Fabric': 'Cloth that hangs, drapes, blows in the air, soaks up water and burns.',
                'Weather': 'Rain, snow, sleet, hail and wind over the whole scene.',
                'Objects': 'Solid things the effect flows around, bounces off or burns. In your shot they hide what is behind them.',
                'Forces': 'Air pushed around: wind, a fan, an updraft, suction, a vortex. It carries smoke, flame, embers and cloth.',
-               'Lights': 'Lights in the set: they light the smoke and steam, and the smoke shadows them.'}
+               'Lights': 'Lights in the set: they light the smoke and steam, and the smoke shadows them.',
+               'Mine': 'Things you built and saved: right-click anything in a scene and Save as a block.'}
 STARTERS = ['burner', 'pour', 'flag', 'snow', 'smoke', 'box']   # one of each kind, shown first under All
 DOMAINS = [('all', 'All', None), ('fire', 'Fire', ('Fire', 'Smoke, steam & sparks')), ('liquid', 'Liquids', ('Liquids',)),
            ('fabric', 'Fabric', ('Fabric',)), ('weather', 'Weather', ('Weather',)), ('forces', 'Forces', ('Forces',)),
-           ('objects', 'Objects', ('Objects', 'Lights'))]
+           ('objects', 'Objects', ('Objects', 'Lights')), ('mine', 'Yours', ('Mine',))]
 
 
 class Tile(QAbstractButton):
@@ -232,6 +236,33 @@ class CreatePanel(QWidget):
         v.addWidget(w)
         self.starters = (lab, w, starters)
         self.tiles.extend(starters)
+        # your blocks
+        if blocks.DIR is None:
+            blocks.DIR = str(Path(QStandardPaths.writableLocation(QStandardPaths.AppDataLocation)) / 'blocks')
+        mine_head = QWidget()
+        mh = QHBoxLayout(mine_head)
+        mh.setContentsMargins(2, 6, 0, 0)
+        lab = QLabel('YOURS')
+        lab.setObjectName('section')
+        lab.setToolTip(GROUP_HINTS['Mine'])
+        mh.addWidget(lab)
+        mh.addStretch(1)
+        imp = QPushButton('Import…')
+        imp.setObjectName('ghost')
+        imp.setToolTip('Add a block someone shared with you (a .bbblock file) to Yours')
+        imp.clicked.connect(self.import_block)
+        mh.addWidget(imp)
+        v.addWidget(mine_head)
+        self.mine_empty = QLabel('Nothing here yet. Right-click anything you built (in the viewer or the object list) and '
+                                 '<b>Save as a block…</b>: it shows up here, to add to any scene.')
+        self.mine_empty.setObjectName('hint')
+        self.mine_empty.setWordWrap(True)
+        v.addWidget(self.mine_empty)
+        self.mine_w = QWidget()
+        self.mine_flow = FlowLayout(self.mine_w, 6)
+        self.mine_flow.setContentsMargins(0, 0, 0, 0)
+        v.addWidget(self.mine_w)
+        self.mine = (mine_head, self.mine_w, [])
         for g in components.GROUPS:
             lab = QLabel(g.upper())
             lab.setObjectName('section')
@@ -255,7 +286,67 @@ class CreatePanel(QWidget):
         v.addStretch(1)
         doc.sceneReplaced.connect(self._sync)
         doc.paramChanged.connect(lambda path: path == ('domain', 'kind') and self._sync())
+        self.reload_blocks()
+
+    def reload_blocks(self):
+        """Rebuild Yours from the blocks folder."""
+        head, w, old = self.mine
+        for t in old:
+            self.mine_flow.removeWidget(t)
+            if t in self.tiles:
+                self.tiles.remove(t)
+            t.deleteLater()
+        tiles = []
+        for c in blocks.all_blocks():
+            t = Tile(c)
+            t.clicked.connect(lambda _=False, k=c.key: self.addComponent.emit(k))
+            t.setContextMenuPolicy(Qt.CustomContextMenu)
+            t.customContextMenuRequested.connect(lambda pos, t=t: self._block_menu(t, pos))
+            self.mine_flow.addWidget(t)
+            tiles.append(t)
+        self.mine = (head, w, tiles)
+        self.tiles.extend(tiles)
         self._sync()
+        self._filter(self.search.text())
+
+    def _block_menu(self, tile, pos):
+        c = tile.comp
+        m = QMenu(self)
+        m.addAction(icons.glyph_icon('plus', theme.MUTED, 16), 'Add to the scene', lambda: self.addComponent.emit(c.key))
+        m.addAction(icons.glyph_icon('copy', theme.MUTED, 16), 'Save a copy to share…', lambda: self._share(c))
+        m.addAction(icons.glyph_icon('open', theme.MUTED, 16), 'Show the file', lambda: QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(Path(c.file).parent))))
+        m.addSeparator()
+        m.addAction(icons.glyph_icon('trash', theme.MUTED, 16), 'Delete…', lambda: self._delete_block(c))
+        m.exec(tile.mapToGlobal(pos))
+
+    def _share(self, c):
+        import shutil
+        path, _ = QFileDialog.getSaveFileName(self, 'Save a copy of the block', str(Path.home() / Path(c.file).name),
+                                              f'Blackbody block (*{blocks.EXT})')
+        if path:
+            shutil.copy2(c.file, path)
+
+    def _delete_block(self, c):
+        if QMessageBox.question(self, 'Delete block', f'Delete your block {c.name}? Scenes it was added to keep their copy.') \
+                == QMessageBox.Yes:
+            blocks.delete(c.key)
+            self.reload_blocks()
+
+    def import_block(self, path=None):
+        """Add a .bbblock file to Yours. Returns its key, or None."""
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, 'Import a block', str(Path.home()), f'Blackbody block (*{blocks.EXT})')
+            if not path:
+                return None
+        try:
+            key = blocks.install(path)
+        except Exception as ex:
+            QMessageBox.information(self, 'Import a block', f'Could not read {Path(path).name}: {ex}')
+            return None
+        self.reload_blocks()
+        self._set_domain('mine')
+        return key
 
     def _sync(self):
         """In a sky scene only lights and objects (terrain) can go in."""
@@ -269,6 +360,15 @@ class CreatePanel(QWidget):
         on = self.domain == 'all' and not words
         lab.setVisible(on)
         w.setVisible(on)
+        head, mw, mine = self.mine
+        shown = 0
+        for t in mine:
+            hay = f'{t.comp.name} {t.comp.tip} yours mine'.lower()
+            t.setVisible(all(x in hay for x in words) and self.domain in ('all', 'mine'))
+            shown += t.isVisibleTo(mw)
+        head.setVisible(self.domain == 'mine' or shown > 0)
+        mw.setVisible(shown > 0)
+        self.mine_empty.setVisible(self.domain == 'mine' and not mine)
         for lab, w, tiles in self.sections:
             shown = 0
             for t in tiles:

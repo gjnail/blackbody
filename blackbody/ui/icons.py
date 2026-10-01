@@ -652,6 +652,23 @@ def _g_roto(p, s):
         p.drawRect(QRectF(q.x() - s * 0.05, q.y() - s * 0.05, s * 0.1, s * 0.1))
 
 
+def _g_text(p, s):
+    """A solid letter T, drawn as its outline."""
+    p.drawPolygon(QPolygonF([QPointF(s * 0.16, s * 0.16), QPointF(s * 0.84, s * 0.16), QPointF(s * 0.84, s * 0.34),
+                             QPointF(s * 0.6, s * 0.34), QPointF(s * 0.6, s * 0.86), QPointF(s * 0.4, s * 0.86),
+                             QPointF(s * 0.4, s * 0.34), QPointF(s * 0.16, s * 0.34)]))
+
+
+def _g_shape(p, s):
+    """A star: a logo or picture made solid."""
+    pts = []
+    for k in range(10):
+        r = s * (0.4 if k % 2 == 0 else 0.17)
+        a = math.pi / 2 + k * math.pi / 5
+        pts.append(QPointF(s * 0.5 + r * math.cos(a), s * 0.54 - r * math.sin(a)))
+    p.drawPolygon(QPolygonF(pts))
+
+
 def _g_book(p, s):
     p.drawRoundedRect(QRectF(s * 0.18, s * 0.14, s * 0.64, s * 0.72), s * 0.05, s * 0.05)
     p.drawLine(QPointF(s * 0.32, s * 0.14), QPointF(s * 0.32, s * 0.86))
@@ -670,7 +687,7 @@ GLYPHS = {
     'logs': _g_logs, 'pool': _g_pool, 'line': _g_line, 'torch': _g_torch, 'ring': _g_ring, 'burst': _g_burst, 'jet': _g_jet,
     'spiral': _g_spiral, 'steam': _g_steam, 'pour': _g_pour, 'fountain': _g_fountain, 'ball': _g_ball, 'pillar': _g_pillar,
     'wall': _g_wall, 'house': _g_house, 'car': _g_car, 'hill': _g_hill, 'flag': _g_flag, 'spot': _g_spot, 'window': _g_window,
-    'mesh': _g_mesh, 'crate': _g_crate, 'roto': _g_roto,
+    'mesh': _g_mesh, 'crate': _g_crate, 'roto': _g_roto, 'text': _g_text, 'shape': _g_shape,
     'play': lambda p, s: p.drawPolygon(QPolygonF([QPointF(s * 0.3, s * 0.2), QPointF(s * 0.8, s * 0.5), QPointF(s * 0.3, s * 0.8)])),
     'stop': lambda p, s: p.drawRect(QRectF(s * 0.25, s * 0.25, s * 0.5, s * 0.5)),
 }

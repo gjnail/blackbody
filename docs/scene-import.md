@@ -4,7 +4,8 @@ Bring the shot's camera, objects and lights in from your 3D package or tracker, 
 
 ## Moving shots
 
-- **Handheld or moving camera, no 3D solve:** park the fire where it should be, then Tracking › Track the fire base (Ctrl+T). The fire follows that point through the shot. Dragging the ring afterwards offsets the whole track. Pick a spot with texture or a corner; the tracker follows position only, not rotation, scale or perspective.
+- **Any camera move with the ground in view, no 3D solve:** line up the ground (Tracking › Line up the ground), then Tracking › Track (Ctrl+T). Blackbody works out where the camera is and where it looks on every frame: pans, tilts, handheld shake, dollies, walks and drone moves, in real metres. The effect stays put on the ground in perspective. See [Following the camera move](compositing.md#following-the-camera-move).
+- **Pinned in 2D:** with no ground lined up, park the fire where it should be, then Tracking › Track (Ctrl+T). The fire follows that point through the shot. Dragging the ring afterwards offsets the whole track. Pick a spot with texture or a corner; the tracker follows position only, not rotation, scale or perspective.
 
 ![Tracking › Track the fire base (Ctrl+T) follows a point through a handheld pan; the fire stays put on the ground](media/gif/ui-track.gif "Tracking › Track the fire base (Ctrl+T) follows a point through a handheld pan; the fire stays put on the ground.")
 

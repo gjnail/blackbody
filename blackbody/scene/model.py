@@ -108,6 +108,10 @@ class Scene:
         self.footage = None     # {'path', 'fps', 'offset'}
         self.track = None       # {'points': {frame: [x, y]}}
         self.roto = []          # roto shapes over the footage (scene/roto.py): a holdout drawn in the app
+        # the camera matched to the footage from the ground (scene/groundmatch.py): {'corners': 4 x [x, y] across and
+        # down the frame (0..1), 'scale_by': 'height' | 'side', 'height': m, 'side': m, 'lens': 'picture' | 'known',
+        # 'frame': the frame it was lined up on}. With it, the camera is the footage's, the same in every layer.
+        self.ground = None
         # More effects in the same shot, each its own simulation (a Scene), drawn back to front with this
         # scene's own effect at base_index among them. They share the shot (SHARED_COMPOSITE, the render
         # settings, the footage, the roto and the track's points; see sync_layers).
@@ -1058,6 +1062,7 @@ class Scene:
             'track': ({'points': {str(k): list(v) for k, v in self.track.get('points', {}).items()},
                        'offset': list(self.track.get('offset', (0, 0)))} if self.track else None),
             'roto': getattr(self, 'roto', None) or [],
+            'ground': getattr(self, 'ground', None),
             'layers': [dict(l.to_dict(), uid=l.uid, enabled=bool(l.enabled)) for l in getattr(self, 'layers', None) or []],
             'base_index': int(getattr(self, 'base_index', 0)),
             'links': [dict(l) for l in getattr(self, 'links', None) or []],
@@ -1115,6 +1120,8 @@ class Scene:
             s.track = {'points': {int(float(k)): tuple(v) for k, v in tr['points'].items()},
                        'offset': tuple(tr.get('offset', (0, 0)))}
         s.roto = [dict(r) for r in (d.get('roto') or []) if isinstance(r, dict)]
+        g = d.get('ground')
+        s.ground = dict(g) if isinstance(g, dict) and len(g.get('corners') or []) == 4 else None
         for i, ld in enumerate(d.get('layers') or []):
             if not isinstance(ld, dict):
                 continue
@@ -1144,7 +1151,8 @@ class Scene:
 
     def apply_links(self):
         """Put every attached object where its parent is, at its offset, over the whole shot (a parent's keys
-        become the child's, moved by the offset). Links whose objects are gone are dropped."""
+        become the child's, moved by the offset). A link with 'shape' also gives the child the parent's mesh, size
+        and rotation (fire on solid letters). Links whose objects are gone are dropped."""
         keep = []
         for l in getattr(self, 'links', None) or []:
             ci, child = self.find_object(*l['child'])
@@ -1165,6 +1173,11 @@ class Scene:
                     child['end'] = Curve([[f, tuple(a + b for a, b in zip(v, eo)), it] for f, v, it in pp.keys])
                 else:
                     child['end'] = tuple(a + b for a, b in zip(pp, eo))
+            if l.get('shape'):
+                import copy
+                for k in ('mesh', 'size', 'yaw'):
+                    if k in parent and k in child:
+                        child[k] = copy.deepcopy(parent[k])
             del old
         self.links = keep
 
@@ -1185,6 +1198,8 @@ class Scene:
         """Give every layer the shot's shared settings, from `source` (the layer just edited) or this scene."""
         src = source or self
         scenes = [self] + list(self.layers)
+        for l in self.layers:   # project-relative files in a layer are found from the project too
+            l.path = self.path
         for s in scenes:
             if s is src:
                 continue
@@ -1207,6 +1222,8 @@ class Scene:
         tmp.write_text(json.dumps(data, indent=1), encoding='utf-8')
         tmp.replace(path)
         self.path = str(path)
+        for l in getattr(self, 'layers', None) or []:
+            l.path = self.path
 
     @classmethod
     def load(cls, path):
@@ -1215,6 +1232,8 @@ class Scene:
         if s.footage and s.footage.get('path'):
             s.footage['path'] = relink(s.footage, path.parent)
         s.path = str(path)
+        for l in getattr(s, 'layers', None) or []:
+            l.path = s.path
         for d in s.emitters + s.colliders + s.fabrics:
             for key in ('mesh', 'volume'):
                 m = d.get(key)
@@ -1251,12 +1270,19 @@ SHARED_COMPOSITE = ('plate_transform', 'ocio_plate', 'plate_exposure', 'view', '
                     'matte_invert', 'holdout_depth', 'depth_kind', 'depth_scale', 'grain_match', 'grain', 'bg', 'bg_checker')
 
 
+MATCHED_CAMERA = ('mode', 'position', 'rotation', 'focal_mm', 'sensor_mm', 'use_anchor', 'roll', 'near', 'far')
+
+
 def share_shot(src, dst):
     """Copy the shot's shared settings from one layer to another. The track's points are shared; where each
     layer sits on them (the track's offset) is its own."""
     import copy as _copy
     dst.footage = _copy.deepcopy(src.footage)
     dst.roto = _copy.deepcopy(getattr(src, 'roto', []))
+    dst.ground = _copy.deepcopy(getattr(src, 'ground', None))
+    if dst.ground:   # a camera matched to the footage is the same for every layer; where each effect stands is its own
+        for k in MATCHED_CAMERA:
+            dst.data['camera'][k] = _copy.deepcopy(src.data['camera'][k])
     dst.data['render'] = _copy.deepcopy(src.data['render'])
     for k in SHARED_COMPOSITE:
         if k in src.data['composite']:

@@ -133,7 +133,7 @@ The [tutorial](docs/tutorial.md) takes a shot from footage to final render in ab
 
 | Guide | What is in it |
 |---|---|
-| [Install and first steps](docs/getting-started.md) | Requirements, install, the window, a shot in five steps, building your own, layers, animation |
+| [Install and first steps](docs/getting-started.md) | Requirements, install, the window, putting an effect in your shot, building your own, layers, animation |
 | [Tutorial: your first shot](docs/tutorial.md) | Footage, placing, matching, tracking, keyframes, rendering |
 | [Presets](docs/presets.md) | All 79 built-in effects |
 | [Fire, smoke and sparks](docs/fire.md) | Puffing, swirl, sparks, colour, steam, spreading fire, rooms, flame fronts, meshes |

@@ -28,6 +28,24 @@ def _t(doc):
     return round(doc.scene.seconds(doc.frame), 3)
 
 
+def _unique(items, name):
+    names = {o['name'] for o in items}
+    base, n = name, 2
+    while name in names:
+        name = f'{base} {n}'
+        n += 1
+    return name
+
+
+def text_spec(d, scene=None):
+    """The words (or picture), font and size of an object made by a Text or logo block, or None. With the scene, a
+    mesh path relative to the project (a packed project) is found."""
+    if d.get('shape') != 'mesh' or not d.get('mesh'):
+        return None
+    from . import textmesh
+    return textmesh.spec_for(scene.mesh_path(d['mesh']) if scene is not None else d['mesh'])
+
+
 # -- the actions ------------------------------------------------------------------------------------------------
 
 def set_on_fire(win, kind, i):
@@ -50,6 +68,7 @@ def set_on_fire(win, kind, i):
     target = C.target_kind(sc, C.BY_KEY['burner'])
     if target is None:
         raise ValueError('Nothing burns in a sky scene.')
+    spec = text_spec(d, sc) if kind == 'collider' else None
 
     def fn(s):
         if target != s.kind:
@@ -58,14 +77,162 @@ def set_on_fire(win, kind, i):
         dd['burnable'] = True
         if kind == 'collider':
             s.data['spread']['enabled'] = True
-        e = dict(name=f'Flame on {dd["name"]}', shape='sphere', position=tuple(float(x) for x in at), size=(r, r * 0.6, r),
-                 fuel=14.0, temperature=0.6, start=_t(doc), stop=_t(doc) + 3.0, fade_out=0.6, noise_freq=4.0)
+        if spec is not None:   # letters catch all over at once: a flame in their shape for 2 s, then the fire is their own
+            h = float(spec['height'])
+            dom = s.data['domain']
+            cell = max(s.domain_size()) / max(16.0, dom['resolution'] * dom['preview_scale'])
+            e = dict(name=_unique(s.emitters, f'Flame on {dd["name"]}'), shape='mesh', mesh=dd['mesh'], position=tuple(float(x) for x in pos),
+                     size=(1.0, 1.0, 1.0), thickness=round(max(0.04 * h, cell), 4), fuel=14.0, temperature=0.6, start=_t(doc),
+                     stop=_t(doc) + 2.0, fade_out=0.6, noise=0.4, noise_freq=round(3.2 / h, 3))
+        else:
+            e = dict(name=_unique(s.emitters, f'Flame on {dd["name"]}'), shape='sphere', position=tuple(float(x) for x in at),
+                     size=(r, r * 0.6, r), fuel=14.0, temperature=0.6, start=_t(doc), stop=_t(doc) + 3.0, fade_out=0.6, noise_freq=4.0)
         if s.kind == 'both':
             e['emits'] = 'fire'
         s.add_emitter(**e)
+        if spec is not None:
+            s.links.append({'child': ['emitter', e['name']], 'parent': ['collider', dd['name']], 'offset': [0.0, 0.0, 0.0],
+                            'shape': True})
     doc.edit(f'Set {d["name"]} on fire', fn, structure=True)
-    _say(win, f'{d["name"]} catches at frame {doc.frame}: the flame at its base lasts 3 s, then the fire is its own'
-              + (' (Spreading fire is on).' if kind == 'collider' else '.'))
+    if spec is not None:
+        steady = 'Burning logo' if spec.get('kind') == 'image' else 'Burning text'
+        _say(win, f'{d["name"]} catches all over at frame {doc.frame}: it flares up and burns out (Spreading fire is on). For '
+                  f'fire that keeps burning on it, use Create › {steady}.')
+    else:
+        _say(win, f'{d["name"]} catches at frame {doc.frame}: the flame at its base lasts 3 s, then the fire is its own'
+                  + (' (Spreading fire is on).' if kind == 'collider' else '.'))
+    doc.set_playing(True)
+
+
+def repeat(win, sel=None):
+    """Copies of the selection (or sel) in a row, a ring or scattered, from the Repeat dialog."""
+    from ..scene import arrange as A, blocks
+    from . import repeatdialog
+    doc = win.doc
+    sel = sel or doc.selected_objects()
+    if not sel:
+        QMessageBox.information(win, 'Repeat', 'Select what to repeat first (click it in the viewer or the object list).')
+        return
+    whole = blocks.with_attached(doc.scene, sel)
+    lo, hi = A.footprint(doc.scene, whole, doc.frame)
+    got = repeatdialog.ask(win, len(whole), (float(hi[0] - lo[0]), float(hi[2] - lo[2])))
+    if not got:
+        return
+    places, ring = got
+    new = doc.repeat(sel, places, ring=ring)
+    _say(win, f'{len(new)} new things ({len(places) - (1 if ring else 0)} copies). They are selected: drag one to move them all, '
+              'Ctrl+Z to undo.')
+    doc.set_playing(True)
+
+
+def group(win, sel=None):
+    doc = win.doc
+    sel = sel or doc.selected_objects()
+    if len(sel) < 2:
+        return
+    doc.group(sel)
+    name = _items(doc.scene, sel[0][0])[sel[0][1]]['name']
+    _say(win, f'Grouped: the others are attached to {name} and go wherever it goes. Ungroup to move them on their own again.')
+
+
+def select_group(win, kind, i):
+    """Select a thing with everything attached to it (and what it is attached to, up to the top)."""
+    from ..scene import blocks
+    doc = win.doc
+    sc = doc.scene
+    top = (kind, i)
+    seen = set()
+    while True:
+        d = _items(sc, top[0])[top[1]]
+        link = sc.link_of(top[0], d['name'])
+        if link is None or tuple(link['parent']) in seen:
+            break
+        seen.add(tuple(link['parent']))
+        pi, _ = sc.find_object(*link['parent'])
+        if pi is None:
+            break
+        top = (link['parent'][0], pi)
+    doc.set_selected(blocks.with_attached(sc, [top]), top)
+
+
+def save_block(win, sel):
+    """Save objects sel = [(kind, i)] (and what is attached to them) as one of your blocks, under Yours in Create."""
+    from pathlib import Path
+    from ..scene import blocks
+    from . import blockdialog
+    sc = win.doc.scene
+    sel = [s for s in sel if s[0] in ('emitter', 'collider', 'light', 'fabric')]
+    if not sel:
+        QMessageBox.information(win, 'Save as a block', 'Select what you built first (click it in the viewer or the object list).')
+        return
+    got = blockdialog.ask(win, sc, sel)
+    if not got:
+        return
+    name, tip = got
+    path = blocks.folder() / f'{blocks.slug(name)}{blocks.EXT}'
+    if path.exists() and QMessageBox.question(win, 'Save as a block', f'You have a block called {name} already. Replace it?') \
+            != QMessageBox.Yes:
+        return
+    try:
+        path = blocks.save(sc, sel, name, tip, frame=win.doc.frame, path=path)
+    except (ValueError, OSError) as ex:
+        QMessageBox.information(win, 'Save as a block', str(ex))
+        return
+    if hasattr(win, 'create'):
+        win.create.reload_blocks()
+    _say(win, f'Saved {name} as a block: it is under Yours in Create (and {Path(path).name} is the file to share).')
+
+
+def edit_text(win, kind, i):
+    """Change the words, font or size of letters made by a Text block. Everything made from the same letters (the
+    fire on them, the flame that lit them) changes with them."""
+    from . import textdialog, textmesh
+    doc = win.doc
+    sc = doc.scene
+    d = _items(sc, kind)[i]
+    spec = text_spec(d, sc)
+    if spec is None:
+        return
+    old_mesh = d['mesh']
+    users = [(k2, o) for k2 in ('emitter', 'collider') for o in _items(sc, k2) if o.get('shape') == 'mesh' and o.get('mesh') == old_mesh]
+    if any(k2 == 'emitter' and o.get('fuel', 0.0) > 0 and o.get('emits', 'fire') == 'fire' for k2, o in users):
+        look = 'fire'
+    elif any(k2 == 'emitter' for k2, o in users):
+        look = 'water'
+    else:
+        look = 'solid'
+    from . import shapedialog
+    image = spec.get('kind') == 'image'
+    new = (shapedialog if image else textdialog).ask(win, spec, width=C.scene_width(sc), look=look, edit=True)
+    if not new or new == spec:
+        return
+    try:
+        path = textmesh.make(new)[0]
+    except (ValueError, OSError) as ex:
+        QMessageBox.information(win, 'Shape' if image else 'Text', str(ex))
+        return
+    old_label, new_label = textmesh.label_of(spec), textmesh.label_of(new)
+
+    def fn(s):
+        renamed = []
+        for k2 in ('emitter', 'collider'):
+            items = _items(s, k2)
+            for o in items:
+                if o.get('shape') == 'mesh' and o.get('mesh') == old_mesh:
+                    o['mesh'] = path
+                    if old_label in o['name'] and old_label != new_label:
+                        name = _unique(items, o['name'].replace(old_label, new_label))
+                        renamed.append((k2, o['name'], name))
+                        o['name'] = name
+        for l in s.links:
+            for end in ('child', 'parent'):
+                for k2, a, b in renamed:
+                    if list(l[end]) == [k2, a]:
+                        l[end] = [k2, b]
+        C.text_detail(s, path)
+    doc.edit('Edit text', fn, structure=True)
+    _say(win, ('The shape is changed.' if image else f'The letters read {new_label} now.') if old_label != new_label
+         else ('The shape is changed.' if image else 'The letters are changed.'))
     doc.set_playing(True)
 
 
@@ -243,8 +410,24 @@ def fill_menu(m: QMenu, win, sel, path_mode=None):
                 QMessageBox.information(win, 'Not here', str(ex))
         return run
 
+    many = doc.selected_objects() if (kind, i) in doc.selected_objects() else [(kind, i)]
+    if len(many) > 1:
+        head = m.addAction(f'{len(many)} selected')
+        head.setEnabled(False)
+        act('Group (attach to ' + d.get('name', kind) + ')', lambda: group(win, many),
+            'They go wherever this one goes: move it and they all move', 'layers')
+        act('Repeat…', lambda: repeat(win, many), 'Copies of all of them in a row, a ring or scattered', 'grid')
+        act(f'Duplicate the {len(many)}', lambda: doc.duplicate_objects(many), '', 'copy')
+        act('Save them as a block…', lambda: save_block(win, many), 'Keep them under Yours in Create', 'save')
+        act(f'Delete the {len(many)}', lambda: doc.delete_objects(many), '', 'trash')
+        m.addSeparator()
     head = m.addAction(d.get('name', kind))
     head.setEnabled(False)
+    if kind in ('emitter', 'collider') and text_spec(d, sc) is not None:
+        image = text_spec(d, sc).get('kind') == 'image'
+        act('Edit shape…' if image else 'Edit text…', lambda: edit_text(win, kind, i),
+            'Change the picture, its size or what of it is the shape' if image else 'Change the words, the font or the size',
+            'shape' if image else 'text')
     if kind == 'emitter':
         sub = m.addMenu(icons.glyph_icon('spark' if False else 'sparks', theme.ACCENT, 16), 'Turn into')
         for key, label in C.TURN_INTO:
@@ -303,14 +486,34 @@ def fill_menu(m: QMenu, win, sel, path_mode=None):
         sub.addAction(icons.glyph_icon(k2, theme.OBJECT_COLOURS[k2], 16), name,
                       lambda k2=k2, j=j, name=name: (doc.attach((kind, i), (k2, j)),
                                                      _say(win, f'{d["name"]} is attached to {name}: it goes where {name} goes.')))
+    attached = [l for l in sc.links if list(l['parent']) == [kind, d['name']]]
+    if attached or link is not None:
+        act('Select its group', lambda: select_group(win, kind, i), 'It and everything attached to it', 'layers')
+    if attached:
+        act(f'Ungroup ({len(attached)} attached)', lambda: (doc.ungroup((kind, i)), _say(win, 'They move on their own again.')),
+            'What is attached to it moves on its own again', 'copy')
+    act('Repeat…', lambda: repeat(win, [(kind, i)] if len(many) == 1 else many),
+        'Copies of it in a row (torches down a path), a ring (jets round a stage) or scattered (spot fires)', 'grid')
     if path_mode is not None:
         act('Move along a path…', lambda: path_mode(kind, i), 'Click points on the ground to draw where it goes, over the next seconds',
             'line')
     act('Drop to the ground', lambda: drop_to_ground(win, kind, i), '', 'fit', enabled=kind != 'light')
     act('Look at it', lambda: frame_it(win, kind, i), 'The Build camera turns to it', 'camera')
     m.addSeparator()
+    act('Save as a block…', lambda: save_block(win, many),
+        'Keep it (and what is attached to it) under Yours in Create, to add to any scene or share as a file', 'save')
     act('Duplicate', lambda: duplicate(win, kind, i), '', 'copy')
     act('Delete', lambda: delete(win, kind, i), '', 'trash')
+
+
+def selected_actions(win):
+    """(label, glyph, callable) for the bar over a several-things selection's settings."""
+    doc = win.doc
+    many = doc.selected_objects()
+    if len(many) < 2:
+        return []
+    return [('Group', 'layers', lambda: group(win, many)), ('Repeat…', 'grid', lambda: repeat(win, many)),
+            ('Save block…', 'save', lambda: save_block(win, many)), ('Delete all', 'trash', lambda: doc.delete_objects(many))]
 
 
 def quick_actions(win, sel):
@@ -319,6 +522,9 @@ def quick_actions(win, sel):
     sc = win.doc.scene
     d = _items(sc, kind)[i]
     out = []
+    if kind in ('emitter', 'collider') and text_spec(d, sc) is not None:
+        image = text_spec(d, sc).get('kind') == 'image'
+        out.append(('Edit shape' if image else 'Edit text', 'shape' if image else 'text', lambda: edit_text(win, kind, i)))
     if kind == 'collider':
         out += [('Set on fire', 'flame', lambda: _guard(win, lambda: set_on_fire(win, 'collider', i))),
                 ('Float', 'waves', lambda: make_float(win, i, 500.0)), ('Hot', 'flame', lambda: make_temperature(win, i, 300.0))]

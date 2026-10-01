@@ -719,8 +719,13 @@ def apply_to(scene: Scene, name: str, keep_camera=True, keep_render=True):
     if keep_camera:
         keep['camera'] = dict(scene.data['camera'])
         # (the clip planes go with the effect's scale: a sky preset works in kilometres)
-        for k in ('distance', 'target_y', 'focal_mm', 'near', 'far'):
-            keep['camera'][k] = fresh.data['camera'][k]
+        if getattr(scene, 'ground', None):   # a camera matched to the footage keeps its lens; the clip planes only widen
+            c = keep['camera']
+            c['near'] = min(float(c['near']), float(fresh.data['camera']['near']))
+            c['far'] = max(float(c['far']), float(fresh.data['camera']['far']))
+        else:
+            for k in ('distance', 'target_y', 'focal_mm', 'near', 'far'):
+                keep['camera'][k] = fresh.data['camera'][k]
     if keep_render:
         keep['render'] = dict(scene.data['render'])
     keep['composite'] = dict(scene.data['composite'])

@@ -31,7 +31,11 @@ class Component:
     scene: dict = field(default_factory=dict)     # {section: {key: value}} set when added
     scales: bool = False       # sized for a 2 m box: scaled to the scene's box
     room: tuple = (0.0, 0.0, 0.0)   # space it needs around its base: half width, height, half depth (m)
-    pick: str = ''             # 'mesh': ask for a file for the first object
+    pick: str = ''             # 'mesh': ask for a file for the first object; 'text': ask for words, 'shape': for a picture
+                               # (every mesh object gets it)
+    origin: bool = False       # objects are placed about the block's own origin (your blocks), not the first object
+    links: list = field(default_factory=list)     # attachments between its objects, by name
+    file: str = ''             # your block's .bbblock file
 
 
 def _E(**kw):
@@ -106,6 +110,16 @@ COMPONENTS = [
               '(turns on Spreading fire). Put a fire next to it.', 'cube', 'fire', scales=True, room=(0.6, 2.0, 0.6),
               objects=[_C(name='Burnable block', shape='box', position=(0.45, 0.25, 0.0), size=(0.25, 0.25, 0.25), burnable=True)],
               scene={'spread': {'enabled': True}}),
+    Component('text_fire', 'Burning text', 'Fire', 'Type words and they burn: solid letters in any font on this computer, '
+              'with fire all over them. Right-click them to edit the text.', 'text', 'fire', pick='text',
+              objects=[_E(name='Fire', shape='mesh', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0), thickness=0.015, fuel=10.0,
+                          temperature=0.55, noise=0.6, noise_freq=10.0, noise_rise=1.5),
+                       _C(name='Text', shape='mesh', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0))]),
+    Component('logo_fire', 'Burning logo', 'Fire', 'A logo or picture (SVG, PNG, JPG) made solid, with fire all over it: '
+              'its shape is traced from the picture.', 'shape', 'fire', pick='shape',
+              objects=[_E(name='Fire', shape='mesh', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0), thickness=0.015, fuel=10.0,
+                          temperature=0.55, noise=0.6, noise_freq=10.0, noise_rise=1.5),
+                       _C(name='Logo', shape='mesh', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0))]),
     Component('armchair', 'Armchair', 'Fire', 'A burnable armchair (a built-in mesh) with a small fire on its seat (turns on Spreading fire).',
               'cube', 'fire', room=(0.8, 2.4, 0.8),
               objects=[_C(name='Armchair', shape='mesh', mesh='builtin:armchair.obj', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0),
@@ -148,6 +162,14 @@ COMPONENTS = [
               'liquid', scales=True, room=(0.8, 0.8, 0.6),
               objects=[_E(name='Water', shape='box', position=(-0.5, 0.25, 0.0), size=(0.25, 0.25, 0.3), noise=0.0, embers=False,
                           liquid_mode='fill', start=0.0)]),
+    Component('text_water', 'Water letters', 'Liquids', 'Words made of water, in any font on this computer: they hang in '
+              'the air for a moment, then fall and splash.', 'text', 'liquid', pick='text',
+              objects=[_E(name='Water', shape='mesh', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0), thickness=0.0, noise=0.0,
+                          embers=False, liquid_mode='fill', start=0.0)]),
+    Component('logo_water', 'Water shape', 'Liquids', 'A logo or picture (SVG, PNG, JPG) made of water: it hangs in the air '
+              'for a moment, then falls and splashes.', 'shape', 'liquid', pick='shape',
+              objects=[_E(name='Water', shape='mesh', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0), thickness=0.0, noise=0.0,
+                          embers=False, liquid_mode='fill', start=0.0)]),
     Component('throw', 'Thrown water', 'Liquids', 'A bucketful of water thrown through the air.', 'drop', 'liquid', room=(1.2, 1.0, 0.6),
               scales=True, objects=[_E(name='Thrown water', shape='sphere', position=(-0.9, 0.75, 0.0), size=(0.2, 0.1, 0.1), velocity=(2.4, 0.9, 0.0),
                           radial=0.7, noise=0.0, start=0.05, embers=False, liquid_mode='fill')]),
@@ -210,6 +232,12 @@ COMPONENTS = [
               objects=[_C(name='Banks', shape='mesh', mesh='builtin:pond_basin.png', position=(0.0, 0.0, 0.0), size=(3.2, 0.4, 2.4))]),
     Component('logs', 'Firewood', 'Objects', 'A built-in pile of firewood logs (a solid mesh).', 'cube', room=(0.6, 0.6, 0.6),
               objects=[_C(name='Firewood', shape='mesh', mesh='builtin:firewood.obj', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0))]),
+    Component('text', 'Text', 'Objects', 'Solid letters in any font on this computer. Set them on fire (they catch all '
+              'over, flare up and burn out), float them, pour water over them.', 'text', pick='text',
+              objects=[_C(name='Text', shape='mesh', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0))]),
+    Component('logo', 'Logo or picture', 'Objects', 'Any logo or picture (SVG, PNG, JPG) as a solid shape, traced from it. '
+              'Set it on fire, float it, pour water over it.', 'shape', pick='shape',
+              objects=[_C(name='Logo', shape='mesh', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0))]),
     Component('mesh', 'Your mesh…', 'Objects', 'Any OBJ or STL model, a numbered mesh sequence, a USD mesh or a greyscale heightfield '
               'image (terrain).', 'cube', pick='mesh',
               objects=[_C(name='Mesh', shape='mesh', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0))]),
@@ -281,11 +309,28 @@ GLYPHS = {'campfire': 'logs', 'pool': 'pool', 'line': 'line', 'torch': 'torch', 
           'fountain': 'fountain', 'block': 'crate', 'flow': 'waves', 'pond': 'waves', 'ball': 'ball', 'pillar': 'pillar',
           'wall': 'wall', 'room': 'house', 'car': 'car', 'crate': 'crate', 'stone': 'ball', 'hill': 'hill', 'basin': 'hill',
           'logs': 'logs', 'mesh': 'mesh', 'flag': 'flag', 'banner': 'flag', 'spot': 'spot', 'window': 'window', 'vortex': 'spiral',
-          'fan': 'jet', 'updraft': 'steam', 'suction': 'burst'}
+          'fan': 'jet', 'updraft': 'steam', 'suction': 'burst', 'text_fire': 'text', 'text': 'text', 'text_water': 'text'}
 for _c in COMPONENTS:
     _c.glyph = GLYPHS.get(_c.key, _c.glyph)
 
 BY_KEY = {c.key: c for c in COMPONENTS}
+
+
+def get(key):
+    """A building block by key: a built-in one, or one of yours ('user:<name>', scene/blocks.py)."""
+    if key in BY_KEY:
+        return BY_KEY[key]
+    from . import blocks
+    c = blocks.get(key)
+    if c is None:
+        raise KeyError(key)
+    return c
+
+
+def _values(v):
+    """The values a setting takes: its keys' if it is animated."""
+    from .anim import Curve
+    return [k[1] for k in v.keys] if isinstance(v, Curve) else [v]
 GROUPS = ['Fire', 'Smoke, steam & sparks', 'Liquids', 'Fabric', 'Weather', 'Forces', 'Objects', 'Lights']
 
 # Making a scene from scratch: (label, box width in metres)
@@ -367,12 +412,74 @@ def _scale_factor(scene):
     return min(max(scene_width(scene) / REF_WIDTH, 0.05), 50.0)
 
 
-def _extent(kind, d):
-    """Where an object reaches (fire-local min and max corners), roughly."""
+_BOUNDS = {}
+
+
+def mesh_box(mesh):
+    """(min, max) of an OBJ mesh in its own units (a built-in one or a file), or None if it cannot be read cheaply."""
     import numpy as np
+    from pathlib import Path
+    if not mesh or '#' in str(mesh) or not str(mesh).lower().endswith('.obj'):
+        return None
+    f = Path(__file__).resolve().parents[1] / 'assets' / 'meshes' / mesh[8:] if mesh.startswith('builtin:') else Path(mesh)
+    try:
+        key = (str(f), f.stat().st_mtime)
+    except OSError:
+        return None
+    if key not in _BOUNDS:
+        try:
+            with open(f, 'rb') as fh:
+                rows = [ln.split()[1:4] for ln in fh if ln.startswith(b'v ')]
+            v = np.array(rows, np.float64)
+            _BOUNDS[key] = (v.min(0), v.max(0)) if len(v) else None
+        except (OSError, ValueError):
+            _BOUNDS[key] = None
+    return _BOUNDS[key]
+
+
+def text_info(mesh):
+    """What a Text block's mesh says about itself (text, font, height, depth, extent), or None."""
+    import json
+    from pathlib import Path
+    if not mesh or not str(mesh).lower().endswith('.obj') or str(mesh).startswith('builtin:'):
+        return None
+    try:
+        meta = json.loads(Path(mesh).with_suffix('.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    return meta if isinstance(meta, dict) and ('text' in meta or meta.get('kind') == 'image') else None
+
+
+def text_label(text):
+    """An object name for some words: the first 24 characters, on one line, in quotes."""
+    t = ' '.join(str(text).split())
+    return f'“{t[:24]}{"…" if len(t) > 24 else ""}”'
+
+
+def _extent(kind, d):
+    """Where an object reaches (fire-local min and max corners), roughly; for an animated one, everywhere it goes."""
+    import numpy as np
+    from .anim import Curve
+    if any(isinstance(d.get(k), Curve) for k in ('position', 'end', 'size')):
+        lo, hi = np.full(3, np.inf), np.full(3, -np.inf)
+        for pos in _values(d.get('position', (0.0, 0.0, 0.0))):
+            for size in _values(d.get('size', (0.1, 0.1, 0.1))):
+                for end in _values(d['end']) if 'end' in d else [None]:
+                    s = dict(d, position=pos, size=size)
+                    if end is not None:
+                        s['end'] = end
+                    a, b = _extent(kind, s)
+                    lo, hi = np.minimum(lo, a), np.maximum(hi, b)
+        return lo, hi
     p = np.asarray(d.get('position', (0.0, 0.0, 0.0)), float)
     if kind == 'emitter' or kind == 'collider':
         s = np.abs(np.asarray(d.get('size', (0.1, 0.1, 0.1)), float))
+        box = mesh_box(d.get('mesh')) if d.get('shape') == 'mesh' else None
+        if box is not None:
+            c, r = (box[0] + box[1]) / 2 * s, (box[1] - box[0]) / 2 * s
+            if d.get('yaw'):   # turned: the box round its turned corners
+                r = np.array([math.hypot(r[0], r[2]), r[1], math.hypot(r[0], r[2])])
+            return p + c - r, p + c + r
         if d.get('shape') == 'mesh' and str(d.get('mesh', '')).endswith('.png'):
             s = s * np.array([0.5, 1.0, 0.5])   # a heightfield's size is its full width, height and depth, from the ground
             return p - s * np.array([1, 0, 1]), p + s
@@ -407,7 +514,8 @@ def convert_kind(scene: Scene, kind):
 def add(scene: Scene, key, at=None, mesh=None):
     """Add a building block to the scene. `at` is a fire-local ground point (x, z) to put its base on.
     Returns ([(kind, index)], [notes for the user]). Raises ValueError if the scene cannot take it."""
-    comp = BY_KEY[key]
+    from .anim import Curve
+    comp = get(key)
     notes = []
     target = target_kind(scene, comp)
     if target is None:
@@ -424,31 +532,69 @@ def add(scene: Scene, key, at=None, mesh=None):
         if target == 'both':
             notes.append('Fire and liquid now simulate together in this scene.')
     f = _scale_factor(scene) if comp.scales else 1.0
-    objs = copy.deepcopy(comp.objects)
+    if comp.file:
+        from . import blocks
+        objs = blocks.unpacked(comp)   # its meshes unpacked beside your blocks
+    else:
+        objs = copy.deepcopy(comp.objects)
+    room = comp.room
+    info = None
     if comp.pick == 'mesh':
         if not mesh:
             raise ValueError('No mesh chosen.')
         from pathlib import Path
         objs[0][1]['mesh'] = mesh
         objs[0][1]['name'] = Path(mesh.split('#')[0]).stem.rstrip('.#_') or objs[0][1].get('name', 'Mesh')
-    anchor = None
+    elif comp.pick in ('text', 'shape'):
+        if not mesh:
+            raise ValueError('No text given.' if comp.pick == 'text' else 'No picture chosen.')
+        info = text_info(mesh) or {}
+        h = float(info.get('height', 0.4))
+        if info.get('kind') == 'image':
+            from pathlib import Path
+            label = text_label(Path(info.get('image', 'shape')).stem)
+        else:
+            label = text_label(info.get('text', 'Text'))
+        dom = scene.data['domain']
+        cell = max(scene.domain_size()) / max(16.0, dom['resolution'] * dom['preview_scale'])
+        for kind, d in objs:
+            if d.get('shape') == 'mesh':
+                d['mesh'] = mesh
+                d['name'] = label if kind == 'collider' or len(objs) == 1 else f'{label} fire'
+                if kind == 'emitter' and d.get('thickness'):
+                    d['thickness'] = round(max(0.04 * h, cell), 4)   # a skin of fire about a cell deep
+                if kind == 'emitter' and d.get('noise_freq'):
+                    d['noise_freq'] = round(d['noise_freq'] * 0.4 / h, 3)   # clumps sized to the letters
+        if comp.need == 'liquid':   # water letters hang well above the ground, then fall
+            y = round(max(0.75 * h, 0.4 * scene.domain_size()[1]), 3)
+            for kind, d in objs:
+                d['position'] = (d['position'][0], y, d['position'][2])
+        room = (0.0, (1.2 if comp.need == 'liquid' else 5.0) * h, 0.0)   # head room for the flames (or the fall)
+    anchor = (0.0, 0.0) if comp.origin else None
     for kind, d in objs:
-        if 'position' in d:
-            anchor = (d['position'][0] * f, d['position'][2] * f)
+        if 'position' in d and anchor is None:
+            anchor = (_values(d['position'])[0][0] * f, _values(d['position'])[0][2] * f)
             break
-    dx = dz = 0.0
+    dx = dy = dz = 0.0
+    if at is not None and len(at) == 3:   # (x, y, z): a point with a height (a table top, a step, a slope)
+        dy = float(at[1])
+        at = (at[0], at[2])
     if at is not None and anchor is not None:
         dx, dz = at[0] - anchor[0], at[1] - anchor[1]
     elif at is not None:
         anchor = (0.0, 0.0)
     added = []
     lists = {'emitter': scene.emitters, 'collider': scene.colliders, 'light': scene.lights, 'fabric': scene.fabrics}
+    renamed = {}
     for kind, d in objs:
         d = dict(d)
         for k in ('position', 'end'):
             if k in d:
                 v = d[k]
-                d[k] = (v[0] * f + dx, v[1] * f, v[2] * f + dz)
+                if isinstance(v, Curve):
+                    d[k] = Curve([[fr, (x[0] * f + dx, x[1] * f + dy, x[2] * f + dz), it] for fr, x, it in v.keys])
+                else:
+                    d[k] = (v[0] * f + dx, v[1] * f + dy, v[2] * f + dz)
         if f != 1.0:
             if 'size' in d and not (d.get('shape') == 'mesh'):
                 d['size'] = tuple(x * f for x in d['size'])
@@ -465,9 +611,10 @@ def add(scene: Scene, key, at=None, mesh=None):
             if kind == 'light':
                 d['intensity'] = d.get('intensity', 2000.0) * f * f   # as bright at the effect from f times as far
                 d['radius'] = d.get('radius', 0.1) * f
-        if kind == 'emitter' and scene.kind == 'both':
+        if kind == 'emitter' and scene.kind == 'both' and not comp.origin:   # your blocks keep what each source emits
             d['emits'] = {'fire': 'fire', 'liquid': 'liquid', 'lava': 'lava'}.get(comp.need, 'fire')
-        if kind == 'emitter' and (comp.need in ('liquid', 'lava') or d.get('vapour')) and 'size' in d:
+        if kind == 'emitter' and (comp.need in ('liquid', 'lava') or d.get('vapour')) and 'size' in d and d.get('shape') != 'mesh' \
+                and not comp.origin and not isinstance(d['size'], Curve):
             # a source smaller than the grid's cells pours next to nothing: at least about one cell across
             dom = scene.data['domain']
             cell = max(scene.domain_size()) / max(16.0, dom['resolution'] * dom['preview_scale'])
@@ -481,8 +628,16 @@ def add(scene: Scene, key, at=None, mesh=None):
         while d.get('name', base) in names:
             d['name'] = f'{base} {n}'
             n += 1
-        i = {'emitter': scene.add_emitter, 'collider': scene.add_collider, 'light': scene.add_light, 'fabric': scene.add_fabric}[kind](**d)
+        renamed[(kind, base)] = d.get('name', base)
+        curves = {k: v for k, v in d.items() if isinstance(v, Curve)}   # animated settings go in as they are
+        i = {'emitter': scene.add_emitter, 'collider': scene.add_collider, 'light': scene.add_light,
+             'fabric': scene.add_fabric}[kind](**{k: v for k, v in d.items() if k not in curves})
+        lists[kind][i].update(curves)
         added.append((kind, i))
+    for l in comp.links:   # its attachments, between the objects as they are named here
+        c, p = tuple(l['child']), tuple(l['parent'])
+        if c in renamed and p in renamed:
+            scene.links.append(dict(l, child=[c[0], renamed[c]], parent=[p[0], renamed[p]]))
     # scene-wide settings that come with it (only the sections the scene has)
     from .params import applies
     for sec, vals in comp.scene.items():
@@ -491,10 +646,18 @@ def add(scene: Scene, key, at=None, mesh=None):
         for k, v in vals.items():
             if applies(sec, k, scene.kind):
                 scene.set((sec, k), v)
-    if comp.scene.get('spread', {}).get('enabled') and comp.need == 'fire':
+    if comp.scene.get('spread', {}).get('enabled') and comp.need in ('fire', 'both'):
         notes.append('Spreading fire is on: fire spreads over anything marked Burnable.')
+    if comp.pick in ('text', 'shape'):
+        text_detail(scene, mesh)
+        emitters = [i for k, i in added if k == 'emitter']
+        colliders = [i for k, i in added if k == 'collider']
+        if emitters and colliders:   # the fire keeps to the letters wherever they are moved, stretched or turned
+            scene.links.append({'child': ['emitter', scene.emitters[emitters[0]]['name']],
+                                'parent': ['collider', scene.colliders[colliders[0]]['name']], 'offset': [0.0, 0.0, 0.0],
+                                'shape': True})
     # grow the box to fit (it keeps its cell count, so detail drops a little)
-    grown = _fit_box(scene, [(k, lists[k][i]) for k, i in added], comp, f, (anchor[0] + dx, anchor[1] + dz) if anchor else (0.0, 0.0))
+    grown = _fit_box(scene, [(k, lists[k][i]) for k, i in added], room, f, (anchor[0] + dx, anchor[1] + dz) if anchor else (0.0, 0.0))
     if grown:
         notes.append(f'The simulation box grew to {grown[0]:.2g} × {grown[1]:.2g} × {grown[2]:.2g} m to fit it.')
     return added, notes
@@ -545,7 +708,18 @@ def turn_into(scene: Scene, i, key):
     return notes
 
 
-def _fit_box(scene, objs, comp, f, base):
+def text_detail(scene, mesh):
+    """Fine enough mesh detail for the strokes of a Text block's letters: about three cells across a stroke."""
+    info = text_info(mesh)
+    if not info:
+        return
+    ext = info.get('extent') or (1.0, 0.4, 0.1)
+    need = int(math.ceil(max(ext) / (0.03 * float(info.get('height', 0.4))))) + 4
+    d = scene.data['domain']
+    d['mesh_resolution'] = int(min(192, max(int(d['mesh_resolution']), need)))
+
+
+def _fit_box(scene, objs, room, f, base):
     import numpy as np
     sx, sy, sz = scene.domain_size()
     need = np.array([sx / 2, sy, sz / 2])
@@ -554,7 +728,7 @@ def _fit_box(scene, objs, comp, f, base):
             continue   # a light may stand outside the box: it lights it from there
         lo, hi = _extent(kind, d)
         need = np.maximum(need, [max(abs(lo[0]), abs(hi[0])) * 1.1, hi[1] * 1.08, max(abs(lo[2]), abs(hi[2])) * 1.1])
-    rx, ry, rz = (x * f for x in comp.room)
+    rx, ry, rz = (x * f for x in room)
     if rx or ry or rz:
         need = np.maximum(need, [abs(base[0]) + rx, ry, abs(base[1]) + rz])
     new = (float(need[0] * 2), float(need[1]), float(need[2] * 2))

@@ -55,6 +55,35 @@ class WorkView:
                    pitch=min(80.0, math.degrees(math.asin(max(-1.0, min(1.0, d[1] / max(dist, 1e-9))))) + 10.0),
                    distance=dist * back, target=tuple(float(x) for x in tgt), focal_mm=min(spec.focal_mm, 35.0))
 
+    @classmethod
+    def from_shot(cls, scene, frame):
+        """A view from exactly where the shot's camera is, looking the way it looks (its placement in the frame
+        aside), turning about a point in front of it at the depth of the middle of the box."""
+        spec, fire = scene.camera(frame)
+        st = cam.compute(dataclasses.replace(spec, use_anchor=False, shift=(0.0, 0.0)), 16 / 9, fire)
+        eye = np.asarray(st.eye, float)
+        R = st.view[:3, :3].T
+        fwd = -R[:, 2]
+        L = fire.local_to_world()
+        sy = scene.domain_size()[1]
+        centre = (L @ np.array([0.0, sy * 0.4, 0.0, 1.0]))[:3]
+        t = float(np.dot(centre - eye, fwd))
+        t = min(max(t, 0.3), 500.0) if t > 0 else 5.0
+        tgt = eye + fwd * t
+        d = eye - tgt
+        dist = float(np.linalg.norm(d))
+        local = (np.linalg.inv(L) @ np.append(tgt, 1.0))[:3]
+        return cls(yaw=math.degrees(math.atan2(d[0], d[2])), pitch=math.degrees(math.asin(max(-1.0, min(1.0, d[1] / max(dist, 1e-9))))),
+                   distance=dist, target=tuple(float(x) for x in local), focal_mm=float(spec.focal_mm) * 36.0 / max(float(spec.sensor_mm), 1e-3))
+
+    def shot_values(self, scene, frame):
+        """The shot camera settings that see what this view sees: a free camera at the eye, the same field of view on
+        the shot's own sensor, no placement in the frame."""
+        spec, fire = scene.camera(frame)
+        eye, rot = self.eye_and_rotation(fire)
+        return {'position': tuple(float(x) for x in eye), 'rotation': tuple(float(x) for x in rot),
+                'focal_mm': float(self.focal_mm) * float(spec.sensor_mm) / 36.0, 'near': max(0.001, min(float(spec.near), self.distance * 0.01))}
+
     def eye_and_rotation(self, fire: cam.FireXform):
         """World-space eye and the XYZ Euler rotation (degrees) of a free camera looking at the target."""
         L = fire.local_to_world()

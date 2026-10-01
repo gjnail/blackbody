@@ -224,6 +224,14 @@ class Timeline(QWidget):
         self.restart_btn.setText(' Restart')
         self.restart_btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         bar.addSpacing(6)
+        self.timing_btn = QToolButton()
+        self.timing_btn.setObjectName('toggle')
+        self.timing_btn.setCheckable(True)
+        self.timing_btn.setText('Timing')
+        self.timing_btn.setToolTip('When each thing starts and stops, as bars over the shot: drag a bar to move it in time, '
+                                   'drag its ends to start or stop it then')
+        self.timing_btn.toggled.connect(self._show_timing)
+        bar.addWidget(self.timing_btn)
         self.keys_btn = QToolButton()
         self.keys_btn.setObjectName('toggle')
         self.keys_btn.setCheckable(True)
@@ -235,10 +243,15 @@ class Timeline(QWidget):
         self.ruler.scrubbed.connect(self._scrub)
         v.addWidget(self.ruler)
         from .keys import KeyEditor
+        from .timing import TimingEditor
+        self.timing = TimingEditor(doc)
+        self.timing.hide()
+        v.addWidget(self.timing, 1)
         self.keys = KeyEditor(doc)
         self.keys.hide()
         v.addWidget(self.keys, 1)
         self.keys_btn.setChecked(QSettings().value('ui/keys_open', False, type=bool))
+        self.timing_btn.setChecked(QSettings().value('ui/timing_open', False, type=bool))
         doc.frameChanged.connect(self.sync)
         doc.sceneReplaced.connect(self.sync)
         doc.paramChanged.connect(lambda *_: self.sync())
@@ -246,6 +259,12 @@ class Timeline(QWidget):
         doc.playingChanged.connect(self._playing)
         doc.selectionChanged.connect(lambda *_: self.ruler.update())
         self.sync()
+
+    def _show_timing(self, on):
+        QSettings().setValue('ui/timing_open', bool(on))
+        self.timing.setVisible(on)
+        if on:
+            self.timing.rebuild()
 
     def _show_keys(self, on):
         QSettings().setValue('ui/keys_open', bool(on))

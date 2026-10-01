@@ -21,6 +21,34 @@ Notable changes to Blackbody. The format follows
   it, send it along a path you click out on the ground, drop it to the ground.
 - Forces to place: a fan, an updraft, suction and a vortex push the air, and with it smoke, flame, embers and cloth.
 - In Build, objects in a liquid scene are drawn as grey stand-ins.
+- Text: type words, pick any installed font, and get solid 3D letters. Burning text has fire all over the letters,
+  Text is a solid object (set it on fire and every letter catches at once), and Water letters fall and splash. Edit
+  the words, font or size later from the right-click menu.
+- Logos and pictures as shapes: Burning logo, Logo or picture and Water shape trace an SVG, PNG or JPG (its
+  transparency, or what stands out from its background) into a solid, with Invert and a threshold.
+- Several things at once: Ctrl+click, Shift+drag a box or Ctrl+A to select several; they move and turn together.
+  Group, Ungroup, Duplicate, Delete, and Repeat in a row, a ring or scattered, with attached things coming along.
+- Your own blocks: Save as a block keeps what you built (with what is attached to it and its meshes) under Yours
+  in Create, as one .bbblock file to share; drop a block on the window to add it.
+- The shot's camera from Build: Use this view, Key here (keys at two frames make a camera move) and Look through it.
+- Timing on the timeline: each source's start and stop as a bar to drag, cloth let-go times, fills, and keys.
+- Search everything (Ctrl+K): actions on the selection, building blocks, commands, settings, effects and objects.
+- File › Pack project copies every file a project uses into a folder beside it and points the project at the copies.
+- Line up the ground: drag a grid's corners onto a rectangle on the ground in the footage and the camera follows: the
+  lens (from the vanishing points), the tilt, roll and height, with a perspective grid, the horizon and a 1.75 m
+  figure drawn over the footage to check. Effects then stand on the real ground at real size; drag their base over
+  it, or drop blocks onto the footage.
+- Camera tracking for lined-up shots, for cameras that turn and cameras that travel (dollies, walks, cars, drones):
+  about 60 spots followed through the footage with sub-pixel affine Lucas-Kanade matching (spots that look like
+  their neighbours skipped, lost ones replaced), the camera's position and turn worked out on every frame from the
+  spots on the ground (RANSAC, then a bundle adjustment of every camera and spot together), in real metres.
+- Line up from the horizon when there is no rectangle in view, and on sloping ground with two upright lines (the world
+  stays level; the slope becomes solid ground).
+- Surfaces: line up a wall, a table or platform, a ramp or stairs in the footage and it becomes a solid there (in every
+  layer, kept in place when the effect moves) that effects meet and go behind. Blocks dropped onto the footage, and
+  the effect's base, land on the ground, table tops, steps and slopes.
+- The lens is read from footage that records it (photo EXIF, phone video).
+- Shot steps: a card in the Shot view that walks through putting an effect in footage, step by step.
 - Contributor guide, code of conduct, security policy, issue and pull request
   templates, and CI that checks Windows, macOS and Linux.
 - Ko-fi links in the README and on the website.

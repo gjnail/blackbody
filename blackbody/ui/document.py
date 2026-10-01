@@ -65,10 +65,11 @@ class Document(QObject):
         self.active = 'base'    # the layer being edited (its uid); self.scene is that layer, self.shot the whole shot
         self.scene = presets.make('campfire')
         self.undo = QUndoStack(self)
-        self.undo.cleanChanged.connect(lambda clean: self.dirtyChanged.emit(not clean))
+        self.undo.cleanChanged.connect(self._clean_changed)
         self.frame = self.scene.start
         self.selection = ('emitter', 0)
         self.footage_info = None
+        self.picked = []   # other objects selected with the main one (Ctrl+click, a box drag); their settings do not show
         self.playing = False
         self.load_seq = 0   # counts scene loads; the engine tags its frames with it, so the viewer knows a frame is stale
         self.baseline = self.scene.copy()   # the scene as loaded (preset or file): settings changed from it are marked
@@ -223,18 +224,193 @@ class Document(QObject):
     def push_soon(self):
         self._push_timer.start()
 
+    def _clean_changed(self, clean):
+        try:
+            self.dirtyChanged.emit(not clean)
+        except RuntimeError:   # the window is going away
+            pass
+
+    # -- the camera matched to the footage ----------------------------------------------------------------
+
+    def ground_match(self, g=None):
+        """The camera that ground match g (or the shot's) makes, as a scene/groundmatch.Match. Raises ValueError."""
+        from ..scene import groundmatch as GM
+        sc = self.scene
+        g = g or sc.ground
+        if not g:
+            raise ValueError('The ground has not been lined up.')
+        W, H = sc.output_size()
+        f = int(g.get('frame', self.frame))
+        sensor = float(sc.v('camera', 'sensor_mm', f))
+        focal = float(g.get('focal_mm') or sc.v('camera', 'focal_mm', f))
+        by_side = g.get('scale_by') == 'side'
+        verts = [[(x * W, y * H) for x, y in seg] for seg in g['verticals']] if g.get('verticals') else None
+        if g.get('mode') == 'horizon':
+            hz = [(x * W, y * H) for x, y in g['horizon']]
+            b = g.get('base', (0.5, 0.8))
+            return GM.solve_horizon(hz, (b[0] * W, b[1] * H), (W, H), focal * W / sensor, float(g.get('height', 1.6)), verts)
+        return GM.solve([(x * W, y * H) for x, y in g['corners']], (W, H), focal_px=focal * W / sensor,
+                        height=None if by_side else float(g.get('height', 1.6)), side=float(g.get('side', 2.0)) if by_side else None,
+                        use_solved_lens=g.get('lens', 'picture') == 'picture', verticals=verts)
+
+    def set_ground(self, g, merge=True):
+        """Line up the ground: keep g and point the camera (every layer's: it is the footage's) the way it says. The
+        first time, the effect goes to the middle of the rectangle. Returns the Match; raises ValueError, changing
+        nothing, when g cannot be a rectangle on the ground."""
+        from ..scene.anim import Curve
+        m = self.ground_match(g)
+        W = self.scene.output_size()[0]
+        first = not self.scene.ground
+        g = dict(g)
+        g['plane'] = list(m.plane) if m.slope > 1.5 else [0.0, 1.0, 0.0]
+        g['slope'] = round(float(m.slope), 2)
+        g['surfaces'] = list((self.scene.ground or {}).get('surfaces') or [])
+
+        def fn(s):
+            for x in [self.shot] + list(self.shot.layers):
+                c = x.data['camera']
+                for k in ('position', 'rotation', 'focal_mm', 'roll'):
+                    if isinstance(c.get(k), Curve):
+                        x.clear_anim(('camera', k))   # a still camera: tracking the camera move keys it again
+                c['mode'] = 'free'
+                c['use_anchor'] = False
+                c['roll'] = 0.0
+                c['position'] = m.position
+                c['rotation'] = m.rotation
+                if m.focal_solved:
+                    c['focal_mm'] = round(m.focal_px * float(c['sensor_mm']) / W, 2)
+                elif g.get('focal_mm'):
+                    c['focal_mm'] = float(g['focal_mm'])
+                c['near'] = min(float(c['near']), 0.05)
+                if first:
+                    c['fire_position'] = (0.0, 0.0, 0.0)
+                    c['fire_yaw'] = 0.0
+                x.ground = dict(g)
+        self.edit('Line up the ground', fn, merge_key=('ground', self._gen) if merge else None, path=('camera', 'position'))
+        return m
+
+    def finish_ground(self):
+        """After lining up: a sloping ground becomes a solid slope (a surface) in the scene, so water runs down it."""
+        from . import surfaces
+        g = self.scene.ground or {}
+        old = [s_ for s_ in g.get('surfaces') or [] if s_.get('kind') == 'slope']
+        if not old and g.get('slope', 0.0) <= 1.5:
+            return
+
+        def fn(s):
+            for x in [self.shot] + list(self.shot.layers):
+                if not x.ground:
+                    continue
+                x.colliders = [c for c in x.colliders if not any(c.get('mesh') == o['mesh'] for o in old)]
+                x.ground['surfaces'] = [s_ for s_ in x.ground.get('surfaces') or [] if s_.get('kind') != 'slope']
+            if g.get('slope', 0.0) > 1.5:
+                sx, sy, sz = self.scene.domain_size()
+                srf = surfaces.slope_surface(g['plane'], max(4.0, 1.5 * max(sx, sz)))
+                self._add_surface(srf, 'Sloping ground')
+        self.edit('Sloping ground', fn, structure=True)
+
+    def _add_surface(self, srf, name):
+        from . import surfaces
+        path, centre = surfaces.write(srf)
+        entry = {'name': name, 'kind': srf['kind'], 'top': srf['top'], 'mesh': path, 'centre': list(centre)}
+        if srf.get('treads'):
+            entry['treads'] = srf['treads']
+        for x in [self.shot] + list(self.shot.layers):
+            if not x.ground:
+                continue
+            names = {c['name'] for c in x.colliders}
+            n, base = 2, name
+            while entry['name'] in names:
+                entry['name'] = f'{base} {n}'
+                n += 1
+            x.ground = dict(x.ground, surfaces=list(x.ground.get('surfaces') or []) + [dict(entry)])
+            x.add_collider(**surfaces.collider_of(x, entry))
+        return entry
+
+    def add_surface(self, srf):
+        """A real surface lined up in the footage (ui/surfaces.py) becomes a solid in every layer. Returns its name."""
+        from . import surfaces
+        name = surfaces.NAMES.get(srf['kind'], 'Surface')
+        out = {}
+        self.edit(f'Add {name.lower()}', lambda s: out.update(self._add_surface(srf, name)), structure=True)
+        i = next((k for k, c in enumerate(self.scene.colliders) if c.get('mesh') == out.get('mesh')), None)
+        if i is not None:
+            self.select(('collider', i), force=True)
+        return out.get('name', name)
+
+    def clear_ground(self):
+        """Back to pinning the effect in the frame (2D), without a matched camera."""
+        def fn(s):
+            for x in [self.shot] + list(self.shot.layers):
+                x.ground = None
+                c = x.data['camera']
+                c['mode'] = 'orbit'
+                c['use_anchor'] = True
+        self.edit('Pin in the frame', fn, path=('camera', 'mode'))
+
+    def shot_from_view(self, key=False):
+        """Point the shot's camera (the active layer's) the way the Build view looks. key=False: a still camera (any
+        camera animation goes); key=True: a key at this frame, so keys at two frames make a camera move. Returns a
+        note for the user; raises ValueError when the camera is matched to footage."""
+        from ..scene.anim import Curve
+        sc = self.scene
+        if self.work_view is None:
+            raise ValueError('Look around in Build first: the shot’s camera takes the Build view.')
+        if sc.footage or sc.track:
+            raise ValueError('The shot’s camera matches your footage, so it is not moved from Build. Place the effect in the '
+                             'shot instead: switch to Shot and drag it, or set Camera › Placement.')
+        vals = self.work_view.shot_values(sc, self.frame)
+        f = self.frame
+        anim = ('position', 'rotation', 'focal_mm', 'roll')
+
+        def fn(s):
+            c = s.data['camera']
+            fresh = c['mode'] != 'free' or bool(c.get('use_anchor'))
+            if fresh or not key:   # a camera of a different kind (or a still one): its old animation goes
+                for k in anim:
+                    if isinstance(c.get(k), Curve):
+                        s.clear_anim(('camera', k), f)
+            c['mode'] = 'free'
+            c['use_anchor'] = False
+            c['roll'] = 0.0
+            c['near'] = min(float(c['near']), vals['near'])
+            rot = list(vals['rotation'])
+            if key and isinstance(c.get('rotation'), Curve):
+                # the same turn by the short way round, so the camera does not spin between keys
+                prev = s.get(('camera', 'rotation'), f)
+                rot = [r + 360.0 * round((p - r) / 360.0) for r, p in zip(rot, prev)]
+            for k, v in (('position', vals['position']), ('rotation', tuple(rot)), ('focal_mm', vals['focal_mm'])):
+                if key:
+                    s.set_key(('camera', k), f, v)
+                else:
+                    s.set(('camera', k), v)
+        self.edit('Key the shot camera' if key else 'Shot camera from this view', fn, structure=True)
+        if not key:
+            return 'The shot’s camera now sees what you see here. Tab shows the shot.'
+        c = self.scene.data['camera']
+        n = len(c['position'].keys) if isinstance(c['position'], Curve) else 1
+        return (f'Shot camera keyed at frame {f} ({n} keys): it moves between them.' if n > 1 else
+                f'Shot camera keyed at frame {f}. Go to another frame, look from somewhere else and key again for a camera move.')
+
     # -- undo plumbing -----------------------------------------------------------------------------
 
     def _snap(self):
         return json.dumps({'shot': self.shot.to_dict(), 'active': self.active})
 
+    def _counts(self):
+        sc = self.scene
+        return (len(sc.emitters), len(sc.colliders), len(sc.lights), len(sc.fabrics), self.active)
+
     def _restore(self, snap):
+        counts = self._counts()
         path = self.shot.path
         old = (self.scene.preset, self.scene.kind)
         d = json.loads(snap)
         active = d.get('active', 'base')
         self.scene = Scene.from_dict(d['shot'] if 'shot' in d else d)
         self.shot.path = path
+        for l in self.shot.layers:
+            l.path = path
         if self.shot.layer(active) is not None:
             self.active = active
         self.layersChanged.emit()
@@ -250,6 +426,8 @@ class Document(QObject):
             self.selection = ('section', 'lighting')
         if self.selection[0] == 'fabric' and self.selection[1] >= len(self.scene.fabrics):
             self.selection = ('section', 'domain')
+        if counts != self._counts():   # things came or went: only the main selection stays
+            self.picked = []
         self.sceneReplaced.emit()
         self.push_soon()
 
@@ -260,6 +438,10 @@ class Document(QObject):
         fn(self.scene)
         if getattr(self.scene, 'links', None):
             self.scene.apply_links()   # attached objects follow what they are attached to
+        if (self.shot.ground or {}).get('surfaces'):   # real surfaces stay where they are in the world
+            from . import surfaces
+            for x in [self.shot] + list(self.shot.layers):
+                surfaces.sync(x)
         if self.shot.layers:
             self.shot.sync_layers(source=self.scene)   # what one layer changes of the shot, every layer has
         after = self._snap()
@@ -269,6 +451,7 @@ class Document(QObject):
         if self.scene.kind != kind_before:
             self.sceneReplaced.emit()   # what the scene simulates changed: the panels change with it
         if structure:
+            self.picked = []   # indices may have moved: the main selection stays, the others go
             self.structureChanged.emit()
         if path is not None:
             self.paramChanged.emit(path)
@@ -477,7 +660,7 @@ class Document(QObject):
         """Add a building block (scene/components.py) as one undoable step, select what it added and return
         notes for the user. Raises ValueError if the scene cannot take it."""
         from ..scene import components
-        comp = components.BY_KEY[key]
+        comp = components.get(key)
         result = {}
 
         def fn(s):
@@ -567,9 +750,162 @@ class Document(QObject):
     def select(self, sel, force=False):
         """Select an object or a section. `force` tells the panels again even if it is already selected
         (a click on it in the viewer brings its settings up)."""
-        if sel != self.selection or force:
+        if sel != self.selection or force or self.picked:
             self.selection = sel
+            self.picked = []
             self.selectionChanged.emit(sel)
+
+    # -- several things at once -------------------------------------------------------------------------
+
+    def _lists(self):
+        sc = self.scene
+        return {'emitter': sc.emitters, 'collider': sc.colliders, 'light': sc.lights, 'fabric': sc.fabrics}
+
+    def selected_objects(self):
+        """The objects selected: the main one (whose settings show) first, then the others selected with it."""
+        lists = self._lists()
+        out = []
+        for s in [self.selection] + list(self.picked):
+            if s and s[0] in lists and 0 <= s[1] < len(lists[s[0]]) and s not in out:
+                out.append(tuple(s))
+        return out
+
+    def set_selected(self, sels, primary=None):
+        """Select several objects; `primary` (or the first) is the one whose settings show."""
+        sels = list(dict.fromkeys(tuple(s) for s in sels))
+        if not sels:
+            self.select(('section', 'domain'))
+            return
+        primary = tuple(primary) if primary is not None and tuple(primary) in sels else sels[0]
+        self.selection = primary
+        self.picked = [s for s in sels if s != primary]
+        self.selectionChanged.emit(primary)
+
+    def pick(self, sel):
+        """Ctrl+click: add an object to the selection (it becomes the main one), or take it out."""
+        cur = self.selected_objects()
+        sel = tuple(sel)
+        if sel in cur:
+            if len(cur) == 1:
+                return
+            cur.remove(sel)
+            self.set_selected(cur, self.selection if self.selection != sel else cur[0])
+        else:
+            self.set_selected(cur + [sel], sel)
+
+    def selection_state(self):
+        """The selected objects (and what is attached to them) as they are now, for moving or turning them together."""
+        import copy
+        from ..scene import blocks
+        lists = self._lists()
+        return {s: copy.deepcopy(lists[s[0]][s[1]]) for s in blocks.with_attached(self.scene, self.selected_objects())}
+
+    def arrange(self, starts, pivot=(0.0, 0.0, 0.0), theta=0.0, move=(0.0, 0.0, 0.0), label='Move together'):
+        """Turn (theta degrees about the vertical through pivot) and move the objects of a selection_state() from where
+        they were then: the whole of a path moves. One undo step per drag."""
+        import copy
+        from ..scene import arrange as A
+
+        def fn(s):
+            names = {(k, d['name']) for (k, _), d in starts.items()}
+            lists = {'emitter': s.emitters, 'collider': s.colliders, 'light': s.lights, 'fabric': s.fabrics}
+            for (kind, i), d0 in starts.items():
+                items = lists[kind]
+                if i >= len(items):
+                    continue
+                link = s.link_of(kind, d0['name'])
+                if link is not None and tuple(link['parent']) in names:
+                    continue   # it goes with what it is attached to
+                d = copy.deepcopy(d0)
+                A.transform(kind, d, pivot, theta, move)
+                for k in ('position', 'end', 'yaw', 'direction', 'velocity'):
+                    if k in d:
+                        items[i][k] = d[k]
+                if link is not None:   # attached to something that stays: it keeps its new place relative to it
+                    pi, parent = s.find_object(*link['parent'])
+                    if parent is not None:
+                        pp = s.get((link['parent'][0], pi, 'position'), self.frame)
+                        here = s.get((kind, i, 'position'), self.frame)
+                        link['offset'] = [float(v) - float(q) for v, q in zip(here, pp)]
+        self.edit(label, fn, merge_key=(label, self._gen))
+
+    def delete_objects(self, sels):
+        sels = [tuple(s) for s in sels]
+        n = len(sels)
+
+        def fn(s):
+            lists = {'emitter': s.emitters, 'collider': s.colliders, 'light': s.lights, 'fabric': s.fabrics}
+            for kind, i in sorted(sels, key=lambda x: (x[0], -x[1])):
+                if i < len(lists[kind]):
+                    lists[kind].pop(i)
+        self.edit(f'Delete {n} things' if n > 1 else 'Delete', fn, structure=True)
+        self.select(('section', 'domain'))
+
+    def duplicate_objects(self, sels):
+        """Copies of the objects (and what is attached to them) beside them, selected."""
+        from ..scene import arrange as A, blocks
+        sel = blocks.with_attached(self.scene, sels)
+        lo, hi = A.footprint(self.scene, sel, self.frame)
+        step = float(max(hi[0] - lo[0], 0.05)) * 1.15
+        out = {}
+
+        def fn(s):
+            out['new'] = A.copy_objects(s, sel, move=(step, 0.0, 0.0))
+        self.edit('Duplicate', fn, structure=True)
+        self.set_selected(out['new'], out['new'][0] if out['new'] else None)
+        return out['new']
+
+    def group(self, sels):
+        """Attach the others to the main one: they go wherever it goes."""
+        sels = [tuple(s) for s in sels]
+        if len(sels) < 2:
+            return
+        import numpy as np
+        lists = self._lists()
+        parent = sels[0]
+        pname = lists[parent[0]][parent[1]]['name']
+        f = self.frame
+
+        def fn(s):
+            pp = np.asarray(s.get((parent[0], parent[1], 'position'), f), float)
+            for kind, i in sels[1:]:
+                c = {'emitter': s.emitters, 'collider': s.colliders, 'light': s.lights, 'fabric': s.fabrics}[kind][i]
+                s.links = [l for l in s.links if list(l['child']) != [kind, c['name']]]
+                cp = np.asarray(s.get((kind, i, 'position'), f), float)
+                link = {'child': [kind, c['name']], 'parent': [parent[0], pname], 'offset': [float(x) for x in cp - pp]}
+                if kind == 'emitter' and c.get('shape') == 'capsule':
+                    link['end_offset'] = [float(x) for x in np.asarray(s.get(('emitter', i, 'end'), f), float) - pp]
+                s.links.append(link)
+        self.edit(f'Group with {pname}', fn)
+        self.set_selected(sels, parent)
+
+    def ungroup(self, sel):
+        name = self._lists()[sel[0]][sel[1]]['name']
+        self.edit(f'Ungroup {name}', lambda s: setattr(s, 'links', [l for l in s.links if list(l['parent']) != [sel[0], name]]))
+
+    def repeat(self, sels, places, ring=False):
+        """Copies of the objects (and what is attached to them) at places [(dx, dz, turn)] about their middle (see
+        scene/arrange.layout); with ring, the originals take the first place. The originals and copies end up selected."""
+        from ..scene import arrange as A, blocks
+        sel = blocks.with_attached(self.scene, sels)
+        lo, hi = A.footprint(self.scene, sel, self.frame)
+        pivot = ((lo[0] + hi[0]) / 2, 0.0, (lo[2] + hi[2]) / 2)
+        out = {}
+
+        def fn(s):
+            new = []
+            rest = places
+            if ring and places:
+                dx, dz, th = places[0]
+                for kind, i in sel:
+                    A.transform(kind, A.items(s, kind)[i], pivot, th, (dx, 0.0, dz))
+                rest = places[1:]
+            for k, (dx, dz, th) in enumerate(rest):
+                new += A.copy_objects(s, sel, pivot, th, (dx, 0.0, dz), seed=k + 1)
+            out['new'] = new
+        self.edit(f'Repeat ({len(places)})', fn, structure=True)
+        self.set_selected(sel + out['new'], sels[0] if sels else None)
+        return out['new']
 
     # -- time ----------------------------------------------------------------------------------------
 
@@ -601,6 +937,7 @@ class Document(QObject):
     # -- files ------------------------------------------------------------------------------------------
 
     def _begin_load(self, name):
+        self.picked = []
         self.load_seq += 1
         self.loadStarted.emit(name or 'Untitled')
 
@@ -724,9 +1061,14 @@ class Document(QObject):
         """Engine thread opened (or failed to open) footage: fit the shot to it."""
         self.footage_info = info
         if info and 'error' not in info:
+            new_clip = not (self.scene.footage and self.scene.footage.get('path') == info['path'])
+
             def fn(s):
                 prev = s.footage or {}
                 s.footage = {'path': info['path'], 'offset': int(prev.get('offset', 0)) if prev.get('path') == info['path'] else 0}
+                if new_clip and info.get('focal_35') and not s.ground:   # the lens the file says it was shot with
+                    s.data['camera']['focal_mm'] = float(info['focal_35'])
+                    s.data['camera']['sensor_mm'] = 36.0
                 r = s.data['render']
                 r['width'], r['height'] = int(info['width']), int(info['height'])
                 r['fps'] = float(round(info['fps'], 3))

@@ -193,7 +193,8 @@ class EngineWorker(QThread):
             self.footage = Footage(path)
             f = self.footage
             self.footageInfo.emit({'path': path, 'width': f.width, 'height': f.height, 'fps': f.fps, 'frames': f.frames,
-                                   'linear': f.linear, 'audio': f.audio, 'describe': f.describe(), 'kind': f.kind})
+                                   'linear': f.linear, 'audio': f.audio, 'describe': f.describe(), 'kind': f.kind,
+                                   'focal_35': f.focal_35})
         except Exception as ex:
             self.footage = None
             self.footageInfo.emit({'error': str(ex), 'path': path})

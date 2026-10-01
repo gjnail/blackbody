@@ -203,6 +203,14 @@ class Viewport(QWidget):
         self._roto_live = None   # (shape, points) while a point or the shape is dragged
         self._roto_cursor = None
         self.rotobar = None
+        self.camerabar = None    # the shot camera's bar, under the Build view
+        self.steps = None        # the Shot steps card (ui/shotsteps.py), in Shot
+        self.ground_mode = False  # lining up the ground (scene/groundmatch.py): four corners dragged onto the footage
+        self.surface_mode = False  # lining up a surface (ui/surfaces.py): a wall, a table, a ramp, stairs
+        self.surfacebar = None
+        self._sm = None
+        self.groundbar = None
+        self._gm = None           # {'corners': [[x, y] 0..1], 'person': (x, z), 'undo': index at the start, 'match', 'error'}
         self.sim_msg = ''
         # what holds up the next frame (UI.set_busy), shown as a card over the viewer: (text, fraction) or None
         self.busy = None
@@ -223,6 +231,7 @@ class Viewport(QWidget):
         doc.selectionChanged.connect(lambda *_: self.update())
         doc.frameChanged.connect(lambda *_: self.update())
         doc.viewChanged.connect(self.update)
+        doc.viewChanged.connect(self.sync_camerabar)
 
     # -- data in ---------------------------------------------------------------------------------------
 
@@ -363,9 +372,481 @@ class Viewport(QWidget):
         if on and self.roto_sel is None and self.doc.scene.roto:
             self.roto_sel = 0
         self.setCursor(Qt.CrossCursor if on else Qt.ArrowCursor)
+        self.sync_steps()
         self.update()
 
+    # -- lining up the ground ---------------------------------------------------------------------------------
+
+    def _world_ground(self, pos, y=0.0):
+        """World point where the ray under `pos` meets the level ground at height y (None above the horizon)."""
+        cs, fire, _ = self.camstate()
+        W, H = self.out_size()
+        fx, fy = self.to_frame(pos)
+        o, d = cam.pixel_ray(cs, fx, fy, W, H)
+        if abs(d[1]) < 1e-9:
+            return None
+        t = (y - o[1]) / d[1]
+        return None if t <= 0 else o + d * t
+
+    def _base3d(self):
+        """(centre, knob, ring polyline) on screen of the effect's base on the ground, or None."""
+        sc = self.doc.scene
+        cs, fire, _ = self.camstate()
+        W, H = self.out_size()
+        r = max(0.15, 0.22 * max(sc.domain_size()[0], sc.domain_size()[2]))
+        fp = np.asarray(fire.position, float)
+        yaw = math.radians(fire.yaw)
+        ring = [fp + r * np.array([math.cos(a), 0.0, math.sin(a)]) for a in np.linspace(0, 2 * math.pi, 41)]
+        knob = fp + r * np.array([math.cos(yaw), 0.0, -math.sin(yaw)])
+        px, ok = cam.project(cs, np.array([fp, knob] + ring), W, H)
+        if not ok[:2].all():
+            return None
+        return self.to_widget(px[0]), self.to_widget(px[1]), [self.to_widget(q) for q, o in zip(px[2:], ok[2:]) if o]
+
+    def _paint_base3d(self, p):
+        b = self._base3d()
+        if b is None:
+            return
+        c, knob, ring = b
+        hot = self._hover in ('base3d', 'yaw3d') or (self._drag or {}).get('kind') in ('base3d', 'yaw3d')
+        col = QColor(theme.ACCENT if hot else '#ffffff')
+        p.setPen(QPen(col, 1.6))
+        p.setBrush(Qt.NoBrush)
+        if len(ring) > 2:
+            p.drawPolyline(QPolygonF(ring))
+        p.drawEllipse(c, 5, 5)
+        p.drawLine(c, knob)
+        p.setBrush(col)
+        p.drawEllipse(knob, 5, 5)
+        p.setPen(QColor(255, 255, 255, 200))
+        p.drawText(QPointF(c.x() + 10, c.y() + 18), 'drag to place · knob turns it')
+
+    def start_ground(self):
+        """Line up the ground: corners where they were last time, or a grid laid on the ground under the effect."""
+        sc = self.doc.scene
+        win = self.window()
+        if self.roto_mode and hasattr(win, 'roto_btn'):
+            win.roto_btn.setChecked(False)
+        g = dict(sc.ground) if sc.ground else None
+        if g is None:
+            corners = None
+            try:
+                cs, fire, spec = self.camstate()
+                W, H = self.out_size()
+                s = 0.5 * max(sc.domain_size()[0], sc.domain_size()[2])
+                px, ok = self._project_local(cs, fire, [[-s, 0, -s], [s, 0, -s], [s, 0, s], [-s, 0, s]])
+                if ok.all():
+                    cand = [[float(x) / W, float(y) / H] for x, y in px]
+                    from ..scene import groundmatch as GM
+                    GM.solve([(x * W, y * H) for x, y in cand], (W, H), focal_px=1000.0, use_solved_lens=False)
+                    if all(0.02 < x < 0.98 and 0.3 < y < 0.98 for x, y in cand):
+                        corners = cand
+            except Exception:
+                corners = None
+            corners = corners or [[0.32, 0.6], [0.68, 0.6], [0.8, 0.88], [0.2, 0.88]]
+            g = {'corners': corners, 'scale_by': 'height', 'height': 1.6, 'side': 2.0, 'lens': 'picture', 'frame': self.doc.frame}
+            info = self.doc.footage_info or {}
+            if info.get('focal_35'):   # the file says what lens it was: use that, the picture need not tell
+                g['lens'] = 'known'
+                g['focal_mm'] = float(sc.v('camera', 'focal_mm', self.doc.frame))
+        self._gm = {'g': g, 'person': (1.0, 0.3), 'undo': self.doc.undo.index(), 'match': None, 'error': None}
+        self.ground_mode = True
+        self.sync_steps()
+        if self.groundbar is None:
+            from .groundbar import GroundBar
+            self.groundbar = GroundBar(self)
+        self.groundbar.load(g, float(sc.v('camera', 'focal_mm', self.doc.frame)))
+        self.groundbar.show()
+        self.place_rotobar()
+        self._ground_apply(merge=False)
+        self.setFocus()
+        self.update()
+
+    def _ground_apply(self, merge=True):
+        gm = self._gm
+        try:
+            m = self.doc.set_ground(gm['g'], merge=merge)
+            gm['match'], gm['error'] = m, None
+            focal = float(self.doc.scene.v('camera', 'focal_mm', self.doc.frame))
+            if self.groundbar is not None:
+                self.groundbar.show_match(m, focal_mm=focal)
+        except ValueError as ex:
+            gm['error'] = str(ex)
+            if self.groundbar is not None:
+                self.groundbar.show_match(None, error=str(ex))
+        self.update()
+
+    def ground_settings_changed(self):
+        if self._gm is None:
+            return
+        st = self.groundbar.settings()
+        g = self._gm['g']
+        slopes = st.pop('slopes')
+        g.update(st)
+        if g['mode'] == 'horizon' and not g.get('horizon'):
+            m = self._gm.get('match')
+            W, H = self.out_size()
+            from ..scene import groundmatch as GM
+            hz = GM.horizon(m.R, m.focal_px, (W, H)) if m is not None else None
+            if hz is not None:   # where the rectangle put it
+                y0 = hz[0][1] + (hz[1][1] - hz[0][1]) * (W * 0.15 + W) / (3 * W)
+                y1 = hz[0][1] + (hz[1][1] - hz[0][1]) * (W * 0.85 + W) / (3 * W)
+                g['horizon'] = [[0.15, min(max(y0 / H, 0.02), 0.95)], [0.85, min(max(y1 / H, 0.02), 0.95)]]
+            else:
+                g['horizon'] = [[0.15, 0.4], [0.85, 0.4]]
+            g['base'] = [0.5, 0.8]
+        if slopes and not g.get('verticals'):
+            m = self._gm.get('match')
+            W, H = self.out_size()
+            segs = None
+            if m is not None:   # upright as the camera now has it: the slope starts at none, and the lines go on real edges
+                from ..scene import groundmatch as GM
+                try:
+                    segs = []
+                    for x in (-1.2, 1.2):
+                        q, ok = GM.project([(x, 0.0, -0.5), (x, 1.5, -0.5)], m.R, m.position, m.focal_px, (W, H))
+                        if not ok.all():
+                            raise ValueError
+                        segs.append([[float(q[0][0] / W), float(q[0][1] / H)], [float(q[1][0] / W), float(q[1][1] / H)]])
+                    if not all(0.02 < v < 0.98 for seg in segs for pt in seg for v in pt):
+                        segs = None
+                except ValueError:
+                    segs = None
+            g['verticals'] = segs or [[[0.22, 0.3], [0.22, 0.7]], [[0.78, 0.3], [0.78, 0.7]]]
+        elif not slopes:
+            g.pop('verticals', None)
+        self._ground_apply()
+        self.doc.end_drag()
+        self.doc.end_drag()
+
+    def _gm_corners_widget(self):
+        W, H = self.out_size()
+        return [self.to_widget((x * W, y * H)) for x, y in self._gm['g']['corners']]
+
+    def _gm_points(self):
+        """[(key, widget point)] of the handles of the line-up as it is set: the rectangle's corners or the horizon's ends
+        and the effect's spot, and the upright lines' ends."""
+        W, H = self.out_size()
+        g = self._gm['g']
+        out = []
+        if g.get('mode') == 'horizon':
+            out += [(('horizon', k), self.to_widget((x * W, y * H))) for k, (x, y) in enumerate(g['horizon'])]
+            b = g.get('base', (0.5, 0.8))
+            out.append((('base', 0), self.to_widget((b[0] * W, b[1] * H))))
+        else:
+            out += [(('corners', k), q) for k, q in enumerate(self._gm_corners_widget())]
+        for j, seg in enumerate(g.get('verticals') or []):
+            out += [(('verticals', j, k), self.to_widget((x * W, y * H))) for k, (x, y) in enumerate(seg)]
+        return out
+
+    def _ground_press(self, pos):
+        pts = self._gm_points()
+        key, q = min(pts, key=lambda t: (t[1] - pos).manhattanLength())
+        if (q - pos).manhattanLength() < 16:
+            self._drag = {'kind': 'gm_corner', 'k': key}
+            return
+        cs = self._gm_corners_widget() if self._gm['g'].get('mode') != 'horizon' else []
+        m = self._gm.get('match')
+        if m is not None:
+            from ..scene import groundmatch as GM
+            W, H = self.out_size()
+            px, ok = GM.project([(self._gm['person'][0], 0.0, self._gm['person'][1]),
+                                 (self._gm['person'][0], GM.PERSON, self._gm['person'][1])], m.R, m.position, m.focal_px, (W, H))
+            if ok.all():
+                a, b = self.to_widget(px[0]), self.to_widget(px[1])
+                if abs(pos.x() - a.x()) < 14 and min(a.y(), b.y()) - 8 < pos.y() < max(a.y(), b.y()) + 8:
+                    self._drag = {'kind': 'gm_person'}
+                    return
+        if cs and QPolygonF(cs).containsPoint(pos, Qt.OddEvenFill):
+            self._drag = {'kind': 'gm_all', 'last': pos}
+
+    def _ground_drag(self, d, pos):
+        W, H = self.out_size()
+        g = self._gm['g']
+        if d['kind'] == 'gm_corner':
+            fx, fy = self.to_frame(pos)
+            key = d['k']
+            if key[0] == 'verticals':
+                g['verticals'][key[1]][key[2]] = [fx / W, fy / H]
+            elif key[0] == 'base':
+                g['base'] = [fx / W, fy / H]
+            else:
+                g[key[0]][key[1]] = [fx / W, fy / H]
+        elif d['kind'] == 'gm_all':
+            fx0, fy0 = self.to_frame(d['last'])
+            fx1, fy1 = self.to_frame(pos)
+            d['last'] = pos
+            g['corners'] = [[x + (fx1 - fx0) / W, y + (fy1 - fy0) / H] for x, y in g['corners']]
+        elif d['kind'] == 'gm_person':
+            w = self._world_ground(pos, 0.0)
+            if w is not None:
+                self._gm['person'] = (float(w[0]), float(w[2]))
+            self.update()
+            return
+        g['frame'] = self.doc.frame
+        self._ground_apply()
+
+    def _paint_ground(self, p):
+        from ..scene import groundmatch as GM
+        W, H = self.out_size()
+        gm = self._gm
+        m = gm.get('match')
+        cs = self._gm_corners_widget()
+        if m is not None and not gm.get('error'):
+            for line, main in GM.ground_lines(m.R, m.position, m.focal_px, (W, H), step=self._gm_step(m)):
+                p.setPen(QPen(QColor(255, 160, 80, 150) if main else QColor(255, 255, 255, 46), 1.2 if main else 1.0))
+                p.drawPolyline(QPolygonF([self.to_widget(q) for q in line]))
+            hz = GM.horizon(m.R, m.focal_px, (W, H))
+            if hz is not None:
+                p.setPen(QPen(QColor(120, 210, 255, 200), 1.2, Qt.DashLine))
+                a, b = self.to_widget(hz[0]), self.to_widget(hz[1])
+                p.drawLine(a, b)
+                mid = self.to_widget((W * 0.04, hz[0][1] + (hz[1][1] - hz[0][1]) * (W * 0.04 + W) / (3 * W)))
+                p.drawText(QPointF(mid.x(), mid.y() - 5), 'horizon')
+            px_all = []
+            for poly in GM.person(gm['person']):
+                px, ok = GM.project(poly, m.R, m.position, m.focal_px, (W, H))
+                if ok.all():
+                    px_all.append([self.to_widget(q) for q in px])
+            p.setPen(QPen(QColor(255, 225, 120, 230), 1.6))
+            for pts in px_all:
+                p.drawPolyline(QPolygonF(pts))
+            if px_all:
+                top = min(q.y() for pts in px_all for q in pts)
+                p.drawText(QPointF(px_all[0][0].x() + 12, top + 4), f'{GM.PERSON:g} m')
+        g = gm['g']
+        if g.get('mode') != 'horizon':
+            p.setPen(QPen(QColor(theme.ACCENT), 2))
+            p.setBrush(QColor(255, 140, 60, 40))
+            p.drawPolygon(QPolygonF(cs))
+            if m is not None and not gm.get('error'):
+                p.setPen(QColor(255, 255, 255, 230))
+                for k, length in ((0, m.sides[0]), (1, m.sides[1])):
+                    a, b = cs[k], cs[(k + 1) % 4]
+                    p.drawText(QPointF((a.x() + b.x()) / 2 + 6, (a.y() + b.y()) / 2 - 6), f'{length:.2f} m')
+        else:
+            pts = dict(self._gm_points())
+            a, b = pts[('horizon', 0)], pts[('horizon', 1)]
+            p.setPen(QPen(QColor(theme.ACCENT), 2))
+            p.drawLine(a, b)
+            p.drawText(QPointF(a.x() + 8, a.y() - 8), 'drag along the horizon')
+            c = pts[('base', 0)]
+            p.drawLine(c + QPointF(-10, 0), c + QPointF(10, 0))
+            p.drawLine(c + QPointF(0, -10), c + QPointF(0, 10))
+            p.drawText(QPointF(c.x() + 10, c.y() - 10), 'the effect goes here')
+        for j, seg in enumerate(g.get('verticals') or []):
+            ends = [self.to_widget((x * W, y * H)) for x, y in seg]
+            p.setPen(QPen(QColor(120, 210, 255, 230), 2))
+            p.drawLine(ends[0], ends[1])
+            p.drawText(QPointF(ends[0].x() + 8, ends[0].y()), 'upright')
+        for key, c in self._gm_points():
+            hot = (self._drag or {}).get('k') == key
+            col = QColor(120, 210, 255) if key[0] == 'verticals' else QColor(theme.ACCENT)
+            p.setPen(QPen(col, 2))
+            p.setBrush(QColor('#ffffff' if hot else '#1b1b1f'))
+            p.drawEllipse(c, 7 if hot else 6, 7 if hot else 6)
+            if key[0] == 'corners':
+                p.setPen(QColor('#ffffff'))
+                p.drawText(QPointF(c.x() + 9, c.y() - 8), str(key[1] + 1))
+        if gm.get('error'):
+            self._pill(p, QPointF(self.frame_rect().center().x(), self.frame_rect().bottom() - 24), gm['error'])
+
+    @staticmethod
+    def _gm_step(m):
+        s = max(m.height, 0.2)
+        return 10 ** math.floor(math.log10(s * 0.8)) if s > 0 else 1.0
+
+    def ground_done(self):
+        if self._gm is not None and self._gm.get('error'):
+            return
+        self._ground_close()
+        self.doc.finish_ground()
+        win = self.window()
+        if hasattr(win, 'msg'):
+            win.msg.setText('The camera matches the footage: drag the ring to put the effect anywhere on the ground, or '
+                            'drop a building block onto the footage. If the camera moves, Track the camera (Tracking menu).')
+        self.doc.end_drag()
+
+    def ground_cancel(self):
+        if self._gm is not None:
+            start = self._gm['undo']
+            while self.doc.undo.index() > start and self.doc.undo.canUndo():
+                self.doc.undo.undo()
+        self._ground_close()
+
+    def ground_flat(self):
+        self._ground_close()
+        if self.doc.scene.ground or not self.doc.scene.data['camera']['use_anchor']:
+            self.doc.clear_ground()
+        win = self.window()
+        if hasattr(win, 'msg'):
+            win.msg.setText('The effect is pinned in the frame: drag its ring and square to place and size it.')
+
+    # -- lining up a surface -----------------------------------------------------------------------------------
+
+    def start_surface(self, kind='wall'):
+        """Line up a surface in the footage (the camera must match it first)."""
+        if not self.doc.scene.ground:
+            return False
+        self._sm = {'corners': [[0.4, 0.45], [0.6, 0.45], [0.62, 0.7], [0.38, 0.7]], 'result': None, 'error': None}
+        self.surface_mode = True
+        self.sync_steps()
+        if self.surfacebar is None:
+            from .surfacebar import SurfaceBar
+            self.surfacebar = SurfaceBar(self)
+        i = self.surfacebar.kind.findData(kind)
+        self.surfacebar.kind.setCurrentIndex(max(0, i))
+        self.surfacebar.show()
+        self.place_rotobar()
+        self.surface_changed()
+        self.setFocus()
+        return True
+
+    def surface_changed(self):
+        sm = self._sm
+        if sm is None:
+            return
+        from . import surfaces
+        st = self.surfacebar.settings()
+        sc = self.doc.scene
+        W, H = self.out_size()
+        try:
+            R, eye, f, size = surfaces.camera_of(sc, self.doc.frame)
+            sm['result'] = surfaces.solve(st['kind'], [(x * W, y * H) for x, y in sm['corners']], R, eye, f, size,
+                                          ground=surfaces.ground_plane(sc), height=st['height'], rise=st['rise'],
+                                          steps=st['steps'], solid=st['solid'])
+            sm['error'] = None
+            self.surfacebar.show_result(sm['result'])
+        except ValueError as ex:
+            sm['result'], sm['error'] = None, str(ex)
+            self.surfacebar.show_result(None, str(ex))
+        self.update()
+
+    def _surface_press(self, pos):
+        W, H = self.out_size()
+        cs = [self.to_widget((x * W, y * H)) for x, y in self._sm['corners']]
+        k = min(range(4), key=lambda i: (cs[i] - pos).manhattanLength())
+        if (cs[k] - pos).manhattanLength() < 16:
+            self._drag = {'kind': 'sm_corner', 'k': k}
+        elif QPolygonF(cs).containsPoint(pos, Qt.OddEvenFill):
+            self._drag = {'kind': 'sm_all', 'last': pos}
+
+    def _surface_drag(self, d, pos):
+        W, H = self.out_size()
+        c = self._sm['corners']
+        if d['kind'] == 'sm_corner':
+            fx, fy = self.to_frame(pos)
+            c[d['k']] = [fx / W, fy / H]
+        else:
+            fx0, fy0 = self.to_frame(d['last'])
+            fx1, fy1 = self.to_frame(pos)
+            d['last'] = pos
+            self._sm['corners'] = [[x + (fx1 - fx0) / W, y + (fy1 - fy0) / H] for x, y in c]
+        self.surface_changed()
+
+    def _paint_surface(self, p):
+        from . import surfaces
+        W, H = self.out_size()
+        sm = self._sm
+        res = sm.get('result')
+        if res is not None:
+            R, eye, f, size = surfaces.camera_of(self.doc.scene, self.doc.frame)
+            from ..scene import groundmatch as GM
+            v = np.asarray(res['verts'], float)
+            px, ok = GM.project(v, R, eye, f, size)
+            edges = set()
+            for a, b, c in np.asarray(res['tris']):
+                for x, y in ((a, b), (b, c), (c, a)):
+                    edges.add((min(x, y), max(x, y)))
+            p.setPen(QPen(QColor(120, 210, 255, 170), 1))
+            for a, b in edges:
+                if ok[a] and ok[b]:
+                    p.drawLine(self.to_widget(px[a]), self.to_widget(px[b]))
+        cs = [self.to_widget((x * W, y * H)) for x, y in sm['corners']]
+        p.setPen(QPen(QColor(theme.ACCENT), 2))
+        p.setBrush(QColor(255, 140, 60, 40))
+        p.drawPolygon(QPolygonF(cs))
+        for k, c in enumerate(cs):
+            hot = (self._drag or {}).get('k') == k
+            p.setBrush(QColor('#ffffff' if hot else '#1b1b1f'))
+            p.drawEllipse(c, 7 if hot else 6, 7 if hot else 6)
+        if sm.get('error'):
+            self._pill(p, QPointF(self.frame_rect().center().x(), self.frame_rect().bottom() - 24), sm['error'])
+
+    def surface_done(self):
+        sm = self._sm
+        if sm is None or sm.get('result') is None:
+            return
+        name = self.doc.add_surface(sm['result'])
+        self._surface_close()
+        win = self.window()
+        if hasattr(win, 'msg'):
+            win.msg.setText(f'{name} added: effects meet it and it hides them behind it. Right-click it to set it on fire, '
+                            'make it hot, or hide it from the render.')
+
+    def surface_cancel(self):
+        self._surface_close()
+
+    def _surface_close(self):
+        self.surface_mode = False
+        self._sm = None
+        if self.surfacebar is not None:
+            self.surfacebar.hide()
+        self._drag = None
+        self.sync_steps()
+        self.update()
+
+    def _ground_close(self):
+        self.ground_mode = False
+        self._gm = None
+        if self.groundbar is not None:
+            self.groundbar.hide()
+        self.sync_steps()
+        self._drag = None
+        self.update()
+
+    def sync_steps(self):
+        """The Shot steps card shows in Shot, unless hidden (View › Shot steps), while lining up the ground or drawing roto."""
+        from PySide6.QtCore import QSettings
+        win = self.window()
+        on = (self.doc.work_view is None and getattr(win, 'workspace', 'shot') == 'shot' and not self.ground_mode
+              and not self.surface_mode
+              and not self.roto_mode and QSettings().value('ui/shot_steps', True, type=bool))
+        if on and self.steps is None:
+            from .shotsteps import ShotSteps
+            self.steps = ShotSteps(self)
+        if self.steps is not None:
+            self.steps.setVisible(on)
+            if on:
+                self.steps.sync()
+                self.steps.raise_()
+
+    def sync_camerabar(self):
+        """The shot camera's bar shows in Build (the work view) only."""
+        self.sync_steps()
+        on = self.doc.work_view is not None
+        if on and self.camerabar is None:
+            from .camerabar import CameraBar
+            self.camerabar = CameraBar(self)
+        if self.camerabar is not None:
+            self.camerabar.setVisible(on)
+            if on:
+                self.camerabar.sync()
+
     def place_rotobar(self):
+        if self.steps is not None and self.steps.isVisible():
+            self.steps.adjustSize()
+            self.steps.move(self.width() - self.steps.width() - 10, 44)
+        if self.camerabar is not None:
+            self.camerabar.adjustSize()
+            w = min(self.camerabar.sizeHint().width(), self.width() - 24)
+            self.camerabar.resize(w, self.camerabar.sizeHint().height())
+            self.camerabar.move((self.width() - w) // 2, self.height() - self.camerabar.height() - 10)
+        for bar in (self.surfacebar, self.groundbar):   # at the bottom: the horizon and the far ground are up top
+            if bar is not None and bar.isVisible():
+                bar.setFixedWidth(min(900, self.width() - 24))
+                bar.adjustSize()
+                bar.move((self.width() - bar.width()) // 2, self.height() - bar.height() - 10)
         if self.pathbar is not None and self.pathbar.isVisible():
             self.pathbar.setFixedWidth(min(560, self.width() - 24))
             self.pathbar.adjustSize()
@@ -639,7 +1120,7 @@ class Viewport(QWidget):
         p.setPen(QPen(QColor(255, 255, 255, 40), 1))
         p.setBrush(Qt.NoBrush)
         p.drawRect(r)
-        if self.guides:
+        if self.guides and not self.ground_mode and not self.surface_mode:
             p.save()
             p.setClipRect(r.adjusted(-1, -1, 1, 1))  # guides stay inside the frame
             try:
@@ -656,6 +1137,22 @@ class Viewport(QWidget):
             p.setClipRect(r.adjusted(-1, -1, 1, 1))
             self._paint_roto(p)
             p.restore()
+        if self.ground_mode and self._gm is not None:
+            p.save()
+            p.setClipRect(r.adjusted(-1, -1, 1, 1))
+            self._paint_ground(p)
+            p.restore()
+        if self.surface_mode and self._sm is not None:
+            p.save()
+            p.setClipRect(r.adjusted(-1, -1, 1, 1))
+            self._paint_surface(p)
+            p.restore()
+        d = self._drag
+        if d is not None and d.get('kind') == 'box':
+            band = QRectF(d['start'], d['now']).normalized()
+            p.setPen(QPen(QColor(theme.ACCENT), 1, Qt.DashLine))
+            p.setBrush(QColor(255, 140, 60, 28))
+            p.drawRect(band)
         self._paint_busy(p, r)
         self._paint_hud(p, r)
         self._paint_hints(p, r)
@@ -771,12 +1268,12 @@ class Viewport(QWidget):
         box = QPen(QColor(255, 255, 255, 70), 1, Qt.DashLine)
         for line in shape_lines('box', (0, sy / 2, 0), (sx / 2, sy / 2, sz / 2)):
             self._poly(p, cs, fire, line, box)
-        sel = self.doc.selection
+        chosen = set(self.doc.selected_objects())
         for i, em in enumerate(sc.emitters):
             if not em['enabled']:
                 continue
             g = lambda k: sc.get(('emitter', i, k), self.doc.frame)
-            is_sel = sel == ('emitter', i)
+            is_sel = ('emitter', i) in chosen
             pen = QPen(QColor(theme.ACCENT) if is_sel else QColor(255, 170, 90, 140), 1.6 if is_sel else 1.0)
             self._lines(p, cs, fire, shape_lines(em['shape'], g('position'), g('size'), g('end'), g('yaw'),
                                                  sc.item_source(em) if em['shape'] == 'volume' else sc.mesh_path(em['mesh']),
@@ -785,7 +1282,7 @@ class Viewport(QWidget):
             if not l['enabled']:
                 continue
             g = lambda k, i=i: sc.get(('light', i, k), self.doc.frame)
-            is_sel = sel == ('light', i)
+            is_sel = ('light', i) in chosen
             col = QColor(255, 220, 120, 240 if is_sel else 150)
             pen = QPen(col, 1.6 if is_sel else 1.0)
             pos = np.asarray(g('position'), float)
@@ -799,7 +1296,7 @@ class Viewport(QWidget):
         for i, f in enumerate(sc.fabrics):
             if not f['enabled']:
                 continue
-            is_sel = sel == ('fabric', i)
+            is_sel = ('fabric', i) in chosen
             pen = QPen(QColor(150, 210, 255, 240 if is_sel else 130), 1.6 if is_sel else 1.0, Qt.DashLine)
             self._lines(p, cs, fire, fabric_lines(sc, i, self.doc.frame), pen)
         floats = self.stats.get('floats') if self.stats.get('frame') == self.doc.frame else None
@@ -809,7 +1306,7 @@ class Viewport(QWidget):
             ov = (floats or {}).get(i) if c.get('floating') else None
             g = (lambda k, ov=ov, i=i: (tuple(ov['pos']) if k == 'position' else math.degrees(ov['rot_y']))
                  if ov is not None and k in ('position', 'yaw') else sc.get(('collider', i, k), self.doc.frame))
-            is_sel = sel == ('collider', i)
+            is_sel = ('collider', i) in chosen
             col = QColor(255, 140, 80) if c.get('burnable') else QColor(120, 190, 255)
             col.setAlpha(230 if is_sel else 120)
             pen = QPen(col, 1.6 if is_sel else 1.0)
@@ -839,6 +1336,8 @@ class Viewport(QWidget):
             p.drawPath(path)
         # placement handles
         base, top, ok, spec = self._handles()
+        if not spec.use_anchor and self.doc.work_view is None and self.doc.scene.ground and not self.ground_mode:
+            self._paint_base3d(p)
         if ok and spec.use_anchor:
             hot = self._hover == 'anchor' or (self._drag or {}).get('kind') == 'anchor'
             p.setPen(QPen(QColor(theme.ACCENT if hot else '#ffffff'), 1.5))
@@ -952,6 +1451,8 @@ class Viewport(QWidget):
             return
         d = {'kind': 'gz', 'key': key, 'what': gz.kind, 'i': gz.i, 'pos0': gz.pos.copy(), 'yaw0': gz.yaw, 'L': gz.L,
              'snap': gz.snap()}
+        if len(self.doc.selected_objects()) > 1:
+            d['starts'] = self.doc.selection_state()
         it = gz.item
         g = gz.g
         if gz.capsule:
@@ -976,6 +1477,8 @@ class Viewport(QWidget):
             self._drag = {'kind': 'move', 'what': gz.kind, 'i': gz.i, 'y': float(gz.pos[1]),
                           'start_world': self._ground_point(pos, gz.pos[1]), 'p0': gz.pos.copy(),
                           'e0': d.get('end0', gz.pos.copy()), 'vertical': False, 'sy': pos.y(), 'snap': d['snap']}
+            if 'starts' in d:
+                self._drag['starts'] = d['starts']
             return
         if d.get('t0', 0.0) is None:
             return
@@ -994,6 +1497,10 @@ class Viewport(QWidget):
             new = d['pos0'] + d['axis'] * (t - d['t0'])
             if snap:
                 new[k] = round(new[k] / snap) * snap
+            if 'starts' in d:   # everything selected moves by the same amount
+                self.doc.arrange(d['starts'], move=tuple(float(x) for x in new - d['pos0']))
+                self._readout = (f'{key[-1]}  {new[k]:.3g} m  ({len(d["starts"])} things)', pos)
+                return
             self.doc.set((what, i, 'position'), tuple(float(x) for x in new))
             if 'end0' in d:
                 self.doc.set(('emitter', i, 'end'), tuple(float(x) for x in d['end0'] + (new - d['pos0'])))
@@ -1045,6 +1552,13 @@ class Viewport(QWidget):
             yaw = (yaw + 180.0) % 360.0 - 180.0
             if mods & (Qt.ShiftModifier | Qt.ControlModifier):
                 yaw = round(yaw / 15.0) * 15.0
+            if 'starts' in d:   # everything selected turns about this one, as one piece
+                turn = d['yaw0'] - math.degrees(a - d['a0'])
+                if mods & (Qt.ShiftModifier | Qt.ControlModifier):
+                    turn = d['yaw0'] + round((turn - d['yaw0']) / 15.0) * 15.0
+                self.doc.arrange(d['starts'], pivot=tuple(float(x) for x in d['pos0']), theta=turn - d['yaw0'], label='Turn together')
+                self._readout = (f'turn  {turn - d["yaw0"]:+.0f}\u00b0  ({len(d["starts"])} things)', pos)
+                return
             self.doc.set((what, i, 'yaw'), yaw)
             self._readout = (f'turn  {yaw:.0f}\u00b0', pos)
 
@@ -1174,6 +1688,14 @@ class Viewport(QWidget):
             base, top, ok, spec = self._handles()
         except Exception:
             return None
+        if not spec.use_anchor and self.doc.work_view is None and self.doc.scene.ground:
+            b3 = self._base3d()
+            if b3 is not None:
+                c, knob, _ = b3
+                if (pos - knob).manhattanLength() < 12:
+                    return 'yaw3d'
+                if (pos - c).manhattanLength() < 18:
+                    return 'base3d'
         if ok and spec.use_anchor:
             if (pos - base).manhattanLength() < 16:
                 return 'anchor'
@@ -1206,6 +1728,12 @@ class Viewport(QWidget):
         if self.roto_mode and not (mods & Qt.AltModifier) and e.button() in (Qt.LeftButton, Qt.RightButton):
             self._roto_press(e)
             return
+        if self.ground_mode and e.button() == Qt.LeftButton:
+            self._ground_press(pos)
+            return
+        if self.surface_mode and e.button() == Qt.LeftButton:
+            self._surface_press(pos)
+            return
         if self.path_target is not None and e.button() == Qt.LeftButton:
             gp = self._path_ground(pos)
             if gp is not None:
@@ -1218,6 +1746,10 @@ class Viewport(QWidget):
             return
         self._rmb_moved = 0.0
         wv = self.doc.work_view
+        if e.button() == Qt.LeftButton and mods & Qt.ShiftModifier and not mods & (Qt.ControlModifier | Qt.AltModifier) \
+                and self._hit(pos) is None:
+            self._drag = {'kind': 'box', 'start': pos, 'now': pos}
+            return
         if wv is not None and (e.button() == Qt.MiddleButton or (e.button() == Qt.RightButton and not mods & Qt.AltModifier)):
             self._drag = {'kind': 'wv_pan', 'last': pos}
             return
@@ -1237,7 +1769,15 @@ class Viewport(QWidget):
             return
         if e.button() == Qt.LeftButton:
             hit = self._hit(pos)
-            if hit == 'anchor':
+            if hit == 'gz:centre' and mods & Qt.ControlModifier:
+                hit = tuple(self.doc.selection)   # Ctrl+click on the selected thing itself: take it out of the selection
+            if hit == 'base3d':
+                fp = self.doc.scene.get(('camera', 'fire_position'), self.doc.frame)
+                w0 = self._world_ground(pos, fp[1])
+                self._drag = {'kind': 'base3d', 'p0': np.asarray(fp, float), 'w0': w0}
+            elif hit == 'yaw3d':
+                self._drag = {'kind': 'yaw3d'}
+            elif hit == 'anchor':
                 self._drag = {'kind': 'anchor'}
             elif hit == 'scale':
                 base, top, ok, spec = self._handles()
@@ -1245,7 +1785,14 @@ class Viewport(QWidget):
             elif isinstance(hit, str) and hit.startswith('gz:'):
                 self._gz_press(hit[3:], pos)
             elif isinstance(hit, tuple):
-                self.doc.select(hit, force=True)
+                chosen = self.doc.selected_objects()
+                pending = None
+                if mods & Qt.ControlModifier:
+                    pending = hit   # a Ctrl+click adds it to the selection (or takes it out); a Ctrl+drag moves with snapping
+                elif hit in chosen and len(chosen) > 1:
+                    self.doc.set_selected(chosen, hit)   # the selection stays: drag them all
+                else:
+                    self.doc.select(hit, force=True)
                 kind, i = hit
                 sc = self.doc.scene
                 p0 = np.asarray(sc.get((kind, i, 'position'), self.doc.frame), float)
@@ -1257,6 +1804,10 @@ class Viewport(QWidget):
                     self._drag['snap'] = Gizmo(self, kind, i).snap()
                 except Exception:
                     self._drag['snap'] = 0.1
+                self._drag['pending'] = pending
+                self._drag['press'] = pos
+                if pending is None and len(self.doc.selected_objects()) > 1:
+                    self._drag['starts'] = self.doc.selection_state()
             self.update()
 
     def _ground_point(self, pos, y_local):
@@ -1310,6 +1861,34 @@ class Viewport(QWidget):
             self._gz_move(d, pos, e.modifiers())
             self.update()
             return
+        if k in ('gm_corner', 'gm_all', 'gm_person'):
+            self._ground_drag(d, pos)
+            return
+        if k in ('sm_corner', 'sm_all'):
+            self._surface_drag(d, pos)
+            return
+        if k == 'base3d':
+            from . import surfaces
+            cs_, fire_, _ = self.camstate()
+            W_, H_ = self.out_size()
+            fx_, fy_ = self.to_frame(pos)
+            o_, dir_ = cam.pixel_ray(cs_, fx_, fy_, W_, H_)
+            w = surfaces.ground_hit(self.doc.scene, o_, dir_)
+            if w is not None:
+                new = np.asarray(w, float)   # on the ground, or on a table, a step or a slope
+                self.doc.set(('camera', 'fire_position'), tuple(float(x) for x in new))
+                self._readout = (f'on the ground at x {new[0]:.2f}  z {new[2]:.2f} m', pos)
+            return
+        if k == 'yaw3d':
+            fp = np.asarray(self.doc.scene.get(('camera', 'fire_position'), self.doc.frame), float)
+            w = self._world_ground(pos, fp[1])
+            if w is not None:
+                yaw = math.degrees(math.atan2(-(w[2] - fp[2]), w[0] - fp[0]))
+                if e.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier):
+                    yaw = round(yaw / 15.0) * 15.0
+                self.doc.set(('camera', 'fire_yaw'), float((yaw + 180.0) % 360.0 - 180.0))
+                self._readout = (f'turn  {yaw:.0f}\u00b0', pos)
+            return
         if k in ('wv_orbit', 'wv_pan'):
             delta = pos - d['last']
             d['last'] = pos
@@ -1352,8 +1931,19 @@ class Viewport(QWidget):
         elif k == 'scale':
             dist = max(4.0, d['base'].y() - pos.y())
             self.doc.set(('camera', 'scale'), max(0.02, d['s0'] * dist / d['d0']))
+        elif k == 'box':
+            d['now'] = pos
+            self.update()
         elif k == 'move':
             i, what = d['i'], d['what']
+            if d.get('pending') is not None:   # a Ctrl+press: a click until it moves
+                if (pos - d['press']).manhattanLength() < 5:
+                    return
+                if d['pending'] not in self.doc.selected_objects():
+                    self.doc.select(d['pending'], force=True)
+                elif len(self.doc.selected_objects()) > 1:
+                    d['starts'] = self.doc.selection_state()
+                d['pending'] = None
             if d['vertical']:
                 dy = (d['sy'] - pos.y()) * 0.01 * max(self.doc.scene.domain_size()) / 3
                 new = d['p0'] + np.array([0.0, dy, 0.0])
@@ -1369,6 +1959,9 @@ class Viewport(QWidget):
             delta = new - d['p0']
             self._readout = (f'x {new[0]:.3g}  y {new[1]:.3g}  z {new[2]:.3g} m', pos)
             self.update()
+            if 'starts' in d:
+                self.doc.arrange(d['starts'], move=tuple(float(x) for x in delta))
+                return
             self.doc.set((what, i, 'position'), tuple(float(x) for x in new))
             if what == 'emitter' and self.doc.scene.emitters[i]['shape'] == 'capsule':
                 self.doc.set(('emitter', i, 'end'), tuple(float(x) for x in d['e0'] + delta))
@@ -1393,10 +1986,35 @@ class Viewport(QWidget):
             self._roto_release()
             return
         if self._drag is not None:
+            d = self._drag
             self._drag = None
             self._readout = None
+            if d.get('kind') == 'box':
+                self._box_select(QRectF(d['start'], d['now']).normalized(), e.modifiers())
+            elif d.get('pending') is not None:   # a Ctrl+click
+                self.doc.pick(d['pending'])
             self.doc.end_drag()
             self.update()
+
+    def _box_select(self, band, mods):
+        """Select the objects whose place is inside a box dragged on the viewer (Shift+drag)."""
+        if band.width() < 4 and band.height() < 4:
+            return
+        sc = self.doc.scene
+        cs, fire, _ = self.camstate()
+        found = []
+        for kind, items in (('emitter', sc.emitters), ('collider', sc.colliders), ('fabric', sc.fabrics), ('light', sc.lights)):
+            for i, it in enumerate(items):
+                if not it['enabled']:
+                    continue
+                px, ok = self._project_local(cs, fire, [sc.get((kind, i, 'position'), self.doc.frame)])
+                if ok[0] and band.contains(self.to_widget(px[0])):
+                    found.append((kind, i))
+        if found:
+            self.doc.set_selected(found, self.doc.selection if self.doc.selection in found else found[0])
+            win = self.window()
+            if hasattr(win, 'msg'):
+                win.msg.setText(f'{len(found)} selected. Drag one to move them all; right-click for Group, Repeat, Delete.')
 
     def mouseDoubleClickEvent(self, e):
         if self.path_target is not None:
@@ -1408,8 +2026,11 @@ class Viewport(QWidget):
             elif self._roto_draft is None:
                 self._roto_press(e)   # a quick second click is a press too (on a point: drag it)
             return
-        if e.button() == Qt.LeftButton and self._hit(e.position()) is None:
+        hit = self._hit(e.position()) if e.button() == Qt.LeftButton else None
+        if e.button() == Qt.LeftButton and hit is None:
             self.fit()
+        elif isinstance(hit, tuple) or (isinstance(hit, str) and hit.startswith('gz:')):
+            self.mousePressEvent(e)   # a quick second click on a thing is a click too (Ctrl+click two things fast)
 
     def wheelEvent(self, e):
         if self.doc.work_view is not None:
@@ -1426,6 +2047,20 @@ class Viewport(QWidget):
         self.update()
 
     def keyPressEvent(self, e):
+        if self.surface_mode:
+            if e.key() == Qt.Key_Escape:
+                self.surface_cancel()
+                return
+            if e.key() in (Qt.Key_Return, Qt.Key_Enter):
+                self.surface_done()
+                return
+        if self.ground_mode:
+            if e.key() == Qt.Key_Escape:
+                self.ground_cancel()
+                return
+            if e.key() in (Qt.Key_Return, Qt.Key_Enter):
+                self.ground_done()
+                return
         if self.path_target is not None:
             if e.key() == Qt.Key_Escape:
                 self.path_cancel()
@@ -1454,6 +2089,9 @@ class Viewport(QWidget):
                 else:
                     self.roto_delete()
                 return
+        if e.key() == Qt.Key_Escape and self.doc.picked:
+            self.doc.select(self.doc.selection, force=True)   # just the main one
+            return
         if e.key() == Qt.Key_F:
             self.fit()
         elif e.key() == Qt.Key_G:

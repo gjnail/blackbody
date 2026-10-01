@@ -93,6 +93,34 @@ def read_image(path):
     return np.ascontiguousarray(np.asarray(im))
 
 
+def lens_of_image(path):
+    """The full-frame equivalent focal length a photo's EXIF gives, or None."""
+    try:
+        from PIL import Image
+        with Image.open(path) as im:
+            ex = im.getexif()
+            sub = ex.get_ifd(0x8769) if hasattr(ex, 'get_ifd') else {}
+            v = sub.get(0xA405) or ex.get(0xA405)   # FocalLengthIn35mmFilm
+            return float(v) if v and 4 <= float(v) <= 2000 else None
+    except Exception:
+        return None
+
+
+def lens_of_video(container, stream):
+    """The full-frame equivalent focal length a video's metadata gives (phones record it), or None."""
+    for md in (getattr(stream, 'metadata', None) or {}, getattr(container, 'metadata', None) or {}):
+        for k, v in md.items():
+            k = k.lower()
+            if 'focal' in k and ('35' in k or 'equiv' in k):
+                try:
+                    f = float(str(v).split()[0])
+                except ValueError:
+                    continue
+                if 4 <= f <= 2000:
+                    return f
+    return None
+
+
 class Footage:
     """A video, image sequence or still, read frame by frame with a small decoded-frame cache."""
 
@@ -110,6 +138,7 @@ class Footage:
         self.codec = ''
         self.rotation = 0
         self.first_number = 0
+        self.focal_35 = None    # the lens it was shot with, as a full-frame (35 mm) focal length, when the file says
         ext = p.suffix.lower()
         if ext in VIDEO_EXT:
             self.kind = 'video'
@@ -132,6 +161,7 @@ class Footage:
             self.deep = first.dtype != np.uint8
             self._put(0, first)
             self.codec = ext[1:].upper()
+            self.focal_35 = lens_of_image(p if self.kind == 'still' else Path(self._pattern.format(self._nums[0])))
         else:
             raise ValueError(f'Unsupported footage type: {ext}')
 
@@ -173,6 +203,7 @@ class Footage:
         except Exception:
             pass
         self.rotation = rot
+        self.focal_35 = lens_of_video(self._c, s)
         # decode the first frame to settle size (rotation) and sanity-check
         first = self._decode_to(0)
         self.height, self.width = first.shape[:2]
@@ -257,7 +288,7 @@ class Footage:
         kind = {'video': 'Video', 'sequence': 'Image sequence', 'still': 'Still image'}[self.kind]
         depth = 'float' if self.linear else ('10+ bit' if self.deep else '8 bit')
         return (f'{kind} · {self.width}×{self.height} · {self.fps:.3f} fps · {self.frames} frames · {self.codec} · {depth}'
-                + (' · audio' if self.audio else ''))
+                + (' · audio' if self.audio else '') + (f' · {self.focal_35:g} mm lens (full-frame)' if self.focal_35 else ''))
 
     def close(self):
         with self._lock:

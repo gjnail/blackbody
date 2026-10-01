@@ -7,7 +7,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QRectF, QSettings, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
-from PySide6.QtWidgets import (QAbstractButton, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QScrollArea,
+from PySide6.QtWidgets import (QAbstractButton, QAbstractItemView, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QScrollArea,
                                QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from ..scene import presets
@@ -324,6 +324,7 @@ class ObjectList(QWidget):
         self.tree.setIconSize(QSize(16, 16))
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._menu)
+        self.tree.setSelectionMode(QAbstractItemView.ExtendedSelection)   # Ctrl and Shift select several
         self.tree.itemSelectionChanged.connect(self._picked)
         self.tree.itemChanged.connect(self._item_changed)
         self.tree.setStyleSheet(f'QTreeWidget {{ background: {theme.CARD}; border: 1px solid {theme.LINE}; border-radius: 8px; padding: 4px; }}')
@@ -405,21 +406,26 @@ class ObjectList(QWidget):
     def _sync_selection(self, sel):
         it = self._find(sel)
         self._building = True
+        self.tree.clearSelection()
         if it is not None:
-            if not it.isSelected():
-                self.tree.setCurrentItem(it)
-        else:
-            self.tree.clearSelection()
+            self.tree.setCurrentItem(it)
+            for other in self.doc.selected_objects()[1:]:
+                o = self._find(other)
+                if o is not None:
+                    o.setSelected(True)
         self._building = False
 
     def _picked(self):
         if self._building:
             return
-        items = self.tree.selectedItems()
-        if items:
-            sel = items[0].data(0, Qt.UserRole)
-            if sel:
-                self.doc.select(sel)
+        sels = [it.data(0, Qt.UserRole) for it in self.tree.selectedItems()]
+        sels = [tuple(s) for s in sels if s]
+        if len(sels) > 1:
+            cur = self.tree.currentItem()
+            main = cur.data(0, Qt.UserRole) if cur is not None and cur.isSelected() else None
+            self.doc.set_selected(sels, tuple(main) if main else sels[0])
+        elif sels:
+            self.doc.select(sels[0])
 
     def _item_changed(self, it, col):
         if self._building:
@@ -955,8 +961,25 @@ class Inspector(QWidget):
         tb('trash', 'Delete', lambda: {'emitter': self.doc.remove_emitter, 'collider': self.doc.remove_collider,
                                         'light': self.doc.remove_light, 'fabric': self.doc.remove_fabric}[okind](i))
         if hasattr(win, 'doc'):
-            from .actions import fill_menu, quick_actions
+            from .actions import fill_menu, quick_actions, selected_actions
             from .library import FlowLayout
+            many = selected_actions(win)
+            if many:   # several things selected: what can be done to all of them, over this one's settings
+                n = len(self.doc.selected_objects())
+                lab = QLabel(f'<b>{n} selected</b> · the settings below are {d["name"]}’s')
+                lab.setObjectName('hint')
+                v.addWidget(lab)
+                mrow = QWidget()
+                mflow = FlowLayout(mrow, 4)
+                mflow.setContentsMargins(0, 0, 0, 0)
+                for label, glyph, fn in many:
+                    b = QPushButton(' ' + label)
+                    b.setObjectName('chip')
+                    b.setIcon(icons.glyph_icon(glyph, theme.ACCENT, 14, active=theme.TEXT))
+                    b.setCursor(Qt.PointingHandCursor)
+                    b.clicked.connect(fn)
+                    mflow.addWidget(b)
+                v.addWidget(mrow)
             row = QWidget()
             flow = FlowLayout(row, 4)
             flow.setContentsMargins(0, 0, 0, 0)

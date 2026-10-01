@@ -15,7 +15,7 @@ import blackbody
 
 from ..io.footage import IMAGE_EXT, VIDEO_EXT
 from ..scene import PROJECT_EXT
-from . import icons, theme
+from . import actions, icons, theme
 from .document import Document
 from .export_dialog import ExportDialog, RenderProgress
 from .create import MIME as COMPONENT_MIME
@@ -314,6 +314,8 @@ class MainWindow(QMainWindow):
         h.addSpacing(6)
         h.addWidget(_vsep())
 
+        self._header_texts = []   # (button, text): words that go when the window is narrow (icons stay)
+
         def hb(glyph, text, fn, tip):
             b = QPushButton(text)
             b.setObjectName('ghost')
@@ -322,6 +324,7 @@ class MainWindow(QMainWindow):
             b.setToolTip(tip)
             b.clicked.connect(fn)
             h.addWidget(b)
+            self._header_texts.append((b, text))
             return b
         hb('footage', ' Import footage', self.import_footage,
            'Bring in your clip, image sequence or still (Ctrl+I). You can also drop it on the window.')
@@ -349,6 +352,10 @@ class MainWindow(QMainWindow):
         self.doc.undo.undoTextChanged.connect(lambda t: self.undo_btn.setToolTip(f'Undo {t} (Ctrl+Z)' if t else 'Undo (Ctrl+Z)'))
         self.doc.undo.redoTextChanged.connect(lambda t: self.redo_btn.setToolTip(f'Redo {t} (Ctrl+Y)' if t else 'Redo (Ctrl+Y)'))
         h.addStretch(1)
+        self.search_btn = hb('search', ' Search', self.search_everything,
+                             'Search everything: what you can do to the selected thing, building blocks, commands, every setting, '
+                             'ready-made effects and the things in the scene (Ctrl+K)')
+        h.addSpacing(4)
         self.footage_label = QLabel('No footage')
         self.footage_label.setObjectName('pill')
         self.footage_label.setToolTip('The footage the effect is composited into')
@@ -462,6 +469,7 @@ class MainWindow(QMainWindow):
         self._act(f, 'Save', self.save, QKeySequence.Save)
         self._act(f, 'Save as…', self.save_as, QKeySequence.SaveAs)
         self._act(f, 'Save as preset…', lambda: self.library.save_current())
+        self._act(f, 'Pack project (copy its files beside it)…', self.pack_project)
         f.addSeparator()
         self._act(f, 'Import footage…', self.import_footage, 'Ctrl+I')
         self._act(f, 'Remove footage', self.doc.remove_footage)
@@ -480,10 +488,21 @@ class MainWindow(QMainWindow):
         e.addAction(u)
         e.addAction(r)
         e.addSeparator()
+        self._act(e, 'Search everything…', self.search_everything, 'Ctrl+K')
         self._act(e, 'Search settings', self.focus_settings_search, 'Ctrl+F')
         self._act(e, 'Search effects', self.focus_effects, 'Ctrl+E')
         self._act(e, 'Create', self.focus_create)
         self._act(e, 'Add layer', self.add_layer, 'Ctrl+L')
+        e.addSeparator()
+        self._act(e, 'Select everything', self._select_all, 'Ctrl+A')
+        self._act(e, 'Duplicate the selection', lambda: self._on_selection(lambda sel: self.doc.duplicate_objects(sel)), 'Ctrl+D')
+        self._act(e, 'Repeat the selection…', lambda: self._on_selection(lambda sel: actions.repeat(self, sel)), 'Ctrl+R')
+        self._act(e, 'Group the selection', lambda: self._on_selection(lambda sel: actions.group(self, sel)), 'Ctrl+G')
+        self._act(e, 'Ungroup', lambda: self._on_selection(lambda sel: self.doc.ungroup(sel[0])), 'Ctrl+Shift+G')
+        self._act(e, 'Delete the selection', lambda: self._on_selection(lambda sel: self.doc.delete_objects(sel)), 'Delete')
+        e.addSeparator()
+        self._act(e, 'Save the selection as a block…', self._save_block)
+        self._act(e, 'Import a block…', lambda: self.create.import_block())
         s = mb.addMenu('&Simulation')
         self._act(s, 'Play / pause', lambda: self.doc.set_playing(not self.doc.playing))
         self._act(s, 'Restart simulation', lambda: self.worker.post('restart'), 'Ctrl+Backspace')
@@ -502,7 +521,9 @@ class MainWindow(QMainWindow):
             addc.addAction(label + ('…' if shape == 'mesh' else ''), lambda sh=shape: add_collider(self.doc, sh, self))
         t = mb.addMenu('&Tracking')
         from .tracking import clear_track, track_fire_base
-        self._act(t, 'Track the effect\u2019s base', lambda: track_fire_base(self), 'Ctrl+T')
+        self._act(t, 'Line up the ground (match the camera)…', self.line_up_ground, 'Ctrl+Shift+L')
+        self._act(t, 'Track (the camera move, or the effect\u2019s base)', lambda: track_fire_base(self), 'Ctrl+T')
+        self._act(t, 'Add a surface (a wall, a table, a ramp, stairs)…', self.add_surface)
         self._act(t, 'Clear track', lambda: clear_track(self))
         v = mb.addMenu('&View')
         for i, k in enumerate(VIEW_KEYS):
@@ -511,7 +532,13 @@ class MainWindow(QMainWindow):
         self._act(v, 'Fit', self.viewport.fit, 'F')
         self._act(v, 'Guides', lambda: self.guides_btn.toggle(), 'G')
         self._act(v, 'Build / Shot', lambda: self.set_workspace('shot' if getattr(self, 'workspace', 'build') == 'build' else 'build'), 'W')
+        cm = v.addMenu('Shot camera')
+        self._act(cm, 'Use the Build view for the shot camera', lambda: self._shot_camera('use_view'))
+        self._act(cm, 'Key the shot camera from the Build view', lambda: self._shot_camera('key_view'))
+        self._act(cm, 'Look through the shot camera in Build', lambda: self._shot_camera('look_through'))
         self._act(v, 'Roto (shapes in front of the effect)', lambda: self.roto_btn.toggle(), 'R')
+        steps = self._act(v, 'Shot steps (put it in your shot)', self._toggle_steps, checkable=True)
+        steps.setChecked(QSettings().value('ui/shot_steps', True, type=bool))
         self._act(v, 'Statistics', lambda: self.stats_btn.toggle())
         v.addSeparator()
         for d in (self.d_lib, self.d_props, self.d_tl):
@@ -523,6 +550,80 @@ class MainWindow(QMainWindow):
         self._act(h, 'Getting started', self._show_welcome)
         self._act(h, 'Keyboard shortcuts', self._shortcuts_help)
         self._act(h, 'About Blackbody', self._about)
+
+    def _toggle_steps(self, on):
+        QSettings().setValue('ui/shot_steps', bool(on))
+        if on and getattr(self, 'workspace', 'build') != 'shot':
+            self.set_workspace('shot')
+        self.viewport.sync_steps()
+
+    def track(self):
+        from .tracking import track_fire_base
+        track_fire_base(self)
+
+    def blend_settings(self):
+        """Essentials, where 'Blend with the footage' is."""
+        self.d_props.show()
+        self.d_props.raise_()
+        self.props.set_page('essentials')
+
+    def add_surface(self, kind='wall'):
+        """Line up a real surface in the footage (once the ground is lined up)."""
+        if getattr(self, 'workspace', 'build') != 'shot':
+            self.set_workspace('shot')
+        if not self.viewport.start_surface(kind):
+            self.msg.setText('Line up the ground first (Tracking › Line up the ground): surfaces are placed from it.')
+
+    def line_up_ground(self):
+        """Match the camera to the footage from the ground (in Shot)."""
+        if getattr(self, 'workspace', 'build') != 'shot':
+            self.set_workspace('shot')
+        self.viewport.start_ground()
+
+    def pack_project(self):
+        from .packdialog import pack_project
+        return pack_project(self)
+
+    def search_everything(self):
+        from . import palette
+        self._palette = palette.show(self)
+
+    def _on_selection(self, fn):
+        """Do something to the selected objects (unless typing, drawing roto or a path)."""
+        from PySide6.QtWidgets import QAbstractSpinBox, QApplication, QLineEdit, QPlainTextEdit
+        f = QApplication.focusWidget()
+        if isinstance(f, (QLineEdit, QAbstractSpinBox, QPlainTextEdit)) or self.viewport.roto_mode or self.viewport.path_target:
+            return
+        sel = self.doc.selected_objects()
+        if sel:
+            fn(sel)
+
+    def _select_all(self):
+        from PySide6.QtWidgets import QApplication, QLineEdit
+        if isinstance(QApplication.focusWidget(), QLineEdit):
+            QApplication.focusWidget().selectAll()
+            return
+        sc = self.doc.scene
+        every = [(k, i) for k, items in (('emitter', sc.emitters), ('collider', sc.colliders), ('fabric', sc.fabrics),
+                                        ('light', sc.lights)) for i in range(len(items))]
+        if every:
+            self.doc.set_selected(every, self.doc.selection if self.doc.selection in every else every[0])
+            self.msg.setText(f'All {len(every)} things selected.')
+
+    def _save_block(self):
+        from . import actions
+        sel = self.doc.selected_objects() if hasattr(self.doc, 'selected_objects') else [self.doc.selection]
+        actions.save_block(self, [s for s in sel if s and s[0] != 'section'])
+
+    def _shot_camera(self, what):
+        """The shot camera's Build bar, from the menu: in Shot, Build opens first."""
+        if self.doc.work_view is None:
+            self.set_workspace('build')
+            if what != 'look_through':
+                self.msg.setText('Frame the view you want in Build, then Use this view (or Key here) under the viewer.')
+                return
+        self.viewport.sync_camerabar()
+        getattr(self.viewport.camerabar, what)()
 
     def _act(self, menu, text, fn, shortcut=None, checkable=False):
         a = QAction(text, self)
@@ -710,6 +811,7 @@ class MainWindow(QMainWindow):
                 self.work_btn.setChecked(False)
         self.roto_btn.setEnabled(ws == 'shot')
         self._place_start()
+        self.viewport.sync_steps()
 
     def _work_view(self, on):
         if on == (self.doc.work_view is not None):
@@ -782,13 +884,29 @@ class MainWindow(QMainWindow):
 
     def add_component(self, key, at=None):
         """Add a building block (from Create), at a ground point if it was dropped in the viewer."""
-        from ..scene.components import BY_KEY
-        comp = BY_KEY[key]
+        from ..scene.components import get as get_block
+        comp = get_block(key)
         mesh = None
         if comp.pick == 'mesh':
             from .params import pick_mesh_file
             mesh = pick_mesh_file(self)
             if not mesh:
+                return
+        elif comp.pick in ('text', 'shape'):
+            from ..scene import components as C
+            from . import shapedialog, textdialog, textmesh
+            if C.target_kind(self.doc.scene, comp) is None:
+                QMessageBox.information(self, comp.name, f'{comp.name} cannot go in a sky scene: skies are kilometres across. '
+                                        'Start a fire or liquid scene for it.')
+                return
+            look = {'fire': 'fire', 'liquid': 'water'}.get(comp.need, 'solid')
+            spec = (textdialog if comp.pick == 'text' else shapedialog).ask(self, None, width=C.scene_width(self.doc.scene), look=look)
+            if not spec:
+                return
+            try:
+                mesh = textmesh.make(spec)[0]
+            except (ValueError, OSError) as ex:
+                QMessageBox.information(self, comp.name, str(ex))
                 return
         try:
             notes = self.doc.add_component(key, at=at, mesh=mesh)
@@ -1001,6 +1119,8 @@ class MainWindow(QMainWindow):
                 return 'scene', p
             if ext == '.chan':
                 return 'track', p
+            if ext == '.bbblock':
+                return 'block', p
             if ext in VIDEO_EXT or ext in IMAGE_EXT:
                 return 'footage', p
         return None
@@ -1011,18 +1131,38 @@ class MainWindow(QMainWindow):
             return
         e.acceptProposedAction()
         if d[0] == 'component':
-            from ..scene.components import BY_KEY
-            self.viewport.set_drop_hint(f'Drop to add {BY_KEY[d[1]].name} here', marker=True)
+            from ..scene.components import get as get_block
+            self.viewport.set_drop_hint(f'Drop to add {get_block(d[1]).name} here', marker=True)
             self.viewport.set_drop_point(self._ground_at(e))
             return
         self.viewport.set_drop_hint({'scene': 'Drop to open this scene', 'track': 'Drop to import this camera track',
-                                     'footage': 'Drop to use this as the footage'}[d[0]])
+                                     'footage': 'Drop to use this as the footage',
+                                     'block': 'Drop to add this block (it is kept under Yours in Create)'}[d[0]],
+                                    marker=d[0] == 'block')
+        if d[0] == 'block':
+            self.viewport.set_drop_point(self._ground_at(e))
 
     def _ground_at(self, e):
-        """The fire-local ground point (x, z) under a drop, or None if it is not over the viewer's picture."""
+        """The fire-local ground point (x, z) under a drop, or None if it is not over the viewer's picture. With the camera
+        matched to the footage, (x, y, z): the ground, a table top, a step or a slope where it is dropped."""
         pos = self.viewport.mapFrom(self, e.position().toPoint())
         if not self.viewport.rect().contains(pos):
             return None
+        sc = self.doc.scene
+        if sc.ground and self.doc.work_view is None and not sc.data['camera']['use_anchor']:
+            from . import surfaces
+            from ..engine import camera as cam
+            try:
+                cs, fire, _ = self.viewport.camstate()
+                W, H = self.viewport.out_size()
+                fx, fy = self.viewport.to_frame(QPointF(pos))
+                o, d = cam.pixel_ray(cs, fx, fy, W, H)
+                w = surfaces.ground_hit(sc, o, d)
+            except Exception:
+                w = None
+            if w is not None:
+                q = surfaces.local(sc, w, self.doc.frame)
+                return (float(q[0]), float(q[1]), float(q[2]))
         try:
             gp = self.viewport._ground_point(QPointF(pos), 0.0)
         except Exception:
@@ -1033,7 +1173,7 @@ class MainWindow(QMainWindow):
         d = self._dropped(e.mimeData())
         if d is not None:
             e.acceptProposedAction()
-            if d[0] == 'component':
+            if d[0] in ('component', 'block'):
                 self.viewport.set_drop_point(self._ground_at(e))
 
     def dragLeaveEvent(self, e):
@@ -1053,6 +1193,10 @@ class MainWindow(QMainWindow):
                 self.open_path(path)
         elif what == 'track':
             self.import_chan(path)
+        elif what == 'block':
+            key = self.create.import_block(path)
+            if key:
+                self.add_component(key, at=self._ground_at(e))
         else:
             self.import_footage_path(path)
 
@@ -1123,6 +1267,11 @@ class MainWindow(QMainWindow):
         if self.welcome is not None and self.welcome.isVisible():
             self._place_welcome()
         self._place_start()
+        narrow = self.width() < 1500   # above the full header's width, so the window can still shrink past it
+        if narrow != getattr(self, '_header_narrow', None):
+            self._header_narrow = narrow
+            for b, text in getattr(self, '_header_texts', []):
+                b.setText('' if narrow else text)
 
     def _place_start(self):
         """The start card, while the stage in Build is empty."""
@@ -1144,9 +1293,15 @@ class MainWindow(QMainWindow):
     def _shortcuts_help(self):
         rows = [('Space', 'Play / pause'), ('Left / Right', 'Previous / next frame'), ('Home / End', 'First / last frame'),
                 ('1 – 7', 'View: composite, fire, alpha, emission, heat, depth, temperature'), ('F', 'Fit the view'),
-                ('G', 'Guides on/off'), ('W', 'Work view on/off: a camera of your own for building'),
+                ('G', 'Guides on/off'), ('W / Tab', 'Build / Shot'),
                 ('R', 'Roto on/off: draw shapes the effect goes behind'),
+                ('Ctrl+K', 'Search everything: actions, blocks, commands, settings, effects'),
+                ('Ctrl+Shift+L', 'Line up the ground: match the camera to the footage'),
+                ('Ctrl+T', 'Track the camera move (or the effect’s base, pinned in 2D)'),
                 ('Ctrl+F', 'Search settings'), ('Ctrl+E', 'Search effects'),
+                ('Ctrl+click / Shift+drag', 'Select several things'), ('Ctrl+A', 'Select everything'),
+                ('Ctrl+D / Delete', 'Duplicate / delete the selection'), ('Ctrl+G / Ctrl+Shift+G', 'Group / ungroup'),
+                ('Ctrl+R', 'Repeat the selection in a row, a ring or scattered'), ('Esc', 'Just the main selection'),
                 ('Mouse wheel', 'Zoom the view'), ('Middle drag', 'Pan the view'),
                 ('Drag the ring', 'Move the effect in the frame'), ('Drag the square', 'Scale the effect in the frame'),
                 ('Drag a source, object, light or cloth', 'Move it along the ground (Shift: up and down)'), ('Alt + drag', 'Orbit the camera'),

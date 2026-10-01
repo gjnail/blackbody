@@ -49,6 +49,30 @@ Blackbody judges how much a light changes the footage against the light the foot
 
 ## Matching the camera
 
+### Lining up the ground
+
+Tracking › *Line up the ground* (Ctrl+Shift+L) gives the effect the footage's camera from something rectangular lying on the ground: drag the grid's four corners onto it. Each pair of opposite sides meets at a vanishing point; the two directions lie in the ground and are square to each other, which gives the ground's tilt and roll and, unless the lens is known, the focal length. Untick *Lens from the picture* to give the lens instead (it is needed when a pair of sides runs parallel in the picture, as with a rectangle seen square-on); a lens recorded in the footage's file is used by itself. The scale comes from the camera's height, or from the real length of the grid's first side (between corners 1 and 2). The bar reports the camera's height, tilt, lens and roll and the rectangle's size, so wrong numbers stand out. The matched camera is a free camera in metres at the ground's origin (the middle of the grid), the same in every layer, and every number of it is in the Camera settings. Lining up again, on another frame or with a better rectangle, keeps where the effect stands.
+
+*From the horizon* lines up with no rectangle at all: the horizon and the lens give the ground's tilt and roll, and the camera's height the scale. *The ground slopes* adds two upright lines; their vanishing point is true vertical, so the world stays level (gravity straight down, flames rising straight up) while the lined-up ground is a slope in it. Done makes the slope a solid surface.
+
+### Surfaces
+
+Tracking › *Add a surface* lines up a real thing in the footage once the ground is lined up. The four kinds:
+- **A wall, or anything upright:** its bottom edge on the ground.
+- **Something flat and raised:** a table, a step or a platform, at a height you give, either solid to the ground or a slab.
+- **A ramp or slope:** its bottom edge on the ground and its sides running up it.
+- **Stairs:** the grid on the lowest step, with the step height and how many steps.
+
+Each becomes a mesh collider where it stands in the world, the same in every layer and kept in place when the effect moves. It hides the effect behind it (*Hides fire*), and like any collider it can be made burnable, hot or freezing, or hidden from the render. Blocks dropped onto the footage, and the effect's base when dragged, land on whatever ground or surface is under the cursor.
+
+### Following the camera move
+
+With the ground lined up, Tracking › *Track* (Ctrl+T) works out the camera on every frame from the frame you lined up on, forwards and backwards. It follows about 60 well-textured spots spread over the footage. Spots that look like their neighbours (tiles, bricks) are skipped, and new ones replace those that leave the frame. Each spot is placed to a fraction of a pixel by warping its first look onto the frame (an affine Lucas-Kanade match), so a patch of ground that grows and leans as the camera moves on it is followed without drift. Two solves are tried and the better one kept:
+- **The camera only turns** (a tripod, someone standing still): its pan, tilt and roll on every frame.
+- **The camera travels** (a dolly, a walk, a car, a drone): spots on the ground are placed where their rays meet the lined-up ground. Each frame's camera is found from them (RANSAC against spots that are not on the ground). Then every camera and every spot are refined together (a bundle adjustment), so errors do not pile up along the move. The ground gives the move in real metres.
+
+Spots that disagree with the rest (people, cars, flags) are dropped, and the fit is reported in pixels. Tracking › *Clear track* goes back to the lined-up camera. For moves with no ground in view, or a zoom, import a solve from a matchmover ([Moving shots](scene-import.md#moving-shots)).
+
 ### Highlights like a camera's
 
 In the Standard view, Composite › *Highlights to white* makes over-bright flame behave as it does on a camera sensor, where each colour channel catches some of the others' light: it goes from orange through yellow to white at the hottest cores, instead of clipping to a flat yellow. Footage below the roll-off is never changed. 0 gives the old per-channel roll-off. If whole flames go white, lower *Fire exposure*: real flames are rarely more than a few stops over.
