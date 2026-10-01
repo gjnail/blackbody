@@ -1303,15 +1303,26 @@ class Viewport(QWidget):
         for i, c in enumerate(sc.colliders):
             if not c['enabled']:
                 continue
-            ov = (floats or {}).get(i) if c.get('floating') else None
+            ov = (floats or {}).get(i) if (c.get('floating') or c.get('dynamic')) else None
             g = (lambda k, ov=ov, i=i: (tuple(ov['pos']) if k == 'position' else math.degrees(ov['rot_y']))
                  if ov is not None and k in ('position', 'yaw') else sc.get(('collider', i, k), self.doc.frame))
             is_sel = ('collider', i) in chosen
-            col = QColor(255, 140, 80) if c.get('burnable') else QColor(120, 190, 255)
+            col = QColor(255, 140, 80) if c.get('burnable') else QColor(150, 230, 160) if c.get('dynamic') else QColor(120, 190, 255)
             col.setAlpha(230 if is_sel else 120)
             pen = QPen(col, 1.6 if is_sel else 1.0)
-            self._lines(p, cs, fire, shape_lines(c['shape'], g('position'), g('size'), None, g('yaw'), sc.mesh_path(c['mesh']),
-                                                 self.doc.frame - c.get('mesh_offset', 0.0)), pen)
+            if ov is not None and ov.get('quat') is not None:   # a tumbling thing: drawn as it lies, any way up
+                q = ov['quat']
+                x_, y_, z_, w_ = (float(v) for v in q)
+                Rq = np.array([[1 - 2 * (y_ * y_ + z_ * z_), 2 * (x_ * y_ - z_ * w_), 2 * (x_ * z_ + y_ * w_)],
+                               [2 * (x_ * y_ + z_ * w_), 1 - 2 * (x_ * x_ + z_ * z_), 2 * (y_ * z_ - x_ * w_)],
+                               [2 * (x_ * z_ - y_ * w_), 2 * (y_ * z_ + x_ * w_), 1 - 2 * (x_ * x_ + y_ * y_)]])
+                base = shape_lines(c['shape'], (0.0, 0.0, 0.0), g('size'), None, 0.0, sc.mesh_path(c['mesh']),
+                                   self.doc.frame - c.get('mesh_offset', 0.0))
+                pos = np.asarray(ov['pos'], float)
+                self._lines(p, cs, fire, [np.asarray(l, float) @ Rq.T + pos for l in base], pen)
+            else:
+                self._lines(p, cs, fire, shape_lines(c['shape'], g('position'), g('size'), None, g('yaw'), sc.mesh_path(c['mesh']),
+                                                     self.doc.frame - c.get('mesh_offset', 0.0)), pen)
             op = np.asarray(g('opening'), float)
             if (op > 0).all():  # the doorway or window cut through it
                 at = np.asarray(g('position'), float) + _rot_y(np.asarray(g('opening_at'), float), g('yaw'))
@@ -1709,11 +1720,14 @@ class Viewport(QWidget):
         sc = self.doc.scene
         cs, fire, _ = self.camstate()
         best, bd = None, 12.0
+        floats = self.stats.get('floats') if self.stats.get('frame') == self.doc.frame else None
         for kind, items in (('emitter', sc.emitters), ('collider', sc.colliders), ('light', sc.lights), ('fabric', sc.fabrics)):
             for i, it in enumerate(items):
                 if not it['enabled']:
                     continue
-                px, ok = self._project_local(cs, fire, [sc.get((kind, i, 'position'), self.doc.frame)])
+                ov = (floats or {}).get(i) if kind == 'collider' and (it.get('floating') or it.get('dynamic')) else None
+                where = ov['pos'] if ov is not None else sc.get((kind, i, 'position'), self.doc.frame)   # where it fell to
+                px, ok = self._project_local(cs, fire, [where])
                 if ok[0]:
                     d = (self.to_widget(px[0]) - pos).manhattanLength()
                     if d < bd:

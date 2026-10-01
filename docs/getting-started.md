@@ -83,6 +83,7 @@ Blackbody opens in **Build**: an empty stage you look at with a camera of your o
 2. **Move and shape it.** The selected thing has a gizmo: drag an arrow to move it along X (red), Y (green) or Z (blue), a square to stretch it along that side, the ring's knob to turn it, and its middle to slide it over the ground. Hold **Ctrl** to snap to a grid sized for the scene. The size or place shows by the cursor as you drag.
 3. **Make things happen.** Right-click anything in the viewer (or in the object list, or use the buttons on its page) for what it can do:
    - **Set it on fire**: a box, a chair or a curtain catches at its base and the fire spreads over it.
+   - **Make it fall**: a real object that falls, tumbles, bounces and knocks into other things, pushed by the smoke and the water (*Drop it at this frame* holds it until then). Things attached to it go with it. Create › *Things that fall* has ready-made ones: a falling box, a bouncy ball, a boulder, dominoes, a tower. See [Things that fall](physics.md).
    - **Make it float**, **make it sink**: in the water, or in a pond put under it if there is none. **Make it hot** (water on it boils) or **freezing** (water on it freezes). **Make it hollow**: a tank, a room or a pipe.
    - **Soak** a cloth (it drips, steams in the heat and will not burn until it dries), **let it go** at this frame, choose what it is **held** by and what it is made of.
    - **Turn into**: any source becomes fire, smoke, steam, water, lava, a fan, an updraft, suction or a vortex, keeping its shape and place.

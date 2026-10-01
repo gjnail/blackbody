@@ -257,6 +257,27 @@ def make_float(win, i, density):
     doc.set_playing(True)
 
 
+def make_fall(win, i, on=True, at_frame=False):
+    """Make object i fall (a rigid body: it falls, tumbles and knocks into things), from the start or from this frame;
+    on=False holds it where its keys put it again."""
+    doc = win.doc
+    sc = doc.scene
+    d = sc.colliders[i]
+    release = _t(doc) if at_frame else 0.0
+    out = {}
+
+    def fn(s):
+        out['notes'] = C.make_dynamic(s, i, on=on, release=release)
+    doc.edit(f'{"Make" if on else "Stop"} {d["name"]} {"fall" if on else "falling"}', fn)
+    if on:
+        when = f'from frame {doc.frame}' if at_frame else 'from the start'
+        _say(win, f'{d["name"]} falls {when}: it tumbles, bounces and knocks into things, and the smoke and water push it. '
+                  'Its keys now only set where it starts. ' + ' '.join(out.get('notes') or []))
+    else:
+        _say(win, f'{d["name"]} stays where its keys put it again.')
+    doc.set_playing(True)
+
+
 def make_temperature(win, i, celsius):
     doc = win.doc
 
@@ -440,6 +461,13 @@ def fill_menu(m: QMenu, win, sel, path_mode=None):
                                                 set_value(win, 'emitter', i, 'stop', _t(doc) + 0.2, 'A fifth of a second, from this frame.')))
     if kind == 'collider':
         act('Set it on fire', guarded(lambda: set_on_fire(win, 'collider', i)), 'It catches here and the fire spreads over it', 'flame')
+        if d.get('dynamic'):
+            act('Stop it falling', lambda: make_fall(win, i, on=False), 'It stays where its keys put it', 'stop')
+        else:
+            act('Make it fall', lambda: make_fall(win, i), 'A real object: it falls, tumbles, bounces and knocks into other things',
+                'ball')
+            act(f'Drop it at this frame ({doc.frame})', lambda: make_fall(win, i, at_frame=True),
+                'Held where it is until this frame, then it falls', 'ball')
         act('Make it float', lambda: make_float(win, i, 500.0), 'It floats on the water (a pond is added if there is none)', 'waves')
         act('Make it sink', lambda: make_float(win, i, 2500.0), 'It falls in the water and sinks', 'drop')
         act('Make it hot (300 °C)', lambda: make_temperature(win, i, 300.0), 'Water on it boils', 'flame')
@@ -527,6 +555,8 @@ def quick_actions(win, sel):
         out.append(('Edit shape' if image else 'Edit text', 'shape' if image else 'text', lambda: edit_text(win, kind, i)))
     if kind == 'collider':
         out += [('Set on fire', 'flame', lambda: _guard(win, lambda: set_on_fire(win, 'collider', i))),
+                ('Stop falling', 'stop', lambda: make_fall(win, i, on=False)) if d.get('dynamic') else
+                ('Fall', 'ball', lambda: make_fall(win, i)),
                 ('Float', 'waves', lambda: make_float(win, i, 500.0)), ('Hot', 'flame', lambda: make_temperature(win, i, 300.0))]
     elif kind == 'fabric':
         out += [('Set on fire', 'flame', lambda: _guard(win, lambda: set_on_fire(win, 'fabric', i))),

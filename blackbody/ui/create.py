@@ -18,7 +18,8 @@ from .params import guard_wheel
 
 MIME = 'application/x-blackbody-component'
 GROUP_COLOURS = {'Fire': theme.ACCENT, 'Smoke, steam & sparks': '#c9c9d1', 'Liquids': '#6fb6ff', 'Fabric': '#d59cff',
-                 'Weather': '#a8e0ff', 'Forces': '#9fe0c8', 'Objects': '#9fb0c4', 'Lights': '#ffdc78', 'Mine': '#f0c674'}
+                 'Weather': '#a8e0ff', 'Forces': '#9fe0c8', 'Objects': '#9fb0c4', 'Things that fall': '#b4e6a0',
+                 'Lights': '#ffdc78', 'Mine': '#f0c674'}
 GROUP_HINTS = {'Fire': 'Sources of flame, and things that burn.', 'Smoke, steam & sparks': 'Smoke, steam and sparks without flame.',
                'Liquids': 'Water, honey, ink and lava: sources, standing water. With fire in the scene too, the two meet.',
                'Fabric': 'Cloth that hangs, drapes, blows in the air, soaks up water and burns.',
@@ -26,11 +27,13 @@ GROUP_HINTS = {'Fire': 'Sources of flame, and things that burn.', 'Smoke, steam 
                'Objects': 'Solid things the effect flows around, bounces off or burns. In your shot they hide what is behind them.',
                'Forces': 'Air pushed around: wind, a fan, an updraft, suction, a vortex. It carries smoke, flame, embers and cloth.',
                'Lights': 'Lights in the set: they light the smoke and steam, and the smoke shadows them.',
-               'Mine': 'Things you built and saved: right-click anything in a scene and Save as a block.'}
+               'Mine': 'Things you built and saved: right-click anything in a scene and Save as a block.',
+               'Things that fall': 'Real objects that fall, tumble, bounce, stack and topple, pushed by smoke and water. '
+                                   'Any object can: right-click it and Make it fall.'}
 STARTERS = ['burner', 'pour', 'flag', 'snow', 'smoke', 'box']   # one of each kind, shown first under All
 DOMAINS = [('all', 'All', None), ('fire', 'Fire', ('Fire', 'Smoke, steam & sparks')), ('liquid', 'Liquids', ('Liquids',)),
            ('fabric', 'Fabric', ('Fabric',)), ('weather', 'Weather', ('Weather',)), ('forces', 'Forces', ('Forces',)),
-           ('objects', 'Objects', ('Objects', 'Lights')), ('mine', 'Yours', ('Mine',))]
+           ('objects', 'Objects', ('Objects', 'Things that fall', 'Lights')), ('mine', 'Yours', ('Mine',))]
 
 
 class Tile(QAbstractButton):

@@ -24,6 +24,9 @@ Notable changes to Blackbody. The format follows
 - CG objects in footage: an object's Look (Automatic, CG or In the footage). A CG one goes over the footage lit by
   the shot's light, with its shadows on the real ground, hidden behind the footage's depth pass and matte.
 - Fixed mesh objects hold falling things on their real shape (between the logs of a pile, on stairs).
+- Make it fall and Drop it at this frame on any object (right-click it, the Fall chip on its page, or Ctrl+K), and
+  Stop it falling. Falling things are drawn and picked where the simulation has them in the viewer, tilted as they
+  tumble, and outlined in green. In Build, liquid scenes show objects in their materials instead of grey stand-ins.
 
 - Layers: several effects in one shot (a campfire in front, a waterfall behind), each its own simulation with its own
   box and scale, composited back to front in the viewer, renders and the command line.

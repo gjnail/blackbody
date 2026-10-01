@@ -296,8 +296,8 @@ class EngineWorker(QThread):
         st = eng.stats() if eng.sim_frame is not None or eng.cache.frames() else front.stats()
         st['refined'] = refine
         st['preview'] = (w, h)
-        # colliders the liquid moves, where the simulation put them (drawn there in the viewer)
-        st['floats'] = eng.floating_overrides(frame) if sc.kind in ('liquid', 'both') else None
+        # things that fall or float, where the simulation put them (drawn and picked there in the viewer)
+        st['floats'] = eng.floating_overrides(frame) if hasattr(eng, 'floating_overrides') else None
         st['frame'] = frame
         st['load_seq'] = getattr(self.scene, 'load_seq', 0)
         st['layers'] = len(order)
