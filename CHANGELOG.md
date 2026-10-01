@@ -42,6 +42,9 @@ Notable changes to Blackbody. The format follows
 - Make it breakable and Make it break into (Chunks, Bricks, Shards, Splinters) on any box, ball or cylinder
   (right-click it or the Breakable chip on its page), and Stop it breaking. Once it has broken, the viewer no longer
   draws or picks it as the whole object.
+- Hang it on a rope, Put it on a spring, Hinge it and Put it on a ball joint from the right-click menu, Tie it with a
+  rope to and Hinge it to another object, and Take it off its joint. The viewer draws ropes and springs as they hang
+  (a dashed line before the simulation has run), and renaming an object keeps what is tied to it.
 
 - Layers: several effects in one shot (a campfire in front, a waterfall behind), each its own simulation with its own
   box and scale, composited back to front in the viewer, renders and the command line.

@@ -304,6 +304,32 @@ def make_breakable(win, i, on=True, fracture=None):
     doc.set_playing(True)
 
 
+JOINT_ACTIONS = [('rope', 'Hang it on a rope', 'From a point 1.5 m above it: it swings, and the rope goes slack or snaps'),
+                 ('spring', 'Put it on a spring', 'It bounces up and down on a spring from a point above it'),
+                 ('hinge', 'Hinge it', 'Along a side (a door), its back edge (a lid), or through its middle (a wheel)'),
+                 ('ball', 'Put it on a ball joint', 'It swings any way about a point at its top')]
+
+
+def add_joint(win, i, kind, to=None, on=True):
+    """Hang object i on a rope or a spring, or hinge it (to object `to`, or to a fixed point); on=False takes it off."""
+    doc = win.doc
+    d = doc.scene.colliders[i]
+    other = doc.scene.colliders[to]['name'] if to is not None else None
+    out = {}
+
+    def fn(s):
+        out['notes'] = C.add_joint(s, i, kind=kind, to=to, on=on)
+    what = {'rope': 'on a rope', 'spring': 'on a spring', 'hinge': 'on a hinge', 'ball': 'on a ball joint'}.get(kind, '')
+    doc.edit(f'{d["name"]} {what}' if on else f'Take {d["name"]} off its joint', fn)
+    notes = ' '.join(out.get('notes') or [])
+    if on:
+        _say(win, (f'{d["name"]} hangs {what}' + (f' from {other}' if other else '') + '. It swings and falls from the start; '
+                   'drag it to where it starts. ' + notes).strip())
+    else:
+        _say(win, notes or f'{d["name"]} is no longer joined to anything.')
+    doc.set_playing(True)
+
+
 def make_temperature(win, i, celsius):
     doc = win.doc
 
@@ -487,13 +513,25 @@ def fill_menu(m: QMenu, win, sel, path_mode=None):
                                                 set_value(win, 'emitter', i, 'stop', _t(doc) + 0.2, 'A fifth of a second, from this frame.')))
     if kind == 'collider':
         act('Set it on fire', guarded(lambda: set_on_fire(win, 'collider', i)), 'It catches here and the fire spreads over it', 'flame')
-        if d.get('dynamic'):
-            act('Stop it falling', lambda: make_fall(win, i, on=False), 'It stays where its keys put it', 'stop')
+        if d.get('dynamic') or d.get('joint', 'none') not in (None, 'none'):
+            act('Stop it falling', lambda: make_fall(win, i, on=False), 'It stays where its keys put it (and comes off its joint)', 'stop')
         else:
             act('Make it fall', lambda: make_fall(win, i), 'A real object: it falls, tumbles, bounces and knocks into other things',
                 'ball')
             act(f'Drop it at this frame ({doc.frame})', lambda: make_fall(win, i, at_frame=True),
                 'Held where it is until this frame, then it falls', 'ball')
+        joined = d.get('joint', 'none') not in (None, 'none')
+        if joined:
+            act('Take it off its joint', lambda: add_joint(win, i, d.get('joint'), on=False), 'It falls freely', 'stop')
+        else:
+            for key, label, tip in JOINT_ACTIONS:
+                act(label, lambda k=key: add_joint(win, i, k), tip, 'line')
+        others = [(j, x['name']) for j, x in enumerate(sc.colliders) if j != i]
+        if others:
+            for key, label in (('rope', 'Tie it with a rope to'), ('hinge', 'Hinge it to')):
+                sub = m.addMenu(icons.glyph_icon('line', theme.MUTED, 16), label)
+                for j, name in others:
+                    sub.addAction(name, lambda k=key, j=j: add_joint(win, i, k, to=j))
         if d.get('breakable'):
             act('Stop it breaking', lambda: make_breakable(win, i, on=False), 'It stays whole', 'stop')
         else:
@@ -593,8 +631,8 @@ def quick_actions(win, sel):
         out.append(('Edit shape' if image else 'Edit text', 'shape' if image else 'text', lambda: edit_text(win, kind, i)))
     if kind == 'collider':
         out += [('Set on fire', 'flame', lambda: _guard(win, lambda: set_on_fire(win, 'collider', i))),
-                ('Stop falling', 'stop', lambda: make_fall(win, i, on=False)) if d.get('dynamic') else
-                ('Fall', 'ball', lambda: make_fall(win, i)),
+                ('Stop falling', 'stop', lambda: make_fall(win, i, on=False))
+                if d.get('dynamic') or d.get('joint', 'none') not in (None, 'none') else ('Fall', 'ball', lambda: make_fall(win, i)),
                 ('Whole', 'stop', lambda: make_breakable(win, i, on=False)) if d.get('breakable') else
                 ('Breakable', 'burst', lambda: make_breakable(win, i)),
                 ('Float', 'waves', lambda: make_float(win, i, 500.0)), ('Hot', 'flame', lambda: make_temperature(win, i, 300.0))]

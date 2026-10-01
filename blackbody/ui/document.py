@@ -745,6 +745,10 @@ class Document(QObject):
                 for end in ('child', 'parent'):
                     if list(l[end]) == [kind, old]:
                         l[end] = [kind, name]
+            if kind == 'collider':   # and so do joints (a rope tied to it, a door hinged to it)
+                for c in s.colliders:
+                    if c.get('joint_to') == old:
+                        c['joint_to'] = name
         self.edit('Rename', fn, structure=True)
 
     def select(self, sel, force=False):

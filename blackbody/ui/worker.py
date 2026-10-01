@@ -298,6 +298,7 @@ class EngineWorker(QThread):
         st['preview'] = (w, h)
         # things that fall or float, where the simulation put them (drawn and picked there in the viewer)
         st['floats'] = eng.floating_overrides(frame) if hasattr(eng, 'floating_overrides') else None
+        st['ropes'] = eng.rope_poses(frame) if hasattr(eng, 'rope_poses') else None   # ropes and springs, for drawing
         st['frame'] = frame
         st['load_seq'] = getattr(self.scene, 'load_seq', 0)
         st['layers'] = len(order)

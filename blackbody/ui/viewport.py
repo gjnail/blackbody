@@ -117,6 +117,16 @@ def fabric_lines(sc, i, frame):
     return out
 
 
+def _falls(c):
+    """Whether a collider moves as a rigid body (it falls, or hangs on a joint)."""
+    return bool(c.get('dynamic')) or _joint(c) is not None
+
+
+def _joint(c):
+    k = c.get('joint', 'none')
+    return k if k in ('rope', 'spring', 'hinge', 'ball') else None
+
+
 def _rot_y(pts, yaw_deg):
     """Rotate object-space offsets about y into fire-local space (matches the solver's rotation)."""
     a = np.radians(yaw_deg)
@@ -1303,15 +1313,21 @@ class Viewport(QWidget):
         for i, c in enumerate(sc.colliders):
             if not c['enabled']:
                 continue
-            ov = (floats or {}).get(i) if (c.get('floating') or c.get('dynamic') or c.get('breakable')) else None
+            ov = (floats or {}).get(i) if (c.get('floating') or _falls(c) or c.get('breakable')) else None
             if ov is not None and float(ov['pos'][1]) < -1e3:
                 continue   # broken: its pieces are what is there now
             g = (lambda k, ov=ov, i=i: (tuple(ov['pos']) if k == 'position' else math.degrees(ov['rot_y']))
                  if ov is not None and k in ('position', 'yaw') else sc.get(('collider', i, k), self.doc.frame))
             is_sel = ('collider', i) in chosen
-            col = QColor(255, 140, 80) if c.get('burnable') else QColor(150, 230, 160) if c.get('dynamic') else QColor(120, 190, 255)
+            col = QColor(255, 140, 80) if c.get('burnable') else QColor(150, 230, 160) if _falls(c) else QColor(120, 190, 255)
             col.setAlpha(230 if is_sel else 120)
             pen = QPen(col, 1.6 if is_sel else 1.0)
+            if ov is not None and is_sel and _falls(c):   # where it starts (what its handle moves), faintly
+                ghost = QColor(col)
+                ghost.setAlpha(90)
+                self._lines(p, cs, fire, shape_lines(c['shape'], sc.get(('collider', i, 'position'), self.doc.frame), g('size'), None,
+                                                     sc.get(('collider', i, 'yaw'), self.doc.frame), sc.mesh_path(c['mesh']),
+                                                     self.doc.frame - c.get('mesh_offset', 0.0)), QPen(ghost, 1.0, Qt.DashLine))
             if ov is not None and ov.get('quat') is not None:   # a tumbling thing: drawn as it lies, any way up
                 q = ov['quat']
                 x_, y_, z_, w_ = (float(v) for v in q)
@@ -1329,6 +1345,7 @@ class Viewport(QWidget):
             if (op > 0).all():  # the doorway or window cut through it
                 at = np.asarray(g('position'), float) + _rot_y(np.asarray(g('opening_at'), float), g('yaw'))
                 self._lines(p, cs, fire, shape_lines('box', at, op, None, g('yaw')), QPen(col, 1.0, Qt.DotLine))
+        self._paint_joints(p, cs, fire, sc, floats)
         # the transform gizmo of the selected object
         gz = self._gizmo()
         if gz is not None:
@@ -1364,6 +1381,46 @@ class Viewport(QWidget):
             p.setPen(QPen(QColor(theme.ACCENT if hot else '#ffffff'), 1.2))
             p.setBrush(QColor(theme.ACCENT if hot else '#ffffff'))
             p.drawRect(QRectF(top.x() - 4, top.y() - 4, 8, 8))
+
+    def _paint_joints(self, p, cs, fire, sc, floats):
+        """Ropes and springs as they hang (from the simulation), or, before it has run, where each joint is."""
+        if not any(_joint(c) for c in sc.colliders):
+            return
+        ropes = self.stats.get('ropes') if self.stats.get('frame') == self.doc.frame else None
+        if ropes:
+            try:
+                from ..engine.ropes import rope_points
+                for i, r in ropes.items():
+                    pts, _ = rope_points(r, ground=0.0)
+                    look = int(r.get('look', 0))
+                    col = QColor(200, 200, 205, 220) if look == 1 else QColor(150, 230, 160, 220) if look == 2 else QColor(214, 182, 132, 230)
+                    self._poly(p, cs, fire, np.asarray(pts, float), QPen(col, 1.6))
+            except Exception:
+                pass
+            return
+        try:   # not simulated yet: a dashed line for each rope or spring, a ring for each hinge or ball joint
+            from ..engine.solids import joint_ends
+            cgs = sc.colliders_gpu(self.doc.frame, floats or None)
+            idx = [i for i, c in enumerate(sc.colliders) if c['enabled']]
+            cg_of = dict(zip(idx, cgs))
+            names = {c['name']: i for i, c in enumerate(sc.colliders)}
+            for i, c in enumerate(sc.colliders):
+                kind = _joint(c)
+                if not kind or i not in cg_of:
+                    continue
+                other = cg_of.get(names.get(c.get('joint_to') or '', -1))
+                a, b = joint_ends(c, cg_of[i], other)
+                if kind in ('rope', 'spring'):
+                    self._poly(p, cs, fire, np.array([a, b], float), QPen(QColor(214, 182, 132, 220), 1.4, Qt.DashLine))
+                else:
+                    px, ok = self._project_local(cs, fire, [a])
+                    if ok[0]:
+                        q = self.to_widget(px[0])
+                        p.setPen(QPen(QColor(150, 230, 160, 230), 1.6))
+                        p.setBrush(Qt.NoBrush)
+                        p.drawEllipse(q, 5, 5)
+        except Exception:
+            pass
 
     def _gizmo(self):
         sel = self.doc.selection
@@ -1727,7 +1784,7 @@ class Viewport(QWidget):
             for i, it in enumerate(items):
                 if not it['enabled']:
                     continue
-                ov = (floats or {}).get(i) if kind == 'collider' and (it.get('floating') or it.get('dynamic') or it.get('breakable')) else None
+                ov = (floats or {}).get(i) if kind == 'collider' and (it.get('floating') or _falls(it) or it.get('breakable')) else None
                 if ov is not None and float(ov['pos'][1]) < -1e3:
                     continue   # broken into pieces
                 where = ov['pos'] if ov is not None else sc.get((kind, i, 'position'), self.doc.frame)   # where it fell to
