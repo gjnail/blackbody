@@ -18,6 +18,7 @@
 </p>
 
 <p align="center">
+  <a href="https://ko-fi.com/gnail"><img src="https://img.shields.io/badge/Ko--fi-support%20Blackbody-FF5E5B?logo=ko-fi&logoColor=white" alt="Support Blackbody on Ko-fi"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-ff8a28" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/python-3.10%2B-ff8a28" alt="Python 3.10+">
   <img src="https://img.shields.io/badge/GPU-Vulkan%20%C2%B7%20D3D12%20%C2%B7%20Metal-ff8a28" alt="GPU: Vulkan, Direct3D 12, Metal">
@@ -175,6 +176,11 @@ pytest -q
 ## Contributing
 
 Bug reports, footage that breaks it, and pull requests are welcome: [open an issue](https://github.com/gjnail/blackbody/issues). The guides live in [`docs/`](docs) as Markdown, and the website is built from them by `tools/build_site.py`. So a change to a feature and to its guide can go in the same pull request.
+
+## Support
+
+Blackbody is free. If it saved you a shot and you'd like to say thanks, you can
+[buy me a coffee on Ko-fi](https://ko-fi.com/gnail).
 
 ## License
 
