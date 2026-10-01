@@ -6,7 +6,7 @@ import time
 
 import numpy as np
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import QMenu, QWidget
 
 from ..engine import camera as cam
@@ -191,6 +191,12 @@ class Viewport(QWidget):
         self.mode_labels = {}   # the view's name for this kind of simulation (main window)
         self.drop_hint = None   # text shown while a file is dragged over the window
         self.drop_point = None  # where a dragged building block would land
+        self.roto_mode = False   # drawing and editing roto shapes over the footage
+        self.roto_sel = None     # the shape being edited
+        self._roto_draft = None  # points of a shape being drawn ([x, y] across and down the frame, 0..1)
+        self._roto_live = None   # (shape, points) while a point or the shape is dragged
+        self._roto_cursor = None
+        self.rotobar = None
         self.sim_msg = ''
         # what holds up the next frame (UI.set_busy), shown as a card over the viewer: (text, fraction) or None
         self.busy = None
@@ -210,6 +216,7 @@ class Viewport(QWidget):
         doc.structureChanged.connect(self.update)
         doc.selectionChanged.connect(lambda *_: self.update())
         doc.frameChanged.connect(lambda *_: self.update())
+        doc.viewChanged.connect(self.update)
 
     # -- data in ---------------------------------------------------------------------------------------
 
@@ -253,6 +260,232 @@ class Viewport(QWidget):
                 self.drop_point = None
             self.update()
 
+    # -- roto -------------------------------------------------------------------------------------------------
+
+    def set_roto_mode(self, on):
+        self.roto_mode = bool(on)
+        self._roto_draft = None
+        self._roto_live = None
+        if on and self.rotobar is None:
+            from .rotobar import RotoBar
+            self.rotobar = RotoBar(self)
+        if self.rotobar is not None:
+            self.rotobar.setVisible(on)
+            if on:
+                self.rotobar.sync()
+        if on and self.roto_sel is None and self.doc.scene.roto:
+            self.roto_sel = 0
+        self.setCursor(Qt.CrossCursor if on else Qt.ArrowCursor)
+        self.update()
+
+    def place_rotobar(self):
+        if self.rotobar is not None:
+            self.rotobar.setFixedWidth(min(max(420, self.rotobar.sizeHint().width()), self.width() - 24))
+            self.rotobar.adjustSize()
+            self.rotobar.move((self.width() - self.rotobar.width()) // 2, 10)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.place_rotobar()
+
+    def _norm(self, pos):
+        W, H = self.out_size()
+        fx, fy = self.to_frame(pos)
+        return [min(max(fx / W, -0.5), 1.5), min(max(fy / H, -0.5), 1.5)]
+
+    def _scr(self, q):
+        W, H = self.out_size()
+        return self.to_widget((q[0] * W, q[1] * H))
+
+    def _roto_pts(self, i):
+        if self._roto_live is not None and self._roto_live[0] == i:
+            return self._roto_live[1]
+        from ..scene.roto import points_at
+        return points_at(self.doc.scene.roto[i], self.doc.frame)
+
+    def _roto_hit_point(self, pos):
+        i = self.roto_sel
+        if i is None or i >= len(self.doc.scene.roto):
+            return None
+        for j, q in enumerate(self._roto_pts(i) or []):
+            if (self._scr(q) - pos).manhattanLength() < 10:
+                return j
+        return None
+
+    def _roto_hit_shape(self, pos):
+        for i in reversed(range(len(self.doc.scene.roto))):
+            pts = self._roto_pts(i)
+            if pts and QPolygonF([self._scr(q) for q in pts]).containsPoint(pos, Qt.OddEvenFill):
+                return i
+        return None
+
+    def _roto_hit_edge(self, pos):
+        i = self.roto_sel
+        if i is None or i >= len(self.doc.scene.roto):
+            return None
+        pts = [self._scr(q) for q in self._roto_pts(i) or []]
+        for j in range(len(pts)):
+            a, b = pts[j], pts[(j + 1) % len(pts)]
+            ab = b - a
+            L2 = ab.x() ** 2 + ab.y() ** 2
+            t = 0.0 if L2 < 1e-9 else max(0.0, min(1.0, ((pos - a).x() * ab.x() + (pos - a).y() * ab.y()) / L2))
+            q = a + ab * t
+            if (q - pos).manhattanLength() < 8:
+                return j
+        return None
+
+    def _roto_finish(self):
+        pts, self._roto_draft = self._roto_draft, None
+        if not pts or len(pts) < 3:
+            self.update()
+            return
+        from ..scene.roto import new_shape, set_points
+        n = len(self.doc.scene.roto)
+        f = self.doc.frame
+
+        def fn(shapes):
+            sh = new_shape(f'Roto {n + 1}')
+            set_points(sh, f, pts)
+            shapes.append(sh)
+        self.doc.roto_edit('Add roto shape', fn)
+        self.roto_sel = n
+        if self.rotobar is not None:
+            self.rotobar.sync()
+        self.update()
+
+    def roto_delete(self):
+        i = self.roto_sel
+        if i is None or i >= len(self.doc.scene.roto):
+            return
+        self.doc.roto_edit('Delete roto shape', lambda shapes: shapes.pop(i))
+        self.roto_sel = (i - 1) if i > 0 else (0 if self.doc.scene.roto else None)
+        if self.rotobar is not None:
+            self.rotobar.sync()
+        self.update()
+
+    def _roto_press(self, e):
+        pos = e.position()
+        if e.button() == Qt.RightButton:
+            j = self._roto_hit_point(pos)
+            if j is not None and len(self._roto_pts(self.roto_sel)) > 3:
+                from ..scene.roto import delete_point
+                i = self.roto_sel
+                self.doc.roto_edit('Remove roto point', lambda shapes: delete_point(shapes[i], j))
+            elif self._roto_draft:
+                self._roto_draft.pop()
+                if self.rotobar is not None:
+                    self.rotobar.sync()
+                self.update()
+            return
+        if e.button() != Qt.LeftButton:
+            return
+        if self._roto_draft is not None:
+            if len(self._roto_draft) >= 3 and (self._scr(self._roto_draft[0]) - pos).manhattanLength() < 12:
+                self._roto_finish()
+            else:
+                self._roto_draft.append(self._norm(pos))
+                if self.rotobar is not None:
+                    self.rotobar.sync()
+            self.update()
+            return
+        j = self._roto_hit_point(pos)
+        if j is not None:
+            self._drag = {'kind': 'roto_pt', 'j': j, 'pts': [list(q) for q in self._roto_pts(self.roto_sel)]}
+            return
+        if e.modifiers() & Qt.ControlModifier:
+            j = self._roto_hit_edge(pos)
+            if j is not None:
+                from ..scene.roto import insert_point
+                i, f, xy = self.roto_sel, self.doc.frame, self._norm(pos)
+                self.doc.roto_edit('Add roto point', lambda shapes: insert_point(shapes[i], j, f, xy))
+                self._drag = {'kind': 'roto_pt', 'j': j + 1, 'pts': [list(q) for q in self._roto_pts(i)]}
+                return
+        i = self._roto_hit_shape(pos)
+        if i is not None:
+            self.roto_sel = i
+            self._drag = {'kind': 'roto_move', 'start': self._norm(pos), 'pts': [list(q) for q in self._roto_pts(i)]}
+            if self.rotobar is not None:
+                self.rotobar.sync()
+            self.update()
+            return
+        self.roto_sel = None
+        self._roto_draft = [self._norm(pos)]
+        if self.rotobar is not None:
+            self.rotobar.sync()
+        self.update()
+
+    def _roto_drag(self, d, pos):
+        q = self._norm(pos)
+        if d['kind'] == 'roto_pt':
+            pts = [list(x) for x in d['pts']]
+            pts[d['j']] = q
+        else:
+            dx, dy = q[0] - d['start'][0], q[1] - d['start'][1]
+            pts = [[x + dx, y + dy] for x, y in d['pts']]
+        self._roto_live = (self.roto_sel, pts)
+        self.update()
+
+    def _roto_release(self):
+        live, self._roto_live = self._roto_live, None
+        if live is None:
+            return
+        from ..scene.roto import set_points
+        i, pts = live
+        f = self.doc.frame
+        self.doc.roto_edit('Move roto shape', lambda shapes: set_points(shapes[i], f, pts))
+        if self.rotobar is not None:
+            self.rotobar.sync()
+
+    def _paint_roto(self, p):
+        shapes = self.doc.scene.roto
+        if not shapes and self._roto_draft is None:
+            return
+        from ..scene.roto import has_key
+        p.save()
+        for i, sh in enumerate(shapes):
+            pts = self._roto_pts(i)
+            if not pts:
+                continue
+            poly = QPolygonF([self._scr(q) for q in pts])
+            sel = i == self.roto_sel and self.roto_mode
+            on = sh.get('enabled', True)
+            if not self.roto_mode:
+                p.setPen(QPen(QColor(255, 255, 255, 70 if on else 30), 1.0, Qt.DashLine))
+                p.setBrush(Qt.NoBrush)
+                p.drawPolygon(poly)
+                continue
+            fill = QColor(theme.ACCENT)
+            fill.setAlpha((60 if sel else 30) if on else 10)
+            p.setBrush(fill)
+            p.setPen(QPen(QColor(theme.ACCENT if sel else '#ffffff'), 1.6 if sel else 1.0, Qt.SolidLine if on else Qt.DashLine))
+            p.drawPolygon(poly)
+            if sel:
+                keyed = has_key(sh, self.doc.frame)
+                for q in poly:
+                    p.setPen(QPen(QColor(theme.ACCENT), 1.2))
+                    p.setBrush(QColor(theme.ACCENT) if keyed else QColor(20, 20, 24))
+                    p.drawRect(QRectF(q.x() - 3.5, q.y() - 3.5, 7, 7))
+            if sh.get('invert'):
+                c = poly.boundingRect().center()
+                p.setPen(QColor(255, 255, 255, 160))
+                p.drawText(QPointF(c.x() - 18, c.y()), 'inverted')
+        if self._roto_draft:
+            pts = [self._scr(q) for q in self._roto_draft]
+            p.setPen(QPen(QColor(theme.ACCENT), 1.6))
+            p.setBrush(Qt.NoBrush)
+            path = QPainterPath()
+            path.moveTo(pts[0])
+            for q in pts[1:]:
+                path.lineTo(q)
+            if self._roto_cursor is not None:
+                path.lineTo(self._roto_cursor)
+            p.drawPath(path)
+            for k, q in enumerate(pts):
+                p.setBrush(QColor(theme.ACCENT) if k == 0 else QColor(20, 20, 24))
+                r = 6.0 if k == 0 else 3.5
+                p.drawEllipse(q, r, r)
+        p.restore()
+
     def set_drop_point(self, gp):
         """Where a building block dragged over the viewer would land (fire-local x, z on the ground), or None."""
         if gp != self.drop_point:
@@ -282,8 +515,7 @@ class Viewport(QWidget):
         return ((pt.x() - r.x()) / r.width() * W, (pt.y() - r.y()) / r.height() * H)
 
     def camstate(self):
-        sc = self.doc.scene
-        spec, fire = sc.camera(self.doc.frame)
+        spec, fire = self.doc.camera(self.doc.frame)
         W, H = self.out_size()
         return cam.compute(spec, W / H, fire), fire, spec
 
@@ -323,6 +555,11 @@ class Viewport(QWidget):
                 self._paint_guides(p)
             except Exception:
                 pass
+            p.restore()
+        if self.roto_mode or (self.guides and self.doc.scene.roto):
+            p.save()
+            p.setClipRect(r.adjusted(-1, -1, 1, 1))
+            self._paint_roto(p)
             p.restore()
         self._paint_busy(p, r)
         self._paint_hud(p, r)
@@ -504,8 +741,10 @@ class Viewport(QWidget):
                     p.drawEllipse(q, 5, 5)
                 else:
                     p.drawRect(QRectF(q.x() - 4.5, q.y() - 4.5, 9, 9))
+        if self.doc.work_view is not None:
+            self._paint_shot_camera(p)
         # tracked path of the fire base
-        if sc.track and sc.track.get('points'):
+        if sc.track and sc.track.get('points') and self.doc.work_view is None:
             W, H = self.out_size()
             off = sc.track.get('offset', (0.0, 0.0))
             pts = sorted(sc.track['points'].items())
@@ -532,11 +771,46 @@ class Viewport(QWidget):
             p.setBrush(QColor(theme.ACCENT if hot else '#ffffff'))
             p.drawRect(QRectF(top.x() - 4, top.y() - 4, 8, 8))
 
+    def _paint_shot_camera(self, p):
+        """In the work view: where the shot's camera is and what it sees, as a frustum."""
+        sc = self.doc.scene
+        spec, fire = sc.camera(self.doc.frame)
+        W, H = self.out_size()
+        shot = cam.compute(spec, W / H, fire)
+        cs, _, _ = self.camstate()
+        sy = max(sc.domain_size())
+        eye = np.asarray(shot.eye, float)
+        corners = []
+        for fx, fy in ((0, 0), (W, 0), (W, H), (0, H)):
+            o, d = cam.pixel_ray(shot, fx, fy, W, H)
+            corners.append(eye + np.asarray(d, float) * sy * 0.35)
+        lines = [np.stack([eye, c]) for c in corners] + [np.stack(corners + corners[:1])]
+        pen = QPen(QColor(255, 214, 102, 210), 1.3)
+        path = QPainterPath()
+        for ln in lines:
+            px, ok = cam.project(cs, ln, W, H)
+            if not ok.all():
+                continue
+            path.moveTo(self.to_widget(px[0]))
+            for q in px[1:]:
+                path.lineTo(self.to_widget(q))
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawPath(path)
+        px, ok = cam.project(cs, [eye], W, H)
+        if ok[0]:
+            q = self.to_widget(px[0])
+            p.setPen(QColor(255, 214, 102, 230))
+            p.drawText(QPointF(q.x() + 8, q.y() - 6), 'shot camera')
+
     def _paint_hud(self, p, r):
         st = self.stats
         f = QFont(theme.mono_font(8.5))
         p.setFont(f)
         lines = [f'{self.mode_labels.get(self.mode) or MODE_NAMES.get(self.mode, self.mode)}  ·  frame {self.doc.frame}']
+        if self.doc.work_view is not None:
+            lines[0] = 'WORK VIEW  \u00b7  ' + lines[0]
+            lines.append('drag: orbit \u00b7 middle-drag: pan \u00b7 wheel: closer \u00b7 F: frame the box \u00b7 W: back to the shot')
         if st and self.show_stats:
             dims = st.get('dims') or (0, 0, 0)
             lines.append(f'{dims[0]}×{dims[1]}×{dims[2]} voxels · {st.get("cell_mm", 0):.1f} mm · {st.get("substeps", 0)} substeps')
@@ -597,7 +871,8 @@ class Viewport(QWidget):
                 and not sc.fabrics and not (sc.kind != 'fire' and (sc.data['liquid']['water_level'] > 0 or sc.data['liquid']['rain'] > 0))):
             self._pill(p, QPointF(r.center().x(), r.center().y()), 'An empty scene · add fire, water or objects from Create, on the left',
                        strong=True)
-        if self.busy is None and self.image is not None and not self.doc.scene.footage and not self.doc.footage_info:
+        if self.busy is None and self.image is not None and not self.doc.scene.footage and not self.doc.footage_info \
+                and self.doc.work_view is None:
             self._pill(p, QPointF(r.center().x(), r.top() + 22), 'No footage yet · drop a clip here, or Import footage (Ctrl+I)')
 
     def _pill(self, p, c, text, strong=False):
@@ -696,6 +971,16 @@ class Viewport(QWidget):
     def mousePressEvent(self, e):
         pos = e.position()
         mods = e.modifiers()
+        if self.roto_mode and not (mods & Qt.AltModifier) and e.button() in (Qt.LeftButton, Qt.RightButton):
+            self._roto_press(e)
+            return
+        wv = self.doc.work_view
+        if wv is not None and (e.button() == Qt.MiddleButton or (e.button() == Qt.RightButton and not mods & Qt.AltModifier)):
+            self._drag = {'kind': 'wv_pan', 'last': pos}
+            return
+        if wv is not None and e.button() == Qt.LeftButton and (mods & Qt.AltModifier or self._hit(pos) is None):
+            self._drag = {'kind': 'wv_orbit', 'last': pos}
+            return
         if e.button() == Qt.MiddleButton or (e.button() == Qt.LeftButton and mods & Qt.ShiftModifier and mods & Qt.ControlModifier):
             self._drag = {'kind': 'pan', 'start': pos, 'pan': QPointF(self.pan)}
             return
@@ -753,6 +1038,16 @@ class Viewport(QWidget):
     def mouseMoveEvent(self, e):
         pos = e.position()
         d = self._drag
+        if d is not None and d['kind'] in ('roto_pt', 'roto_move'):
+            self._roto_drag(d, pos)
+            return
+        if self.roto_mode and d is None:
+            self._roto_cursor = pos if self._roto_draft else None
+            if self._roto_draft:
+                self.update()
+            j = self._roto_hit_point(pos)
+            self.setCursor(Qt.SizeAllCursor if j is not None else Qt.CrossCursor)
+            return
         if d is None:
             h = self._hit(pos)
             h = h if isinstance(h, str) else None
@@ -763,6 +1058,18 @@ class Viewport(QWidget):
                 self.update()
             return
         k = d['kind']
+        if k in ('wv_orbit', 'wv_pan'):
+            delta = pos - d['last']
+            d['last'] = pos
+            wv = self.doc.work_view
+            if wv is None:
+                return
+            if k == 'wv_orbit':
+                wv.orbit(delta.x(), delta.y())
+            else:
+                wv.pan(delta.x(), delta.y(), self.frame_rect().height())
+            self.doc.move_work_view()
+            return
         if k == 'pan':
             self.pan = d['pan'] + (pos - d['start'])
             self.update()
@@ -822,16 +1129,30 @@ class Viewport(QWidget):
             self.doc.set((d['what'], d['i'], 'size'), tuple(float(max(x * f, 1e-3)) for x in d['size0']))
 
     def mouseReleaseEvent(self, e):
+        if self._drag is not None and self._drag['kind'] in ('roto_pt', 'roto_move'):
+            self._drag = None
+            self._roto_release()
+            return
         if self._drag is not None:
             self._drag = None
             self.doc.end_drag()
             self.update()
 
     def mouseDoubleClickEvent(self, e):
+        if self.roto_mode:
+            if self._roto_draft is not None and len(self._roto_draft) >= 3:
+                self._roto_finish()
+            elif self._roto_draft is None:
+                self._roto_press(e)   # a quick second click is a press too (on a point: drag it)
+            return
         if e.button() == Qt.LeftButton and self._hit(e.position()) is None:
             self.fit()
 
     def wheelEvent(self, e):
+        if self.doc.work_view is not None:
+            self.doc.work_view.dolly(0.87 ** (e.angleDelta().y() / 120.0))
+            self.doc.move_work_view()
+            return
         f = 1.15 ** (e.angleDelta().y() / 120.0)
         pos = e.position()
         c = QPointF(self.width() / 2, self.height() / 2)
@@ -842,6 +1163,23 @@ class Viewport(QWidget):
         self.update()
 
     def keyPressEvent(self, e):
+        if self.roto_mode:
+            if e.key() == Qt.Key_Escape and self._roto_draft is not None:
+                self._roto_draft = None
+                if self.rotobar is not None:
+                    self.rotobar.sync()
+                self.update()
+                return
+            if e.key() in (Qt.Key_Return, Qt.Key_Enter) and self._roto_draft is not None:
+                self._roto_finish()
+                return
+            if e.key() in (Qt.Key_Delete, Qt.Key_Backspace):
+                if self._roto_draft:
+                    self._roto_draft.pop()
+                    self.update()
+                else:
+                    self.roto_delete()
+                return
         if e.key() == Qt.Key_F:
             self.fit()
         elif e.key() == Qt.Key_G:
@@ -853,6 +1191,12 @@ class Viewport(QWidget):
     def fit(self):
         self.zoom = 1.0
         self.pan = QPointF(0, 0)
+        if self.doc.work_view is not None:
+            from .workview import WorkView
+            fr = WorkView.framing(self.doc.scene)
+            wv = self.doc.work_view
+            wv.distance, wv.target = fr.distance, fr.target
+            self.doc.move_work_view()
         self.update()
 
     def contextMenuEvent(self, e):

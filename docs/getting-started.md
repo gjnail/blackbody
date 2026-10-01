@@ -89,6 +89,14 @@ Every preset is made of a few pieces you can put together yourself. Open **Creat
 
 Generic blocks are sized for the scene; real things (a torch, a car, a curtain) keep their real size. If a block does not fit, the simulation box grows to take it. Adding water where there is fire (or fire where there is water) makes them simulate together, so they meet: a hose puts the fire out, lava boils the sea. The header shows what the scene simulates. Every addition is one step of undo.
 
+## Layers
+
+A shot can hold several effects, each its own simulation with its own box, scale and settings: a campfire in the foreground and a waterfall in the distance, smoke from a chimney behind a burning car. Click **Layer** in the header (**Ctrl+L**) to add one in front of the others, then load an effect into it from **Effects** or build one in **Create**.
+
+The strip over the viewer lists the layers from back to front; the lit one is the layer you are editing, and Properties, Effects and Create all work on it. Click a layer to edit it, double-click to rename it, and right-click to hide it, move it back or forward, duplicate it or delete it. Each layer is placed in the shot by its own ring and square.
+
+Every layer is drawn over the ones behind it as if they were its footage, so its heat haze, glow and light land on them too. The layers share the shot: the footage, the frame size, rate and range, the output look, the holdouts and roto, and the camera track (each layer keeps its own place on it). Renders, the command line and *Export this frame* draw all the layers; element outputs merge them, with the extra passes (emission, depth and so on) from the base layer. Effects that have to touch, such as a hose on a fire, belong in one simulation, not in two layers.
+
 ## Animate
 
 Any setting with a **◇** next to it can be keyframed: click the ◇ to key it at the current frame, then change the frame and the value. **Animation** at the right of the timeline opens the animation editor: every animated setting is a row, with its keys on a track and a trace of its value. Drag keys to move them in time (Shift-click to select several), double-click a track to add a key, press **Delete** to remove the selected ones, and right-click to choose how a key eases into the next (*Smooth*, *Linear* or *Hold*). Click a setting's name to bring it up in Properties.
@@ -99,9 +107,13 @@ Every setting has a tooltip. A number is a bar: drag it sideways to change it (S
 
 ![Scrubbing the wind speed: the flames lean over while the simulation keeps running](media/gif/ui-scrub.gif "Drag a setting's name to scrub it. Here the wind speed leans the flames over while the simulation runs.")
 
-In the viewer, click an emitter or a collider to select it and drag it along the ground (Shift: up and down). The selected one shows a ring with a knob to turn it and a square to resize it (Shift snaps the turn to 15°).
+In the viewer, click a source, an object, a light or a piece of fabric to select it and drag it along the ground (Shift: up and down). A selected source or object shows a ring with a knob to turn it and a square to resize it (Shift snaps the turn to 15°).
 
-The view bar switches what the viewer shows, the way a compositor checks an element: the composite, the fire alone, its alpha, emission, heat (the haze driver), depth and temperature.
+**Work view** (in the view bar, or **W**) gives you a camera of your own for building the scene: drag to orbit around it, middle-drag (or right-drag) to pan, use the wheel to move closer, and press **F** to frame the simulation box. It starts from behind the shot's camera, which is drawn as a yellow frustum so you can see what the shot sees. Only the viewer changes: the shot, its camera and every render stay as they are, and turning the view re-draws cached frames without simulating again. Press **W** again to go back to the shot.
+
+**Roto** (in the view bar, or **R**) draws shapes around what is in front of the effect in your footage, and the effect goes behind them: see [Roto](compositing.md#roto).
+
+The view bar switches what the viewer shows, the way a compositor checks an element: the composite, the effect alone over black, its alpha, emission, heat (the haze driver), depth and temperature. In a liquid scene the last views show what the liquid does to the footage (wet ground, shadows, caustics) and how fast it moves.
 
 ![Cycling the view modes: composite, fire, alpha, emission, heat, depth, temperature](media/gif/ui-views.gif "Keys 1 to 7 cycle the view: composite, fire, alpha, emission, heat, depth and temperature.")
 

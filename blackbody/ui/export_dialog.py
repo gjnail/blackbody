@@ -28,7 +28,7 @@ class ExportDialog(QDialog):
     def __init__(self, doc, parent=None):
         super().__init__(parent)
         self.doc = doc
-        sc = doc.scene
+        sc = getattr(doc, 'shot', doc.scene)
         self.setWindowTitle('Render')
         self.setMinimumWidth(700)
         s = QSettings()
@@ -215,7 +215,7 @@ class ExportDialog(QDialog):
             self.folder.setText(d)
 
     def _update_labels(self, *_):
-        sc = self.doc.scene.copy()
+        sc = getattr(self.doc, 'shot', self.doc.scene).copy()
         sc.data['render']['final_scale'] = self.res_scale.value()
         dims, h, _ = sc.sim_layout(final=True)
         mem = dims[0] * dims[1] * dims[2] * 88 / 1e9
@@ -262,7 +262,7 @@ class ExportDialog(QDialog):
         self.accept()
 
     def spec(self):
-        sc = self.doc.scene.copy()
+        sc = getattr(self.doc, 'shot', self.doc.scene).copy()
         sc.data['render']['width'], sc.data['render']['height'] = self.w.value(), self.h.value()
         sc.data['render']['final_scale'] = self.res_scale.value()
         return {'scene': sc, 'outputs': self.outputs(), 'frames': (self.first.value(), self.last.value()),

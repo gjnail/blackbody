@@ -38,6 +38,7 @@ class FootageHoldout:
         self.invert = bool(c.get('matte_invert', False))
         self.matte = self.depth = None
         self.errors = []
+        self.roto = [r for r in (getattr(scene, 'roto', None) or []) if r.get('enabled', True) and r.get('keys')]
         for attr, key in (('matte', 'holdout_matte'), ('depth', 'holdout_depth')):
             p = c.get(key, '')
             if not p:
@@ -56,7 +57,7 @@ class FootageHoldout:
 
     @property
     def active(self):
-        return self.matte is not None or self.depth is not None
+        return self.matte is not None or self.depth is not None or bool(self.roto)
 
     def index(self, frame):
         off = int((self.scene.footage or {}).get('offset', 0))
@@ -72,6 +73,14 @@ class FootageHoldout:
                 m = 1.0 - m
         if self.depth is not None:
             d = _channel(self.depth.read(i), 'red')
+        if self.roto:
+            from ..scene.roto import rasterise
+            ref = m if m is not None else d
+            out = self.scene.output_size()
+            size = (ref.shape[1], ref.shape[0]) if ref is not None else out
+            r = rasterise(self.roto, frame, size, out_size=out)
+            if r is not None:
+                m = r if m is None else np.maximum(m, r)
         return m, d
 
     def close(self):

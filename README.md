@@ -125,13 +125,15 @@ Then double-click `Blackbody.bat` on Windows, or run `./blackbody.sh` on macOS o
 
 **Animate it.** Click the ◆ next to a setting to keyframe it. An animation editor lists every animated setting with its keys. You can drag keys in time, add and delete them, and set how each eases into the next.
 
+**Layers, roto and a work view.** Layers put several effects in one shot, such as a campfire in front and a waterfall behind. Each is its own simulation, and they're composited back to front ([Layers](docs/getting-started.md#layers)). Roto shapes drawn around what's in front of the effect, and keyed over the shot, put the effect behind them ([Roto](docs/compositing.md#roto)). The work view lets you look around your scene with a camera of your own while you build it, while the shot and its renders stay put.
+
 The [tutorial](docs/tutorial.md) takes a shot from footage to final render in about 30 minutes.
 
 ## Documentation
 
 | Guide | What is in it |
 |---|---|
-| [Install and first steps](docs/getting-started.md) | Requirements, install, the window, a shot in five steps |
+| [Install and first steps](docs/getting-started.md) | Requirements, install, the window, a shot in five steps, building your own, layers, animation |
 | [Tutorial: your first shot](docs/tutorial.md) | Footage, placing, matching, tracking, keyframes, rendering |
 | [Presets](docs/presets.md) | All 79 built-in effects |
 | [Fire, smoke and sparks](docs/fire.md) | Puffing, swirl, sparks, colour, steam, spreading fire, rooms, flame fronts, meshes |
@@ -141,7 +143,7 @@ The [tutorial](docs/tutorial.md) takes a shot from footage to final render in ab
 | [Lava, and fire with water](docs/lava.md) | Molten liquids and crust, and fire, water and lava together |
 | [Ice, boiling and steam](docs/heat.md) | Freezing, melting, boiling, evaporating |
 | [Weather and clouds](docs/weather.md) | Snow, sleet, freezing rain and hail, and clouds and storms |
-| [Fitting it into your footage](docs/compositing.md) | Holdouts, fire light, lens, haze, noise, lights in the set, OCIO |
+| [Fitting it into your footage](docs/compositing.md) | Holdouts and roto, fire light, lens, haze, noise, lights in the set, OCIO |
 | [Moving shots and scene import](docs/scene-import.md) | The tracker, camera solves, USD scenes, VDB volumes |
 | [Outputs](docs/outputs.md) | EXR layers, deep EXR, ProRes, PNG, composites, OpenVDB, meshes |
 | [Command line and render farms](docs/command-line.md) | Batch renders, wedges, a shared cache, frame ranges on many machines |

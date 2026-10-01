@@ -1,5 +1,5 @@
 {
-  "getting-started": {"image": "media/video/ui-library.jpg", "blurb": "Requirements, installing, the window, and putting a fire into a shot in five steps."},
+  "getting-started": {"image": "media/video/ui-library.jpg", "blurb": "Requirements, installing, the window, a shot in five steps, building your own, layers and animation."},
   "tutorial": {"image": "tutorial/00_result.png", "blurb": "A whole shot in 30 minutes: footage, placing, matching, tracking, keyframes and rendering."},
   "fire": {"image": "media/video/campfire.jpg", "blurb": "Fire presets, puffing and swirl, sparks, colour, steam, spreading fire, rooms, flame fronts and meshes."},
   "fabric": {"image": "media/video/fabric_curtain.jpg", "blurb": "Curtains, flags and towels from real fabrics: blowing, burning through, soaking and steaming."},
@@ -8,7 +8,7 @@
   "lava": {"image": "media/video/lava.jpg", "blurb": "Molten lava that glows and crusts, and fire, water and lava together in one box."},
   "heat": {"image": "media/video/ice_cubes.jpg", "blurb": "Freezing, melting, boiling and evaporating, with water's real heat capacities and latent heats."},
   "weather": {"image": "media/video/cumulus_day.jpg", "blurb": "Snow, sleet, freezing rain and hail decided by the air above, and clouds that build into storms."},
-  "compositing": {"image": "media/img/compare-comp.jpg", "blurb": "Holdouts, fire light on the footage, lens, haze, noise matching, lights in the set and OCIO."},
+  "compositing": {"image": "media/img/compare-comp.jpg", "blurb": "Holdouts and roto, fire light on the footage, lens, haze, noise matching, lights in the set and OCIO."},
   "scene-import": {"image": "media/video/ui-track.jpg", "blurb": "The 2D tracker, camera tracks, USD scenes with cameras, objects and lights, and VDB volumes."},
   "outputs": {"image": "media/img/pass-heat.jpg", "blurb": "EXR layers, deep EXR, ProRes and PNG elements, composites, OpenVDB, and liquid meshes."},
   "command-line": {"image": "media/img/pass-emission.jpg", "blurb": "Batch renders, wedges, a shared disk cache and frame ranges across a render farm."},

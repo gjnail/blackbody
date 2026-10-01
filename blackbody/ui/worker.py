@@ -61,6 +61,7 @@ class EngineWorker(QThread):
         self._last_cache = None
         self._last_progress = 0.0
         self._load_seq = 0      # which scene load (Document.load_seq) the engine is on
+        self.layer_engines = None   # render/layers.LayerEngines: the engines of the shot's other layers
 
     # -- API for the GUI thread -------------------------------------------------------------------
 
@@ -164,6 +165,8 @@ class EngineWorker(QThread):
             self._need = True
         elif kind == 'restart':
             self.engine.invalidate()
+            for e in (self.layer_engines.extra.values() if self.layer_engines is not None else ()):
+                e.invalidate()
             self._need = True
         elif kind == 'cache_range':
             self._cache_range()
@@ -199,10 +202,12 @@ class EngineWorker(QThread):
         """(matte, depth) from the footage holdout settings for a frame, or None."""
         sc = self.scene
         c = sc.data['composite']
+        import json
+        roto = getattr(sc, 'roto', None) or []
         key = (c.get('holdout_matte'), c.get('holdout_depth'), c.get('matte_channel'), c.get('matte_invert'),
-               (sc.footage or {}).get('offset', 0), sc.start, sc.path)
-        if not (c.get('holdout_matte') or c.get('holdout_depth')) or sc.kind == 'liquid':
-            return None
+               (sc.footage or {}).get('offset', 0), sc.start, sc.path, json.dumps(roto, sort_keys=True), sc.output_size())
+        if not (c.get('holdout_matte') or c.get('holdout_depth') or roto):
+            return None   # (a liquid layer is drawn without it: render/layers.py)
         if self._hold is None or self._hold[0] != key:
             from ..io.holdout import FootageHoldout
             if self._hold is not None:
@@ -238,39 +243,63 @@ class EngineWorker(QThread):
             self._last_progress = now
             self.simProgress.emit(float(frac), int(frame))
 
+    def _layers(self):
+        """The shot's layers to draw [(uid, scene)] back to front, and the one being edited (uid, scene)."""
+        from ..render.layers import LayerEngines
+        sc = self.scene
+        if self.layer_engines is None or self.layer_engines.base is not self.engine:
+            self.layer_engines = LayerEngines(self.engine)
+        active_uid = getattr(sc, 'active_uid', 'base')
+        active = sc.layer(active_uid) or sc
+        if active is sc:
+            active_uid = 'base'
+        self.layer_engines.keep({u for u, _ in sc.layer_order(enabled_only=False)})
+        only = getattr(sc, 'view_only', None)
+        if only is not None or self.mode != 'composite':
+            return [(active_uid, active)], (active_uid, active)   # the work view, and the passes: the layer being edited
+        order = sc.layer_order() or [('base', sc)]
+        return order, (active_uid, active)
+
     def _show(self, frame, refine=False):
         sc = self.scene
-        eng = self.engine
-        eng.prepare(sc, final=False, soft=self.live)
-        if frame not in eng.cache and eng.sim_frame != frame:
-            far = eng.sim_frame is None or frame < eng.sim_frame or frame - eng.sim_frame > 2
-            # a long catch-up (pre-roll, a jump) gives way to the UI even while playing, so Pause and edits work
-            ok = eng.simulate_to(sc, frame, progress=self._progress if far else None,
-                                 cancelled=self._interrupted if (far or not self.playing) else None)
-            if not ok:
-                return False
-            if far:
-                self.simProgress.emit(1.0, frame)
+        order, (active_uid, active) = self._layers()
+        LE = self.layer_engines
+        for uid, lay in order:
+            eng = LE.get(uid)
+            eng.prepare(lay, final=False, soft=self.live)
+            if frame not in eng.cache and eng.sim_frame != frame:
+                far = eng.sim_frame is None or frame < eng.sim_frame or frame - eng.sim_frame > 2
+                # a long catch-up (pre-roll, a jump) gives way to the UI even while playing, so Pause and edits work
+                ok = eng.simulate_to(lay, frame, progress=self._progress if far else None,
+                                     cancelled=self._interrupted if (far or not self.playing) else None)
+                if not ok:
+                    return False
+                if far:
+                    self.simProgress.emit(1.0, frame)
         W, H = sc.output_size()
         q = 1.0 if refine else self.quality
         w, h = max(16, int(W * q)), max(16, int(H * q))
         # a liquid element refracts the footage behind it, so it needs the footage too
-        wants_plate = self.mode == 'composite' or (sc.kind == 'liquid' and self.mode == 'fire')
+        wants_plate = self.mode == 'composite' or (active.kind == 'liquid' and self.mode == 'fire')
         plate = self._plate(frame) if wants_plate else None
         fit = plate_fit(self.footage.width, self.footage.height, W, H) if plate is not None else (1.0, 1.0)
         # the refined frame gets motion blur too (from the velocity cached with the frame)
-        eng.render(sc, frame, (w, h), mode=self.mode, final=False, samples=4 if refine else 1,
-                   motion_blur=refine and bool(sc.data['render']['motion_blur']), plate=plate, plate_fit=fit,
-                   holdout=self._holdout(frame))
-        img = to_qimage(eng.display_image())
+        from ..render.layers import render as render_layers
+        front = render_layers(LE, order, frame, (w, h), mode=self.mode, final=False, samples=4 if refine else 1,
+                              motion_blur=refine and bool(sc.data['render']['motion_blur']), plate=plate, plate_fit=fit,
+                              holdout=self._holdout(frame))
+        img = to_qimage(front.display_image())
         self._shown = frame
-        st = eng.stats()
+        eng = LE.get(active_uid)
+        sc = active
+        st = eng.stats() if eng.sim_frame is not None or eng.cache.frames() else front.stats()
         st['refined'] = refine
         st['preview'] = (w, h)
         # colliders the liquid moves, where the simulation put them (drawn there in the viewer)
         st['floats'] = eng.floating_overrides(frame) if sc.kind in ('liquid', 'both') else None
         st['frame'] = frame
-        st['load_seq'] = getattr(sc, 'load_seq', 0)
+        st['load_seq'] = getattr(self.scene, 'load_seq', 0)
+        st['layers'] = len(order)
         self.frameReady.emit(img, frame, st)
         frames = eng.cache.frames()
         if frames != self._last_cache:
@@ -283,9 +312,12 @@ class EngineWorker(QThread):
         if sc is None:
             return
         eng = self.engine
-        eng.prepare(sc, final=False, soft=False)
+        from ..render.layers import LayerEngines, simulate
+        if self.layer_engines is None:
+            self.layer_engines = LayerEngines(eng)
         self.message.emit('Simulating the frame range…')
-        ok = eng.simulate_to(sc, sc.end, progress=self._progress, cancelled=self._interrupted)
+        ok = simulate(self.layer_engines, sc.layer_order() or [('base', sc)], sc.end, progress=self._progress,
+                      cancelled=self._interrupted)
         self.simProgress.emit(1.0, eng.sim_frame or sc.start)
         self.cacheChanged.emit(eng.cache.frames())
         self.message.emit('Frame range cached.' if ok else 'Caching stopped.')
@@ -294,15 +326,19 @@ class EngineWorker(QThread):
         """Render one frame at final quality and hand back the arrays (for 'Export frame')."""
         try:
             sc = spec['scene']
-            eng = self.engine
-            eng.prepare(sc, final=True)
-            eng.simulate_to(sc, spec['frame'], progress=self._progress)
+            from ..render.layers import LayerEngines, render as render_layers, simulate
+            LE = LayerEngines(self.engine) if self.layer_engines is None else self.layer_engines
+            mode = spec.get('mode', 'composite')
+            order = sc.layer_order() or [('base', sc)]
+            if mode != 'composite':
+                order = [('base', sc)]
+            simulate(LE, order, spec['frame'], final=True, progress=self._progress)
             W, H = sc.output_size()
             plate = self._plate(spec['frame'])
             fit = plate_fit(self.footage.width, self.footage.height, W, H) if plate is not None else (1.0, 1.0)
-            eng.render(sc, spec['frame'], (W, H), mode=spec.get('mode', 'composite'), final=True,
-                       samples=sc.data['render']['aa_samples'], motion_blur=sc.data['render']['motion_blur'],
-                       plate=plate, plate_fit=fit, holdout=self._holdout(spec['frame']))
+            eng = render_layers(LE, order, spec['frame'], (W, H), mode=mode, final=True,
+                                samples=sc.data['render']['aa_samples'], motion_blur=sc.data['render']['motion_blur'],
+                                plate=plate, plate_fit=fit, holdout=self._holdout(spec['frame']))
             result = {'display': eng.display_image(), 'aov': eng.aovs(), 'linear': eng.linear_comp(),
                       'frame': spec['frame'], 'path': spec.get('path'), 'mode': spec.get('mode', 'composite')}
             self.stillDone.emit(result, '')
@@ -310,6 +346,8 @@ class EngineWorker(QThread):
             self.stillDone.emit(None, f'{ex}')
         finally:
             self.engine.invalidate()
+            for e in (self.layer_engines.extra.values() if self.layer_engines is not None else ()):
+                e.invalidate()
 
     def _run_job(self, spec):
         from ..render.job import RenderJob
@@ -319,7 +357,7 @@ class EngineWorker(QThread):
         try:
             job = RenderJob(sc, spec['outputs'], self.engine, frames=spec['frames'], final=True,
                             footage=self.footage if sc.footage else None, samples=spec.get('samples'),
-                            motion_blur=spec.get('motion_blur'))
+                            motion_blur=spec.get('motion_blur'), engines=self.layer_engines)
             last_preview = [0.0]
 
             def progress(frac, text):

@@ -107,6 +107,14 @@ class Scene:
         self.fabrics = []       # cloth: curtains, flags, sheets (engine/cloth.py)
         self.footage = None     # {'path', 'fps', 'offset'}
         self.track = None       # {'points': {frame: [x, y]}}
+        self.roto = []          # roto shapes over the footage (scene/roto.py): a holdout drawn in the app
+        # More effects in the same shot, each its own simulation (a Scene), drawn back to front with this
+        # scene's own effect at base_index among them. They share the shot (SHARED_COMPOSITE, the render
+        # settings, the footage, the roto and the track's points; see sync_layers).
+        self.layers = []
+        self.base_index = 0
+        self.uid = 'base'
+        self.enabled = True
         self.preset = None
         self.notes = ''
         self.path = None
@@ -193,6 +201,8 @@ class Scene:
                 for v in d.values():
                     if isinstance(v, Curve):
                         out.update(v.frames())
+        for r in getattr(self, 'roto', None) or []:
+            out.update(float(f) for f in r.get('keys', {}))
         return sorted(out)
 
     # -- time ------------------------------------------------------------------------------------
@@ -1044,6 +1054,9 @@ class Scene:
             'footage': self.footage,
             'track': ({'points': {str(k): list(v) for k, v in self.track.get('points', {}).items()},
                        'offset': list(self.track.get('offset', (0, 0)))} if self.track else None),
+            'roto': getattr(self, 'roto', None) or [],
+            'layers': [dict(l.to_dict(), uid=l.uid, enabled=bool(l.enabled)) for l in getattr(self, 'layers', None) or []],
+            'base_index': int(getattr(self, 'base_index', 0)),
         }
 
     @classmethod
@@ -1097,7 +1110,41 @@ class Scene:
         if tr and tr.get('points'):
             s.track = {'points': {int(float(k)): tuple(v) for k, v in tr['points'].items()},
                        'offset': tuple(tr.get('offset', (0, 0)))}
+        s.roto = [dict(r) for r in (d.get('roto') or []) if isinstance(r, dict)]
+        for i, ld in enumerate(d.get('layers') or []):
+            if not isinstance(ld, dict):
+                continue
+            ld = dict(ld, layers=[])   # layers do not nest
+            layer = cls.from_dict(ld)
+            layer.uid = str(ld.get('uid') or f'layer{i + 1}')
+            layer.enabled = bool(ld.get('enabled', True))
+            s.layers.append(layer)
+        s.base_index = max(0, min(int(d.get('base_index', 0) or 0), len(s.layers)))
+        if s.layers:
+            s.sync_layers()
         return s
+
+    # -- layers ------------------------------------------------------------------------------------
+
+    def layer_order(self, enabled_only=True):
+        """The shot's effects back to front: [(uid, scene)] (this scene's own is 'base')."""
+        out = [(l.uid, l) for l in getattr(self, 'layers', None) or []]
+        out.insert(min(getattr(self, 'base_index', 0), len(out)), ('base', self))
+        return [(u, s) for u, s in out if s.enabled or not enabled_only]
+
+    def layer(self, uid):
+        if uid in (None, 'base'):
+            return self
+        return next((l for l in self.layers if l.uid == uid), None)
+
+    def sync_layers(self, source=None):
+        """Give every layer the shot's shared settings, from `source` (the layer just edited) or this scene."""
+        src = source or self
+        scenes = [self] + list(self.layers)
+        for s in scenes:
+            if s is src:
+                continue
+            share_shot(src, s)
 
     def save(self, path):
         path = Path(path)
@@ -1151,6 +1198,30 @@ def relink(footage, project_dir):
         if c.exists():
             return str(c.resolve())
     return str(cands[0])
+
+
+# What every layer of a shot has in common (the footage and how it is read, the frame, the output look,
+# the holdouts): set on one, set on all
+SHARED_COMPOSITE = ('plate_transform', 'ocio_plate', 'plate_exposure', 'view', 'ocio_config', 'ocio_working', 'ocio_display',
+                    'ocio_view', 'ocio_look', 'exr_space', 'knee', 'highlight_white', 'holdout_matte', 'matte_channel',
+                    'matte_invert', 'holdout_depth', 'depth_kind', 'depth_scale', 'grain_match', 'grain', 'bg', 'bg_checker')
+
+
+def share_shot(src, dst):
+    """Copy the shot's shared settings from one layer to another. The track's points are shared; where each
+    layer sits on them (the track's offset) is its own."""
+    import copy as _copy
+    dst.footage = _copy.deepcopy(src.footage)
+    dst.roto = _copy.deepcopy(getattr(src, 'roto', []))
+    dst.data['render'] = _copy.deepcopy(src.data['render'])
+    for k in SHARED_COMPOSITE:
+        if k in src.data['composite']:
+            dst.data['composite'][k] = _copy.deepcopy(src.data['composite'][k])
+    if src.track and src.track.get('points'):
+        off = (dst.track or {}).get('offset', src.track.get('offset', (0.0, 0.0)))
+        dst.track = {'points': dict(src.track['points']), 'offset': off}
+    else:
+        dst.track = None
 
 
 def track_point(track, frame):

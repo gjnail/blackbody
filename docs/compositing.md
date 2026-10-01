@@ -19,6 +19,16 @@ A collider marked *Hides fire* (on by default) hides the fire, smoke and embers 
 
 Composite › *Holdout matte* takes a matte sequence of whatever is in front of the fire (any roto or keyed matte, numbered like the footage): the fire, smoke and embers go behind it. *Depth pass* takes the footage's depth (from a 3D scene, a lidar camera or a depth estimator; Z, distance or inverse depth, in any units): the fire is hidden only behind the footage's surfaces, so it can burn in front of an object and behind it, and the fire light lands on the footage's own surfaces, shaped from the depth pass.
 
+### Roto
+
+For something in front of the effect that you have no matte for, draw one: click **Roto** in the view bar (or press **R**) and click around the object in the picture, then click the first point again (or press Enter) to close the shape. The fire, smoke and embers go behind it.
+
+- Drag a point, or drag inside the shape to move all of it. A change on a frame keys the shape there, so you follow a moving object by stepping through the shot and adjusting it; between keys the points move in a straight line. The keys show on the timeline.
+- Ctrl+click an edge to add a point; right-click a point to remove it. Delete removes the selected shape.
+- The bar over the viewer picks the shape, softens its edge (*Feather*, in pixels of the output frame), turns it off, or inverts it (the effect then shows only inside it).
+
+Roto shapes are saved with the scene and work in renders and on the command line, alongside a holdout matte if you also have one. They hide fire and smoke; in a liquid scene, put a collider over the object instead (with *In the shot* on).
+
 ## Light from the fire
 
 ### Fire light on surfaces

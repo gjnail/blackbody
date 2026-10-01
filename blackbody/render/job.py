@@ -100,8 +100,9 @@ def infer_output(path, content=None, profile=None):
 
 class RenderJob:
     def __init__(self, scene, outputs, engine, frames=None, final=True, footage=None, size=None, samples=None,
-                 motion_blur=None, from_cache=False):
+                 motion_blur=None, from_cache=False, engines=None):
         self.scene = scene
+        self.engines = engines   # render/layers.LayerEngines for a shot with layers (made here if not given)
         self.outputs = list(outputs)
         self.engine = engine
         r = scene.data['render']
@@ -148,6 +149,10 @@ class RenderJob:
         need_fabric = [o for o in self.outputs if o.kind == 'mesh'] if sc.fabrics else []
         audio_src = sc.footage['path'] if (sc.footage and self.footage is not None and self.footage.audio) else None
         total = self.last - self.first + 1
+        from .layers import LayerEngines, merge_elements, render as render_layers, simulate as simulate_layers
+        order = sc.layer_order() or [('base', sc)]
+        layered = [x for x in order if x[0] != 'base']   # the shot's other layers, each its own simulation
+        LE = self.engines if (self.engines is not None and self.engines.base is eng) else LayerEngines(eng)
         try:
             for i, frame in enumerate(range(self.first, self.last + 1)):
                 if (cancelled and cancelled()) or self.cancelled:
@@ -165,8 +170,28 @@ class RenderJob:
                 else:
                     eng.simulate_to(sc, frame, progress=sim_progress if i == 0 else None, cancelled=cancelled,
                                     cache=eng.cache.disk is not None)
+                if layered and not simulate_layers(LE, layered, frame, final=self.final, cancelled=cancelled):
+                    self.cancelled = True
+                    break
                 holdout = hold.read(frame) if hold is not None else None
-                if need_elem:
+                if need_elem and layered:
+                    # each layer's element, merged back to front; the extra passes are the base layer's
+                    beauties, aov = [], None
+                    for uid, lay in order:
+                        e = LE.get(uid)
+                        e.render(lay, frame, (W, H), mode='fire', final=self.final, samples=self.samples,
+                                 motion_blur=self.motion_blur, plate=self._plate(frame) if lay.kind in ('liquid', 'both') else None,
+                                 plate_fit=self._plate_fit(), holdout=holdout if lay.kind != 'liquid' else None)
+                        a = e.aovs()
+                        beauties.append(a['beauty'])
+                        if uid == 'base' or aov is None:
+                            aov = a
+                    aov = dict(aov)
+                    aov['beauty'] = merge_elements(beauties).astype(np.float16)
+                    for o in self.outputs:
+                        if o.content == 'element' and o.kind not in ('vdb', 'deep', 'mesh'):
+                            self._write_element(o, frame, aov, aov['beauty'], None, writers, audio_src)
+                elif need_elem:
                     liquid = sc.kind == 'liquid'
                     # a liquid refracts the footage, so its element is rendered against it
                     eng.render(sc, frame, (W, H), mode='fire', final=self.final, samples=self.samples,
@@ -185,10 +210,10 @@ class RenderJob:
                         elif o.content == 'element' and o.kind not in ('vdb', 'deep', 'mesh'):
                             self._write_element(o, frame, aov, elem_lin, glow, writers, audio_src)
                 if need_comp:
-                    eng.render(sc, frame, (W, H), mode='composite', final=self.final, samples=self.samples,
-                               motion_blur=self.motion_blur, plate=self._plate(frame), plate_fit=self._plate_fit(),
-                               holdout=holdout)
-                    comp_lin = eng.linear_comp()
+                    front = render_layers(LE, order, frame, (W, H), mode='composite', final=self.final, samples=self.samples,
+                                          motion_blur=self.motion_blur, plate=self._plate(frame), plate_fit=self._plate_fit(),
+                                          holdout=holdout)
+                    comp_lin = front.linear_comp()
                     for o in self.outputs:
                         if o.content == 'composite' and o.kind not in ('vdb', 'mesh'):
                             self._write_comp(o, frame, comp_lin, writers, audio_src)

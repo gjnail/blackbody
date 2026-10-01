@@ -8,6 +8,10 @@ Notable changes to Blackbody. The format follows
 
 ### Added
 
+- Layers: several effects in one shot (a campfire in front, a waterfall behind), each its own simulation with its own
+  box and scale, composited back to front in the viewer, renders and the command line.
+- Roto: shapes drawn around what is in front of the effect, keyed over the shot, hide the effect behind them.
+- Work view: an orbit camera of your own for building the scene; the shot's camera is drawn as a frustum.
 - Contributor guide, code of conduct, security policy, issue and pull request
   templates, and CI that checks Windows, macOS and Linux.
 - Ko-fi links in the README and on the website.

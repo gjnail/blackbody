@@ -54,10 +54,13 @@ class Document(QObject):
     footageChanged = Signal(object)   # footage info dict or None
     playingChanged = Signal(bool)
     loadStarted = Signal(str)         # a different scene replaced this one (preset, file, new): its name
+    viewChanged = Signal()            # the work view turned on or off, or moved
+    layersChanged = Signal()          # a layer added, removed, renamed, hidden, moved, or another one picked
 
     def __init__(self, worker=None, parent=None):
         super().__init__(parent)
         self.worker = worker
+        self.active = 'base'    # the layer being edited (its uid); self.scene is that layer, self.shot the whole shot
         self.scene = presets.make('campfire')
         self.undo = QUndoStack(self)
         self.undo.cleanChanged.connect(lambda clean: self.dirtyChanged.emit(not clean))
@@ -67,19 +70,153 @@ class Document(QObject):
         self.playing = False
         self.load_seq = 0   # counts scene loads; the engine tags its frames with it, so the viewer knows a frame is stale
         self.baseline = self.scene.copy()   # the scene as loaded (preset or file): settings changed from it are marked
+        self.work_view = None   # ui/workview.WorkView while the viewer looks through a camera of its own
         self._push_timer = QTimer(self)
         self._push_timer.setSingleShot(True)
         self._push_timer.setInterval(0)
         self._push_timer.timeout.connect(self._push)
         self._gen = 0
 
+    # -- the shot and its layers -------------------------------------------------------------------------
+
+    @property
+    def scene(self):
+        """The layer being edited (the shot itself when it has no other layers)."""
+        return self.shot.layer(self.active) or self.shot
+
+    @scene.setter
+    def scene(self, value):
+        """A whole new shot (a file opened, a new scene): edit its base layer."""
+        self.shot = value
+        self.active = 'base'
+
+    def layers(self):
+        """[(uid, scene)] back to front, hidden ones too."""
+        return self.shot.layer_order(enabled_only=False)
+
+    def set_active(self, uid):
+        """Edit another layer of the shot."""
+        if uid == self.active or self.shot.layer(uid) is None:
+            return
+        self.active = uid
+        self.baseline = self.scene.copy()
+        self.selection = ('emitter', 0) if self.scene.emitters else ('section', 'domain')
+        if self.work_view is not None:
+            from .workview import WorkView
+            self.work_view = WorkView.behind_shot(self.scene, self.frame)
+        self.sceneReplaced.emit()
+        self.layersChanged.emit()
+        self.push_soon()
+
+    def add_layer(self, scale='person'):
+        """A new, empty layer in front of the others, to build or load an effect into. Returns its uid."""
+        import copy as _copy
+        import uuid
+        from ..scene import components
+        from ..scene.model import share_shot
+        uid = 'l' + uuid.uuid4().hex[:8]
+
+        def fn(s):
+            shot = self.shot
+            lay = components.new_scene('auto', scale)
+            lay.uid = uid
+            lay.name = f'Layer {len(shot.layers) + 2}'
+            share_shot(shot, lay)
+            cam = _copy.deepcopy(shot.data['camera'])   # placed where the base layer is, a little to the side
+            for k in ('distance', 'target_y', 'near', 'far'):
+                cam[k] = lay.data['camera'][k]
+            if not isinstance(cam.get('anchor_x'), dict) and isinstance(cam.get('anchor_x'), float):
+                cam['anchor_x'] = min(0.85, cam['anchor_x'] + 0.2) if cam['anchor_x'] < 0.6 else max(0.15, cam['anchor_x'] - 0.2)
+            lay.data['camera'] = cam
+            shot.layers.append(lay)
+        self.edit('Add layer', fn, structure=True)
+        self.set_active(uid)
+        self.layersChanged.emit()
+        return uid
+
+    def remove_layer(self, uid):
+        if uid == 'base':
+            return
+        if self.active == uid:
+            self.set_active('base')
+        self.edit('Delete layer', lambda s: setattr(self.shot, 'layers', [l for l in self.shot.layers if l.uid != uid]), structure=True)
+        self.layersChanged.emit()
+
+    def layer_set(self, uid, key, value, text):
+        """Rename a layer ('name') or show/hide it ('enabled')."""
+        def fn(s):
+            lay = self.shot.layer(uid)
+            if lay is not None:
+                setattr(lay, key, value)
+        self.edit(text, fn, structure=True)
+        self.layersChanged.emit()
+
+    def move_layer(self, uid, delta):
+        """Move a layer back (-1) or forward (+1) among the others: the last one is in front."""
+        order = [u for u, _ in self.layers()]
+        if uid not in order:
+            return
+        i = order.index(uid)
+        j = max(0, min(len(order) - 1, i + delta))
+        if i == j:
+            return
+        order.insert(j, order.pop(i))
+
+        def fn(s):
+            shot = self.shot
+            by = {l.uid: l for l in shot.layers}
+            shot.layers = [by[u] for u in order if u != 'base']
+            shot.base_index = order.index('base')
+        self.edit('Move layer', fn, structure=True)
+        self.layersChanged.emit()
+
+    def duplicate_layer(self, uid):
+        import uuid
+        new = 'l' + uuid.uuid4().hex[:8]
+
+        def fn(s):
+            src = self.shot.layer(uid)
+            lay = src.copy()
+            lay.layers, lay.base_index = [], 0
+            lay.uid = new
+            lay.name = f'{src.name} copy'
+            lay.enabled = True
+            self.shot.layers.append(lay)
+        self.edit('Duplicate layer', fn, structure=True)
+        self.set_active(new)
+        self.layersChanged.emit()
+
     # -- engine sync ----------------------------------------------------------------------------
 
     def _push(self):
         if self.worker is not None:
-            c = self.scene.copy()
+            c = self.shot.copy()
             c.load_seq = self.load_seq
+            c.active_uid = self.active
+            if self.work_view is not None:   # the work view shows the layer being edited, on its own
+                c.view_only = self.active
+                lay = c.layer(self.active) or c
+                self.work_view.apply(lay)
+                c.footage = None
             self.worker.post('scene', c)
+
+    def camera(self, frame):
+        """The camera the viewer looks through at a frame: the shot's, or the work view's."""
+        spec, fire = self.scene.camera(frame)
+        if self.work_view is not None:
+            spec = self.work_view.spec(spec, fire)
+        return spec, fire
+
+    def set_work_view(self, wv):
+        """Look through a work view (None: back to the shot's camera). Only the viewer changes."""
+        self.work_view = wv
+        self.viewChanged.emit()
+        self.push_soon()
+
+    def move_work_view(self):
+        """The work view moved: show the scene through it (cached frames are re-drawn, not re-simulated)."""
+        self.viewChanged.emit()
+        self.push_soon()
 
     def push_soon(self):
         self._push_timer.start()
@@ -87,13 +224,18 @@ class Document(QObject):
     # -- undo plumbing -----------------------------------------------------------------------------
 
     def _snap(self):
-        return json.dumps(self.scene.to_dict())
+        return json.dumps({'shot': self.shot.to_dict(), 'active': self.active})
 
     def _restore(self, snap):
-        path = self.scene.path
+        path = self.shot.path
         old = (self.scene.preset, self.scene.kind)
-        self.scene = Scene.from_dict(json.loads(snap))
-        self.scene.path = path
+        d = json.loads(snap)
+        active = d.get('active', 'base')
+        self.scene = Scene.from_dict(d['shot'] if 'shot' in d else d)
+        self.shot.path = path
+        if self.shot.layer(active) is not None:
+            self.active = active
+        self.layersChanged.emit()
         if (self.scene.preset, self.scene.kind) != old:   # undoing or redoing a preset load
             self._begin_load(self.scene.name)
             self.baseline = self.scene.copy()
@@ -113,6 +255,8 @@ class Document(QObject):
         """Apply fn(scene) as one undoable step."""
         before = self._snap()
         fn(self.scene)
+        if self.shot.layers:
+            self.shot.sync_layers(source=self.scene)   # what one layer changes of the shot, every layer has
         after = self._snap()
         if before == after:
             return
@@ -341,16 +485,26 @@ class Document(QObject):
                 fresh.data['camera'] = cam
                 fresh.data['render'] = dict(s.data['render'])
                 fresh.data['composite'] = dict(s.data['composite'])
-                fresh.footage, fresh.track = s.footage, s.track
+                fresh.footage, fresh.track, fresh.roto = s.footage, s.track, list(getattr(s, 'roto', []))
             saved = {'path': s.path} if s.path else {}
+            saved.update(layers=s.layers, base_index=s.base_index, uid=s.uid, enabled=s.enabled)
+            if s is not self.shot:
+                saved['name'] = s.name
             s.__dict__.update(fresh.__dict__)
             s.__dict__.update(saved)
+            if s is not self.shot:
+                from ..scene.model import share_shot
+                share_shot(self.shot, s)
         name = components.new_scene(kind, scale).name
         self._begin_load(name)
         self.edit('New sky scene' if kind == 'cloud' else 'New scene', fn, structure=True)
         self._loaded()
         if not self.scene.emitters:
             self.selection = ('section', 'domain')
+
+    def roto_edit(self, text, fn):
+        """An undoable change to the roto shapes: fn(list of shapes)."""
+        self.edit(text, lambda s: fn(s.roto), structure=True)
 
     def rename(self, kind, i, name):
         def fn(s):
@@ -397,6 +551,12 @@ class Document(QObject):
         self.load_seq += 1
         self.loadStarted.emit(name or 'Untitled')
 
+    def _reframe_work_view(self):
+        if self.work_view is not None:
+            from .workview import WorkView
+            self.work_view = WorkView.framing(self.scene)
+            self.viewChanged.emit()
+
     def has_shot(self):
         """The scene is matched to a real shot (footage, a 2D track or an animated camera), which a preset
         loaded with Keep my shot keeps. Without one, a preset comes with its own camera and frame range."""
@@ -419,6 +579,7 @@ class Document(QObject):
         s = Scene.load(path)
         self.scene = s
         self.baseline = s.copy()
+        self._reframe_work_view()
         self._begin_load(s.name)
         self.undo.clear()
         self.frame = s.start
@@ -429,13 +590,13 @@ class Document(QObject):
         self.push_soon()
 
     def save(self, path=None):
-        path = path or self.scene.path
+        path = path or self.shot.path
         if not path:
             raise ValueError('no path')
         if not str(path).lower().endswith(PROJECT_EXT):
             path = str(path) + PROJECT_EXT
-        self.scene.name = self.scene.name if self.scene.name not in ('', 'Untitled') else Path(path).stem
-        self.scene.save(path)
+        self.shot.name = self.shot.name if self.shot.name not in ('', 'Untitled') else Path(path).stem
+        self.shot.save(path)
         self.undo.setClean()
         return path
 
@@ -450,8 +611,14 @@ class Document(QObject):
             else:
                 fresh = presets.make(name)
                 saved = {'path': s.path, 'name': s.name} if s.path else {}   # a saved project stays that project
+                saved.update(layers=s.layers, base_index=s.base_index, uid=s.uid, enabled=s.enabled)
+                if s is not self.shot:
+                    saved.pop('name', None)
                 s.__dict__.update(fresh.__dict__)
                 s.__dict__.update(saved)
+                if s is not self.shot:   # a layer keeps the shot it is in
+                    from ..scene.model import share_shot
+                    share_shot(self.shot, s)
         self._begin_load(presets.PRESETS[name]['name'])
         self.edit(f'Preset: {presets.PRESETS[name]["name"]}', fn, structure=True)
         self._loaded()
@@ -478,6 +645,7 @@ class Document(QObject):
     def _loaded(self):
         """After a preset load: select its first emitter and start from the first frame."""
         self.baseline = self.scene.copy()
+        self._reframe_work_view()
         self.selection = ('emitter', 0) if self.scene.emitters else ('section', 'domain')
         self.frame = self.scene.start
         self.sceneReplaced.emit()
@@ -519,6 +687,8 @@ class Document(QObject):
                 self.edit('Import footage', fn, structure=True)
             else:
                 fn(self.scene)
+                if self.shot.layers:
+                    self.shot.sync_layers(source=self.scene)
             if self.baseline is not None:
                 fn(self.baseline)   # the size, rate and range the footage sets are the shot's, not changes to the effect
             self.sceneReplaced.emit()

@@ -644,6 +644,14 @@ def _g_crate(p, s):
     p.drawLine(QPointF(s * 0.84, s * 0.5), QPointF(s * 0.5, s * 0.68))
 
 
+def _g_roto(p, s):
+    pts = [QPointF(s * 0.2, s * 0.3), QPointF(s * 0.62, s * 0.14), QPointF(s * 0.86, s * 0.56), QPointF(s * 0.44, s * 0.86),
+           QPointF(s * 0.14, s * 0.66)]
+    p.drawPolygon(QPolygonF(pts))
+    for q in pts:
+        p.drawRect(QRectF(q.x() - s * 0.05, q.y() - s * 0.05, s * 0.1, s * 0.1))
+
+
 def _g_book(p, s):
     p.drawRoundedRect(QRectF(s * 0.18, s * 0.14, s * 0.64, s * 0.72), s * 0.05, s * 0.05)
     p.drawLine(QPointF(s * 0.32, s * 0.14), QPointF(s * 0.32, s * 0.86))
@@ -662,7 +670,7 @@ GLYPHS = {
     'logs': _g_logs, 'pool': _g_pool, 'line': _g_line, 'torch': _g_torch, 'ring': _g_ring, 'burst': _g_burst, 'jet': _g_jet,
     'spiral': _g_spiral, 'steam': _g_steam, 'pour': _g_pour, 'fountain': _g_fountain, 'ball': _g_ball, 'pillar': _g_pillar,
     'wall': _g_wall, 'house': _g_house, 'car': _g_car, 'hill': _g_hill, 'flag': _g_flag, 'spot': _g_spot, 'window': _g_window,
-    'mesh': _g_mesh, 'crate': _g_crate,
+    'mesh': _g_mesh, 'crate': _g_crate, 'roto': _g_roto,
 }
 
 

@@ -73,6 +73,7 @@ class ViewBar(QWidget):
         super().__init__()
         self.modes = {}          # key: button
         self.hidden = ()         # views the scene has nothing for
+        self.on_level = None     # called when the bar gets narrower or wider (the view names shorten)
         self.mode_combo = None
         self.texts = []          # (widget, text) shown only when there is room
         self.compact = None
@@ -81,9 +82,11 @@ class ViewBar(QWidget):
     def resizeEvent(self, e):
         super().resizeEvent(e)
         w = self.width()
-        level = 0 if w >= 900 else (1 if w >= 700 else 2)   # 1: toggles lose their words; 2: views fold into a list
+        level = 0 if w >= 1060 else (1 if w >= 760 else 2)   # 1: short words, toggles without; 2: views fold into a list
         if level != self.compact:
             self.compact = level
+            if self.on_level is not None:
+                self.on_level()
             for k, b in self.modes.items():
                 b.setVisible(level < 2 and k not in self.hidden)
             self.mode_combo.setVisible(level == 2)
@@ -170,6 +173,9 @@ class MainWindow(QMainWindow):
         cv.setSpacing(0)
         self.viewport = Viewport(self.doc)
         cv.addWidget(self._view_bar())
+        from .layerstrip import LayerStrip
+        self.layer_strip = LayerStrip(self.doc)
+        cv.addWidget(self.layer_strip)
         cv.addWidget(self.viewport, 1)
         self.setCentralWidget(centre)
 
@@ -286,6 +292,9 @@ class MainWindow(QMainWindow):
         hb('open', ' Open', self.open_dialog, 'Open a scene (Ctrl+O)')
         hb('save', ' Save', self.save, 'Save the scene (Ctrl+S)')
         h.addWidget(_vsep())
+        hb('layers', ' Layer', self.add_layer, 'Add a layer: another effect in the same shot, with its own simulation box, '
+           'scale and settings, drawn in front of the others (a fire on the left and a waterfall on the right)')
+        h.addWidget(_vsep())
 
         def ib(glyph, tip, fn):
             b = QToolButton()
@@ -352,6 +361,7 @@ class MainWindow(QMainWindow):
         guard_wheel(self.mode_combo)
         self.mode_combo.hide()
         bar.mode_combo = self.mode_combo
+        bar.on_level = lambda: QTimer.singleShot(0, self._sync_modes)
         seg.addWidget(self.mode_combo)
         h.addStretch(1)
         ql = QLabel('Preview')
@@ -384,6 +394,13 @@ class MainWindow(QMainWindow):
         self.guides_btn.toggled.connect(self._guides)
         self.stats_btn = toggle('stats', 'Stats', 'Show simulation statistics over the picture', QSettings().value('ui/stats', False, type=bool))
         self.stats_btn.toggled.connect(self._stats)
+        self.work_btn = toggle('camera', 'Work view', 'Look around the scene with a camera of your own while you build it: drag to orbit, '
+                               'middle-drag to pan, wheel to move closer, F to frame the box. The shot, its camera and the renders '
+                               'do not change (W)', False)
+        self.work_btn.toggled.connect(self._work_view)
+        self.roto_btn = toggle('roto', 'Roto', 'Draw shapes around what is in front of the effect in your footage: the effect goes '
+                               'behind them. Key them over the shot as the object moves (R)', False)
+        self.roto_btn.toggled.connect(self._roto)
         self.viewport.show_stats = self.stats_btn.isChecked()
         fit = QToolButton()
         fit.setIcon(icons.glyph_icon('fit', theme.MUTED, 16, active=theme.TEXT))
@@ -429,6 +446,7 @@ class MainWindow(QMainWindow):
         self._act(e, 'Search settings', self.focus_settings_search, 'Ctrl+F')
         self._act(e, 'Search effects', self.focus_effects, 'Ctrl+E')
         self._act(e, 'Create', self.focus_create)
+        self._act(e, 'Add layer', self.add_layer, 'Ctrl+L')
         s = mb.addMenu('&Simulation')
         self._act(s, 'Play / pause', lambda: self.doc.set_playing(not self.doc.playing))
         self._act(s, 'Restart simulation', lambda: self.worker.post('restart'), 'Ctrl+Backspace')
@@ -455,6 +473,8 @@ class MainWindow(QMainWindow):
         v.addSeparator()
         self._act(v, 'Fit', self.viewport.fit, 'F')
         self._act(v, 'Guides', lambda: self.guides_btn.toggle(), 'G')
+        self._act(v, 'Work view (a camera of your own)', lambda: self.work_btn.toggle(), 'W')
+        self._act(v, 'Roto (shapes in front of the effect)', lambda: self.roto_btn.toggle(), 'R')
         self._act(v, 'Statistics', lambda: self.stats_btn.toggle())
         v.addSeparator()
         for d in (self.d_lib, self.d_props, self.d_tl):
@@ -600,11 +620,13 @@ class MainWindow(QMainWindow):
         kind = self.doc.scene.kind
         labels = mode_labels(kind)
         hidden = HIDDEN_MODES.get(kind, ())
-        compact = self.centralWidget().layout().itemAt(0).widget().compact == 2
+        bar = self.centralWidget().layout().itemAt(0).widget()
+        compact = bar.compact == 2
+        short = {'Composite': 'Comp', 'Emission': 'Emis.', 'On footage': 'Ground'} if bar.compact == 1 else {}
         self.centralWidget().layout().itemAt(0).widget().hidden = hidden
         for i, k in enumerate(VIEW_KEYS):
             b = self.mode_group.button(i)
-            b.setText(labels[k])
+            b.setText(short.get(labels[k], labels[k]))
             b.setVisible(k not in hidden and not compact)
             self.mode_combo.setItemText(i, labels[k])
         self.viewport.mode_labels = labels
@@ -635,6 +657,31 @@ class MainWindow(QMainWindow):
         self.viewport.show_stats = on
         self.viewport.update()
 
+    def _work_view(self, on):
+        if on == (self.doc.work_view is not None):
+            return
+        if on:
+            if self.roto_btn.isChecked():
+                self.roto_btn.setChecked(False)
+            from .workview import WorkView
+            wv = getattr(self, '_last_work_view', None)
+            if wv is None or getattr(self, '_last_work_seq', None) != self.doc.load_seq:
+                wv = WorkView.behind_shot(self.doc.scene, self.doc.frame)
+            self.doc.set_work_view(wv)
+            self.msg.setText('Work view: your own camera for building the scene. The shot and its renders are unchanged. W goes back.')
+        else:
+            self._last_work_view, self._last_work_seq = self.doc.work_view, self.doc.load_seq
+            self.doc.set_work_view(None)
+            self.msg.setText('Back to the shot\u2019s camera.')
+
+    def _roto(self, on):
+        if on and self.work_btn.isChecked():
+            self.work_btn.setChecked(False)   # roto is drawn over the footage, through the shot's camera
+        self.viewport.set_roto_mode(on)
+        if on:
+            self.viewport.setFocus()
+            self.msg.setText('Roto: click around what is in front of the effect, then click the first point to close the shape.')
+
     def _live(self, on):
         self.worker.post('live', on)
 
@@ -643,6 +690,14 @@ class MainWindow(QMainWindow):
         self.d_lib.raise_()
         self.left.show_page('effects')
         self.library.focus_search()
+
+    def add_layer(self):
+        self.doc.add_layer(self.create.scale.currentData() or 'person')
+        self.left.show_page('create')
+        self.msg.setText('New layer, in front of the others. Load an effect into it from Effects, or build one in Create; '
+                         'the strip over the viewer picks which layer you edit.')
+        if not self.doc.playing:
+            self.doc.set_playing(True)
 
     def focus_create(self):
         self.d_lib.show()
@@ -741,19 +796,19 @@ class MainWindow(QMainWindow):
         self.msg.setText(f'Opened {Path(path).name}')
 
     def save(self):
-        if not self.doc.scene.path:
+        if not self.doc.shot.path:
             return self.save_as()
         try:
             self.doc.save()
-            self._add_recent(self.doc.scene.path)
-            self.msg.setText(f'Saved {Path(self.doc.scene.path).name}')
+            self._add_recent(self.doc.shot.path)
+            self.msg.setText(f'Saved {Path(self.doc.shot.path).name}')
             return True
         except Exception as ex:
             QMessageBox.warning(self, 'Save', f'Could not save:\n{ex}')
             return False
 
     def save_as(self):
-        start = self.doc.scene.path or str(Path(QSettings().value('ui/last_dir', str(Path.home()))) / f'{self.doc.scene.name}{PROJECT_EXT}')
+        start = self.doc.shot.path or str(Path(QSettings().value('ui/last_dir', str(Path.home()))) / f'{self.doc.shot.name}{PROJECT_EXT}')
         path, _ = QFileDialog.getSaveFileName(self, 'Save scene', start, SCENE_FILTER)
         if not path:
             return False
@@ -839,7 +894,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         self.msg.setText('Rendering the frame at final quality…')
-        self.worker.post('still', {'scene': self.doc.scene.copy(), 'frame': self.doc.frame, 'path': path,
+        self.worker.post('still', {'scene': self.doc.shot.copy(), 'frame': self.doc.frame, 'path': path,
                                    'mode': 'fire' if path.lower().endswith('.exr') else self.viewport.mode})
 
     def _still_done(self, result, err):
@@ -953,7 +1008,7 @@ class MainWindow(QMainWindow):
     def _do_autosave(self):
         if self.isWindowModified():
             try:
-                self.doc.scene.copy().save(app_data() / f'autosave{PROJECT_EXT}')
+                self.doc.shot.copy().save(app_data() / f'autosave{PROJECT_EXT}')
             except Exception:
                 pass
 
@@ -962,15 +1017,15 @@ class MainWindow(QMainWindow):
         if p.exists() and not QSettings().value('ui/clean_exit', True, type=bool):
             if QMessageBox.question(self, 'Recover', 'Blackbody did not close cleanly last time. Open the autosaved scene?') == QMessageBox.Yes:
                 self.open_path(str(p))
-                self.doc.scene.path = None
+                self.doc.shot.path = None
         QSettings().setValue('ui/clean_exit', False)
 
     def _update_title(self):
-        name = self.doc.scene.name or 'Untitled'
+        name = self.doc.shot.name or 'Untitled'
         modified = not self.doc.undo.isClean()
         self.setWindowTitle(f'{name}[*] — {blackbody.APP_NAME}')
         self.setWindowModified(modified)
-        saved = Path(self.doc.scene.path).name if self.doc.scene.path else 'not saved'
+        saved = Path(self.doc.shot.path).name if self.doc.shot.path else 'not saved'
         from ..scene.components import KIND_BADGES
         self.scene_label.setText(f'{name}' + ('  •' if modified else ''))
         self.kind_label.setText(KIND_BADGES.get(self.doc.scene.kind, ''))
@@ -1003,7 +1058,9 @@ class MainWindow(QMainWindow):
     def _shortcuts_help(self):
         rows = [('Space', 'Play / pause'), ('Left / Right', 'Previous / next frame'), ('Home / End', 'First / last frame'),
                 ('1 – 7', 'View: composite, fire, alpha, emission, heat, depth, temperature'), ('F', 'Fit the view'),
-                ('G', 'Guides on/off'), ('Ctrl+F', 'Search settings'), ('Ctrl+E', 'Search effects'),
+                ('G', 'Guides on/off'), ('W', 'Work view on/off: a camera of your own for building'),
+                ('R', 'Roto on/off: draw shapes the effect goes behind'),
+                ('Ctrl+F', 'Search settings'), ('Ctrl+E', 'Search effects'),
                 ('Mouse wheel', 'Zoom the view'), ('Middle drag', 'Pan the view'),
                 ('Drag the ring', 'Move the effect in the frame'), ('Drag the square', 'Scale the effect in the frame'),
                 ('Drag a source, object, light or cloth', 'Move it along the ground (Shift: up and down)'), ('Alt + drag', 'Orbit the camera'),
