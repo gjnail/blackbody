@@ -7,6 +7,8 @@ of the scene once per event-loop turn however many edits happened in it.
 from __future__ import annotations
 
 import json
+
+import numpy as np
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -254,13 +256,18 @@ class Document(QObject):
     def edit(self, text, fn, merge_key=None, structure=False, path=None):
         """Apply fn(scene) as one undoable step."""
         before = self._snap()
+        kind_before = self.scene.kind
         fn(self.scene)
+        if getattr(self.scene, 'links', None):
+            self.scene.apply_links()   # attached objects follow what they are attached to
         if self.shot.layers:
             self.shot.sync_layers(source=self.scene)   # what one layer changes of the shot, every layer has
         after = self._snap()
         if before == after:
             return
         self.undo.push(Snapshot(self, before, after, text, merge_key))
+        if self.scene.kind != kind_before:
+            self.sceneReplaced.emit()   # what the scene simulates changed: the panels change with it
         if structure:
             self.structureChanged.emit()
         if path is not None:
@@ -282,7 +289,23 @@ class Document(QObject):
     def set(self, path, value, merge=True):
         label = Scene.spec(path).label
         key = ('set', path, self._gen) if merge else None
-        self.edit(f'Change {label}', lambda s: s.set(path, value, self.frame), merge_key=key, path=path)
+        link = None
+        if len(path) == 3 and path[2] in ('position', 'end') and getattr(self.scene, 'links', None):
+            items = {'emitter': self.scene.emitters, 'collider': self.scene.colliders, 'light': self.scene.lights,
+                     'fabric': self.scene.fabrics}[path[0]]
+            link = self.scene.link_of(path[0], items[path[1]].get('name'))
+
+        def fn(s):
+            if link is not None:   # an attached object moved by hand: it keeps the new place relative to its parent
+                pi, parent = s.find_object(*link['parent'])
+                if parent is not None:
+                    pp = s.get((link['parent'][0], pi, 'position'), self.frame)
+                    if path[2] == 'position':
+                        link['offset'] = [float(v) - float(q) for v, q in zip(value, pp)]
+                    else:
+                        link['end_offset'] = [float(v) - float(q) for v, q in zip(value, pp)]
+            s.set(path, value, self.frame)
+        self.edit(f'Change {label}', fn, merge_key=key, path=path)
 
     def toggle_key(self, path):
         label = Scene.spec(path).label
@@ -506,9 +529,39 @@ class Document(QObject):
         """An undoable change to the roto shapes: fn(list of shapes)."""
         self.edit(text, lambda s: fn(s.roto), structure=True)
 
+    def attach(self, child, parent):
+        """Attach object child (kind, i) to parent (kind, i): from now on it goes where the parent goes."""
+        sc = self.scene
+        lists = {'emitter': sc.emitters, 'collider': sc.colliders, 'light': sc.lights, 'fabric': sc.fabrics}
+        c = lists[child[0]][child[1]]
+        p = lists[parent[0]][parent[1]]
+        cp = np.asarray(sc.get((child[0], child[1], 'position'), self.frame), float)
+        pp = np.asarray(sc.get((parent[0], parent[1], 'position'), self.frame), float)
+
+        def fn(s):
+            s.links = [l for l in s.links if list(l['child']) != [child[0], c['name']]]
+            link = {'child': [child[0], c['name']], 'parent': [parent[0], p['name']], 'offset': [float(x) for x in cp - pp]}
+            if child[0] == 'emitter' and c.get('shape') == 'capsule':
+                link['end_offset'] = [float(x) for x in np.asarray(s.get(('emitter', child[1], 'end'), self.frame), float) - pp]
+            s.links.append(link)
+        self.edit(f'Attach {c["name"]} to {p["name"]}', fn, structure=True)
+
+    def detach(self, kind, i):
+        sc = self.scene
+        items = {'emitter': sc.emitters, 'collider': sc.colliders, 'light': sc.lights, 'fabric': sc.fabrics}[kind]
+        name = items[i]['name']
+        self.edit(f'Detach {name}', lambda s: setattr(s, 'links', [l for l in s.links if list(l['child']) != [kind, name]]),
+                  structure=True)
+
     def rename(self, kind, i, name):
         def fn(s):
-            {'emitter': s.emitters, 'collider': s.colliders, 'light': s.lights, 'fabric': s.fabrics}[kind][i]['name'] = name
+            items = {'emitter': s.emitters, 'collider': s.colliders, 'light': s.lights, 'fabric': s.fabrics}[kind]
+            old = items[i]['name']
+            items[i]['name'] = name
+            for l in getattr(s, 'links', None) or []:   # links follow the name
+                for end in ('child', 'parent'):
+                    if list(l[end]) == [kind, old]:
+                        l[end] = [kind, name]
         self.edit('Rename', fn, structure=True)
 
     def select(self, sel, force=False):

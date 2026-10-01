@@ -119,13 +119,13 @@ Then double-click `Blackbody.bat` on Windows, or run `./blackbody.sh` on macOS o
 
 <img src="docs/media/gif/ui-place.gif" width="100%" alt="Dragging the fire's ring onto the ground in the footage and scaling it">
 
-**Or build your own.** The Create tab starts from an empty scene: what you add decides what it simulates (fire and smoke, liquids, fabric, weather, or several together), and the box and grid follow. You click or drag in ready-made building blocks: fire sources, smoke, steam and sparks, liquids (pour, hose, fountain, ink, lava), fabric (curtain, flag, canopy, tablecloth, your own cloth mesh), weather (rain, snow, sleet, hail, wind), objects and lights. Fire and water added to one scene simulate together. [Build your own](docs/getting-started.md#build-your-own)
+**Or build anything.** Blackbody opens in Build, on an empty stage with a camera of your own. You can put in fire, water, cloth, smoke, weather, forces (fans, updrafts, suction, vortices, wind) and objects, and move them with a 3D gizmo. Then right-click to set things on fire, make them float, soak them, attach them to each other or send them along a path. Fire and water in one scene simulate together. When it works, Shot puts it into your footage. [Build your own](docs/getting-started.md#build-your-own)
 
-<img src="docs/media/gif/ui-create.gif" width="100%" alt="Building a scene in the Create tab: an empty scene, then a campfire, a curtain and wind">
+<img src="docs/media/gif/ui-create.gif" width="100%" alt="Building a scene from the Create tab: an empty scene, then a campfire, a curtain and wind">
 
 **Animate it.** Click the ◆ next to a setting to keyframe it. An animation editor lists every animated setting with its keys. You can drag keys in time, add and delete them, and set how each eases into the next.
 
-**Layers, roto and a work view.** Layers put several effects in one shot, such as a campfire in front and a waterfall behind. Each is its own simulation, and they're composited back to front ([Layers](docs/getting-started.md#layers)). Roto shapes drawn around what's in front of the effect, and keyed over the shot, put the effect behind them ([Roto](docs/compositing.md#roto)). The work view lets you look around your scene with a camera of your own while you build it, while the shot and its renders stay put.
+**Layers and roto.** Layers put several effects in one shot, such as a campfire in front and a waterfall behind. Each is its own simulation, and they're composited back to front ([Layers](docs/getting-started.md#layers)). Roto shapes drawn around what's in front of the effect, and keyed over the shot, put the effect behind them ([Roto](docs/compositing.md#roto)).
 
 The [tutorial](docs/tutorial.md) takes a shot from footage to final render in about 30 minutes.
 

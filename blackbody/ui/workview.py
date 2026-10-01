@@ -102,6 +102,8 @@ class WorkView:
         comp = scene.data['composite']
         comp['bg'] = (0.035, 0.035, 0.04)
         comp['bg_checker'] = False
+        if scene.kind in ('liquid', 'both'):   # no footage to show the objects: draw them as solid grey stand-ins
+            scene.data['water']['colliders_look'] = 'shaded'
         return scene
 
     # -- moves --------------------------------------------------------------------------------------------

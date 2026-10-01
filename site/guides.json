@@ -1,5 +1,5 @@
 {
-  "getting-started": {"image": "media/video/ui-library.jpg", "blurb": "Requirements, installing, the window, a shot in five steps, building your own, layers and animation."},
+  "getting-started": {"image": "media/video/ui-library.jpg", "blurb": "Requirements, installing, the window, a shot in five steps, building anything from scratch, layers and animation."},
   "tutorial": {"image": "tutorial/00_result.png", "blurb": "A whole shot in 30 minutes: footage, placing, matching, tracking, keyframes and rendering."},
   "fire": {"image": "media/video/campfire.jpg", "blurb": "Fire presets, puffing and swirl, sparks, colour, steam, spreading fire, rooms, flame fronts and meshes."},
   "fabric": {"image": "media/video/fabric_curtain.jpg", "blurb": "Curtains, flags and towels from real fabrics: blowing, burning through, soaking and steaming."},

@@ -79,15 +79,24 @@ Space plays. The simulation runs live, so you can change settings while it plays
 
 ## Build your own
 
-Every preset is made of a few pieces you can put together yourself. Open **Create** (the second tab on the left, **Ctrl+N**):
+Blackbody opens in **Build**: an empty stage you look at with a camera of your own (drag empty space to look around, right- or middle-drag to pan, the wheel to move closer, **F** to frame everything). **Shot**, next to it in the header, is where an effect goes into your footage: the shot's camera, placement on the plate, roto, layers and the render. **Tab** or **W** switches between them; nothing you do in Build moves the shot's camera.
 
-1. **Start from scratch.** Pick how big the effect is (*Tabletop*, *Person-sized*, *Car or room*, *Building*) and click **Empty scene**. What you add decides what it simulates: fire and smoke, liquids, fabric, weather, or several together; the box and grid follow. **Sky** starts a sky kilometres across instead, where clouds build into storms. If you have footage, it stays.
-2. **Add building blocks.** Click one to add it, or drag it into the viewer and drop it where it should stand on the ground. The chips filter them: **Fire** (a fire, a campfire, a fuel pool, a fire line, a torch, a gas burner, a fireball, a flame jet, a fire whirl, coloured flame, burnable things, smoke, steam, sparks), **Liquids** (a pour, a hose jet, a fountain, a block of water, thrown water, a waterfall, a pond, ink, lava), **Fabric** (a curtain, a flag, a banner, a canopy, a tablecloth, a falling sheet, a wet towel, your own cloth mesh), **Weather** (rain, snow, sleet, hail, freezing rain, wind) and **Objects** (boxes, balls, pillars, walls, a room with a door, a car, floating crates, terrain, your own meshes, lights).
-3. **Tune it.** The block you added is selected: drag it in the viewer, and change it in Properties.
+1. **Put something in.** The card on the empty stage starts you with fire, water, cloth, smoke, snow or a solid object. After that, **Create** (the second tab on the left, **Ctrl+N**) has everything: fire sources (a fire, a campfire, a fuel pool, a fire line, a torch, a gas burner, a fireball, a flame jet, a fire whirl, coloured flame, burnable things), smoke, steam and sparks, **liquids** (a pour, a hose jet, a fountain, a block of water, thrown water, a waterfall, a pond, ink, lava), **fabric** (a curtain, a flag, a banner, a canopy, a tablecloth, a falling sheet, a wet towel, your own cloth mesh), **weather** (rain, snow, sleet, hail, freezing rain), **forces** (wind, a fan, an updraft, suction, a vortex: air that pushes smoke, flame, embers and cloth around), **objects** (boxes, balls, pillars, walls, a room with a door, a car, floating crates, terrain, your own meshes) and **lights**. Click one, or drag it into the viewer and drop it where it should stand.
+2. **Move and shape it.** The selected thing has a gizmo: drag an arrow to move it along X (red), Y (green) or Z (blue), a square to stretch it along that side, the ring's knob to turn it, and its middle to slide it over the ground. Hold **Ctrl** to snap to a grid sized for the scene. The size or place shows by the cursor as you drag.
+3. **Make things happen.** Right-click anything in the viewer (or in the object list, or use the buttons on its page) for what it can do:
+   - **Set it on fire**: a box, a chair or a curtain catches at its base and the fire spreads over it.
+   - **Make it float**, **make it sink**: in the water, or in a pond put under it if there is none. **Make it hot** (water on it boils) or **freezing** (water on it freezes). **Make it hollow**: a tank, a room or a pipe.
+   - **Soak** a cloth (it drips, steams in the heat and will not burn until it dries), **let it go** at this frame, choose what it is **held** by and what it is made of.
+   - **Turn into**: any source becomes fire, smoke, steam, water, lava, a fan, an updraft, suction or a vortex, keeping its shape and place.
+   - **Start** or **stop** a source at this frame, or give a **short burst** from it.
+   - **Attach to** another thing: it then goes wherever that goes (a torch in a moving hand, a flag on a moving pole, fire on a driving car). Moving it by hand keeps its new place relative to what it is attached to.
+   - **Move along a path**: click points on the ground where it should go, set how long it takes, and press Enter.
+   - **Drop to the ground**, **look at it** (the Build camera turns to it), duplicate, delete.
+4. **Tune it** in Properties: everything about the selected thing, the Essentials of the scene, and every other setting a search away.
+
+Generic blocks are sized for the scene; real things (a torch, a car, a curtain) keep their real size. If a block does not fit, the simulation box grows to take it. Whatever you put in simulates together: water puts fire out, fire burns cloth, wind blows the smoke and the flags, lava boils the sea. The header shows what the scene simulates. Every change is one step of undo.
 
 ![Building a scene in the Create tab](media/gif/ui-create.gif "Create: start an empty scene, then click building blocks to add them: here a campfire, a curtain and wind.")
-
-Generic blocks are sized for the scene; real things (a torch, a car, a curtain) keep their real size. If a block does not fit, the simulation box grows to take it. Adding water where there is fire (or fire where there is water) makes them simulate together, so they meet: a hose puts the fire out, lava boils the sea. The header shows what the scene simulates. Every addition is one step of undo.
 
 ## Layers
 
@@ -109,7 +118,7 @@ Every setting has a tooltip. A number is a bar: drag it sideways to change it (S
 
 In the viewer, click a source, an object, a light or a piece of fabric to select it and drag it along the ground (Shift: up and down). A selected source or object shows a ring with a knob to turn it and a square to resize it (Shift snaps the turn to 15°).
 
-**Work view** (in the view bar, or **W**) gives you a camera of your own for building the scene: drag to orbit around it, middle-drag (or right-drag) to pan, use the wheel to move closer, and press **F** to frame the simulation box. It starts from behind the shot's camera, which is drawn as a yellow frustum so you can see what the shot sees. Only the viewer changes: the shot, its camera and every render stay as they are, and turning the view re-draws cached frames without simulating again. Press **W** again to go back to the shot.
+In **Build** you look at the scene with a camera of your own; the shot's camera is drawn as a yellow frustum so you can see what the shot sees. Only the viewer changes: the shot, its camera and every render stay as they are, and turning the view re-draws cached frames without simulating again. **Shot** (or **Tab**) goes back to the shot's camera over your footage.
 
 **Roto** (in the view bar, or **R**) draws shapes around what is in front of the effect in your footage, and the effect goes behind them: see [Roto](compositing.md#roto).
 

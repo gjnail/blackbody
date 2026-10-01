@@ -11,7 +11,16 @@ Notable changes to Blackbody. The format follows
 - Layers: several effects in one shot (a campfire in front, a waterfall behind), each its own simulation with its own
   box and scale, composited back to front in the viewer, renders and the command line.
 - Roto: shapes drawn around what is in front of the effect, keyed over the shot, hide the effect behind them.
-- Work view: an orbit camera of your own for building the scene; the shot's camera is drawn as a frustum.
+- Build and Shot workspaces. The app opens in Build, on an empty stage with a camera of your own and a card to put
+  in fire, water, cloth, smoke, snow or an object; Shot puts the effect in your footage. (The work view became Build.)
+- A transform gizmo: arrows to move things along X, Y and Z, squares to stretch them, a ring to turn them, Ctrl to snap,
+  and the size or place shown by the cursor while dragging.
+- Things you can do to an object (right-click it, or the buttons on its page): set it on fire, make it float, sink, hot
+  or freezing, hollow it out, soak, dry or let go of a cloth, choose what holds it and what it is made of, turn a source
+  into fire, smoke, steam, water, lava or a force, start or stop it at a frame, attach it to another thing so it follows
+  it, send it along a path you click out on the ground, drop it to the ground.
+- Forces to place: a fan, an updraft, suction and a vortex push the air, and with it smoke, flame, embers and cloth.
+- In Build, objects in a liquid scene are drawn as grey stand-ins.
 - Contributor guide, code of conduct, security policy, issue and pull request
   templates, and CI that checks Windows, macOS and Linux.
 - Ko-fi links in the README and on the website.

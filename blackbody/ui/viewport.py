@@ -191,6 +191,12 @@ class Viewport(QWidget):
         self.mode_labels = {}   # the view's name for this kind of simulation (main window)
         self.drop_hint = None   # text shown while a file is dragged over the window
         self.drop_point = None  # where a dragged building block would land
+        self._readout = None     # (text, where) beside the cursor while the gizmo is dragged
+        self.path_target = None  # (kind, i) while a path is drawn for it
+        self._path_pts = []
+        self._path_cursor = None
+        self.pathbar = None
+        self._rmb_moved = 0.0
         self.roto_mode = False   # drawing and editing roto shapes over the footage
         self.roto_sel = None     # the shape being edited
         self._roto_draft = None  # points of a shape being drawn ([x, y] across and down the frame, 0..1)
@@ -260,6 +266,87 @@ class Viewport(QWidget):
                 self.drop_point = None
             self.update()
 
+    # -- paths ------------------------------------------------------------------------------------------------
+
+    def start_path(self, kind, i):
+        sc = self.doc.scene
+        items = {'emitter': sc.emitters, 'collider': sc.colliders, 'light': sc.lights, 'fabric': sc.fabrics}[kind]
+        if i >= len(items):
+            return
+        self.doc.select((kind, i), force=True)
+        self.path_target = (kind, i)
+        self._path_pts = [np.asarray(sc.get((kind, i, 'position'), self.doc.frame), float)]
+        if self.pathbar is None:
+            from .pathbar import PathBar
+            self.pathbar = PathBar(self)
+        self.pathbar.sync(items[i]['name'], 1, self.doc.frame)
+        self.pathbar.show()
+        self.place_rotobar()
+        self.setCursor(Qt.CrossCursor)
+        self.setFocus()
+        self.update()
+
+    def path_cancel(self):
+        self.path_target = None
+        self._path_pts = []
+        if self.pathbar is not None:
+            self.pathbar.hide()
+        self.setCursor(Qt.ArrowCursor)
+        self.update()
+
+    def path_finish(self):
+        tgt, pts = self.path_target, list(self._path_pts)
+        secs = self.pathbar.secs.value() if self.pathbar is not None else 3.0
+        self.path_cancel()
+        if tgt is None or len(pts) < 2:
+            return
+        from .actions import path_keys
+        kind, i = tgt
+        sc = self.doc.scene
+        items = {'emitter': sc.emitters, 'collider': sc.colliders, 'light': sc.lights, 'fabric': sc.fabrics}[kind]
+        name = items[i]['name']
+        f0 = self.doc.frame
+        end_off = None
+        if kind == 'emitter' and items[i].get('shape') == 'capsule':
+            end_off = np.asarray(sc.get(('emitter', i, 'end'), f0), float) - pts[0]
+
+        def fn(s):
+            s.links = [l for l in getattr(s, 'links', []) if list(l['child']) != [kind, name]]
+            curve = path_keys(s, kind, i, pts, f0, secs)
+            d = {'emitter': s.emitters, 'collider': s.colliders, 'light': s.lights, 'fabric': s.fabrics}[kind][i]
+            d['position'] = curve
+            if end_off is not None:
+                from ..scene.anim import Curve
+                d['end'] = Curve([[f, tuple(float(a + b) for a, b in zip(v, end_off)), it] for f, v, it in curve.keys])
+        self.doc.edit(f'Move {name} along a path', fn, structure=True)
+        win = self.window()
+        if hasattr(win, 'msg'):
+            win.msg.setText(f'{name} goes along the path from frame {f0} for {secs:g} s: its keys are on the timeline '
+                            '(Animation shows them).')
+        self.doc.set_playing(True)
+
+    def _path_ground(self, pos):
+        y = float(self._path_pts[0][1]) if self._path_pts else 0.0
+        gp = self._ground_point(pos, y)
+        return None if gp is None else np.asarray(gp, float)
+
+    def _paint_path(self, p):
+        if self.path_target is None:
+            return
+        cs, fire, _ = self.camstate()
+        pts = list(self._path_pts)
+        if self._path_cursor is not None:
+            pts = pts + [self._path_cursor]
+        if len(pts) >= 2:
+            self._lines(p, cs, fire, [np.stack(pts)], QPen(QColor(theme.ACCENT), 2.0))
+        px, ok = self._project_local(cs, fire, self._path_pts or [np.zeros(3)])
+        p.setPen(QPen(QColor(theme.ACCENT), 1.4))
+        for k, (q, o) in enumerate(zip(px, ok)):
+            if o:
+                w = self.to_widget(q)
+                p.setBrush(QColor(theme.ACCENT) if k == 0 else QColor(20, 20, 24))
+                p.drawEllipse(w, 5, 5)
+
     # -- roto -------------------------------------------------------------------------------------------------
 
     def set_roto_mode(self, on):
@@ -279,6 +366,10 @@ class Viewport(QWidget):
         self.update()
 
     def place_rotobar(self):
+        if self.pathbar is not None and self.pathbar.isVisible():
+            self.pathbar.setFixedWidth(min(560, self.width() - 24))
+            self.pathbar.adjustSize()
+            self.pathbar.move((self.width() - self.pathbar.width()) // 2, 10)
         if self.rotobar is not None:
             self.rotobar.setFixedWidth(min(max(420, self.rotobar.sizeHint().width()), self.width() - 24))
             self.rotobar.adjustSize()
@@ -556,6 +647,10 @@ class Viewport(QWidget):
             except Exception:
                 pass
             p.restore()
+        if self.path_target is not None:
+            p.save()
+            self._paint_path(p)
+            p.restore()
         if self.roto_mode or (self.guides and self.doc.scene.roto):
             p.save()
             p.setClipRect(r.adjusted(-1, -1, 1, 1))
@@ -724,23 +819,10 @@ class Viewport(QWidget):
             if (op > 0).all():  # the doorway or window cut through it
                 at = np.asarray(g('position'), float) + _rot_y(np.asarray(g('opening_at'), float), g('yaw'))
                 self._lines(p, cs, fire, shape_lines('box', at, op, None, g('yaw')), QPen(col, 1.0, Qt.DotLine))
-        # rotate and resize handles of the selected emitter or collider
-        oh = self._object_handles()
-        if oh is not None:
-            drag = (self._drag or {}).get('kind')
-            ring = QPen(QColor(theme.ACCENT), 1.0, Qt.DashLine)
-            self._lines(p, cs, fire, [oh['ring']], ring)
-            for key, shape in (('rot', 'circle'), ('size', 'square')):
-                q = oh.get(key)
-                if q is None:
-                    continue
-                hot = self._hover == key or drag == key
-                p.setPen(QPen(QColor(theme.ACCENT), 1.4))
-                p.setBrush(QColor(theme.ACCENT) if hot else QColor(20, 20, 24))
-                if shape == 'circle':
-                    p.drawEllipse(q, 5, 5)
-                else:
-                    p.drawRect(QRectF(q.x() - 4.5, q.y() - 4.5, 9, 9))
+        # the transform gizmo of the selected object
+        gz = self._gizmo()
+        if gz is not None:
+            self._paint_gizmo(p, gz)
         if self.doc.work_view is not None:
             self._paint_shot_camera(p)
         # tracked path of the fire base
@@ -770,6 +852,201 @@ class Viewport(QWidget):
             p.setPen(QPen(QColor(theme.ACCENT if hot else '#ffffff'), 1.2))
             p.setBrush(QColor(theme.ACCENT if hot else '#ffffff'))
             p.drawRect(QRectF(top.x() - 4, top.y() - 4, 8, 8))
+
+    def _gizmo(self):
+        sel = self.doc.selection
+        if not sel or sel[0] not in ('emitter', 'collider', 'light', 'fabric') or self.roto_mode:
+            return None
+        sc = self.doc.scene
+        items = {'emitter': sc.emitters, 'collider': sc.colliders, 'light': sc.lights, 'fabric': sc.fabrics}[sel[0]]
+        if sel[1] >= len(items) or not items[sel[1]]['enabled']:
+            return None
+        from .gizmo import Gizmo
+        try:
+            return Gizmo(self, sel[0], sel[1])
+        except Exception:
+            return None
+
+    def _paint_gizmo(self, p, gz):
+        from .gizmo import AXIS_COLOURS, AXIS_NAMES, arrow_head
+        hs = gz.handles()
+        cs, fire = gz.cs, gz.fire
+        drag = (self._drag or {}).get('key') if (self._drag or {}).get('kind') == 'gz' else None
+        hover = self._hover[3:] if isinstance(self._hover, str) and self._hover.startswith('gz:') else None
+        if 'ring' in hs:
+            hot = 'rot' in (drag, hover)
+            self._lines(p, cs, fire, [hs['ring']], QPen(QColor(theme.ACCENT), 1.6 if hot else 1.0, Qt.DashLine))
+        p.save()
+        for name, col in zip(AXIS_NAMES, AXIS_COLOURS):
+            v = hs.get('move_' + name)
+            if v is None:
+                continue
+            a, b = v
+            hot = ('move_' + name) in (drag, hover)
+            c = QColor('#ffffff' if hot else col)
+            p.setPen(QPen(c, 2.6 if hot else 1.8, Qt.SolidLine, Qt.RoundCap))
+            p.drawLine(a, b)
+            p.setPen(Qt.NoPen)
+            p.setBrush(c)
+            p.drawPolygon(QPolygonF(arrow_head(a, b, 9.0)))
+        for name, col in zip(AXIS_NAMES, AXIS_COLOURS):
+            q = hs.get('scale_' + name)
+            if q is None:
+                continue
+            hot = ('scale_' + name) in (drag, hover)
+            p.setPen(QPen(QColor('#ffffff' if hot else col), 1.4))
+            p.setBrush(QColor(col) if hot else QColor(16, 16, 20, 220))
+            p.drawRect(QRectF(q.x() - 4.5, q.y() - 4.5, 9, 9))
+        q = hs.get('rot')
+        if q is not None:
+            hot = 'rot' in (drag, hover)
+            p.setPen(QPen(QColor(theme.ACCENT), 1.4))
+            p.setBrush(QColor(theme.ACCENT) if hot else QColor(16, 16, 20, 220))
+            p.drawEllipse(q, 5.5, 5.5)
+        q = hs.get('centre')
+        if q is not None:
+            hot = 'centre' in (drag, hover)
+            p.setPen(QPen(QColor('#ffffff'), 1.4))
+            p.setBrush(QColor(255, 255, 255, 200) if hot else Qt.NoBrush)
+            p.drawEllipse(q, 6, 6)
+        if self._readout is not None:
+            text, at = self._readout
+            f = QFont(theme.font(9.0, QFont.DemiBold))
+            p.setFont(f)
+            w = p.fontMetrics().horizontalAdvance(text) + 16
+            box = QRectF(at.x() + 14, at.y() + 12, w, 22)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(12, 12, 14, 220))
+            p.drawRoundedRect(box, 6, 6)
+            p.setPen(QColor(theme.TEXT))
+            p.drawText(box, Qt.AlignCenter, text)
+        p.restore()
+
+    def _ray_local(self, pos):
+        """The pixel ray under `pos` in the effect's own coordinates: (origin, unit direction)."""
+        cs, fire, _ = self.camstate()
+        W, H = self.out_size()
+        fx, fy = self.to_frame(pos)
+        o, d = cam.pixel_ray(cs, fx, fy, W, H)
+        Li = np.linalg.inv(fire.local_to_world())
+        o_l = (Li @ np.append(o, 1.0))[:3]
+        d_l = Li[:3, :3] @ np.asarray(d, float)
+        n = float(np.linalg.norm(d_l))
+        return o_l, d_l / max(n, 1e-12)
+
+    def _axis_param(self, pos, origin, axis):
+        """Where the mouse ray passes closest to the line origin + t * axis: t (None if they are nearly parallel)."""
+        o, d = self._ray_local(pos)
+        w0 = np.asarray(origin, float) - o
+        axis = np.asarray(axis, float)
+        b = float(axis @ d)
+        den = 1.0 - b * b
+        if abs(den) < 1e-5:
+            return None
+        return (b * float(d @ w0) - float(axis @ w0)) / den
+
+    def _gz_press(self, key, pos):
+        from .gizmo import AXES, AXIS_NAMES
+        gz = self._gizmo()
+        if gz is None:
+            return
+        d = {'kind': 'gz', 'key': key, 'what': gz.kind, 'i': gz.i, 'pos0': gz.pos.copy(), 'yaw0': gz.yaw, 'L': gz.L,
+             'snap': gz.snap()}
+        it = gz.item
+        g = gz.g
+        if gz.capsule:
+            d['end0'] = np.asarray(g('end'), float)
+        if key.startswith('move_'):
+            d['axis'] = AXES[AXIS_NAMES.index(key[-1])]
+            d['t0'] = self._axis_param(pos, gz.pos, d['axis'])
+        elif key.startswith('scale_'):
+            name = key[-1]
+            u = dict(gz.scale_axes())[name]
+            d['u'], d['name'] = u, name
+            d['t0'] = self._axis_param(pos, gz.pos, u)
+            if gz.kind == 'fabric':
+                d['w0'], d['h0'] = float(g('width')), float(g('height'))
+                d['scale0'] = np.asarray(it.get('scale', (1.0, 1.0, 1.0)), float)
+            elif gz.kind in ('emitter', 'collider'):
+                d['size0'] = np.asarray(g('size'), float)
+        elif key == 'rot':
+            gp = self._ground_point(pos, gz.pos[1])
+            d['a0'] = None if gp is None else math.atan2(gp[2] - gz.pos[2], gp[0] - gz.pos[0])
+        elif key == 'centre':
+            self._drag = {'kind': 'move', 'what': gz.kind, 'i': gz.i, 'y': float(gz.pos[1]),
+                          'start_world': self._ground_point(pos, gz.pos[1]), 'p0': gz.pos.copy(),
+                          'e0': d.get('end0', gz.pos.copy()), 'vertical': False, 'sy': pos.y(), 'snap': d['snap']}
+            return
+        if d.get('t0', 0.0) is None:
+            return
+        self._drag = d
+
+    def _gz_move(self, d, pos, mods):
+        from .gizmo import AXIS_NAMES
+        what, i = d['what'], d['i']
+        snap = d['snap'] if mods & Qt.ControlModifier else None
+        key = d['key']
+        if key.startswith('move_'):
+            t = self._axis_param(pos, d['pos0'], d['axis'])
+            if t is None:
+                return
+            k = AXIS_NAMES.index(key[-1])
+            new = d['pos0'] + d['axis'] * (t - d['t0'])
+            if snap:
+                new[k] = round(new[k] / snap) * snap
+            self.doc.set((what, i, 'position'), tuple(float(x) for x in new))
+            if 'end0' in d:
+                self.doc.set(('emitter', i, 'end'), tuple(float(x) for x in d['end0'] + (new - d['pos0'])))
+            self._readout = (f'{key[-1]}  {new[k]:.3g} m', pos)
+        elif key.startswith('scale_'):
+            t = self._axis_param(pos, d['pos0'], d['u'])
+            if t is None:
+                return
+            grow = t - d['t0']
+            name = d['name']
+            k = AXIS_NAMES.index(name)
+            it = {'emitter': self.doc.scene.emitters, 'collider': self.doc.scene.colliders,
+                  'fabric': self.doc.scene.fabrics}.get(what, [None] * (i + 1))[i]
+            if what == 'fabric' and it.get('shape') == 'mesh':
+                s0 = d['scale0']
+                f = max(0.02, 1.0 + grow / max(d['L'], 1e-6))
+                sc_new = s0.copy()
+                sc_new[k] = s0[k] * f
+                self.doc.set(('fabric', i, 'scale'), tuple(float(x) for x in sc_new))
+                self._readout = (f'scale {name}  {sc_new[k]:.2f}\u00d7', pos)
+            elif what == 'fabric':
+                full0 = d['w0'] if name == 'x' else d['h0']
+                full = max(0.02, full0 + 2.0 * grow)
+                if snap:
+                    full = max(snap, round(full / snap) * snap)
+                self.doc.set(('fabric', i, 'width' if name == 'x' else 'height'), float(full))
+                self._readout = (f'{"width" if name == "x" else "height"}  {full:.3g} m', pos)
+            else:
+                s0 = d['size0']
+                ext = max(1e-3, s0[k] + grow)
+                if snap:
+                    ext = max(snap / 2, round(ext * 2 / snap) * snap / 2)
+                new = s0.copy()
+                shape = it.get('shape') if it else ''
+                if shape == 'capsule' or (shape == 'sphere' and what == 'collider'):
+                    new[:] = ext
+                elif shape in ('cylinder', 'cone', 'ring') and name == 'x':
+                    new[0] = new[2] = ext
+                else:
+                    new[k] = ext
+                self.doc.set((what, i, 'size'), tuple(float(x) for x in new))
+                self._readout = (f'size {name}  {2 * ext:.3g} m', pos)
+        elif key == 'rot':
+            gp = self._ground_point(pos, d['pos0'][1])
+            if gp is None or d.get('a0') is None:
+                return
+            a = math.atan2(gp[2] - d['pos0'][2], gp[0] - d['pos0'][0])
+            yaw = d['yaw0'] - math.degrees(a - d['a0'])
+            yaw = (yaw + 180.0) % 360.0 - 180.0
+            if mods & (Qt.ShiftModifier | Qt.ControlModifier):
+                yaw = round(yaw / 15.0) * 15.0
+            self.doc.set((what, i, 'yaw'), yaw)
+            self._readout = (f'turn  {yaw:.0f}\u00b0', pos)
 
     def _paint_shot_camera(self, p):
         """In the work view: where the shot's camera is and what it sees, as a frustum."""
@@ -809,8 +1086,9 @@ class Viewport(QWidget):
         p.setFont(f)
         lines = [f'{self.mode_labels.get(self.mode) or MODE_NAMES.get(self.mode, self.mode)}  ·  frame {self.doc.frame}']
         if self.doc.work_view is not None:
-            lines[0] = 'WORK VIEW  \u00b7  ' + lines[0]
-            lines.append('drag: orbit \u00b7 middle-drag: pan \u00b7 wheel: closer \u00b7 F: frame the box \u00b7 W: back to the shot')
+            lines[0] = 'BUILD  ·  ' + lines[0]
+            lines.append('drag empty space: look around · right/middle-drag: pan · wheel: closer · F: frame all · '
+                         'Ctrl while dragging: snap · right-click a thing: what it can do')
         if st and self.show_stats:
             dims = st.get('dims') or (0, 0, 0)
             lines.append(f'{dims[0]}×{dims[1]}×{dims[2]} voxels · {st.get("cell_mm", 0):.1f} mm · {st.get("substeps", 0)} substeps')
@@ -868,6 +1146,7 @@ class Viewport(QWidget):
             return
         sc = self.doc.scene
         if (self.busy is None and self.image is not None and sc.kind != 'cloud' and not sc.emitters and not sc.colliders
+                and self.doc.work_view is None
                 and not sc.fabrics and not (sc.kind != 'fire' and (sc.data['liquid']['water_level'] > 0 or sc.data['liquid']['rain'] > 0))):
             self._pill(p, QPointF(r.center().x(), r.center().y()), 'An empty scene · add fire, water or objects from Create, on the left',
                        strong=True)
@@ -900,12 +1179,11 @@ class Viewport(QWidget):
                 return 'anchor'
             if (pos - top).manhattanLength() < 14:
                 return 'scale'
-        oh = self._object_handles()
-        if oh is not None:
-            for key in ('rot', 'size'):
-                q = oh.get(key)
-                if q is not None and (q - pos).manhattanLength() < 12:
-                    return key
+        gz = self._gizmo()
+        if gz is not None:
+            k = gz.hit(pos)
+            if k is not None:
+                return 'gz:' + k
         sc = self.doc.scene
         cs, fire, _ = self.camstate()
         best, bd = None, 12.0
@@ -920,52 +1198,6 @@ class Viewport(QWidget):
                         best, bd = (kind, i), d
         return best
 
-    def _object_handles(self):
-        """Screen positions of the selected emitter's or collider's handles: a ring around it with a
-        knob to turn it, and a square above it to resize it. None if nothing suitable is selected."""
-        sel = self.doc.selection
-        if not sel or sel[0] not in ('emitter', 'collider'):
-            return None
-        sc = self.doc.scene
-        kind, i = sel
-        items = sc.emitters if kind == 'emitter' else sc.colliders
-        if i >= len(items) or not items[i]['enabled']:
-            return None
-        it = items[i]
-        g = lambda k: sc.get((kind, i, k), self.doc.frame)
-        pos = np.asarray(g('position'), float)
-        size = np.asarray(g('size'), float)
-        if it['shape'] == 'mesh':
-            segs = mesh_edges(sc.mesh_path(it['mesh']))
-            ext = (np.abs(segs).reshape(-1, 3).max(0) if segs is not None else np.full(3, 0.5)) * size
-        elif it['shape'] == 'volume':
-            box = volume_box(sc.item_source(it)) if it.get('volume') else None
-            ext = (np.maximum(np.abs(box[0]), np.abs(box[1])) if box is not None else np.full(3, 0.5)) * size
-        elif it['shape'] == 'sphere' and kind == 'collider':
-            ext = np.full(3, size[0])
-        elif it['shape'] in ('cylinder', 'cone') or (it['shape'] == 'sphere'):
-            ext = np.array([size[0], size[1], size[0] if it['shape'] != 'sphere' else size[2]])
-        elif it['shape'] == 'ring':
-            ext = np.array([size[0] + size[1], size[1], size[0] + size[1]])
-        elif it['shape'] == 'capsule':
-            ext = np.full(3, size[0])
-        else:
-            ext = size
-        radius = max(float(np.hypot(ext[0], ext[2])), 0.05) * 1.15
-        cs, fire, _ = self.camstate()
-        ring = _circle(pos, np.array([radius, 0, 0]), np.array([0, 0, radius]), 64)
-        out = {'ring': ring}
-        pts = [pos + np.array([0.0, max(ext[1], 0.05) * 1.3 + 0.02 * radius, 0.0])]
-        if it['shape'] != 'capsule':
-            pts.append(pos + _rot_y(np.array([radius, 0.0, 0.0]), g('yaw')))
-        px, ok = self._project_local(cs, fire, pts)
-        if ok[0]:
-            out['size'] = self.to_widget(px[0])
-        if len(pts) > 1 and ok[1]:
-            out['rot'] = self.to_widget(px[1])
-        out['centre'] = pos
-        return out
-
     # -- interaction --------------------------------------------------------------------------------------------
 
     def mousePressEvent(self, e):
@@ -974,6 +1206,17 @@ class Viewport(QWidget):
         if self.roto_mode and not (mods & Qt.AltModifier) and e.button() in (Qt.LeftButton, Qt.RightButton):
             self._roto_press(e)
             return
+        if self.path_target is not None and e.button() == Qt.LeftButton:
+            gp = self._path_ground(pos)
+            if gp is not None:
+                self._path_pts.append(gp)
+                sc = self.doc.scene
+                kind, i = self.path_target
+                items = {'emitter': sc.emitters, 'collider': sc.colliders, 'light': sc.lights, 'fabric': sc.fabrics}[kind]
+                self.pathbar.sync(items[i]['name'], len(self._path_pts), self.doc.frame)
+                self.update()
+            return
+        self._rmb_moved = 0.0
         wv = self.doc.work_view
         if wv is not None and (e.button() == Qt.MiddleButton or (e.button() == Qt.RightButton and not mods & Qt.AltModifier)):
             self._drag = {'kind': 'wv_pan', 'last': pos}
@@ -999,15 +1242,8 @@ class Viewport(QWidget):
             elif hit == 'scale':
                 base, top, ok, spec = self._handles()
                 self._drag = {'kind': 'scale', 'base': base, 'd0': max(8.0, base.y() - pos.y()), 's0': spec.scale}
-            elif hit in ('rot', 'size'):
-                kind, i = self.doc.selection
-                sc = self.doc.scene
-                c = np.asarray(sc.get((kind, i, 'position'), self.doc.frame), float)
-                gp = self._ground_point(pos, c[1])
-                self._drag = {'kind': hit, 'what': kind, 'i': i, 'c': c, 'sy': pos.y(),
-                              'yaw0': sc.get((kind, i, 'yaw'), self.doc.frame),
-                              'size0': np.asarray(sc.get((kind, i, 'size'), self.doc.frame), float),
-                              'a0': None if gp is None else math.atan2(gp[2] - c[2], gp[0] - c[0])}
+            elif isinstance(hit, str) and hit.startswith('gz:'):
+                self._gz_press(hit[3:], pos)
             elif isinstance(hit, tuple):
                 self.doc.select(hit, force=True)
                 kind, i = hit
@@ -1016,6 +1252,11 @@ class Viewport(QWidget):
                 e0 = np.asarray(sc.get(('emitter', i, 'end'), self.doc.frame), float) if kind == 'emitter' else p0
                 self._drag = {'kind': 'move', 'what': kind, 'i': i, 'y': float(p0[1]), 'start_world': self._ground_point(pos, p0[1]),
                               'p0': p0, 'e0': e0, 'vertical': bool(mods & Qt.ShiftModifier), 'sy': pos.y()}
+                from .gizmo import Gizmo
+                try:
+                    self._drag['snap'] = Gizmo(self, kind, i).snap()
+                except Exception:
+                    self._drag['snap'] = 0.1
             self.update()
 
     def _ground_point(self, pos, y_local):
@@ -1041,6 +1282,10 @@ class Viewport(QWidget):
         if d is not None and d['kind'] in ('roto_pt', 'roto_move'):
             self._roto_drag(d, pos)
             return
+        if self.path_target is not None and d is None:
+            self._path_cursor = self._path_ground(pos)
+            self.update()
+            return
         if self.roto_mode and d is None:
             self._roto_cursor = pos if self._roto_draft else None
             if self._roto_draft:
@@ -1053,14 +1298,22 @@ class Viewport(QWidget):
             h = h if isinstance(h, str) else None
             if h != self._hover:
                 self._hover = h
-                cursors = {'anchor': Qt.SizeAllCursor, 'scale': Qt.SizeVerCursor, 'size': Qt.SizeVerCursor, 'rot': Qt.OpenHandCursor}
-                self.setCursor(cursors.get(h, Qt.ArrowCursor))
+                cursors = {'anchor': Qt.SizeAllCursor, 'scale': Qt.SizeVerCursor, 'gz:rot': Qt.OpenHandCursor, 'gz:centre': Qt.SizeAllCursor}
+                cur = cursors.get(h)
+                if cur is None and isinstance(h, str) and h.startswith('gz:'):
+                    cur = Qt.PointingHandCursor
+                self.setCursor(cur or Qt.ArrowCursor)
                 self.update()
             return
         k = d['kind']
+        if k == 'gz':
+            self._gz_move(d, pos, e.modifiers())
+            self.update()
+            return
         if k in ('wv_orbit', 'wv_pan'):
             delta = pos - d['last']
             d['last'] = pos
+            self._rmb_moved += abs(delta.x()) + abs(delta.y())
             wv = self.doc.work_view
             if wv is None:
                 return
@@ -1109,7 +1362,13 @@ class Viewport(QWidget):
                 if hitp is None or d['start_world'] is None:
                     return
                 new = d['p0'] + (hitp - d['start_world']) * np.array([1.0, 0.0, 1.0])
+            if e.modifiers() & Qt.ControlModifier and d.get('snap'):
+                st = d['snap']
+                new = np.array([round(new[0] / st) * st, new[1] if not d['vertical'] else round(new[1] / st) * st,
+                                round(new[2] / st) * st])
             delta = new - d['p0']
+            self._readout = (f'x {new[0]:.3g}  y {new[1]:.3g}  z {new[2]:.3g} m', pos)
+            self.update()
             self.doc.set((what, i, 'position'), tuple(float(x) for x in new))
             if what == 'emitter' and self.doc.scene.emitters[i]['shape'] == 'capsule':
                 self.doc.set(('emitter', i, 'end'), tuple(float(x) for x in d['e0'] + delta))
@@ -1135,10 +1394,14 @@ class Viewport(QWidget):
             return
         if self._drag is not None:
             self._drag = None
+            self._readout = None
             self.doc.end_drag()
             self.update()
 
     def mouseDoubleClickEvent(self, e):
+        if self.path_target is not None:
+            self.path_finish()
+            return
         if self.roto_mode:
             if self._roto_draft is not None and len(self._roto_draft) >= 3:
                 self._roto_finish()
@@ -1163,6 +1426,17 @@ class Viewport(QWidget):
         self.update()
 
     def keyPressEvent(self, e):
+        if self.path_target is not None:
+            if e.key() == Qt.Key_Escape:
+                self.path_cancel()
+                return
+            if e.key() in (Qt.Key_Return, Qt.Key_Enter):
+                self.path_finish()
+                return
+            if e.key() in (Qt.Key_Backspace, Qt.Key_Delete) and len(self._path_pts) > 1:
+                self._path_pts.pop()
+                self.update()
+                return
         if self.roto_mode:
             if e.key() == Qt.Key_Escape and self._roto_draft is not None:
                 self._roto_draft = None
@@ -1200,7 +1474,20 @@ class Viewport(QWidget):
         self.update()
 
     def contextMenuEvent(self, e):
-        if e.modifiers() & Qt.AltModifier:
+        if e.modifiers() & Qt.AltModifier or self.roto_mode or self.path_target is not None:
+            return
+        if self._rmb_moved > 4:   # that right-drag panned the view
+            self._rmb_moved = 0.0
+            return
+        hit = self._hit(e.pos().toPointF() if hasattr(e.pos(), 'toPointF') else QPointF(e.pos()))
+        if isinstance(hit, str) and hit.startswith('gz:'):
+            hit = self.doc.selection
+        if isinstance(hit, tuple) and hit[0] in ('emitter', 'collider', 'light', 'fabric'):
+            self.doc.select(hit, force=True)
+            from .actions import fill_menu
+            m = QMenu(self)
+            fill_menu(m, self.window(), hit, path_mode=self.start_path)
+            m.exec(e.globalPos())
             return
         m = QMenu(self)
         add = m.addMenu('Add emitter')

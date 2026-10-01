@@ -218,9 +218,6 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self._size_docks)
 
         self.welcome = None
-        if not s.value('ui/welcome_done', False, type=bool):
-            self.welcome = Welcome(self.viewport, self, self._close_welcome)
-            QTimer.singleShot(0, self._place_welcome)
 
         QTimer.singleShot(0, self.viewport.setFocus)   # not the first combo box: keys go to the viewer
         QTimer.singleShot(0, self._sync_modes)
@@ -229,6 +226,22 @@ class MainWindow(QMainWindow):
         self._autosave.timeout.connect(self._do_autosave)
         self._autosave.start()
         self._update_title()
+        from .startcard import StartCard
+        self.start_card = StartCard(self, self.viewport)
+        self.start_card.hide()
+        self.doc.sceneReplaced.connect(self._place_start)
+        self.doc.structureChanged.connect(self._place_start)
+        self.doc.paramChanged.connect(lambda *_: self._place_start())
+        self.workspace = 'build'
+        if not open_path:
+            from ..scene import components
+            self.doc.scene = components.new_scene('auto', QSettings().value('ui/new_scale', 'person'))
+            self.doc.baseline = self.doc.scene.copy()
+            self.doc.frame = self.doc.scene.start
+            self.doc.selection = ('section', 'domain')
+            self.doc.sceneReplaced.emit()
+            self.left.show_page('create')
+        QTimer.singleShot(0, lambda: self.set_workspace('build' if not open_path else 'shot'))
         if open_path:
             QTimer.singleShot(0, lambda: self.open_path(open_path))
         else:
@@ -266,7 +279,30 @@ class MainWindow(QMainWindow):
         brand = QLabel('Blackbody')
         brand.setStyleSheet('font-size: 11pt; font-weight: 700; letter-spacing: 0.5px;')
         h.addWidget(brand)
-        h.addSpacing(4)
+        h.addSpacing(10)
+        ws = QHBoxLayout()
+        ws.setSpacing(1)
+        self.ws_group = QButtonGroup(self)
+        self.ws_buttons = {}
+        for n, (key, label, tip) in enumerate((
+                ('build', 'Build', 'Build the scene in 3D with a camera of your own: put in fire, water, cloth, weather and '
+                                   'objects, move and shape them, make them interact (Tab switches)'),
+                ('shot', 'Shot', 'Put the effect in your footage: the shot\u2019s camera, placement, roto, layers over the '
+                                 'footage, and what you render (Tab switches)'))):
+            b = QToolButton()
+            b.setText(label)
+            b.setObjectName('segFirst' if n == 0 else 'segLast')
+            b.setCheckable(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setToolTip(tip)
+            b.setMinimumWidth(64)
+            b.setStyleSheet('QToolButton { font-weight: 600; padding: 5px 14px; }')
+            b.clicked.connect(lambda _=False, k=key: self.set_workspace(k))
+            self.ws_group.addButton(b)
+            ws.addWidget(b)
+            self.ws_buttons[key] = b
+        h.addLayout(ws)
+        h.addSpacing(10)
         self.scene_label = QLabel()
         self.scene_label.setObjectName('hint')
         self.scene_label.setMinimumWidth(80)
@@ -398,6 +434,7 @@ class MainWindow(QMainWindow):
                                'middle-drag to pan, wheel to move closer, F to frame the box. The shot, its camera and the renders '
                                'do not change (W)', False)
         self.work_btn.toggled.connect(self._work_view)
+        self.work_btn.hide()   # the Build / Shot switch in the header is the way to it
         self.roto_btn = toggle('roto', 'Roto', 'Draw shapes around what is in front of the effect in your footage: the effect goes '
                                'behind them. Key them over the shot as the object moves (R)', False)
         self.roto_btn.toggled.connect(self._roto)
@@ -473,7 +510,7 @@ class MainWindow(QMainWindow):
         v.addSeparator()
         self._act(v, 'Fit', self.viewport.fit, 'F')
         self._act(v, 'Guides', lambda: self.guides_btn.toggle(), 'G')
-        self._act(v, 'Work view (a camera of your own)', lambda: self.work_btn.toggle(), 'W')
+        self._act(v, 'Build / Shot', lambda: self.set_workspace('shot' if getattr(self, 'workspace', 'build') == 'build' else 'build'), 'W')
         self._act(v, 'Roto (shapes in front of the effect)', lambda: self.roto_btn.toggle(), 'R')
         self._act(v, 'Statistics', lambda: self.stats_btn.toggle())
         v.addSeparator()
@@ -536,7 +573,8 @@ class MainWindow(QMainWindow):
                         (Qt.Key_Left, lambda: self.doc.set_frame(self.doc.frame - 1)),
                         (Qt.Key_Right, lambda: self.doc.set_frame(self.doc.frame + 1)),
                         (Qt.Key_Home, lambda: self.doc.set_frame(self.doc.scene.start)),
-                        (Qt.Key_End, lambda: self.doc.set_frame(self.doc.scene.end))):
+                        (Qt.Key_End, lambda: self.doc.set_frame(self.doc.scene.end)),
+                        (Qt.Key_Tab, lambda: self.set_workspace('shot' if getattr(self, 'workspace', 'build') == 'build' else 'build'))):
             sc = QShortcut(QKeySequence(key), self)
             sc.setContext(Qt.WindowShortcut)
             sc.activated.connect(lambda fn=fn: self._unless_typing(fn))
@@ -657,6 +695,22 @@ class MainWindow(QMainWindow):
         self.viewport.show_stats = on
         self.viewport.update()
 
+    def set_workspace(self, ws):
+        """Build: your own camera on the scene, to make things. Shot: the shot's camera over the footage."""
+        self.workspace = ws
+        self.ws_buttons[ws].setChecked(True)
+        QSettings().setValue('ui/workspace', ws)
+        if ws == 'build':
+            if self.roto_btn.isChecked():
+                self.roto_btn.setChecked(False)
+            if not self.work_btn.isChecked():
+                self.work_btn.setChecked(True)
+        else:
+            if self.work_btn.isChecked():
+                self.work_btn.setChecked(False)
+        self.roto_btn.setEnabled(ws == 'shot')
+        self._place_start()
+
     def _work_view(self, on):
         if on == (self.doc.work_view is not None):
             return
@@ -666,13 +720,24 @@ class MainWindow(QMainWindow):
             from .workview import WorkView
             wv = getattr(self, '_last_work_view', None)
             if wv is None or getattr(self, '_last_work_seq', None) != self.doc.load_seq:
-                wv = WorkView.behind_shot(self.doc.scene, self.doc.frame)
+                wv = (WorkView.behind_shot(self.doc.scene, self.doc.frame) if self.doc.scene.footage
+                      else WorkView.framing(self.doc.scene))
             self.doc.set_work_view(wv)
-            self.msg.setText('Work view: your own camera for building the scene. The shot and its renders are unchanged. W goes back.')
+            if getattr(self, 'workspace', 'build') != 'build':
+                self.workspace = 'build'
+                self.ws_buttons['build'].setChecked(True)
+                self.roto_btn.setEnabled(False)
+            self.msg.setText('Build: your own camera on the scene. Drag to look around, drag the arrows to move things. '
+                             'Shot puts it in your footage.')
         else:
             self._last_work_view, self._last_work_seq = self.doc.work_view, self.doc.load_seq
             self.doc.set_work_view(None)
-            self.msg.setText('Back to the shot\u2019s camera.')
+            if getattr(self, 'workspace', 'shot') != 'shot':
+                self.workspace = 'shot'
+                self.ws_buttons['shot'].setChecked(True)
+                self.roto_btn.setEnabled(True)
+            self.msg.setText('Shot: the effect through the shot\u2019s camera, over your footage.')
+        self._place_start()
 
     def _roto(self, on):
         if on and self.work_btn.isChecked():
@@ -794,6 +859,8 @@ class MainWindow(QMainWindow):
         self._add_recent(path)
         self.worker.post('frame', self.doc.frame)
         self.msg.setText(f'Opened {Path(path).name}')
+        if self.doc.scene.footage:
+            self.set_workspace('shot')
 
     def save(self):
         if not self.doc.shot.path:
@@ -831,6 +898,7 @@ class MainWindow(QMainWindow):
         QSettings().setValue('ui/footage_dir', str(Path(path).parent))
         self.msg.setText('Opening footage…')
         self.doc.import_footage(path)
+        self.set_workspace('shot')
 
     def import_chan(self, path=None):
         if not path:
@@ -1054,6 +1122,24 @@ class MainWindow(QMainWindow):
         super().resizeEvent(e)
         if self.welcome is not None and self.welcome.isVisible():
             self._place_welcome()
+        self._place_start()
+
+    def _place_start(self):
+        """The start card, while the stage in Build is empty."""
+        card = getattr(self, 'start_card', None)
+        if card is None:
+            return
+        sc = self.doc.scene
+        empty = (not (sc.emitters or sc.colliders or sc.fabrics or sc.lights) and sc.kind != 'cloud'
+                 and not (sc.kind != 'fire' and (sc.data['liquid']['water_level'] > 0 or sc.data['liquid']['rain'] > 0
+                                                 or sc.data['weather']['precip'] != 'none')))
+        show = empty and getattr(self, 'workspace', 'build') == 'build'
+        if show:
+            card.adjustSize()
+            vp = self.viewport
+            card.move(max(8, (vp.width() - card.width()) // 2), max(8, (vp.height() - card.height()) // 2))
+            card.raise_()
+        card.setVisible(show)
 
     def _shortcuts_help(self):
         rows = [('Space', 'Play / pause'), ('Left / Right', 'Previous / next frame'), ('Home / End', 'First / last frame'),

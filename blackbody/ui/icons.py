@@ -671,6 +671,8 @@ GLYPHS = {
     'spiral': _g_spiral, 'steam': _g_steam, 'pour': _g_pour, 'fountain': _g_fountain, 'ball': _g_ball, 'pillar': _g_pillar,
     'wall': _g_wall, 'house': _g_house, 'car': _g_car, 'hill': _g_hill, 'flag': _g_flag, 'spot': _g_spot, 'window': _g_window,
     'mesh': _g_mesh, 'crate': _g_crate, 'roto': _g_roto,
+    'play': lambda p, s: p.drawPolygon(QPolygonF([QPointF(s * 0.3, s * 0.2), QPointF(s * 0.8, s * 0.5), QPointF(s * 0.3, s * 0.8)])),
+    'stop': lambda p, s: p.drawRect(QRectF(s * 0.25, s * 0.25, s * 0.5, s * 0.5)),
 }
 
 

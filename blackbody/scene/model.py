@@ -115,6 +115,9 @@ class Scene:
         self.base_index = 0
         self.uid = 'base'
         self.enabled = True
+        # Objects attached to others ({'child': [kind, name], 'parent': [kind, name], 'offset': [x, y, z]}): a child
+        # goes where its parent goes, at its offset, whenever the scene changes (apply_links)
+        self.links = []
         self.preset = None
         self.notes = ''
         self.path = None
@@ -1057,6 +1060,7 @@ class Scene:
             'roto': getattr(self, 'roto', None) or [],
             'layers': [dict(l.to_dict(), uid=l.uid, enabled=bool(l.enabled)) for l in getattr(self, 'layers', None) or []],
             'base_index': int(getattr(self, 'base_index', 0)),
+            'links': [dict(l) for l in getattr(self, 'links', None) or []],
         }
 
     @classmethod
@@ -1120,9 +1124,49 @@ class Scene:
             layer.enabled = bool(ld.get('enabled', True))
             s.layers.append(layer)
         s.base_index = max(0, min(int(d.get('base_index', 0) or 0), len(s.layers)))
+        s.links = [dict(l) for l in (d.get('links') or []) if isinstance(l, dict) and l.get('child') and l.get('parent')]
         if s.layers:
             s.sync_layers()
         return s
+
+    # -- attached objects ------------------------------------------------------------------------------
+
+    def find_object(self, kind, name):
+        """(index, dict) of the object of a kind with a name, or (None, None)."""
+        items = {'emitter': self.emitters, 'collider': self.colliders, 'light': self.lights, 'fabric': self.fabrics}.get(kind, [])
+        for i, d in enumerate(items):
+            if d.get('name') == name:
+                return i, d
+        return None, None
+
+    def link_of(self, kind, name):
+        return next((l for l in getattr(self, 'links', None) or [] if list(l['child']) == [kind, name]), None)
+
+    def apply_links(self):
+        """Put every attached object where its parent is, at its offset, over the whole shot (a parent's keys
+        become the child's, moved by the offset). Links whose objects are gone are dropped."""
+        keep = []
+        for l in getattr(self, 'links', None) or []:
+            ci, child = self.find_object(*l['child'])
+            pi, parent = self.find_object(*l['parent'])
+            if child is None or parent is None or child is parent:
+                continue
+            keep.append(l)
+            off = tuple(float(x) for x in l.get('offset', (0.0, 0.0, 0.0)))
+            pp = parent['position']
+            old = child['position']
+            if isinstance(pp, Curve):
+                child['position'] = Curve([[f, tuple(a + b for a, b in zip(v, off)), it] for f, v, it in pp.keys])
+            else:
+                child['position'] = tuple(a + b for a, b in zip(pp, off))
+            if l['child'][0] == 'emitter' and child.get('shape') == 'capsule' and 'end_offset' in l:
+                eo = tuple(float(x) for x in l['end_offset'])
+                if isinstance(pp, Curve):
+                    child['end'] = Curve([[f, tuple(a + b for a, b in zip(v, eo)), it] for f, v, it in pp.keys])
+                else:
+                    child['end'] = tuple(a + b for a, b in zip(pp, eo))
+            del old
+        self.links = keep
 
     # -- layers ------------------------------------------------------------------------------------
 

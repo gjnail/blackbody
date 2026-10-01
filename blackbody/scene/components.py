@@ -244,19 +244,32 @@ COMPONENTS = [
                        _C(name='Table', shape='box', position=(0.0, 0.37, 0.0), size=(0.45, 0.37, 0.45))]),
     Component('cloth_mesh', 'Your cloth mesh…', 'Fabric', 'Any OBJ model simulated as cloth: a shirt, a tent, a sail.', 'mesh',
               pick='mesh', objects=[_F(name='Cloth', shape='mesh', position=(0.0, 1.0, 0.0), pins='none')]),
-    # -- light and air ---------------------------------------------------------------------------------------------------------
-    Component('lamp', 'Lamp', 'Lights & air', 'A bare bulb in the set, 2 m up: it lights the smoke and the smoke shadows it.', 'bulb',
+    # -- forces: air pushed around (it carries smoke, flame, steam, embers and cloth) ------------------------
+    Component('fan', 'Fan', 'Forces', 'A box that blows air one way, like a fan or a gust through a door: it pushes smoke, flame '
+              'and cloth. Turn it to aim it.', 'wind', 'fire', scales=True, room=(1.0, 1.2, 0.6),
+              objects=[_E(name='Fan', shape='box', position=(-0.7, 0.5, 0.0), size=(0.15, 0.3, 0.3), fuel=0.0, temperature=0.0,
+                          velocity=(3.0, 0.0, 0.0), vel_blend=0.35, noise=0.0, embers=False)]),
+    Component('updraft', 'Updraft', 'Forces', 'A column of rising air that lifts smoke, sparks and light cloth.', 'wind', 'fire',
+              scales=True, room=(0.6, 2.0, 0.6),
+              objects=[_E(name='Updraft', shape='cylinder', position=(0.0, 0.3, 0.0), size=(0.25, 0.3, 0.25), fuel=0.0,
+                          temperature=0.0, velocity=(0.0, 3.0, 0.0), vel_blend=0.3, noise=0.0, embers=False)]),
+    Component('suction', 'Suction', 'Forces', 'A point that draws the air in from all round, like a vent or an extractor.', 'wind',
+              'fire', scales=True, room=(0.8, 1.4, 0.8),
+              objects=[_E(name='Suction', shape='sphere', position=(0.0, 0.8, 0.0), size=(0.2, 0.2, 0.2), fuel=0.0, temperature=0.0,
+                          radial=-3.0, vel_blend=0.4, noise=0.0, embers=False)]),
+    # -- lights ---------------------------------------------------------------------------------------------------------
+    Component('lamp', 'Lamp', 'Lights', 'A bare bulb in the set, 2 m up: it lights the smoke and the smoke shadows it.', 'bulb',
               scales=True, objects=[_L(name='Lamp', kind='point', position=(1.2, 2.0, 0.8), intensity=130.0, temperature=2700.0,
                           colour=(1.0, 1.0, 1.0))]),
-    Component('spot', 'Spotlight', 'Lights & air', 'A stage spot aimed down at the effect: its beam shows in the smoke.', 'bulb',
+    Component('spot', 'Spotlight', 'Lights', 'A stage spot aimed down at the effect: its beam shows in the smoke.', 'bulb',
               scales=True, objects=[_L(name='Spotlight', kind='spot', position=(1.5, 3.0, 1.0), direction=(-0.45, -0.8, -0.3), intensity=20000.0,
                           cone=18.0, colour=(1.0, 0.95, 0.88))]),
-    Component('window', 'Window light', 'Lights & air', 'Soft light from a window to one side (an area light).', 'bulb',
+    Component('window', 'Window light', 'Lights', 'Soft light from a window to one side (an area light).', 'bulb',
               scales=True, objects=[_L(name='Window', kind='area', position=(-2.0, 1.6, 0.5), direction=(1.0, -0.2, 0.0), intensity=3000.0,
                           radius=0.6, colour=(0.85, 0.9, 1.0))]),
-    Component('wind', 'Wind', 'Weather', 'A steady breeze blowing to screen right. Turn it in Motion › Wind (or Liquid › Wind).', 'wind',
+    Component('wind', 'Wind', 'Forces', 'A steady breeze blowing to screen right. Turn it in Motion › Wind (or Liquid › Wind).', 'wind',
               scene={'motion': {'wind_speed': 1.5}, 'liquid': {'wind_speed': 4.0}, 'atmosphere': {'wind': 8.0}}),
-    Component('vortex', 'Vortex', 'Lights & air', 'Air spinning around a vertical axis: it twists smoke and flame into a column.', 'wind',
+    Component('vortex', 'Vortex', 'Forces', 'Air spinning around a vertical axis: it twists smoke and flame into a column.', 'wind',
               'fire', scales=True, room=(0.8, 2.0, 0.8),
               objects=[_E(name='Vortex', shape='cylinder', position=(0.0, 0.05, 0.0), size=(0.3, 0.05, 0.3), fuel=0.0, temperature=0.0,
                           swirl=2.5, swirl_width=6.0, noise=0.0, embers=False)]),
@@ -267,12 +280,13 @@ GLYPHS = {'campfire': 'logs', 'pool': 'pool', 'line': 'line', 'torch': 'torch', 
           'whirl': 'spiral', 'burnable': 'crate', 'steam': 'steam', 'kettle': 'steam', 'pour': 'pour', 'hose': 'jet',
           'fountain': 'fountain', 'block': 'crate', 'flow': 'waves', 'pond': 'waves', 'ball': 'ball', 'pillar': 'pillar',
           'wall': 'wall', 'room': 'house', 'car': 'car', 'crate': 'crate', 'stone': 'ball', 'hill': 'hill', 'basin': 'hill',
-          'logs': 'logs', 'mesh': 'mesh', 'flag': 'flag', 'banner': 'flag', 'spot': 'spot', 'window': 'window', 'vortex': 'spiral'}
+          'logs': 'logs', 'mesh': 'mesh', 'flag': 'flag', 'banner': 'flag', 'spot': 'spot', 'window': 'window', 'vortex': 'spiral',
+          'fan': 'jet', 'updraft': 'steam', 'suction': 'burst'}
 for _c in COMPONENTS:
     _c.glyph = GLYPHS.get(_c.key, _c.glyph)
 
 BY_KEY = {c.key: c for c in COMPONENTS}
-GROUPS = ['Fire', 'Smoke, steam & sparks', 'Liquids', 'Fabric', 'Weather', 'Objects', 'Lights & air']
+GROUPS = ['Fire', 'Smoke, steam & sparks', 'Liquids', 'Fabric', 'Weather', 'Forces', 'Objects', 'Lights']
 
 # Making a scene from scratch: (label, box width in metres)
 SCALES = {'small': ('Tabletop', 0.6), 'person': ('Person-sized', 2.0), 'large': ('Car or room', 6.0), 'huge': ('Building', 20.0)}
@@ -484,6 +498,51 @@ def add(scene: Scene, key, at=None, mesh=None):
     if grown:
         notes.append(f'The simulation box grew to {grown[0]:.2g} × {grown[1]:.2g} × {grown[2]:.2g} m to fit it.')
     return added, notes
+
+
+# what a source can be turned into (Turn into, in the viewer's menus): the building block it takes its settings from
+TURN_INTO = [('burner', 'Fire'), ('smoke', 'Smoke'), ('steam', 'Steam'), ('pour', 'Water'), ('lava', 'Lava'), ('fan', 'Fan'),
+             ('updraft', 'Updraft'), ('suction', 'Suction'), ('vortex', 'Vortex')]
+GEOMETRY = {'name', 'enabled', 'shape', 'mesh', 'volume', 'volume_mode', 'volume_zup', 'position', 'size', 'end', 'yaw', 'thickness',
+            'mesh_offset'}
+
+
+def turn_into(scene: Scene, i, key):
+    """Make source i the kind of source the block `key` is (fire, water, a fan...), keeping its shape and place.
+    Returns notes. Raises ValueError if the scene cannot take it."""
+    comp = BY_KEY[key]
+    src = next(d for kind, d in comp.objects if kind == 'emitter')
+    notes = []
+    target = target_kind(scene, comp)
+    if target is None:
+        raise ValueError(f'A sky scene has no {comp.name.lower()} sources.')
+    if target != scene.kind:
+        was = scene.kind
+        # this source is changing, so it does not count as fire or liquid that is already there
+        others = [e for j, e in enumerate(scene.emitters) if j != i]
+        keep = scene.emitters
+        scene.emitters = others
+        target = target_kind(scene, comp) or target
+        scene.emitters = keep
+        convert_kind(scene, target)
+        if target in ('liquid', 'both') and was == 'fire':
+            _liquid_look(scene)
+        if target == 'both':
+            notes.append('Fire and liquid now simulate together in this scene.')
+    from .params import emitter_defaults
+    e = scene.emitters[i]
+    base = emitter_defaults()
+    for k, v in base.items():
+        if k not in GEOMETRY:
+            e[k] = v
+    for k, v in src.items():
+        if k not in GEOMETRY:
+            e[k] = v
+    if scene.kind == 'both':
+        e['emits'] = {'fire': 'fire', 'liquid': 'liquid', 'lava': 'lava'}.get(comp.need, 'fire')
+    if comp.need in ('liquid', 'lava') and 'velocity' not in src:
+        e['velocity'] = (0.0, -0.5, 0.0)
+    return notes
 
 
 def _fit_box(scene, objs, comp, f, base):

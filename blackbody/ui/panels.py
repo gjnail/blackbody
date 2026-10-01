@@ -441,7 +441,10 @@ class ObjectList(QWidget):
         sel = it.data(0, Qt.UserRole) if it else None
         m = QMenu(self)
         if sel and sel[0] in OBJECT_KINDS:
-            object_menu(m, self.doc, sel, rename=lambda: self.tree.editItem(it, 0))
+            from .actions import fill_menu
+            win = self.window()
+            fill_menu(m, win, sel, path_mode=getattr(getattr(win, 'viewport', None), 'start_path', None))
+            m.addAction('Rename', lambda: self.tree.editItem(it, 0))
         else:
             fill_add_menu(m, self.doc, self)
         m.exec(self.tree.viewport().mapToGlobal(pos))
@@ -920,15 +923,19 @@ class Inspector(QWidget):
                                 header=self._object_header(okind, i, d), memo=okind)
 
     def _object_header(self, okind, i, d):
+        """The object's card: on/off, duplicate, delete, and what it can do (actions.py) on a row that wraps."""
         w = QFrame()
         w.setObjectName('card')
-        h = QHBoxLayout(w)
-        h.setContentsMargins(10, 6, 6, 6)
+        v = QVBoxLayout(w)
+        v.setContentsMargins(10, 6, 6, 8)
+        v.setSpacing(6)
+        h = QHBoxLayout()
         h.setSpacing(6)
+        v.addLayout(h)
         on = Switch()
         on.setChecked(d['enabled'])
         on.setToolTip('On or off: an object switched off takes no part in the simulation')
-        on.toggled.connect(lambda v: self.doc.set((okind, i, 'enabled'), v, merge=False))
+        on.toggled.connect(lambda val: self.doc.set((okind, i, 'enabled'), val, merge=False))
         h.addWidget(on)
         state = QLabel('On' if d['enabled'] else 'Off')
         state.setObjectName('hint')
@@ -941,16 +948,39 @@ class Inspector(QWidget):
             b.setToolTip(tip)
             b.clicked.connect(fn)
             h.addWidget(b)
-        if okind == 'emitter':
-            tb('copy', 'Duplicate', lambda: self.doc.duplicate_emitter(i))
-            tb('trash', 'Delete', lambda: self.doc.remove_emitter(i))
-        elif okind == 'fabric':
-            tb('copy', 'Duplicate', lambda: self.doc.duplicate_fabric(i))
-            tb('trash', 'Delete', lambda: self.doc.remove_fabric(i))
-        elif okind == 'collider':
-            tb('trash', 'Delete', lambda: self.doc.remove_collider(i))
-        else:
-            tb('trash', 'Delete', lambda: self.doc.remove_light(i))
+        win = self.window()
+        if okind in ('emitter', 'fabric', 'collider', 'light'):
+            from . import actions as A
+            tb('copy', 'Duplicate', lambda: A.duplicate(win, okind, i))
+        tb('trash', 'Delete', lambda: {'emitter': self.doc.remove_emitter, 'collider': self.doc.remove_collider,
+                                        'light': self.doc.remove_light, 'fabric': self.doc.remove_fabric}[okind](i))
+        if hasattr(win, 'doc'):
+            from .actions import fill_menu, quick_actions
+            from .library import FlowLayout
+            row = QWidget()
+            flow = FlowLayout(row, 4)
+            flow.setContentsMargins(0, 0, 0, 0)
+            for label, glyph, fn in quick_actions(win, (okind, i)):
+                b = QPushButton(' ' + label)
+                b.setObjectName('chip')
+                b.setIcon(icons.glyph_icon(glyph, theme.MUTED, 14, active=theme.TEXT))
+                b.setCursor(Qt.PointingHandCursor)
+                b.clicked.connect(fn)
+                flow.addWidget(b)
+            more = QPushButton('More…')
+            more.setObjectName('chip')
+            more.setToolTip('Everything this can do: turn into, attach to, move along a path, look at it…')
+            mm = QMenu(more)
+            mm.aboutToShow.connect(lambda: (mm.clear(), fill_menu(mm, win, (okind, i),
+                                                                  path_mode=getattr(getattr(win, 'viewport', None), 'start_path', None))))
+            more.setMenu(mm)
+            flow.addWidget(more)
+            v.addWidget(row)
+        link = self.doc.scene.link_of(okind, d['name']) if hasattr(self.doc.scene, 'link_of') else None
+        if link is not None:
+            lab = QLabel(f'Attached to <b>{link["parent"][1]}</b>: it goes where that goes.')
+            lab.setObjectName('hint')
+            v.addWidget(lab)
         return w
 
 
