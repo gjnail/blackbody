@@ -157,8 +157,10 @@ class Stage:
         self.k = gpu.kernel('stage.wgsl', ['utex3d', 'tex3d', 'tex3d', 'tex3d', 'tex3d', 'smp', 'smp', 'rbuf', 'rbuf',
                                            'rbuf', 'tex2d', 'tex2d', 'tex2d', 'tex3d', 'st2d:rgba16float:w',
                                            'rbuf', 'rbuf', 'rbuf', 'rbuf', 'st2d:rgba16float:w', 'tex3d', 'tex3d', 'tex2d',
-                                           'utex3d', 'utex3d', 'rbuf', 'tex3d', 'rbuf', 'buf', 'buf', 'rbuf'],
+                                           'utex3d', 'utex3d', 'rbuf', 'tex3d', 'rbuf', 'buf', 'buf', 'rbuf', 'buf'],
                             workgroup=(8, 8, 1))
+        # Lume's caustics: light traced from the lights through curved glass (lume.wgsl caustics), same bindings
+        self.k_caustics = gpu.kernel('stage.wgsl', self.k.bindings, 'caustics', workgroup=(64, 1, 1))
         mg = ['utex3d', 'utex3d', 'buf', 'buf']
         self.k_mglow = gpu.kernel('matter_glow.wgsl', mg, 'lights', workgroup=(4, 4, 4))
         self.k_mglow_finish = gpu.kernel('matter_glow.wgsl', mg, 'finish', workgroup=(1, 1, 1))
@@ -175,7 +177,8 @@ class Stage:
         self._env_key = None
         self.env_sky = None     # the HDRI's average colour (the sky's light), when it has one
         self.lume = None        # Lume's state (lume.Lume), once a scene asks for Lume
-        self._lume_off = [gpu.buffer(16, 'stage-no-acc'), gpu.buffer(32, 'stage-no-aov'), gpu.buffer(16, 'stage-no-env')]
+        self._lume_off = [gpu.buffer(16, 'stage-no-acc'), gpu.buffer(32, 'stage-no-aov'), gpu.buffer(16, 'stage-no-env'),
+                          gpu.buffer(16, 'stage-no-caustics')]
 
     @property
     def lume_pending(self):
@@ -514,7 +517,7 @@ class Stage:
             L = self.lume
             L.ensure(pw, ph)
             L.environment(scene.data['lighting'].get('environment', '') if env is not None else '')
-            lume_bufs = [L.acc, L.aov, L.env_buffer()]
+            lume_bufs = [L.acc, L.aov, L.env_buffer(), L.cau]
             # (the picture the passes so far are of: an edit is drawn live first, which starts them afresh)
             key = (int(frame), pw, ph, bytes(np.asarray(camstate.inv_view_proj, np.float32).tobytes()), bool(footage),
                    float(shutter))
@@ -536,7 +539,7 @@ class Stage:
                floor_burn if floor_burn is not None else r._empty, obj_burn if obj_burn is not None else r._empty,
                burns.slots if obj_burn is not None else r._no_slots, look2, self._ml, *lume_bufs]
         if not lume.on:
-            b.run(self.k, res, u.v4().v4(), (pw, ph, 1))
+            b.run(self.k, res, u.raw([0.0] * LU.TAIL_FLOATS), (pw, ph, 1))
             return self.tex
         # Lume: its passes, each a new path per pixel added to the ones before (lume.wgsl), then the denoiser
         base = list(u.data)
@@ -545,9 +548,21 @@ class Stage:
         # (Clamp bright paths: a bounce's light capped at that many times the sky's brightness; 0: none)
         cap = float(lume.clamp) * max(float(np.dot(np.asarray(sky, float), (0.2126, 0.7152, 0.0722))), 1e-4) if lume.clamp > 0 else 0.0
         ew, eh = L.env_dims if env is not None else (0, 0)
+        # caustics: the curved clear things in the set (not over footage, for now), the camera, how many light paths
+        targets = LU.caustic_targets(scene, cols, rows, meshes, matter if surf is not None else None) if not footage else []
+        caust = Uniforms()
+        n_paths = (pw * ph) // LU.CAUSTIC_SHARE if targets else 0
+        eye_l = w2l @ np.append(np.asarray(camstate.eye, float), 1.0)
+        caust.v4(n_paths, len(targets), 1.0 / max(n_paths * pix * pix, 1e-30) if n_paths else 0.0, 1.0 if n_paths else 0.0)
+        caust.v3(eye_l[:3], 0.0).m4(camstate.view_proj).m4(l2w)
+        for k in range(LU.TARGETS):
+            caust.v4(*(targets[k] if k < len(targets) else (0.0, 0.0, 0.0, 0.0)))
         for i in range(count):
             up = Uniforms()
-            up.data = base + [1.0, float(first + i), float(lume.bounces), cap, float(ew), float(eh), clear_on, 0.0]
+            up.data = base + [1.0, float(first + i), float(lume.bounces), cap, float(ew), float(eh), clear_on, 0.0] + caust.data
+            if n_paths:
+                b.clear_buffer(L.cau)
+                b.run(self.k_caustics, res, up, groups=(-(-n_paths // 64), 1, 1))
             b.run(self.k, res, up, (pw, ph, 1))
             if final and (i + 1) % max(1, LU.FINAL_SUBMIT // ns) == 0 and i + 1 < count:
                 b.submit(restart=True)

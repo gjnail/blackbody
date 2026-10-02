@@ -168,6 +168,7 @@ def main():
     ap.add_argument('scenes', nargs='*')
     ap.add_argument('--ref', type=int, default=16384)
     ap.add_argument('--spp', default='4,16,64,256,1024')
+    ap.add_argument('--repeat', type=int, default=3)
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -187,7 +188,10 @@ def main():
         render(spec, spps[0])     # (warm the JIT up: not timed)
         imgs, secs = [], []
         for spp in spps:
-            img, dt = render(spec, spp, seed=7)
+            dt = float('inf')
+            for _ in range(args.repeat):   # (the fastest of a few: the GPU may be shared)
+                img, t = render(spec, spp, seed=7)
+                dt = min(dt, t)
             imgs.append(img)
             secs.append(dt)
             print(f'mitsuba {name} {spp} spp: {dt:.2f} s', flush=True)

@@ -85,7 +85,7 @@ Objects hang on ropes, steel cables, springs, hinges and ball joints, from a fix
 
 <img src="docs/media/img/lume-classic.jpg" width="49%" alt="A wooden shed with a fire inside, lit by the classic engine: its inner walls flat brown"> <img src="docs/media/img/lume-path.jpg" width="49%" alt="The same shed path traced with Lume: the fire's light on its inner walls and floor, bounced round inside it">
 
-The stage can be path traced with **Lume** (left: the classic engine, right: Lume). Light bounces from surface to surface, so a fire inside a shed lights its walls and the light they throw back fills it. Each fire light, glowing patch of hot metal and lamp casts its own shadow, as soft as the light is big, through the objects and the smoke. An HDRI's sun casts sharp shadows, and glass, ice and jelly bend and tint what is seen through them. Measured against a research path tracer on test scenes, its mean brightness is within about 1%. [Lume lighting](docs/lume.md)
+The stage can be path traced with **Lume** (left: the classic engine, right: Lume). Light bounces from surface to surface, so a fire inside a shed lights its walls and the light they throw back fills it. Each fire light, glowing patch of hot metal and lamp casts its own shadow, as soft as the light is big, through the objects and the smoke. An HDRI's sun casts sharp shadows, and glass, ice and jelly bend and tint what is seen through them and focus the light into caustics. Measured against a research path tracer on test scenes, its mean brightness is within about 1%. [Lume lighting](docs/lume.md)
 
 <img src="docs/media/gif/cart_jump.gif" width="49%" alt="A burning motor cart racing up a ramp, jumping and crashing through a tower of blocks">
 

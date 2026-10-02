@@ -11,8 +11,16 @@
 //   its visible normals), or through glass, ice and jelly (reflected or refracted by its Fresnel term, tinted over its
 //   path through it), so light reaches the camera after bouncing from wall to floor to object;
 // - a path that leaves the set sees the sky (or the HDRI), through the smoke overhead.
-// Paths end by Russian roulette once they carry little light, and indirect light is capped (Clamp bright paths) so a
+// Paths end by Russian roulette (from the fourth bounce) once they carry little light, and indirect light is capped (Clamp bright paths) so a
 // stray glint does not leave a firefly.
+//
+// Caustics: the light a curved clear thing (a glass ball, an ice cube, jelly) focuses is all but never found by a path
+// from the camera. So each pass also traces light paths from the lights (caustics): from a lamp, the key light or the
+// HDRI's bright parts, aimed at the curved clear things; through them (refracted and reflected by Fresnel, tinted); and
+// where one lands on a surface, its light is sent to the camera (a straight line, nothing in the way: light tracing) and
+// added to that pixel (CAU). The camera's paths then leave those lights through curved glass to it: their shadow rays stop
+// at curved glass, and a bounce that reaches a light through glass does not count. Flat glass (a pane, a box, a shard)
+// keeps its exact straight-through shadow. The fire's lights keep the straight-through shadow through curved glass too.
 //
 // Every pass traces one path per pixel at a new place in the pixel and the shutter; the stage adds the passes up
 // (ACC) with the first surface's albedo, facing and distance, and each pass's brightness squared (AOV), for the denoiser
@@ -153,7 +161,22 @@ fn lu_open(p: vec3<f32>, d: vec3<f32>, tmax: f32, eps: f32, want: f32) -> f32 {
 // surfaces let in and out (Fresnel, straight through: a slab's shadow exactly, a ball's without its focused caustic) and
 // their tint over the way through. (The light a curved one focuses is not found this way: paths through glass to a
 // light are not counted again either, see lu_path.)
-fn lu_shadow(p: vec3<f32>, d: vec3<f32>, tmax: f32, eps: f32, want: f32) -> f32 {
+// Whether caustics are traced this pass (lume.wgsl caustics): then curved clear things stop the shadow rays of the lights
+// traced through them, and their light through them comes in as caustics instead.
+fn lu_caustics_on() -> bool { return U.lume3.w > 0.5; }
+
+// Whether what h hit bends light into a caustic: a ball, a cylinder, a mesh, the matter (jelly). Not the floor, a box or a
+// piece of something broken, whose flat faces only shift the light (their straight-through shadow is exact).
+fn lu_curved(h: Hit) -> bool {
+  if (h.id == MATTER) { return true; }
+  if (h.id >= 0 && h.id < FLOOR) {
+    let sh = i32(U.col[h.id].a.w + 0.5);
+    return sh == 0 || sh == 2 || sh == 3;
+  }
+  return false;
+}
+
+fn lu_shadow(p: vec3<f32>, d: vec3<f32>, tmax: f32, eps: f32, want: f32, caustic: bool) -> f32 {
   if (lu_open(p, d, tmax, eps, want) <= 0.0) { return 0.0; }
   // a lamp is a solid bulb: it shades what is behind it (but not the light picked on its own surface, at tmax)
   for (var k = 0; k < i32(U.ln.w); k++) {
@@ -170,6 +193,7 @@ fn lu_shadow(p: vec3<f32>, d: vec3<f32>, tmax: f32, eps: f32, want: f32) -> f32 
     let ph = q + d * h.t;
     let cl = lu_clear(h, ph);
     if (cl.clear <= 0.0) { return 0.0; }
+    if (caustic && lu_curved(h)) { return 0.0; }   // (its light through it is traced from the light: caustics)
     let n = lu_hit_normal(h, ph, eps);
     let fin = lu_fresnel(max(abs(dot(n, d)), 1e-4), cl.ior);
     let ex = lu_exit(h, ph + d * eps, d, eps);
@@ -320,7 +344,7 @@ fn lu_direct(s: Surf, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>) -> vec3<f32> {
     let l = sf[0] * lc.x + sf[1] * lc.y + sf[2] * lc.z;
     let e = lu_eval(m, vl, lu_to_local(fr, l));
     if (e.x + e.y + e.z > 0.0) {
-      var vis = lu_shadow(po, l, 1.0e4, s.eps, s.want);
+      var vis = lu_shadow(po, l, 1.0e4, s.eps, s.want, lu_caustics_on());
       let ps = pl + s.n * 1.5 + l * 0.75;
       if (vis > 0.0 && in_light(ps)) { vis *= samp_c(L0, lin, ps, U.ln.xyz).a; }
       c += U.sun.rgb * e.xyz * vis;
@@ -358,7 +382,7 @@ fn lu_direct(s: Surf, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>) -> vec3<f32> {
           var vis = 1.0;
           if (U.fire.w > 0.0) {
             let reach = max(dist - a.w, 0.0);
-            let sh = lu_shadow(po, l, reach, s.eps, s.want) * smoke_tr(po, l, reach);
+            let sh = lu_shadow(po, l, reach, s.eps, s.want, false) * smoke_tr(po, l, reach);
             vis = mix(1.0, sh, U.fire.w);
           }
           let rad = lights[2u * k + 1u].rgb / (dot(d0, d0) + a.w * a.w);
@@ -424,7 +448,7 @@ fn lu_direct(s: Surf, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>) -> vec3<f32> {
     let e = lu_eval(m, vl, lu_to_local(fr, l));
     if (e.x + e.y + e.z <= 0.0) { continue; }
     let tl = max(lu_sphere_t(po, l, lm.p.xyz, r), 0.0);
-    var vis = lu_shadow(po, l, tl, s.eps, s.want);
+    var vis = lu_shadow(po, l, tl, s.eps, s.want, lu_caustics_on());
     if (vis > 0.0 && lm.e.y > 0.5) {
       let pq = pl + s.n * 1.5 + l * 0.75;
       if (in_light(pq)) { vis *= lamp_tr(pq, k); }
@@ -438,7 +462,7 @@ fn lu_direct(s: Surf, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>) -> vec3<f32> {
     let l = pk.xyz;
     let e = lu_eval(m, vl, lu_to_local(fr, l));
     if (pk.w > 0.0 && e.x + e.y + e.z > 0.0) {
-      var vis = lu_shadow(po, l, 1.0e4, s.eps, s.want);
+      var vis = lu_shadow(po, l, 1.0e4, s.eps, s.want, lu_caustics_on());
       let pk2 = pl + s.n * 1.5;
       if (vis > 0.0 && in_light(pk2)) { vis *= samp_c(L1, lin, pk2, U.ln.xyz).x; }
       c += sky_dir(l) * e.xyz * (vis * lu_power(pk.w, e.w) / pk.w);
@@ -625,8 +649,9 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
       rd = fr[0] * ll.x + fr[1] * ll.y + fr[2] * ll.z;
       ro = s.p + s.n * s.eps;
       depth += 1;
-      // Russian roulette: paths that carry little light end, the rest carry more
-      if (depth >= 2 && !last) {
+      // Russian roulette, from the fourth bounce: paths that carry little light end, the rest carry more (ending them
+      // sooner saves little time and adds noise: measured against Mitsuba, from the second it doubled a glossy set's)
+      if (depth >= 4 && !last) {
         let q = clamp(max(thr.r, max(thr.g, thr.b)), 0.05, 0.95);
         if (lu_rand() >= q) { break; }
         thr /= q;
@@ -719,4 +744,207 @@ fn lume_see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w:
     if (matte > 0.0) { col = mix(col, footage_at(puv), matte); }
   }
   return Seen(col, cg, h.t);
+}
+
+
+// ---- caustics: light traced from the lights through curved glass, to the camera ---------------------------------------
+
+const LU_CAU_SCALE: f32 = 1024.0;   // CAU holds radiance times this, rounded (atomics are integers)
+
+// The caustics this pass put in pixel k (radiance, rgb).
+fn lu_caustic_at(k: u32) -> vec3<f32> {
+  return vec3<f32>(f32(atomicLoad(&CAU[3u * k])), f32(atomicLoad(&CAU[3u * k + 1u])),
+                   f32(atomicLoad(&CAU[3u * k + 2u]))) / LU_CAU_SCALE;
+}
+
+struct LuThru { ro: vec3<f32>, rd: vec3<f32>, tint: vec3<f32>, ok: bool };
+
+// Light travelling along rd that meets clear thing h at p from outside: reflected off it or refracted in, across
+// (reflected inside while it cannot get out) and out, at random by Fresnel; where it goes on from, which way, and the tint
+// of its way through. (ok false: it was lost inside.)
+fn lu_through(h: Hit, p: vec3<f32>, rd: vec3<f32>, cl: LuClear, eps: f32) -> LuThru {
+  var n = lu_hit_normal(h, p, eps);
+  if (dot(n, rd) > 0.0) { n = -n; }
+  let ci = max(dot(n, -rd), 1e-4);
+  if (lu_rand() < lu_fresnel(ci, cl.ior)) {
+    return LuThru(p + n * eps, reflect(rd, n), vec3<f32>(1.0), true);
+  }
+  var rin = refract(rd, n, 1.0 / cl.ior);
+  if (dot(rin, rin) < 0.5) { rin = rd; }
+  var pin = p - n * eps;
+  var tint = vec3<f32>(1.0);
+  for (var j = 0; j < 6; j++) {
+    let ex = lu_exit(h, pin, rin, eps);
+    let nout = ex.xyz;
+    let pout = pin + rin * ex.w;
+    tint *= pow(max(cl.tint, vec3<f32>(1e-3)), vec3<f32>(ex.w / 0.1));
+    let fo = lu_fresnel(max(dot(rin, nout), 1e-4), 1.0 / cl.ior);
+    let rout = refract(rin, -nout, cl.ior);
+    if (dot(rout, rout) > 0.5 && lu_rand() >= fo) {
+      return LuThru(pout + nout * (2.0 * eps), rout, tint, true);
+    }
+    rin = reflect(rin, -nout);
+    pin = pout - nout * (2.0 * eps);
+  }
+  return LuThru(pin, rin, tint, false);
+}
+
+const LU_CAU_BOUNCES: i32 = 2;   // a caustic's light is followed this many bounces on from where it lands
+
+// Light that came along rd to surface s, carrying beta, as the camera sees it: sent along a straight line to the camera
+// (nothing in the way, glass too), into the pixel it is seen in (light tracing; U.lume3.z: 1 / (paths x a pixel's area)).
+fn lu_splat(s: Surf, rd: vec3<f32>, beta: vec3<f32>) {
+  let wc = U.ceye.xyz - s.p;
+  let dist = length(wc);
+  let wn = wc / max(dist, 1e-6);
+  let nx = dot(s.n, wn);
+  if (nx <= 0.0 || dot(s.n, -rd) <= 0.0) { return; }
+  let hv = trace(s.p + s.n * max(s.eps, 1.0e-4), wn, 0.0, dist, 1.0, true);
+  if (hv.id >= 0) { return; }
+  let clip = U.cvp * (U.cl2w * vec4<f32>(s.p, 1.0));
+  if (clip.w <= 1e-6) { return; }
+  let ndc = clip.xy / clip.w;
+  let px = vec2<i32>(floor(vec2<f32>(0.5 * (ndc.x + 1.0), 0.5 * (1.0 - ndc.y)) * U.res.xy));
+  if (px.x < 0 || px.y < 0 || f32(px.x) >= U.res.x || f32(px.y) >= U.res.y) { return; }
+  let fr = lu_frame(s.n);
+  let vl = lu_to_local(fr, wn);
+  let ll = lu_to_local(fr, -rd);
+  let m = lu_mat(s, vl.z);
+  let f = lu_eval(m, vl, ll).xyz / max(ll.z, 1e-4);
+  // the camera's axis (fire-local) and how far off it the surface is seen
+  let fwd = normalize((U.w2l * vec4<f32>(U.fwd.xyz, 0.0)).xyz);
+  let cc = max(dot(-wn, fwd), 1e-4);
+  let val = beta * f * (nx / (dist * dist * cc * cc * cc) * U.lume3.z);
+  let k = u32(px.y) * u32(U.res.x) + u32(px.x);
+  let q = min(val * LU_CAU_SCALE, vec3<f32>(3.0e7));
+  atomicAdd(&CAU[3u * k], u32(q.r + 0.5));
+  atomicAdd(&CAU[3u * k + 1u], u32(q.g + 0.5));
+  atomicAdd(&CAU[3u * k + 2u], u32(q.b + 0.5));
+}
+
+// A light path from one of the lights, aimed at one of the curved clear things: (where from, which way, the light it
+// carries: its share of the light's power, for one path among U.lume3.x), or a zero light when there is nothing to send.
+struct LuEmit { ro: vec3<f32>, rd: vec3<f32>, beta: vec3<f32> };
+
+fn lu_emit() -> LuEmit {
+  var e = LuEmit(vec3<f32>(0.0), vec3<f32>(0.0, -1.0, 0.0), vec3<f32>(0.0));
+  let nl = i32(U.ln.w);
+  let sun_on = max(U.sun.r, max(U.sun.g, U.sun.b)) > 0.0;
+  let env_on = lu_env_on();
+  let kinds = nl + select(0, 1, sun_on) + select(0, 1, env_on);
+  let nt = i32(U.lume3.y);
+  if (kinds == 0 || nt == 0) { return e; }
+  let pick = min(i32(lu_rand() * f32(kinds)), kinds - 1);
+  let tg = U.ctg[min(i32(lu_rand() * f32(nt)), nt - 1)];
+  let sel = f32(kinds * nt);   // (1 / the chance of this light and this target)
+  if (pick < nl) {
+    // a lamp: from its middle, a direction within the cone the target fills seen from it
+    let lm = lamps[pick];
+    let c = lm.p.xyz;
+    let cone = lu_cone_of(c, tg.xyz, tg.w);
+    var l = vec3<f32>(0.0, -1.0, 0.0);
+    var pdf = 1.0 / (4.0 * PI);
+    if (cone.x < -1.5) {
+      l = lu_cone(lu_rand2(), -1.0);
+    } else {
+      let fr = lu_frame(normalize(tg.xyz - c));
+      let lc = lu_cone(lu_rand2(), cone.x);
+      l = fr[0] * lc.x + fr[1] * lc.y + fr[2] * lc.z;
+      pdf = 1.0 / max(cone.y, 1e-12);
+    }
+    let r = max(lm.p.w, 1e-3);
+    let intensity = lu_lamp_radiance(lm, -l) * (PI * r * r);
+    e.ro = c;
+    e.rd = l;
+    e.beta = intensity * (sel / pdf);
+    return e;
+  }
+  // the key light or the HDRI: parallel light over a disc as wide as the target, from far off
+  var dir = vec3<f32>(0.0, 1.0, 0.0);   // toward the light
+  var power = vec3<f32>(0.0);           // what crosses a unit area facing it
+  if (sun_on && pick == nl) {
+    let cmax = cos(atan(1.0 / max(U.sun.w, 1.0)));
+    let sf = lu_frame(U.sund.xyz);
+    let lc = lu_cone(lu_rand2(), cmax);
+    dir = sf[0] * lc.x + sf[1] * lc.y + sf[2] * lc.z;
+    power = U.sun.rgb;
+  } else {
+    let pk = lu_env_pick();
+    if (pk.w <= 0.0) { return e; }
+    dir = pk.xyz;
+    power = sky_dir(dir) / pk.w;
+  }
+  if (U.stage.x > 0.5 && dir.y < 0.0) { return e; }   // (light from below the horizon: the ground stops it)
+  let travel = -dir;
+  let fr = lu_frame(travel);
+  let u = lu_rand2();
+  let rr = sqrt(u.x) * tg.w;
+  let ph = 2.0 * PI * u.y;
+  // (from just outside the target, if nothing between there and the light stops it: a roof over the glass shades it)
+  e.ro = tg.xyz + (fr[0] * cos(ph) + fr[1] * sin(ph)) * rr - travel * (2.0 * tg.w);
+  e.rd = travel;
+  if (lu_open(e.ro, dir, 1.0e5, 1.0e-4, 1.0) <= 0.0) { return e; }
+  e.beta = power * (PI * tg.w * tg.w * sel);
+  return e;
+}
+
+@compute @workgroup_size(64, 1, 1)
+fn caustics(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (f32(id.x) >= U.lume3.x) { return; }
+  lu_rng = pcg1(id.x * 9781u + u32(U.lume.y + 0.5) * 6271u + 17u);
+  g_tau = U.res.w * (lu_rand() - 0.5);
+  g_jit = lu_rand();
+  let em = lu_emit();
+  if (max(em.beta.r, max(em.beta.g, em.beta.b)) <= 0.0) { return; }
+  var ro = em.ro;
+  var rd = em.rd;
+  var beta = em.beta;
+  var curved = 0;
+  var landed = 0;
+  let eps = 1.0e-4;
+  for (var j = 0; j < 16; j++) {
+    let h = trace(ro, rd, 0.0, 2.0e5, 1.0, true);
+    if (h.id < 0 || !lu_drawn(h)) { return; }
+    let p = ro + rd * h.t;
+    let cl = lu_clear(h, p);
+    if (cl.clear > 0.0) {
+      if (lu_rand() >= cl.clear) { return; }   // (its cloudy part)
+      if (!lu_curved(h)) {
+        // flat glass: straight through by its Fresnel and tint, as its shadow is
+        let n = lu_hit_normal(h, p, eps);
+        let ex = lu_exit(h, p + rd * eps, rd, eps);
+        let t = (1.0 - lu_fresnel(max(abs(dot(n, rd)), 1e-4), cl.ior)) * (1.0 - lu_fresnel(max(abs(dot(ex.xyz, rd)), 1e-4), 1.0 / cl.ior));
+        beta *= t * pow(max(cl.tint, vec3<f32>(1e-3)), vec3<f32>(ex.w / 0.1));
+        ro = p + rd * (ex.w + 2.0 * eps);
+        continue;
+      }
+      let th = lu_through(h, p, rd, cl, eps);
+      if (!th.ok) { return; }
+      beta *= th.tint;
+      ro = th.ro;
+      rd = th.rd;
+      curved += 1;
+      continue;
+    }
+    if (curved == 0) { return; }   // (straight from the light: the camera's own paths have that light)
+    // it has landed: the light this surface sends the camera (light tracing), then on, bounced off it (the light the
+    // caustic throws round it, onto the floor beside it and the glass's underside: the camera's paths leave all light
+    // that came through curved glass to these)
+    let s = surface_at(h, ro, rd, 1.0);
+    lu_splat(s, rd, beta);
+    landed += 1;
+    if (landed > LU_CAU_BOUNCES) { return; }
+    let fr = lu_frame(s.n);
+    let li = lu_to_local(fr, -rd);
+    if (li.z <= 0.0) { return; }
+    let lo = lu_cosine(lu_rand2());   // (diffuse: f cos / pdf = f pi)
+    let m = lu_mat(s, lo.z);
+    let ev = lu_eval(m, lo, li);
+    beta *= ev.xyz / max(li.z, 1e-4) * PI;
+    let q = clamp(max(beta.r, max(beta.g, beta.b)) / max(max(em.beta.r, max(em.beta.g, em.beta.b)), 1e-12) * 4.0, 0.05, 1.0);
+    if (lu_rand() >= q) { return; }   // (Russian roulette on what is left of its light)
+    beta /= q;
+    ro = s.p + s.n * max(s.eps, 1.0e-4);
+    rd = fr[0] * lo.x + fr[1] * lo.y + fr[2] * lo.z;
+  }
 }

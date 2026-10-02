@@ -203,3 +203,26 @@ def test_a_lamp_lights_the_floor_below_it_as_a_sphere_does(engine, monkeypatch):
     F = 0.04 + 0.96 * (1.0 - float(v @ h)) ** 5
     highlight = F * D * G2 / (4.0 * nv * nl)
     assert got == pytest.approx((diffuse + highlight) * I / d ** 2, rel=0.015)
+
+
+def test_a_glass_ball_focuses_the_lamp_into_a_caustic(engine, monkeypatch):
+    # a glass ball on a floor under a lamp (no sky): straight below it, opposite the lamp, the light it focuses is brighter
+    # than the open floor beside it (traced from the lamp: lume.wgsl caustics); the shadow round it is dark
+    spec = dict(size=(160, 120), camera=dict(eye=(0.0, 2.2, 0.6), target=(0.0, 0.0, 0.0), hfov=40.0), sky=0.0,
+                floor=dict(alb=(0.6, 0.6, 0.6), rough=0.8), bounces=4,
+                objects=[dict(shape='sphere', pos=(0.0, 0.25, 0.0), size=(0.25,) * 3, alb=(1.0, 1.0, 1.0), rough=0.03,
+                              clear=1.0, ior=1.5)],
+                lamps=[dict(pos=(0.0, 2.5, 0.0), radius=0.05, power=(4.0, 4.0, 4.0))])
+    sc = _bench_scene(spec, monkeypatch)
+    img = _stage(engine, sc, spec, samples=256, bounces=4).mean(-1)
+    from blackbody.engine import camera as cam
+    spec_c, fire = sc.camera(sc.start)
+    cs = cam.compute(spec_c, 160 / 120, fire)
+    def at(p):
+        px, ok = cam.project(cs, np.array([p], float), 160, 120)
+        x, y = int(px[0][0]), int(px[0][1])
+        return float(img[y - 1:y + 2, x - 1:x + 2].mean())
+    under = at((0.0, 0.0, 0.0))        # (seen past the ball? the camera looks down at it from above and in front)
+    open_floor = at((0.8, 0.0, 0.0))
+    assert engine.stage.lume is not None
+    assert max(under, at((0.0, 0.0, 0.06)), at((0.0, 0.0, -0.06))) > 1.5 * open_floor

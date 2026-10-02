@@ -95,6 +95,7 @@ def main():
     ap.add_argument('out')
     ap.add_argument('scenes', nargs='*')
     ap.add_argument('--spp', default='4,16,64,256,1024')
+    ap.add_argument('--repeat', type=int, default=3, help='time each render this many times and keep the fastest')
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -114,10 +115,12 @@ def main():
         imgs, secs = [], []
         for i, spp in enumerate([spps[0]] + spps):     # (the first render compiles the shaders: not timed)
             sc.data['lume'].update(engine='lume', samples=spp, bounces=int(spec['bounces']), denoise=False, clamp=0.0)
-            t0 = time.perf_counter()
-            eng.render(sc, f, (W, H), mode='composite', final=True, samples=4, motion_blur=False)
-            img = eng.gpu.read(eng.stage.tex).astype(np.float32)[..., :3]
-            dt = time.perf_counter() - t0
+            dt = float('inf')
+            for _ in range(args.repeat if i > 0 else 1):   # (the fastest of a few: the GPU may be shared)
+                t0 = time.perf_counter()
+                eng.render(sc, f, (W, H), mode='composite', final=True, samples=4, motion_blur=False)
+                img = eng.gpu.read(eng.stage.tex).astype(np.float32)[..., :3]
+                dt = min(dt, time.perf_counter() - t0)
             if i > 0:
                 imgs.append(img)
                 secs.append(dt)

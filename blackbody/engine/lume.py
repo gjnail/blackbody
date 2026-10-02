@@ -19,6 +19,9 @@ ENV_WIDTH = 512           # the HDRI's brightness map: at most this many columns
 VIEWER_PASSES = 2         # passes the viewer adds per refinement
 FINAL_SUBMIT = 4          # a final render submits its passes this many at a time (each command list stays short)
 FINAL_PER_PASS = 4        # paths per pixel each pass of a final render traces
+TARGETS = 8               # caustics: at most this many curved clear things the lights are traced through
+CAUSTIC_SHARE = 4         # caustics: one light path per this many pixels, each pass
+TAIL_FLOATS = 8 + 8 + 32 + 4 * TARGETS   # the stage's parameters after its materials: Lume's (lume, lume2, caustics)
 ATROUS_STEPS = (1, 2, 4, 8, 16)
 
 
@@ -72,6 +75,33 @@ def env_table(img, width=ENV_WIDTH):
     return table, w, h
 
 
+def caustic_targets(scene, cols, rows, meshes, matter=None):
+    """The curved clear things in the set (glass, ice or jelly balls, cylinders, meshes, clear matter) as spheres round
+    them, fire-local (x, y, z, radius): what the lights are traced through for caustics (lume.wgsl caustics). Flat ones
+    (boxes, broken pieces) are left out: their straight-through shadow is exact."""
+    from .solver import _mesh_ref
+    out = []
+    for c, row in zip(cols, rows):
+        if row[0] == 0 or row[4] <= 0.0 or c.shape not in ('sphere', 'cylinder', 'mesh'):   # (0: not drawn)
+            continue
+        s = np.abs(np.asarray(c.size, float))
+        if c.shape == 'sphere':
+            r = s[0]
+        elif c.shape == 'cylinder':
+            r = math.hypot(s[0], s[1])
+        else:
+            m0, m1 = _mesh_ref(meshes, c.mesh, c.mesh_frame, c.mesh_fps)[:2]
+            ext = np.maximum(np.abs(np.asarray(m0[:3], float)), np.abs(np.asarray(m1[:3], float)))
+            r = float(np.linalg.norm(ext * s))
+        out.append((float(c.pos[0]), float(c.pos[1]), float(c.pos[2]), float(r) * 1.02 + 1e-3))
+    if matter is not None and any(str(m.get('material', '')) == 'jelly' for m in (getattr(scene, 'matter', None) or [])):
+        b = matter.world_bounds()
+        if b is not None:
+            lo, hi = np.asarray(b[0], float), np.asarray(b[1], float)
+            out.append((*((lo + hi) / 2).tolist(), float(np.linalg.norm(hi - lo)) / 2))
+    return out[:TARGETS]
+
+
 class Lume:
     """The stage's Lume state: the passes added up so far (ACC, AOV on the GPU), the HDRI's brightness map, and the
     denoiser."""
@@ -80,6 +110,7 @@ class Lume:
         self.gpu = gpu
         self.acc = None
         self.aov = None
+        self.cau = None
         self.size = None
         self.key = None            # what the passes added up so far were traced of
         self.passes = 0            # how many
@@ -99,12 +130,13 @@ class Lume:
         """The accumulation buffers for a w x h picture (afresh when the size changes)."""
         if self.size == (w, h):
             return
-        for b in (self.acc, self.aov, *self._tmp):
+        for b in (self.acc, self.aov, self.cau, *self._tmp):
             if b is not None:
                 b.destroy()
         n = w * h
         self.acc = self.gpu.buffer(n * 16, 'lume-acc')
         self.aov = self.gpu.buffer(n * 32, 'lume-aov')
+        self.cau = self.gpu.buffer(n * 12, 'lume-caustics')
         self._tmp = [self.gpu.texture2d(w, h, 'rgba16float', f'lume-dn{i}') for i in range(2)]
         self.size = (w, h)
         self.key = None

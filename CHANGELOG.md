@@ -29,8 +29,10 @@ Notable changes to Blackbody. The format follows
   through the smoke), an HDRI's own sun is found and shadowed (importance sampling with MIS), glass, ice and jelly
   refract and bounce light inside, and highlights are GGX. Lamps are sphere lights, seen in reflections. The viewer
   sharpens while you look, and a denoiser clears the grain. It is measured against ground truth (tools/lume_bench: the
-  same scenes rendered by Mitsuba 3 with Lume's own material) and agrees with it to within about 1% in mean brightness,
-  but for the light a glass ball focuses, which it does not trace yet.
+  same scenes rendered by Mitsuba 3 with Lume's own material) and agrees with it to within 1% in mean brightness on
+  every test scene. Caustics are traced from the lights: the bright spot a glass ball focuses into its shadow, the
+  sky's glow through it and the light it throws on round it. In the same time Lume comes as close to the truth as
+  Mitsuba on most test scenes, and five times closer on glass.
 - Plain balls, boxes and cylinders on the stage are hit exactly by each ray instead of marched toward: Lume is up to 26
   times faster on such sets, and the classic stage is faster too.
 - Things that break (Properties › Breaking): objects cut beforehand into chunks, bricks in running bond, glass

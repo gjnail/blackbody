@@ -30,6 +30,7 @@ It renders every scene in `scenes.py` with Lume (`lume_side.py`) and with Mitsub
 | cornell_direct, cornell_2 | The same with one bounce (direct light only) and two: which bounce a difference is in |
 | glossy | Rough and smooth metal and plastic balls under a distant lamp: highlights and reflections |
 | glass | A glass ball beside a block under a lamp: refraction, its shadow, the light it focuses |
+| glass_sky | The glass ball under the sky alone: the sky's caustic |
 
 ## The measures
 
@@ -39,20 +40,24 @@ It renders every scene in `scenes.py` with Lume (`lume_side.py`) and with Mitsub
 
 The lamps themselves are left out of the measures (Lume does not draw them for the camera; Mitsuba does).
 
-## Results, 2026-10-02 (RTX 3090)
+## Results, 2026-10-02 (RTX 3090, timings the fastest of three)
 
 | Scene | Bias | Error, Lume at 1024 samples | Equal-time error, Lume / Mitsuba |
 |---|---|---|---|
 | furnace | 1.0002 | 0.00004 | (both under a millisecond) |
-| cornell | 0.9975 | 0.0027 | 3.0x |
-| cornell_direct | 0.9953 | 0.0010 | 1.2x |
-| cornell_2 | 0.9966 | 0.0022 | 2.2x |
-| glossy | 1.0085 | 0.0019 | 4.9x |
-| glass | 0.9743 | 0.0055 | 1.6x |
+| cornell | 0.9976 | 0.0021 | 1.2x |
+| cornell_direct | 0.9953 | 0.0010 | 0.6x |
+| cornell_2 | 0.9966 | 0.0022 | 0.9x |
+| glossy | 1.0081 | 0.0011 | 2.5x |
+| glass | 0.9975 | 0.0007 | 0.2x |
+| glass_sky | 1.0004 | 0.0005 | (both under a few milliseconds) |
+
+Below 1x Lume is closer to the truth than Mitsuba after the same time: with a glass ball five times closer, because Lume traces the caustic from the lamp (light tracing) where Mitsuba waits for camera paths to find the lamp through the glass.
 
 What is left:
 
-- **Glass**: Lume lets light through glass along shadow rays (by its Fresnel losses and tint), straight through. That is exact for a pane, but a curved piece's focused light (a caustic) is not found: the 2.6% in *glass*.
-- **Speed**: Mitsuba traces with the GPU's ray-tracing cores (OptiX); Lume traces in compute shaders, plain shapes exactly and meshes and matter by marching. At equal time Lume has 1.2–5x Mitsuba's error.
+- **Caustics seen through their glass**: light a glass ball focuses onto the floor, seen through the same ball, is not traced (a specular-diffuse-specular path): the ball itself is up to 3% dark where the caustic shows through it.
+- **Shiny metal**: at equal time, 2.5x Mitsuba's error on the glossy scene; a lamp seen in a smooth metal ball is the noisiest part.
+- **Speed in general**: Mitsuba traces with the GPU's ray-tracing cores (OptiX); Lume traces in compute shaders, plain shapes exactly and meshes and matter by marching.
 
-What the benchmark has caught and fixed so far: the last bounce dropping the sky's share of light (all scenes up to 8x too dark in sky-lit shade), a path clamp that removed most of an HDRI sun's bounced light, lamps treated as soft points (3% dark near them), rays off a ball's underside slipping under the floor (bright contact rings), and ray offsets of a pixel or two putting surfaces that much nearer the lamps (up to 3% bright).
+What the benchmark has caught and fixed so far: Russian roulette from the second bounce (twice the noise on shiny metal; now from the fourth), caustics not traced (2.6% dark with a glass ball; now traced from the lights), sky caustics leaking up through the ground, the last bounce dropping the sky's share of light (all scenes up to 8x too dark in sky-lit shade), a path clamp that removed most of an HDRI sun's bounced light, lamps treated as soft points (3% dark near them), rays off a ball's underside slipping under the floor (bright contact rings), and ray offsets of a pixel or two putting surfaces that much nearer the lamps (up to 3% bright).

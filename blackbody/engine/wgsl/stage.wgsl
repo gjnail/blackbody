@@ -99,6 +99,11 @@ struct Params {
   mat: array<Mat, MAT_ROWS>,
   lume: vec4<f32>,      // Lume (lume.wgsl): on (1/0), this pass (0, 1, ...), bounces, the cap on a bounce's light (0: none)
   lume2: vec4<f32>,     // the HDRI's brightness map to pick directions from (ENV): width, height (0: none); anything clear in the set (1/0), _
+  lume3: vec4<f32>,     // caustics (lume.wgsl caustics): light paths this pass, curved clear things, 1 / (paths x a pixel's area at 1 m), on
+  ceye: vec4<f32>,      // the camera (fire-local), _
+  cvp: mat4x4<f32>,     // world -> clip
+  cl2w: mat4x4<f32>,    // fire-local -> world
+  ctg: array<vec4<f32>, 8>,   // the curved clear things the light is aimed at: a sphere round each (fire-local centre, radius)
 };
 
 @group(0) @binding(0) var atlas: texture_3d<f32>;       // mesh distance fields (meshsdf.wgsl)
@@ -137,6 +142,7 @@ struct PieceG { a: vec4<f32>, q: vec4<f32>, v: vec4<f32>, o: vec4<f32>, r: vec4<
 @group(0) @binding(28) var<storage, read_write> ACC: array<vec4<f32>>;   // Lume: the passes' light added up (rgb), CG share
 @group(0) @binding(29) var<storage, read_write> AOV: array<vec4<f32>>;   // Lume: per pixel, albedo + distance, normal + _
 @group(0) @binding(30) var<storage, read> ENV: array<f32>;               // Lume: the HDRI's cumulative sums and pdf
+@group(0) @binding(31) var<storage, read_write> CAU: array<atomic<u32>>; // Lume: this pass's caustics, per pixel rgb (fixed point)
 @group(1) @binding(0) var<uniform> U: Params;
 
 var<private> g_tau: f32;   // this sample's time in the shutter (s): objects are moved along their motion
@@ -1443,6 +1449,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       al += AOV[2u * k];
       nn += AOV[2u * k + 1u];
     }
+    // (and the light the lights focus through curved glass onto what this pixel sees, traced from the lights this pass)
+    if (U.lume3.w > 0.5) { a = vec4<f32>(a.rgb + lu_caustic_at(k), a.a); }
     ACC[k] = a;
     AOV[2u * k] = al;
     AOV[2u * k + 1u] = nn;
