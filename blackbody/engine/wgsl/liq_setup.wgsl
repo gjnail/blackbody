@@ -6,6 +6,10 @@
 // small expansion wherever particles have bunched up clearly denser than at rest, which keeps the
 // liquid's volume from drifting. Writes cell types, the matrix (diagonal, liquid-neighbour mask)
 // and the starting residual r = b - A x for the warm-started pressure x.
+// Against a moving solid (broken pieces, sand: in svel) the liquid gives a little, as water seeps
+// into sand: a small extra diagonal term per face. Without it, liquid sealed off from the air by
+// solids that move into it (water caught under the foot of a slumping heap) has no pressure that
+// holds it, and the solve blows up; with it, its pressure rises, and pushes the solid back.
 //!include common.wgsl
 //!include liq_common.wgsl
 
@@ -13,7 +17,8 @@ struct Params {
   g: Grid,
   k: vec4<f32>,   // surface density (particles), rest density (particles), volume correction (per step), minimum theta
   k2: vec4<f32>,  // density ratio above which the volume correction acts, surface tension sigma / rho * dt (m^3/s)
-  k3: vec4<f32>,  // open water level (cells, < 0 off), the sides that are walls all the way up (bits -x, +x, -z, +z)
+  k3: vec4<f32>,  // open water level (cells, < 0 off), the sides that are walls all the way up (bits -x, +x, -z, +z),
+                  // moving solids in svel (1/0), how much the liquid gives against them (per face)
 };
 
 @group(0) @binding(0) var vel: texture_3d<f32>;
@@ -25,6 +30,7 @@ struct Params {
 @group(0) @binding(5) var out_co: texture_storage_3d<rg32float, write>;
 @group(0) @binding(6) var out_r: texture_storage_3d<r32float, write>;
 @group(0) @binding(8) var ocn_t: texture_2d<f32>;
+@group(0) @binding(9) var svel: texture_3d<f32>;   // moving solids' velocity in the cells inside them (w = 1)
 //!include liq_level.wgsl
 @group(1) @binding(0) var<uniform> U: Params;
 
@@ -70,7 +76,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (outside_open(q, n)) { diag += 2.0; }  // p = 0 on the open boundary face
       continue;
     }
-    if (textureLoad(sdf, q, 0).x < 0.0) { continue; }
+    if (textureLoad(sdf, q, 0).x < 0.0) {
+      if (U.k3.z > 0.5 && textureLoad(svel, q, 0).w > 0.5) { diag += U.k3.w; }
+      continue;
+    }
     let rq = textureLoad(dens, q, 0).x;
     if (rq >= rho_t) {
       diag += 1.0;

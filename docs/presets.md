@@ -1,6 +1,6 @@
 # Presets
 
-Blackbody comes with 94 presets. Click one in the app's Effects panel to load it into your shot; every one is an ordinary scene you can change and save as your own. On the website the gallery plays a clip of each one that has one: <https://gjnail.github.io/blackbody/presets.html>.
+Blackbody comes with 95 presets. Click one in the app's Effects panel to load it into your shot; every one is an ordinary scene you can change and save as your own. On the website the gallery plays a clip of each one that has one: <https://gjnail.github.io/blackbody/presets.html>.
 
 ## Fire and smoke
 
@@ -64,6 +64,7 @@ Blackbody comes with 94 presets. Click one in the app's Effects panel to load it
 | <img src="../blackbody/assets/presets/snowballs.png" width="200" alt=""> | **Snowballs at a wall**<br>18 cm snowballs | Three snowballs of packing snow thrown one after another at a brick wall: each splats flat, packs where it hits, and breaks into lumps that fall to the ground. Matter in Packing snow, thrown. |
 | <img src="../blackbody/assets/presets/jelly_ball.png" width="200" alt=""> | **Ball dropped on jelly**<br>34 cm block | A 7 kg steel ball dropped onto a block of jelly: the jelly squashes deep, throws the ball back up and wobbles. Matter in Jelly and an object that falls, pushing each other. |
 | <img src="../blackbody/assets/presets/mud_drag.png" width="200" alt=""> | **Crate through mud**<br>1.6 m of mud | A crate dragged through a bed of thick mud: it ploughs a trench, pushes up a bow wave that slumps back, and leaves ridges. Matter in Mud, and an object moved by its keys. |
+| <img src="../blackbody/assets/presets/sand_castle.png" width="200" alt=""> | **Sand castle and a wave**<br>32 cm castle | A wall of water let go at a castle of damp sand: the wave breaks over it and the castle stands, then the water soaks into it, undermines it and slumps it into a mound that the sloshing water carries. Matter in Wet sand and a block of water in a closed box. |
 
 ## Water
 

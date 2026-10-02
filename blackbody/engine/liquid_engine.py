@@ -248,6 +248,7 @@ class LiquidEngine:
         # rigid bodies (falling and floating objects) move through the frame first, pushed by the liquid as it
         # was measured over the frame before; the liquid then sees them where they are at each substep
         solids = self.solids if self.solids.active else None
+        self._push_matter(L)
         poses = (solids.advance(scene, frame, fdt, n, couple=self._matter_couple(scene, frame, fdt, self.solver.meshes))
                  if solids else None)
         moving = scene.colliders_animated() or bool(solids)
@@ -313,6 +314,7 @@ class LiquidEngine:
             solids.liquid_measures(L.read_float(len(regions), n), fdt, n, L.h, prm.rho)
         self._step_matter(scene, frame, fdt, poses, n, self.solver.meshes)
         self._melt_matter(scene, frame, fdt, None, L)
+        self._wet_matter(fdt, L)
         self.sim_frame = frame
         self.last_substeps = n
         self.last_step_ms = (time.perf_counter() - t0) * 1000.0

@@ -237,3 +237,104 @@ def test_sand_does_not_melt_and_snow_in_a_fire_box_just_goes(engine):
     assert left == first
     first, left, _ = melting(engine, 'snow', kind='fire')
     assert left < 0.99 * first
+
+
+# ---- getting wet (mpm_wet.wgsl) -------------------------------------------------------------------------------------
+
+def test_water_poured_on_sand_wets_the_sand_it_runs_over(engine):
+    from blackbody.scene import components
+    sc = components.new_scene('liquid', 'person')
+    sc.emitters = []
+    components.add(sc, 'pour', at=(0.1, 0.0))
+    sc.add_matter(name='Heap', material='sand', shape='pile', position=(0.2, 0.25, 0.0), size=(0.5, 0.25, 0.5))
+    engine.prepare(sc, final=False)
+    m, L = engine.matter, engine.liquid
+    assert [x.key for x in m._mats] == ['sand', 'wet_sand', 'soaked_sand']
+    engine.simulate_to(sc, sc.start + 48, cache=False)
+    P = m.read_particles()
+    wet = P[np.round(P[:, 3]) >= 1, :3] * m.dx + np.asarray(m.origin)
+    assert 0.002 * len(P) < len(wet) < 0.2 * len(P)       # the sand the water runs over, not the whole heap
+    # (and only there: every wet grain is within a few of the liquid's cells of some water)
+    near = np.zeros(tuple(int(n) for n in L.dims), bool)
+    c = np.floor((L.read_particles()[0] - np.asarray(L.origin)) / L.h).astype(int)
+    c = c[np.all((c >= 0) & (c < near.shape), axis=1)]
+    near[c[:, 0], c[:, 1], c[:, 2]] = True
+    for _ in range(3):
+        grown = near.copy()
+        for a in range(3):
+            grown |= np.roll(near, 1, a) | np.roll(near, -1, a)
+        near = grown
+    g = np.clip(np.floor((wet - np.asarray(L.origin)) / L.h).astype(int), 0, np.asarray(near.shape) - 1)
+    assert near[g[:, 0], g[:, 1], g[:, 2]].mean() > 0.9
+
+
+def test_a_pour_digs_into_a_heap_of_dry_sand(engine):
+    from blackbody.scene import components
+    sc = components.new_scene('liquid', 'person')
+    sc.emitters = []
+    components.add(sc, 'pour', at=(0.1, 0.0))
+    sc.add_matter(name='Heap', material='sand', shape='pile', position=(0.2, 0.25, 0.0), size=(0.5, 0.25, 0.5))
+    engine.prepare(sc, final=False)
+    m = engine.matter
+    engine.simulate_to(sc, sc.start, cache=False)
+    P0 = m.read_particles()[:, :3].copy()
+    engine.simulate_to(sc, sc.start + 96, cache=False)
+    P = m.read_particles()
+    moved = np.linalg.norm(P[:len(P0), :3] - P0, axis=1) * m.dx
+    assert int((np.round(P[:, 3]) == 2).sum()) > 500       # the water soaks through where it runs
+    assert 500 < int((moved > 0.02).sum()) < 0.02 * len(P0)  # and carries it off there: a crater and a gully
+
+
+def castle(engine, until):
+    """A block of damp sand (a sand castle) that a wall of water let go beside it floods: [(seconds, slots of its grains,
+    how far each has moved (m))] each second."""
+    from blackbody.scene import components
+    sc = components.new_scene('liquid', 'person')
+    sc.emitters = []
+    sc.add_emitter(name='Water', shape='box', position=(-0.7, 0.3, 0.0), size=(0.25, 0.3, 0.5), noise=0.0, embers=False,
+                   liquid_mode='fill', start=0.0)
+    sc.add_matter(name='Castle', material='wet_sand', shape='box', position=(0.3, 0.12, 0.0), size=(0.12, 0.12, 0.2))
+    sc.data['domain'].update(open_sides=False)
+    engine.prepare(sc, final=False)
+    m = engine.matter
+    engine.simulate_to(sc, sc.start, cache=False)
+    P0 = m.read_particles()[:, :3].copy()
+    out = []
+    for f in range(sc.start, sc.start + int(until * sc.fps) + 1, int(sc.fps)):
+        engine.simulate_to(sc, f, cache=False)
+        P = m.read_particles()
+        out.append(((f - sc.start) / sc.fps, np.round(P[:, 3]).astype(int),
+                    np.linalg.norm(P[:len(P0), :3] - P0, axis=1) * m.dx, P[:, :3] * m.dx + np.asarray(m.origin)))
+    return out
+
+
+def test_damp_sand_holds_when_the_water_hits_it_then_soaks_through_and_slumps(engine):
+    run = castle(engine, 8.0)
+    t, slot, moved, x = run[1]
+    assert t == 1.0 and np.mean(moved > 0.02) < 0.01         # the wave has hit it: it stands
+    t, slot, moved, x = run[-1]
+    assert np.mean(slot == 1) > 0.4                           # soaked through
+    assert np.mean(moved > 0.02) > 0.25                       # and slumped
+    assert x[:, 0].min() > -0.3 and x[:, 0].max() < 0.9       # where it stood
+
+
+def test_sand_slumping_into_water_does_not_blow_the_water_apart(engine):
+    # (water caught between the slumping sand and the floor once made the pressure solve fail)
+    from blackbody.scene import components
+    sc = components.new_scene('liquid', 'person')
+    sc.emitters = []
+    components.add(sc, 'block', at=(0.0, 0.0))
+    sc.add_matter(name='Heap', material='sand', shape='box', position=(0.3, 0.12, 0.0), size=(0.12, 0.12, 0.2))
+    engine.prepare(sc, final=False)
+    for f in range(sc.start + 1, sc.start + 13):
+        engine.simulate_to(sc, f, cache=False)
+        v = engine.liquid.read_particles()[1]
+        assert len(v) and np.percentile(np.linalg.norm(v, axis=1), 99.9) < 6.0, f
+
+
+def test_sand_in_a_fire_box_has_no_wet_sand(engine):
+    from blackbody.scene import components
+    sc = components.new_scene('fire', 'person')
+    sc.add_matter(name='Heap', material='sand', shape='pile', position=(0.2, 0.25, 0.0), size=(0.5, 0.25, 0.5))
+    engine.prepare(sc, final=False)
+    assert [x.key for x in engine.matter._mats] == ['sand'] and not engine.matter.wets()

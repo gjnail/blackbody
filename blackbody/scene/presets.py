@@ -828,6 +828,25 @@ PRESETS = {
                            position=K((0.0, (-0.95, 0.1, 0.0)), (0.3, (-0.95, 0.1, 0.0)), (2.7, (0.95, 0.1, 0.0)), interp='linear'))],
         'matter': [dict(name='Mud', material='mud', shape='box', position=(0.0, 0.05, 0.0), size=(0.8, 0.05, 0.45))],
     },
+    'sand_castle': {
+        'name': 'Sand castle and a wave', 'category': 'Sand, snow and mud', 'size': '32 cm castle',
+        'blurb': 'A wall of water let go at a castle of damp sand: the wave breaks over it and the castle stands, then the '
+                 'water soaks into it, undermines it and slumps it into a mound that the sloshing water carries. Matter in '
+                 'Wet sand and a block of water in a closed box.',
+        'render': {'end': 192},
+        'domain': {'kind': 'liquid', 'size_x': 2.4, 'size_y': 1.0, 'size_z': 1.4, 'resolution': 144, 'preroll': 0.0,
+                   'open_sides': False, 'matter_detail': 160, 'substeps_max': 12, 'cfl': 1.5},
+        'water': {'backdrop': 6.0},
+        'composite': {'backdrop': 'stage', 'floor': 'tiles'},
+        'lighting': {'sun_on': True, 'sun_intensity': 3.0, 'sun_elevation': 40.0, 'sun_azimuth': -130.0, 'ambient_intensity': 2.5},
+        'camera': {'distance': 1.7, 'target_y': 0.14, 'pitch': 18, 'yaw': -35, 'focal_mm': 35},
+        'emitters': [dict(name='Water', shape='box', position=(-0.9, 0.3, 0.0), size=(0.25, 0.3, 0.65), liquid_mode='fill',
+                          vel_blend=0.0, embers=False, noise=0.0, start=0.0)],
+        'matter': [dict(name='Castle', material='wet_sand', shape='box', position=(0.0, 0.07, 0.0), size=(0.16, 0.07, 0.16)),
+                   dict(name='Keep', material='wet_sand', shape='cylinder', position=(0.0, 0.24, 0.0), size=(0.065, 0.1, 0.065))]
+                  + [dict(name=f'Tower {k + 1}', material='wet_sand', shape='cylinder', position=(sx * 0.115, 0.215, sz * 0.115),
+                          size=(0.04, 0.075, 0.04)) for k, (sx, sz) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))],
+    },
     'yard_blast': {
         'name': 'Blast in a yard', 'category': 'Things that fall', 'size': '2 kg charge',
         'blurb': 'Two kilograms of explosive go off among crates, barrels, a brick wall and a heap of sand: a fireball, the '
@@ -1073,7 +1092,7 @@ ORDER = ['campfire', 'bonfire', 'torch', 'candle', 'gas_ring', 'pool_fire', 'fir
          'curtain_fire', 'fabric_curtain', 'wet_towels', 'armchair_fire', 'room_fire', 'backdraft', 'flash_fire', 'gas_cloud', 'coloured_flames', 'road_flare',
          'grinder_sparks', 'fireworks', 'car_through_smoke', 'flag_wind', 'kettle_steam', 'steam_vent',
          'crates_in_fire', 'tower_knockdown', 'wall_smash', 'wrecking_ball', 'window_smash', 'vase_drop',
-         'yard_blast', 'lightning_strike', 'cart_jump', 'meadow_fire', 'shed_fire', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag']
+         'yard_blast', 'lightning_strike', 'cart_jump', 'meadow_fire', 'shed_fire', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag', 'sand_castle']
 
 
 def make(name: str, fps=None, start=None) -> Scene:

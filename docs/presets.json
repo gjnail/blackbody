@@ -336,6 +336,13 @@
   "blurb": "A crate dragged through a bed of thick mud: it ploughs a trench, pushes up a bow wave that slumps back, and leaves ridges. Matter in Mud, and an object moved by its keys."
  },
  {
+  "key": "sand_castle",
+  "name": "Sand castle and a wave",
+  "category": "Sand, snow and mud",
+  "size": "32 cm castle",
+  "blurb": "A wall of water let go at a castle of damp sand: the wave breaks over it and the castle stands, then the water soaks into it, undermines it and slumps it into a mound that the sloshing water carries. Matter in Wet sand and a block of water in a closed box."
+ },
+ {
   "key": "water_pour",
   "name": "Pouring water",
   "category": "Liquids",

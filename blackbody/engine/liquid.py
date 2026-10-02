@@ -50,6 +50,8 @@ FLOAT_SUBSTEPS = 16     # substep slots of the floating-object force sums
 FLOAT_SLOT = 16         # i32 per body and substep (see liq_float.wgsl)
 HEAT_MIXING = 1.5       # 1/s: how fast a molten liquid's particles even out their heat with their cell's
 CRUST_LATCH = 0.02      # s out in the air a molten liquid's melt needs by one of the moments to form crust
+SEEP = 0.25             # how much the liquid gives against a moving solid, per face (liq_setup.wgsl)
+SQUEEZE = 4.0           # x rest density: liquid squeezed against a moving solid past it soaks away (liq_g2p.wgsl)
 
 
 def crust_restarts(t):
@@ -370,7 +372,7 @@ class LiquidSolver:
         k['visc'] = g.kernel('liq_visc.wgsl', ['utex3d', 'utex3d', 'utex3d', 'st3d:rgba32float:w', 'utex3d'])
         k['extrap'] = g.kernel('liq_extrap.wgsl', ['utex3d', 'st3d:rgba32float:w'])
         k['setup'] = g.kernel('liq_setup.wgsl', ['utex3d'] * 4 + ['st3d:r32float:w', 'st3d:rg32float:w', 'st3d:r32float:w', 'utex3d',
-                                                              'utex2d'])
+                                                              'utex2d', 'utex3d'])
         k['normal'] = g.kernel('liq_normal.wgsl', ['utex3d', 'utex3d', 'st3d:rgba16float:w'])
         k['curv'] = g.kernel('liq_curv.wgsl', ['utex3d', 'st3d:r32float:w'])
         k['dot'] = g.kernel('liq_cg_dot.wgsl', ['utex3d', 'utex3d', 'buf'])
@@ -386,7 +388,7 @@ class LiquidSolver:
         k['mgco'] = g.kernel('liq_mg_co.wgsl', ['utex3d', 'st3d:rg32float:w'])
         k['project'] = g.kernel('liq_project.wgsl', ['utex3d'] * 5 + ['st3d:rgba32float:w', 'utex3d', 'utex2d'])
         k['g2p'] = g.kernel('liq_g2p.wgsl', ['buf', 'utex3d', 'utex3d', 'utex3d', 'buf', 'buf', 'buf', 'utex3d',
-                                              'buf', 'buf', 'buf', 'utex3d', 'utex3d', 'utex2d'], workgroup=P)
+                                              'buf', 'buf', 'buf', 'utex3d', 'utex3d', 'utex2d', 'utex3d'], workgroup=P)
         k['ww'] = g.kernel('liq_ww.wgsl', ['buf', 'buf', 'utex3d', 'utex3d', 'utex3d'], workgroup=P)
         k['rain'] = g.kernel('liq_rain.wgsl', ['utex3d', 'utex3d', 'buf', 'buf', 'buf'], workgroup=(8, 8, 1))
         k['ww_pack'] = g.kernel('liq_ww_pack.wgsl', ['rbuf', 'rbuf', 'buf', 'buf'], workgroup=P)
@@ -429,6 +431,7 @@ class LiquidSolver:
 
     def reset(self):
         g = self.gpu
+        self.step_dt = 0.0
         if self._origin0 is not None and self.origin != self._origin0:
             self.origin = self._origin0     # a box that followed the liquid starts where it was set
         self._strips = []
@@ -850,6 +853,7 @@ class LiquidSolver:
 
     def step(self, b: Batch, dt, prm: LiquidParams, sources, colliders=None):
         """Record one substep of length dt (seconds) into batch b."""
+        self.step_dt = dt           # (the pressure's step, for what it pushes: matter.py)
         if (prm.open_sides, prm.open_top, prm.ground) != (self._prm.open_sides, self._prm.open_top, self._prm.ground):
             self._mg_u = {}
             self._press_key = None
@@ -931,14 +935,15 @@ class LiquidSolver:
         # 4. pressure
         ku = gb + (Uniforms().v4(prm.surface_density * rho0, rho0, prm.volume_correction, prm.theta_min)
                    .v4(prm.compression, prm.surface_tension / prm.rho * dt)
-                   .v4(level, float(self._flume_walls(prm))).tobytes())
+                   .v4(level, float(self._flume_walls(prm)), 1.0 if pieces_on else 0.0, SEEP).tobytes())
         ww = prm.whitewater and self.ww_capacity > 64
         if prm.surface_tension > 0 or ww:
             ca = math.radians(prm.contact_angle)
             on = 1.0 if abs(prm.contact_angle - 90.0) > 0.5 else 0.0
             b.run(k['normal'], [self.DENS, self.SDF, self.NRM], gb + Uniforms().v4(rho0, math.cos(ca), math.sin(ca), on).tobytes(), n)
             b.run(k['curv'], [self.NRM, self.KAPPA], gb + Uniforms().v4(0.05).tobytes(), n)
-        b.run(k['setup'], [vin, self.DENS, self.SDF, self.X, self.TYPE[0], self.CO[0], self.R, self.KAPPA, self.OCN], ku, n)
+        b.run(k['setup'], [vin, self.DENS, self.SDF, self.X, self.TYPE[0], self.CO[0], self.R, self.KAPPA, self.OCN,
+                           self.svel if pieces_on else self._zero3], ku, n)
         self._pressure(b, prm)
         pout = self.VA if vin is self.VB else self.VB
         b.run(k['project'], [vin, self.VOLD, self.X, self.TYPE[0], self.DENS, pout, self.KAPPA, self.OCN], ku, m)
@@ -959,11 +964,13 @@ class LiquidSolver:
                   .v4(prm.collision_radius, prm.wall_drag, 0.15 * rho0, 0.5 * rho0)
                   .v4(prm.ww_rate, prm.ww_min_speed, prm.ww_turbulence, prm.ww_crests)
                   .v4(self.ww_capacity if ww else 0.0, prm.foam_life, self.steps + prm.seed * 131.0, rho0)
-                  .v4(prm.damping, level, prm.cooling, self._leave_mask(prm, cur)).tobytes())
+                  .v4(prm.damping, level, prm.cooling, self._leave_mask(prm, cur))
+                  .v4(1.0 if pieces_on else 0.0, SQUEEZE).tobytes())
         if therm is not None:
             therm.hide(b, prm)
         b.run_indirect(k['g2p'], [self.parts, src, self.VOLD, self.SDF, self.ctr, self.freelist, self.cellcount,
-                                  self.DENS, self.WA, self.WB, self.wctr, self.NRM, self.KAPPA, self.OCN], u, self.args, 0)
+                                  self.DENS, self.WA, self.WB, self.wctr, self.NRM, self.KAPPA, self.OCN,
+                                  self.svel if pieces_on else self._zero3], u, self.args, 0)
         if therm is not None:
             # frozen particles move with their ice; every particle takes its heat and changes phase
             therm.after_move(b, prm, dt, ww)

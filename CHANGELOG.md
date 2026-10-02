@@ -78,6 +78,11 @@ Notable changes to Blackbody. The format follows
 - Sand, snow, mud, jelly and clay are solid to the smoke and the water: smoke goes round a heap of sand, water poured
   on it runs off and pools at its foot, and a pour pushes the air aside.
 - Snow melts where hot gas touches it, its water joining the liquid in a fire-and-liquid box.
+- Sand and water: in liquid and fire-and-liquid boxes the water and the matter push each other (a wave shoves jelly
+  and it floats; grains in the water are lighter by it; water running over sand drags it along, so a pour digs a
+  crater and a gully). Dry sand the water touches gets damp (darker, glossier, holding together); the water seeps on
+  into it, and sand it soaks through lets go, so a sand castle the water reaches slumps and the flow carries it off.
+  A Sand castle block in Create, and a preset, Sand castle and a wave.
 - Sand, snow, mud, jelly and clay in the interface: the object list, Properties, outlines and handles in the viewer (a
   pour's nozzle and direction), Made of, Let go, Pour it from here and Start/Stop pouring from the right-click menu,
   timing lanes, a Sand & mud chip in Create; Effects gains Falling & breaking and Sand, snow & mud chips.

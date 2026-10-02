@@ -4,7 +4,9 @@
 // rule); where particles are sparse (spray, droplets, thin sheets) it flies on its own velocity,
 // because a midpoint sample taken across the surface would pin it in place while its velocity
 // kept growing. It is pushed out of solids and walls, and freed if it leaves through an open
-// side. Survivors are counted per cell for the sources.
+// side. Survivors are counted per cell for the sources. Liquid squeezed against a moving solid
+// (sand, broken pieces) with no way out, packed far denser than at rest, takes the grid's
+// velocity, and past a limit the excess soaks into the sand's pores (is gone).
 //
 // Whitewater is born here too (after Ihmsen et al. 2012): where the liquid is fast and either
 // traps air (liquid colliding with liquid or a surface: the flow converges before the pressure
@@ -21,6 +23,7 @@ struct Params {
   w1: vec4<f32>, // whitewater: capacity (0 = off), life (s), step seed, rest density (particles)
   m: vec4<f32>,  // damping (1/s, settling during pre-roll), open water level (cells, < 0 off), cooling (1/s),
                  // the open sides the liquid may leave through under the level (bits -x, +x, -z, +z)
+  s: vec4<f32>,  // moving solids in svel (1/0), how packed (x rest density) liquid next to them may get, _, _
 };
 
 @group(0) @binding(0) var<storage, read_write> parts: array<Particle>;
@@ -37,6 +40,7 @@ struct Params {
 @group(0) @binding(11) var nrm: texture_3d<f32>;
 @group(0) @binding(12) var kappa: texture_3d<f32>;
 @group(0) @binding(13) var ocn_t: texture_2d<f32>;
+@group(0) @binding(14) var svel: texture_3d<f32>;   // moving solids' velocity in the cells inside them (w = 1)
 //!include liq_level.wgsl
 //!include noise.wgsl
 
@@ -111,13 +115,31 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
   let ih = 1.0 / U.g.n.w;
   let x = P.p.xyz;
 
+  // squeezed against a moving solid: how packed (x rest density; 0: it is not)
+  var squeezed = 0.0;
+  if (U.s.x > 0.5) {
+    let cq = clamp(vec3<i32>(floor(x)), vec3<i32>(0), n - vec3<i32>(1));
+    let rq = textureLoad(dens, cq, 0).x / U.w1.w;
+    if (rq > 2.0) {
+      var moving = textureLoad(svel, cq, 0).w > 0.5;
+      for (var a = 0; a < 6; a++) {
+        var e = vec3<i32>(0);
+        e[a >> 1] = select(-1, 1, (a & 1) == 1);
+        let q = cq + e;
+        if (in_grid(q, n) && textureLoad(svel, q, 0).w > 0.5) { moving = true; }
+      }
+      if (moving) { squeezed = rq; }
+    }
+  }
+
   // transfer
   let gu = interp_comp(vnew, x, 0u, n);
   let gv = interp_comp(vnew, x, 1u, n);
   let gw = interp_comp(vnew, x, 2u, n);
   let pic = vec3<f32>(gu.x, gv.x, gw.x);
   let old = vec3<f32>(interp_val(vold, x, 0u, n), interp_val(vold, x, 1u, n), interp_val(vold, x, 2u, n));
-  var v = mix(pic, P.v + (pic - old), U.k.y) * exp(-U.m.x * dt);
+  // (squeezed, the grid's velocity: its kicks there, pressing on liquid with no way out, do not add up)
+  var v = mix(pic, P.v + (pic - old), select(U.k.y, 0.0, squeezed > 0.0)) * exp(-U.m.x * dt);
   let sp = length(v);
   if (sp > U.k.w) { v *= U.k.w / sp; }
   let ap = U.k.z;
@@ -176,6 +198,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
     }
   }
   if (!(all(abs(p) < vec3<f32>(1.0e6)) && all(abs(v) < vec3<f32>(1.0e6)))) { dead = true; }
+  // squeezed past the limit: as much soaks away as brings its cell back to it
+  if (squeezed > U.s.y && rand1(i * 2654435761u + u32(U.w1.z) * 2246822519u + 7u) < 1.0 - U.s.y / squeezed) { dead = true; }
   // open water: liquid heaped above the level at the edge of the box runs off over it (not over a
   // wave flume's walls: a crest shoaling or breaking along them, or a run-up against them, stands
   // above the sea's own surface, and skimmed off there the box drained with every wave)

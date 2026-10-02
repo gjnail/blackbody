@@ -449,6 +449,13 @@ COMPONENTS = [
               'it collapses and spreads.', 'pillar', room=(0.6, 0.7, 0.6),
               objects=[_M(name='Sand column', material='sand', shape='cylinder', position=(0.0, 0.3, 0.0), size=(0.12, 0.3, 0.12),
                           release=0.5)]),
+    Component('sand_castle', 'Sand castle', 'Sand, snow & mud', 'A castle of damp sand 32 cm across, with four towers and a '
+              'keep: it stands until water soaks into it, then slumps. Give it a pond, a pour or a wave.', 'matter',
+              room=(0.4, 0.4, 0.4),
+              objects=[_M(name='Castle', material='wet_sand', shape='box', position=(0.0, 0.07, 0.0), size=(0.16, 0.07, 0.16)),
+                       _M(name='Keep', material='wet_sand', shape='cylinder', position=(0.0, 0.24, 0.0), size=(0.065, 0.1, 0.065))]
+              + [_M(name=f'Tower {k + 1}', material='wet_sand', shape='cylinder', position=(sx * 0.115, 0.215, sz * 0.115),
+                    size=(0.04, 0.075, 0.04)) for k, (sx, sz) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))]),
     Component('snowball', 'Snowball', 'Sand, snow & mud', 'A 14 cm snowball of packing snow thrown at 6 m/s: it splats on '
               'what it hits and breaks into lumps.', 'snowball', room=(0.3, 0.8, 0.3),
               objects=[_M(name='Snowball', material='packing_snow', shape='sphere', position=(0.0, 0.7, 0.0),

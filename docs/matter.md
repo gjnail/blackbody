@@ -36,8 +36,13 @@ Right-click one in the viewer for *Made of*, *Let go at this frame*, *Pour it fr
 - **Gravity, the ground and the box.** It rests on the ground and against the box's closed sides. Through an open side, the top, or the bottom of a box without ground, it leaves the simulation.
 - **Objects.** It piles against objects that stay put, and keyframed ones plough through it (a crate dragged through mud pushes up a bow wave). Things that fall land on it and it holds them up as its strength and their weight say: a wooden crate rests on top of sand where a steel ball of the same size sinks into it, and jelly throws a dropped ball back up. Matter and the falling objects push each other every step.
 - **Blasts.** An explosion (an emitter's *Blast*) throws it away from where it goes off, the surface hardest: a heap of sand near a charge is blown flat.
+- **Water.** In a liquid or fire-and-liquid box the water and the matter push each other. A wave shoves jelly, and jelly floats by the water it puts aside; grains in the water are lighter by it; and water running over sand drags its top along, so a pour digs a crater where it lands and a gully where it runs off.
 
 It is solid to the smoke and the water: smoke blown at a heap of sand goes round and over it, water poured on it runs off it and pools at its foot, and a pour pushes the air aside as it falls.
+
+Sand gets wet. Dry sand the water touches is damp after half a second: darker and glossier, its grains held together by the water between them, so it stands steeper and holds a cut edge. The water seeps on into damp sand, a couple of centimetres a second, and sand it soaks through lets go: its grains part. A sand castle the water reaches stands at first, then is undermined, slumps into a mound and is carried by the flow. Away from the water, soaked sand drains back to damp in a few seconds.
+
+![Sand castle and a wave](media/gif/sand_castle.gif "Sand castle and a wave: a wall of water breaks over a castle of damp sand. It stands, then the water soaks into it and it slumps into a mound.")
 
 Snow melts where hot gas touches it: in flames a snowball's surface melts away in a second or two, while snow beside a fire that its heat does not reach, or buried inside a heap, lasts. In a fire-and-liquid box its water joins the liquid and runs off; in a fire box it is simply gone. (The fire's radiant heat is not counted, so snow a little way from a fire melts only where the hot gas reaches it.)
 
@@ -59,11 +64,11 @@ Presets: *Sand from a hopper*, *Snowballs at a wall*, *Ball dropped on jelly*, *
 
 ## Limits
 
-- The smoke and the water go round it but do not move it: a wave does not wash a sand castle away, and water does not
-  wet sand. Cloth does not meet it yet.
+- The smoke goes round it but does not move it. The water does not flow through it: it seeps into sand only to soak it,
+  so a sand dam holds the water back until the water soaks through it or goes over it. Cloth does not meet it yet.
 - Broken objects' pieces do not push it, and it does not burn.
 - A body of matter is a box, a ball, a cylinder or a cone; it cannot fill a mesh yet.
 - Up to 15 materials (or colours of them) in a scene at once.
 - Snow and mud do not stick to walls: a snowball splats and falls rather than leaving a mark.
 
-Under the hood: the material point method (MLS-MPM, Hu et al. 2018) on the GPU, with sand as Drucker–Prager plasticity (Klár et al. 2016), snow after Stomakhin et al. (2013), mud and clay as von Mises plasticity (mud relaxing toward it over time), and jelly as a neo-Hookean solid. Sand's friction angle is set from the angle of repose asked for, measured on poured heaps. Particle-to-grid sums are fixed-point integers, so a simulation is the same on any GPU, every time.
+Under the hood: the material point method (MLS-MPM, Hu et al. 2018) on the GPU, with sand as Drucker–Prager plasticity (Klár et al. 2016), snow after Stomakhin et al. (2013), mud and clay as von Mises plasticity (mud relaxing toward it over time), and jelly as a neo-Hookean solid. Sand's friction angle is set from the angle of repose asked for, measured on poured heaps. Particle-to-grid sums are fixed-point integers, so a simulation is the same on any GPU, every time. The water pushes the matter with its pressure, on the faces of jelly and clay and as a gradient in sand, snow and mud (the water is between their grains as well as round them), and drags it with the stress of a flow over a bed; damp sand is Drucker–Prager sand with cohesion, soaked sand without.

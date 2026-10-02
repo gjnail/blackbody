@@ -90,6 +90,11 @@ class MatterMaterial:
     def lam(self):
         return self.E * self.nu / ((1.0 + self.nu) * (1.0 - 2.0 * self.nu))
 
+    @property
+    def porous(self):
+        """Water gets in between its grains (sand, snow, mud): the water's pressure is in it as well as round it."""
+        return self.model in ('sand', 'snow', 'mud')
+
     def sound(self, hardening=1.0):
         """Its fastest wave (m/s): pressure waves through it."""
         return math.sqrt((self.lam + 2.0 * self.mu) * hardening / self.density)
@@ -99,7 +104,10 @@ MATTERS = {m.key: m for m in (
     MatterMaterial('sand', 'Sand', 'sand', 3.5e5, 0.3, 1600.0, friction=0.5, angle=34.0, colour=(0.55, 0.42, 0.25),
                    roughness=0.95, sparkle=0.6, variation=0.3),
     MatterMaterial('wet_sand', 'Wet sand', 'sand', 3.5e5, 0.3, 1900.0, friction=0.7, angle=38.0, cohesion=0.004,
-                   colour=(0.3, 0.22, 0.13), roughness=0.55, sparkle=0.3, variation=0.25),
+                   colour=(0.23, 0.17, 0.1), roughness=0.55, sparkle=0.2, variation=0.25),
+    # (sand the water has soaked through: its grains let go of each other. What wet sand under the water becomes)
+    MatterMaterial('soaked_sand', 'Soaked sand', 'sand', 3.5e5, 0.3, 2000.0, friction=0.45, angle=30.0,
+                   colour=(0.2, 0.145, 0.085), roughness=0.3, sparkle=0.1, variation=0.25),
     MatterMaterial('snow', 'Snow', 'snow', 1.4e5, 0.2, 400.0, friction=0.3, theta_c=0.025, theta_s=0.0075, xi=10.0, h_max=3.0,
                    colour=(0.85, 0.88, 0.92), roughness=0.8, sparkle=1.0, wrap=0.6, variation=0.04),
     MatterMaterial('packing_snow', 'Packing snow', 'snow', 2.5e5, 0.2, 600.0, friction=0.4, theta_c=0.019, theta_s=0.0075,
@@ -211,6 +219,7 @@ class Matter:
         self._rng = None
         self._init = None            # the particles as they start (numpy)
         self.surface_ready = False
+        self._push_on = False        # the liquid pushing it through its next steps (liquid_push)
 
     # -- set up --------------------------------------------------------------------------------
 
@@ -219,7 +228,7 @@ class Matter:
         return self.dims is not None and bool(self.specs)
 
     def configure(self, specs, box_origin, box_size, resolution=128, max_particles=1_000_000, gravity=9.81, ground=True,
-                  closed=False, fps=24.0, duration=10.0):
+                  closed=False, fps=24.0, duration=10.0, wets=False):
         """Match the matter to the scene's sources and box. Returns True when it has to start again."""
         specs = list(specs or [])
         key = (tuple((s.material, s.shape, tuple(map(float, s.pos)), tuple(map(float, s.size)), float(s.yaw),
@@ -227,7 +236,7 @@ class Matter:
                       float(s.stop), None if s.colour is None else tuple(map(float, s.colour)), float(s.stiffness), int(s.seed))
                      for s in specs),
                tuple(map(float, box_origin)), tuple(map(float, box_size)), int(resolution), int(max_particles), float(gravity),
-               bool(ground), bool(closed), float(fps), float(duration))
+               bool(ground), bool(closed), float(fps), float(duration), bool(wets))
         if not specs:
             changed = self.dims is not None
             self.release()
@@ -259,6 +268,32 @@ class Matter:
                 self._mats.append(material(s.material))
                 self._colours.append((k[1], k[2]))
             self._slot.append(slots.get(k, 0))
+        # (with a liquid in the box: sand and water. Dry sand the liquid wets becomes damp, damp sand it seeps into
+        # soaked, and soaked sand away from it drains back to damp: per slot (its damp slot, its soaked slot, what it
+        # is: 0 dry, 1 damp, 2 soaked, -1 none of these), mpm_wet.wgsl)
+        self._wet = [[-1.0, -1.0, -1.0, 0.0] for _ in range(MAX_MATS)]
+        if wets:
+            def slot_of(k):
+                if k not in slots:
+                    if len(slots) >= MAX_MATS - 1:
+                        return None
+                    slots[k] = len(slots)
+                    self._mats.append(material(k[0]))
+                    self._colours.append((k[1], k[2]))
+                return slots[k]
+
+            for k in [k for k in slots if k[0] in ('sand', 'wet_sand')]:
+                c, st = k[1], k[2]
+                damp = ('wet_sand', None if c is None else tuple(0.42 * x for x in c), st) if k[0] == 'sand' else k
+                d = slot_of(damp)
+                if d is None:
+                    continue
+                s = slot_of(('soaked_sand', None if damp[1] is None else tuple(0.85 * x for x in damp[1]), st))
+                if k[0] == 'sand':
+                    self._wet[slots[k]] = [float(d), -1.0, 0.0, 0.0]
+                self._wet[d] = [float(d), float(-1 if s is None else s), -1.0 if s is None else 1.0, 0.0]
+                if s is not None:
+                    self._wet[s] = [float(d), float(s), 2.0, 0.0]
         self._mat_bytes = self._pack_materials()
         # the particles each source makes: its body at the start, or its stream over the shot
         self._rng = np.random.default_rng(12345)
@@ -361,12 +396,17 @@ class Matter:
         g = self.gpu
         P = (64, 1, 1)
         self._k['p2g'] = g.kernel('mpm_p2g.wgsl', ['rbuf', 'buf'], workgroup=P)
-        self._k['grid'] = g.kernel('mpm_grid.wgsl', ['utex3d', 'rbuf', 'st3d:rgba32float:w', 'buf'])
+        self._k['grid'] = g.kernel('mpm_grid.wgsl', ['utex3d', 'rbuf', 'st3d:rgba32float:w', 'buf', 'utex3d', 'utex3d'])
+        self._k['push'] = g.kernel('mpm_liquid.wgsl', ['utex3d', 'utex3d', 'utex3d', 'st3d:rgba32float:w',
+                                                       'st3d:rgba32float:w'])
         self._k['g2p'] = g.kernel('mpm_g2p.wgsl', ['buf', 'utex3d', 'buf'], workgroup=P)
         self._k['react'] = g.kernel('mpm_react.wgsl', ['buf', 'buf'], workgroup=P)
         self._k['compact'] = g.kernel('mpm_compact.wgsl', ['rbuf', 'buf'], workgroup=P)
         self._k['blast'] = g.kernel('mpm_blast.wgsl', ['buf', 'utex3d'], workgroup=P)
         self._k['melt'] = g.kernel('mpm_melt.wgsl', ['buf', 'tex3d', 'smp', 'buf', 'buf', 'rbuf'], workgroup=P)
+        self._k['wet'] = g.kernel('mpm_wet.wgsl', ['buf', 'utex3d', 'utex3d'], workgroup=P)
+        self._k['wd_init'] = g.kernel('mpm_wetdist.wgsl', ['utex3d', 'utex3d', 'st3d:r32float:w'], 'init')
+        self._k['wd_step'] = g.kernel('mpm_wetdist.wgsl', ['utex3d', 'utex3d', 'st3d:r32float:w'], 'step')
         self._k['surf_p2g'] = g.kernel('mpm_surf_p2g.wgsl', ['rbuf', 'buf'], workgroup=P)
         self._k['surf_norm'] = g.kernel('mpm_surf_norm.wgsl', ['rbuf', 'st3d:r32float:w', 'st3d:rgba16float:w',
                                                                'st3d:rgba16float:w'])
@@ -520,6 +560,67 @@ class Matter:
         res = [self._buf['P'], gas.scal[0] if gas_on else dt_, g.linear, liquid.parts if live else dp,
                liquid.ctr if live else dc, liquid.freelist if live else df]
         b.run(self._k['melt'], res, u, groups=groups_1d(self.count))
+        self._compact(b)            # (drawn as it is now, melted snow gone)
+        self.surface_ready = False
+
+    WET_TIME = 0.5         # s: how long a grain of dry sand next to liquid takes to get damp
+    SOAK_TIME = 1.0        # s: how long the water takes to soak damp sand a cell in from it (n cells in: n + 1 times)
+    SOAK_DEPTH = 8         # the liquid's cells: the furthest into the sand the water soaks it
+    DRAIN_TIME = 4.0       # s: how long soaked sand away from the water takes to drain back to damp
+    DRAIN_FROM = 3         # the liquid's cells: how far from the water soaked sand drains
+    BED_DRAG = 0.05        # the drag coefficient of the liquid running over it (the stress rho C |du| du): more than
+                           # a real bed's, as its grains are far bigger than sand's
+
+    def liquid_push(self, liquid, rho=1000.0):
+        """What `liquid` (a Liquid) does to the matter through the frame's steps (until end()), from the liquid's last
+        pressure solve (mpm_liquid.wgsl): its pressure where it meets the matter, the buoyancy of grains in it, and its
+        drag. None: nothing."""
+        self._push_on = False
+        dt = float(getattr(liquid, 'step_dt', 0.0) or 0.0) if liquid is not None else 0.0
+        if not self.active or not self.count or dt <= 0.0 or getattr(liquid, 'dims', None) is None:
+            return
+        g = self.gpu
+        if 'push' not in self._tex:
+            self._tex['push'] = g.texture3d(self.dims, 'rgba32float', 'matter-liquid-push')
+            self._tex['flow'] = g.texture3d(self.dims, 'rgba32float', 'matter-liquid-flow')
+        u = (Uniforms().raw(liquid._grid(dt).data).v4(*self.origin, self.dx).v4(*self.dims)
+             .v4(rho / dt, 0.5 * liquid._prm.gravity * dt * liquid.h, rho * self.BED_DRAG,
+                 1.0 if all(m.porous for m in self._mats) else 0.0))
+        with g.batch() as b:
+            b.run(self._k['push'], [liquid.X, liquid.TYPE[0], liquid.vel_tex, self._tex['push'], self._tex['flow']], u,
+                  self.dims)
+        self._push_on = True
+
+    def wets(self):
+        """Whether any of the matter gets wet (sand, with a liquid in the box)."""
+        return self.active and bool(self.count) and any(w[2] >= 0.0 for w in getattr(self, '_wet', []))
+
+    def wet(self, b, dt, liquid):
+        """Sand and the water of `liquid` (a Liquid) through dt seconds (mpm_wet.wgsl), in batch b: dry sand next to it
+        damp after WET_TIME; the water seeping on into damp sand, soaking it SOAK_TIME a cell in from it; soaked sand away
+        from it damp again after DRAIN_TIME."""
+        if not self.wets() or liquid is None or getattr(liquid, 'dims', None) is None:
+            return
+        # how far through the sand each of the liquid's cells is from the water (mpm_wetdist.wgsl)
+        dims = tuple(int(x) for x in liquid.dims)
+        wd = self._tex.get('wd0')
+        if wd is None or tuple(wd.size) != dims:
+            for k in ('wd0', 'wd1'):
+                if k in self._tex:
+                    self._tex[k].destroy()
+                self._tex[k] = self.gpu.texture3d(dims, 'r32float', f'matter-{k}')
+        w0, w1 = self._tex['wd0'], self._tex['wd1']
+        du = Uniforms().v4(*dims)
+        b.run(self._k['wd_init'], [liquid.TYPE[0], w1, w0], du, dims)
+        for _ in range(self.SOAK_DEPTH // 2):
+            b.run(self._k['wd_step'], [liquid.TYPE[0], w0, w1], du, dims)
+            b.run(self._k['wd_step'], [liquid.TYPE[0], w1, w0], du, dims)
+        u = (Uniforms().v4(*self.origin, self.dx).v4(*liquid.origin, liquid.h).v4(*liquid.dims)
+             .v4(self.count, dt, self.WET_TIME, self.SOAK_TIME).v4(self.DRAIN_TIME, self.SOAK_DEPTH, self.DRAIN_FROM)
+             .raw([x for w in self._wet for x in w]))
+        b.run(self._k['wet'], [self._buf['P'], liquid.TYPE[0], w0], u, groups=groups_1d(self.count))
+        self._compact(b)            # (drawn as it is now, wet sand wet)
+        self.surface_ready = False
 
     def blast(self, where, kg, depth=0.1):
         """A blast of `kg` of TNT at `where` (fire-local m) throws the matter away from it (mpm_blast.wgsl): the impulse on
@@ -559,6 +660,7 @@ class Matter:
         self.min_jp = float(st[7:8].view(np.float32)[0])
         self.surface_ready = False
         self._view = None
+        self._push_on = False        # (the liquid's push is set again for each frame: liquid_push)
 
     def _react_forces(self, react, seconds):
         """The momentum the objects took (in particles of water times m/s, (16, 6)) as forces over `seconds` (N, N m)."""
@@ -569,7 +671,8 @@ class Matter:
     def _grid_u(self, dt, cols, pack):
         ground_y = self.box[0][1] if self.ground else -1.0e9
         u = Uniforms().v4(*self.dims, 0).v4(dt, self.dx, self.gravity, self._wall_friction()) \
-            .v4(*self.origin, ground_y).v4(1.0 if self.closed else 0.0, MARGIN)
+            .v4(*self.origin, ground_y).v4(1.0 if self.closed else 0.0, MARGIN, 1.0 if self._push_on else 0.0,
+                                           min(m.density for m in self._mats))
         if pack is not None:
             pack(u, cols)
         else:
@@ -583,7 +686,8 @@ class Matter:
         t_end = self.time + dt
         b.clear_buffer(self._buf['G'])
         b.run(k['p2g'], [self._buf['P'], self._buf['G']], self._particle_u(dt, self.time), groups=groups)
-        b.run(k['grid'], [atlas, self._buf['G'], self._tex['vel'], self._buf['react_i']], gu, self.dims)
+        push, flow = (self._tex['push'], self._tex['flow']) if self._push_on else (self._no_push(),) * 2
+        b.run(k['grid'], [atlas, self._buf['G'], self._tex['vel'], self._buf['react_i'], push, flow], gu, self.dims)
         if fold:
             b.run(k['react'], [self._buf['react_i'], self._buf['react']], Uniforms().v4(96, 1.0 / FX_R), groups=(2, 1, 1))
         # (held or let go as at the start of the step in both passes: p2g's momentum is what g2p picks up)
@@ -603,6 +707,12 @@ class Matter:
 
     def _wall_friction(self):
         return max([m.friction for m in self._mats] + [0.0])
+
+    def _no_push(self):
+        t = self._tex.get('no_push')
+        if t is None:
+            t = self._tex['no_push'] = self.gpu.texture3d((1, 1, 1), 'rgba32float', 'matter-no-liquid')
+        return t
 
     def _empty_atlas(self):
         t = self._tex.get('atlas1')

@@ -1,6 +1,6 @@
-// Matter, the grid: each node's velocity from the momentum and mass the particles gave it, then gravity, and the
-// ground, the box's walls and the objects in the scene, which stop it moving into them and drag it along their
-// surface with friction. What the objects do to the matter, they feel back: the momentum each one takes from it is
+// Matter, the grid: each node's velocity from the momentum and mass the particles gave it, then gravity, the liquid's
+// push and drag (mpm_liquid.wgsl), and the ground, the box's walls and the objects in the scene, which stop it moving
+// into them and drag it along their surface with friction. What the objects do to the matter, they feel back: the momentum each one takes from it is
 // summed (react) for the rigid bodies (solids.py).
 //!include mpm_common.wgsl
 //!include meshsdf.wgsl
@@ -10,7 +10,9 @@ struct Params {
   n: vec4<f32>,      // grid nodes (x, y, z), _
   s: vec4<f32>,      // step (s), node spacing (m), gravity (m/s^2), friction of the ground and the walls
   o: vec4<f32>,      // the grid's corner (node 0, fire-local m), the ground's height (fire-local m; very low: none)
-  w: vec4<f32>,      // closed sides (1/0), the box's edge (nodes in from the grid's), _, _
+  w: vec4<f32>,      // closed sides (1/0), the box's edge (nodes in from the grid's), the liquid's push on (1/0), the
+                     // least density a node is taken to have for the liquid's push (kg/m^3: its lightest material's;
+                     // a node at the matter's edge is part water, but its grains sink or float by their own density)
   ccnt: vec4<f32>,   // objects (count), _
   col: array<Collider, MAX_COLLIDERS>,
 };
@@ -19,9 +21,12 @@ struct Params {
 @group(0) @binding(1) var<storage, read> G: array<i32>;
 @group(0) @binding(2) var vel: texture_storage_3d<rgba32float, write>;
 @group(0) @binding(3) var<storage, read_write> react: array<atomic<i32>>;   // per object: momentum taken (xyz), its moment (xyz)
+@group(0) @binding(4) var push: texture_3d<f32>;   // the liquid's force on it (N/m^3); w: 1 where the liquid is
+@group(0) @binding(5) var flow: texture_3d<f32>;   // the liquid's velocity there (m/s); w: its drag (kg/m^4)
 @group(1) @binding(0) var<uniform> U: Params;
 
 const FX_R: f32 = 64.0;   // react's fixed point (momentum in particles of water times m/s)
+const RHO: f32 = 125.0;   // a node's density (kg/m^3) per unit of its mass (particles of water, eight to a node)
 
 // Stop v moving into a surface (normal n) that moves at vc, with friction mu (Coulomb): it may leave freely.
 fn boundary(v: vec3<f32>, vc: vec3<f32>, n: vec3<f32>, mu: f32) -> vec3<f32> {
@@ -59,6 +64,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let dx = U.s.y;
   var v = vec3<f32>(f32(G[k]), f32(G[k + 1u]), f32(G[k + 2u])) / FX_P / mass;
   v.y -= U.s.z * dt;
+  // the liquid: its pressure, then its drag (as fast as the flow at most)
+  if (U.w.z > 0.5) {
+    let lp = textureLoad(push, c, 0);
+    if (lp.w > 0.0) {
+      let rho = max(mass * RHO, U.w.w);
+      v += lp.xyz * (dt / rho);
+      let lf = textureLoad(flow, c, 0);
+      let du = lf.xyz - v;
+      v += du * min(lf.w * length(du) * dt / rho, 1.0);
+    }
+  }
   let p = U.o.xyz + vec3<f32>(c) * dx;      // fire-local m
   let mu = U.s.w;
   // the ground

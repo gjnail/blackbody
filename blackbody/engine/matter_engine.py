@@ -35,7 +35,7 @@ class MatterEngine:
         return self.matter.configure(specs, origin, size, resolution=int(d.get('matter_detail', 128)),
                                      max_particles=int(d.get('matter_particles', 2_000_000)), gravity=gravity,
                                      ground=bool(d['ground']), closed=not bool(d['open_sides']), fps=scene.fps,
-                                     duration=duration)
+                                     duration=duration, wets=scene.kind in ('liquid', 'both'))
 
     _coupled = False
 
@@ -56,6 +56,13 @@ class MatterEngine:
             pushed = m.step(h, cols, atlas, lambda u, c: pack_colliders(u, c, meshes))
             return {enabled[k]: v for k, v in pushed.items() if k < len(enabled)}
         return dt, fn
+
+    def _push_matter(self, liquid):
+        """The liquid pushing the matter through this frame, as it was at the end of the last (the matter moves in
+        lockstep with the rigid bodies, before the liquid)."""
+        m = self._matter
+        if m is not None and m.active:
+            m.liquid_push(liquid, float(liquid._prm.rho) if liquid is not None else 1000.0)
 
     def _step_matter(self, scene, frame, fdt, poses, n, meshes):
         """Move the matter through frame `frame` (fdt seconds), meeting the objects as they are at each of the frame's n
@@ -110,6 +117,14 @@ class MatterEngine:
         look = scene.look(frame)
         with self.gpu.batch() as b:
             m.melt(b, fdt, gas, liquid, look.ambient_k, look.flame_k)
+
+    def _wet_matter(self, fdt, liquid):
+        """Sand the liquid touches soaking through the frame (fdt seconds): wet sand."""
+        m = self._matter
+        if m is None or liquid is None or not m.wets():
+            return
+        with self.gpu.batch() as b:
+            m.wet(b, fdt, liquid)
 
     def _blast_matter(self, scene, frame):
         """The blasts that go off in frame `frame` throw the matter (at the frame's start)."""
