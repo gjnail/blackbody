@@ -593,7 +593,7 @@ class Matter:
         self._k['react'] = g.kernel('mpm_react.wgsl', ['buf', 'buf'], workgroup=P)
         self._k['compact'] = g.kernel('mpm_compact.wgsl', ['rbuf', 'buf', 'buf'], workgroup=P)
         self._k['blast'] = g.kernel('mpm_blast.wgsl', ['buf', 'utex3d'], workgroup=P)
-        self._k['melt'] = g.kernel('mpm_melt.wgsl', ['buf', 'tex3d', 'smp', 'buf', 'buf', 'rbuf'], workgroup=P)
+        self._k['melt'] = g.kernel('mpm_melt.wgsl', ['buf', 'tex3d', 'smp', 'buf', 'buf', 'rbuf', 'utex3d'], workgroup=P)
         self._k['wet'] = g.kernel('mpm_wet.wgsl', ['buf', 'utex3d', 'utex3d'], workgroup=P)
         heat = ['buf', 'buf', 'tex3d', 'smp', 'utex3d', 'utex3d', 'buf', 'buf', 'utex3d']
         self._k['heat_lights'] = g.kernel('mpm_heat.wgsl', heat, 'lights', workgroup=(4, 4, 4))
@@ -728,9 +728,10 @@ class Matter:
         """Whether any of the matter melts (snow)."""
         return self.active and bool(self.count) and any(m.model == 'snow' for m in self._mats)
 
-    def melt(self, b, dt, gas=None, liquid=None, ambient_k=293.0, flame_k=1650.0):
+    def melt(self, b, dt, gas=None, liquid=None, ambient_k=293.0, flame_k=1650.0, colliders=(), touch=(), meshes=None):
         """Snow melting through dt seconds (mpm_melt.wgsl), in batch b: in the gas of `gas` (a Solver; None: the ambient
-        air), its water joining `liquid` (a Liquid; None: it is gone)."""
+        air) and on the objects it touches warmer than freezing (colliders, touch: as heat()), its water joining
+        `liquid` (a Liquid; None: it is gone)."""
         if not self.melts():
             return
         g = self.gpu
@@ -749,6 +750,7 @@ class Matter:
         u.v4(self.count, dt, liquid.capacity if live else 0, self._melt_seed % 100000)
         u.v4(ambient_k, flame_k, self.MELT_RATE, 1.0 if gas_on else 0.0)
         u.raw(w)
+        cols = self._pack_touch(u, colliders, touch, meshes)
         if getattr(self, '_melt_dummy', None) is None:
             t = g.texture3d((1, 1, 1), 'rgba16float', 'matter-melt-no-gas')
             g.upload(t, np.zeros((1, 1, 1, 4), np.float16))
@@ -756,7 +758,8 @@ class Matter:
                                 g.buffer(16, 'matter-melt-no-free'))
         dt_, dp, dc, df = self._melt_dummy
         res = [self._buf['P'], gas.scal[0] if gas_on else dt_, g.linear, liquid.parts if live else dp,
-               liquid.ctr if live else dc, liquid.freelist if live else df]
+               liquid.ctr if live else dc, liquid.freelist if live else df,
+               meshes.atlas if (meshes is not None and cols) else self._empty_atlas()]
         b.run(self._k['melt'], res, u, groups=groups_1d(self.count))
         self._compact(b)            # (drawn as it is now, melted snow gone)
         self.surface_ready = False
@@ -780,6 +783,18 @@ class Matter:
                 out += [0.0, 0.0, 0.0, 0.0]
         return out
 
+    @staticmethod
+    def _pack_touch(u, colliders, touch, meshes):
+        """The objects matter can touch, for heat() and melt(): pack_colliders' block, then each one's (temperature K,
+        effusivity). Returns the colliders packed."""
+        from .solver import MAX_COLLIDERS, pack_colliders
+        cols = list(colliders or [])[:MAX_COLLIDERS]
+        pack_colliders(u, cols, meshes)
+        touch = list(touch or [])[:len(cols)]
+        for i in range(MAX_COLLIDERS):
+            u.v4(*(touch[i] if i < len(touch) else (0.0, 0.0)))
+        return cols
+
     def heats(self):
         """Whether any of the matter takes on heat, gives it off or melts (wax, chocolate, metal)."""
         return self.active and bool(self.count) and getattr(self, 'thermal', False)
@@ -802,12 +817,7 @@ class Matter:
         u.v4(HEAT_BLOCK, 0.2, FLAME_ABSORPTION, HEAT_LIGHTS)
         u.raw([x for h in self._heat for x in h]).raw([x for c in self._cond for x in c]).raw([x for r in self._burn for x in r])
         u.raw(self._ash)
-        from .solver import MAX_COLLIDERS, pack_colliders
-        cols = list(colliders or [])[:MAX_COLLIDERS]
-        pack_colliders(u, cols, meshes)
-        touch = list(touch or [])[:len(cols)]
-        for i in range(MAX_COLLIDERS):
-            u.v4(*(touch[i] if i < len(touch) else (0.0, 0.0)))
+        cols = self._pack_touch(u, colliders, touch, meshes)
         if getattr(self, '_heat_dummy', None) is None:
             t = g.texture3d((1, 1, 1), 'rgba16float', 'matter-heat-no-gas')
             g.upload(t, np.zeros((1, 1, 1, 4), np.float16))

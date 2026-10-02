@@ -155,13 +155,16 @@ class MatterEngine:
         return (Fields(pieces, matter), i)
 
     def _melt_matter(self, scene, frame, fdt, gas=None, liquid=None):
-        """Snow melting through frame `frame` (fdt seconds) in the gas's heat, its water joining the liquid."""
+        """Snow melting through frame `frame` (fdt seconds) in the gas's heat and on warm objects, its water joining the
+        liquid."""
         m = self._matter
         if m is None or not m.melts():
             return
         look = scene.look(frame)
+        cols = scene.colliders_gpu(frame, self.solids.overrides() if self.solids.active else None)
         with self.gpu.batch() as b:
-            m.melt(b, fdt, gas, liquid, look.ambient_k, look.flame_k)
+            m.melt(b, fdt, gas, liquid, look.ambient_k, look.flame_k, cols, scene.collider_heat(),
+                   getattr(self.solver, 'meshes', None))
 
     _mfire = None
 

@@ -226,6 +226,28 @@ def melting(engine, material, kind='both', secs=4.0):
     return first, left, water
 
 
+def test_snow_melts_from_below_on_a_hot_plate_and_not_on_a_frozen_one(engine):
+    from blackbody.scene import components
+    sc = components.new_scene('fire', 'person')
+    sc.emitters = []
+    for name, temp, x in (('Hot plate', 150.0, -0.15), ('Frozen plate', -10.0, 0.15)):
+        sc.add_collider(name=name, shape='box', position=(x, 0.01, 0.0), size=(0.08, 0.01, 0.08), material='steel',
+                        temperature=temp)
+        sc.add_matter(name=f'Snow on {name}', material='snow', shape='box', position=(x, 0.045, 0.0),
+                      size=(0.03, 0.02, 0.03))
+    sc.data['domain'].update(size_x=0.8, size_y=0.4, size_z=0.4, resolution=32, preroll=0.0, matter_detail=128)
+    engine.prepare(sc, final=False)
+    engine.simulate_to(sc, sc.start, cache=False)
+    _, x = live(engine.matter)
+    hot0, cold0 = int((x[:, 0] < 0).sum()), int((x[:, 0] > 0).sum())
+    engine.simulate_to(sc, sc.start + 144, cache=False)
+    _, x = live(engine.matter)
+    hot, cold = x[:, 0] < 0.0, x[:, 0] > 0.0
+    assert hot.sum() < 0.98 * hot0                      # the hot plate melts it from below,
+    assert x[hot, 1].min() < 0.03                       # and what is left settles onto it
+    assert cold.sum() == cold0                          # the frozen one melts none (and the air none yet)
+
+
 def test_snow_the_flames_touch_melts_into_water(engine):
     first, left, water = melting(engine, 'snow')
     assert left < 0.99 * first and water > 20          # its flank melts, and the water runs off

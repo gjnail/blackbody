@@ -55,7 +55,7 @@ Sand gets wet. Dry sand the water touches is damp after half a second: darker an
 
 ![Sand castle and a wave](media/gif/sand_castle.gif "Sand castle and a wave: a wall of water breaks over a castle of damp sand. It stands, then the water soaks into it and it slumps into a mound.")
 
-Snow melts where hot gas touches it: in flames a snowball's surface melts away in a second or two, while snow beside a fire that its heat does not reach, or buried inside a heap, lasts. In a fire-and-liquid box its water joins the liquid and runs off; in a fire box it is simply gone. (The fire's radiant heat is not counted, so snow a little way from a fire melts only where the hot gas reaches it.)
+Snow melts where hot gas touches it: in flames a snowball's surface melts away in a second or two, while snow beside a fire that its heat does not reach, or buried inside a heap, lasts. It melts from below where it rests on an object warmer than freezing (an object's *Temperature*): on a 150 °C steel plate a layer every few seconds, on a warm car bonnet slowly, on frozen ground not at all. In a fire-and-liquid box its water joins the liquid and runs off; in a fire box it is simply gone. (The fire's radiant heat is not counted, so snow a little way from a fire melts only where the hot gas reaches it.)
 
 ## Things that melt
 

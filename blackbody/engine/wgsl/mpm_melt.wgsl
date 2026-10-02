@@ -1,9 +1,12 @@
 // Snow melting (matter.py): each snow particle warms in the gas round it, the hotter the faster (in flames about a second,
-// in a warm room minutes), and when it has taken in its latent heat it melts: it leaves the matter, and in a box with a
+// in a warm room minutes), and where it touches an object warmer than freezing (a hot plate, a heated pipe), as the
+// object gives it heat; when it has taken in its latent heat it melts: it leaves the matter, and in a box with a
 // liquid the water it held joins the liquid (whole liquid particles, the share left over by chance), in free slots as
 // liq_spawn.wgsl takes them, moving as it was.
 //!include common.wgsl
 //!include liq_common.wgsl
+//!include meshsdf.wgsl
+//!include colliders.wgsl
 
 struct MParticle {
   x: vec4<f32>,   // position (the matter's grid units); w = material slot, negative: an empty slot
@@ -23,6 +26,9 @@ struct Params {
   k: vec4<f32>,      // particles (count), dt (s), the liquid's slot capacity (0: no liquid to join), seed
   t: vec4<f32>,      // ambient K, flame K, melting (per s per K above freezing), gas on (1/0)
   melt: array<vec4<f32>, 4>,   // per material slot (16): liquid particles a particle of it melts into (0: it does not melt)
+  ccnt: vec4<f32>,             // the objects (solver.pack_colliders)
+  col: array<Collider, MAX_COLLIDERS>,
+  touch: array<vec4<f32>, MAX_COLLIDERS>,   // per object: its temperature (K), its effusivity (W s^0.5/m^2/K)
 };
 
 @group(0) @binding(0) var<storage, read_write> P: array<MParticle>;
@@ -31,6 +37,7 @@ struct Params {
 @group(0) @binding(3) var<storage, read_write> parts: array<Particle>;
 @group(0) @binding(4) var<storage, read_write> ctr: array<atomic<i32>>;
 @group(0) @binding(5) var<storage, read> freelist: array<u32>;
+@group(0) @binding(6) var atlas: texture_3d<f32>;   // the meshes' distance fields (meshsdf.wgsl)
 @group(1) @binding(0) var<uniform> U: Params;
 
 fn alloc() -> i32 {
@@ -44,6 +51,8 @@ fn alloc() -> i32 {
   }
   return s;
 }
+
+const SNOW_EFFUSIVITY: f32 = 400.0;   // W s^0.5/m^2/K
 
 fn rnd(i: u32, j: u32) -> f32 {
   var h = i * 747796405u + j * 2891336453u + u32(U.k.w) * 277803737u;
@@ -78,7 +87,22 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
       tk = U.t.x + (U.t.y - U.t.x) * min(T, 1.0);
     }
   }
-  let over = tk - 273.15;
+  var over = tk - 273.15;
+  // an object it touches (within a node spacing of it, as snow resting on it is), warmer than freezing: as the air
+  // twice as far above freezing would, by the share of the heat at the face between them the object gives (its
+  // effusivity against snow's, some 400)
+  if (U.ccnt.x > 0.5) {
+    var nearest = U.m.w;
+    var heat = 0.0;
+    for (var c = 0; c < i32(U.ccnt.x); c++) {
+      let d = col_sdf(U.col[c], pos);
+      if (d < nearest) {
+        nearest = d;
+        heat = 2.0 * max(U.touch[c].x - 273.15, 0.0) * U.touch[c].y / (U.touch[c].y + SNOW_EFFUSIVITY);
+      }
+    }
+    over = max(over, 0.0) + heat;
+  }
   if (over <= 0.0) { return; }
   p.c2.w += U.k.y * U.t.z * over;
   if (p.c2.w < 1.0) {
