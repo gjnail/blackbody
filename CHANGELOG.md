@@ -77,6 +77,7 @@ Notable changes to Blackbody. The format follows
   on fire.
 - Sand, snow, mud, jelly and clay are solid to the smoke and the water: smoke goes round a heap of sand, water poured
   on it runs off and pools at its foot, and a pour pushes the air aside.
+- Snow melts where hot gas touches it, its water joining the liquid in a fire-and-liquid box.
 - Sand, snow, mud, jelly and clay in the interface: the object list, Properties, outlines and handles in the viewer (a
   pour's nozzle and direction), Made of, Let go, Pour it from here and Start/Stop pouring from the right-click menu,
   timing lanes, a Sand & mud chip in Create; Effects gains Falling & breaking and Sand, snow & mud chips.

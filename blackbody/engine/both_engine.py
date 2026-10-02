@@ -409,6 +409,7 @@ class BothEngine:
         if regions:
             solids.liquid_measures(L.read_float(len(regions), n), fdt, n, L.h, lprm.rho)
         self._step_matter(scene, frame, fdt, poses, n, self.solver.meshes)
+        self._melt_matter(scene, frame, fdt, self.solver, L)
         self.sim_frame = frame
         self.last_substeps = n
         self.last_step_ms = (time.perf_counter() - t0) * 1000.0

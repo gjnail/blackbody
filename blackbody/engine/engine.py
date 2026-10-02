@@ -348,6 +348,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine)
         self.solver.pieces_step = None
         self.solver.measure()
         self._step_matter(scene, frame, fdt, poses, n, self.solver.meshes)
+        self._melt_matter(scene, frame, fdt, self.solver)
         if d.get('grow'):
             self._grow(scene, prm)
         self.sim_frame = frame

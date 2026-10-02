@@ -203,3 +203,37 @@ def test_water_runs_off_a_sand_heap_not_through_it(engine):
         x = engine.liquid.read_particles()[0]
         deep.append(int(((np.hypot(x[:, 0] - 0.2, x[:, 2]) < 0.3) & (x[:, 1] < 0.12)).sum()))
     assert deep[0] > 100 and deep[1] == 0
+
+
+# ---- melting (mpm_melt.wgsl) ----------------------------------------------------------------------------------------
+
+def melting(engine, material, kind='both', secs=4.0):
+    from blackbody.scene import components
+    sc = components.new_scene(kind, 'person')
+    sc.emitters = []
+    sc.add_emitter(name='Fire', shape='cylinder', position=(-0.12, 0.05, 0.0), size=(0.2, 0.05, 0.3), fuel=12, temperature=0.6,
+                   **({'emits': 'fire'} if kind == 'both' else {}))
+    sc.add_matter(name='Heap', material=material, shape='pile', position=(0.25, 0.15, 0.0), size=(0.3, 0.15, 0.3))
+    sc.data['domain'].update(size_x=1.8, size_y=1.6, size_z=1.4, resolution=64, preroll=0.0)
+    engine.prepare(sc, final=False)
+    first = None
+    for f in range(sc.start, sc.start + int(secs * sc.fps) + 1):
+        engine.simulate_to(sc, f, cache=False)
+        if first is None:
+            first = int((engine.matter.read_particles()[:, 3] >= 0.0).sum())
+    left = int((engine.matter.read_particles()[:, 3] >= 0.0).sum())
+    water = len(engine.liquid.read_particles()[0]) if kind == 'both' else 0
+    return first, left, water
+
+
+def test_snow_the_flames_touch_melts_into_water(engine):
+    first, left, water = melting(engine, 'snow')
+    assert left < 0.99 * first and water > 20          # its flank melts, and the water runs off
+    assert first - left < 0.5 * first                  # (only where the flames touch it)
+
+
+def test_sand_does_not_melt_and_snow_in_a_fire_box_just_goes(engine):
+    first, left, _ = melting(engine, 'sand')
+    assert left == first
+    first, left, _ = melting(engine, 'snow', kind='fire')
+    assert left < 0.99 * first

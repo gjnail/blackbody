@@ -102,6 +102,15 @@ class MatterEngine:
             return None
         return (Fields(pieces, matter), i)
 
+    def _melt_matter(self, scene, frame, fdt, gas=None, liquid=None):
+        """Snow melting through frame `frame` (fdt seconds) in the gas's heat, its water joining the liquid."""
+        m = self._matter
+        if m is None or not m.melts():
+            return
+        look = scene.look(frame)
+        with self.gpu.batch() as b:
+            m.melt(b, fdt, gas, liquid, look.ambient_k, look.flame_k)
+
     def _blast_matter(self, scene, frame):
         """The blasts that go off in frame `frame` throw the matter (at the frame's start)."""
         for fb, where, kg in scene.blasts():

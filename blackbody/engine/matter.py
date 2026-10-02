@@ -366,6 +366,7 @@ class Matter:
         self._k['react'] = g.kernel('mpm_react.wgsl', ['buf', 'buf'], workgroup=P)
         self._k['compact'] = g.kernel('mpm_compact.wgsl', ['rbuf', 'buf'], workgroup=P)
         self._k['blast'] = g.kernel('mpm_blast.wgsl', ['buf', 'utex3d'], workgroup=P)
+        self._k['melt'] = g.kernel('mpm_melt.wgsl', ['buf', 'tex3d', 'smp', 'buf', 'buf', 'rbuf'], workgroup=P)
         self._k['surf_p2g'] = g.kernel('mpm_surf_p2g.wgsl', ['rbuf', 'buf'], workgroup=P)
         self._k['surf_norm'] = g.kernel('mpm_surf_norm.wgsl', ['rbuf', 'st3d:r32float:w', 'st3d:rgba16float:w',
                                                                'st3d:rgba16float:w'])
@@ -482,6 +483,43 @@ class Matter:
                                                      np.float32(1.0).view(np.uint32)], np.uint32))
         self.forces = {}
         return dt, n
+
+    MELT_RATE = 7.0e-4     # per s per K above freezing: in flames (some 1400 K above) snow melts in about a second
+
+    def melts(self):
+        """Whether any of the matter melts (snow)."""
+        return self.active and bool(self.count) and any(m.model == 'snow' for m in self._mats)
+
+    def melt(self, b, dt, gas=None, liquid=None, ambient_k=293.0, flame_k=1650.0):
+        """Snow melting through dt seconds (mpm_melt.wgsl), in batch b: in the gas of `gas` (a Solver; None: the ambient
+        air), its water joining `liquid` (a Liquid; None: it is gone)."""
+        if not self.melts():
+            return
+        g = self.gpu
+        live = liquid is not None and getattr(liquid, 'dims', None) is not None and liquid.capacity > 0
+        lp = liquid.h ** 3 / max(int(liquid._prm.ppc), 1) if live else 1.0
+        vp = (self.dx / PER_AXIS) ** 3
+        w = np.zeros(16)
+        for k, m in enumerate(self._mats[:15]):
+            if m.model == 'snow':
+                w[k] = vp * m.density / 1000.0 / lp if live else 1.0      # (the water it holds, in liquid particles)
+        gas_on = gas is not None and gas.dims is not None
+        u = Uniforms().v4(*self.origin, self.dx)
+        u.raw((gas._grid(0.0) if gas_on else Uniforms().v4(1, 1, 1, 1).v4().v4()).data)
+        u.v4(*(liquid.origin if live else (0.0, 0.0, 0.0)), liquid.h if live else 1.0)
+        self._melt_seed = getattr(self, '_melt_seed', 0) + 1
+        u.v4(self.count, dt, liquid.capacity if live else 0, self._melt_seed % 100000)
+        u.v4(ambient_k, flame_k, self.MELT_RATE, 1.0 if gas_on else 0.0)
+        u.raw(w)
+        if getattr(self, '_melt_dummy', None) is None:
+            t = g.texture3d((1, 1, 1), 'rgba16float', 'matter-melt-no-gas')
+            g.upload(t, np.zeros((1, 1, 1, 4), np.float16))
+            self._melt_dummy = (t, g.buffer(64, 'matter-melt-no-liquid'), g.buffer(16, 'matter-melt-no-counters'),
+                                g.buffer(16, 'matter-melt-no-free'))
+        dt_, dp, dc, df = self._melt_dummy
+        res = [self._buf['P'], gas.scal[0] if gas_on else dt_, g.linear, liquid.parts if live else dp,
+               liquid.ctr if live else dc, liquid.freelist if live else df]
+        b.run(self._k['melt'], res, u, groups=groups_1d(self.count))
 
     def blast(self, where, kg, depth=0.1):
         """A blast of `kg` of TNT at `where` (fire-local m) throws the matter away from it (mpm_blast.wgsl): the impulse on
