@@ -89,5 +89,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
     atomicAdd(&G[k + 1u], i32(round(q.y)));
     atomicAdd(&G[k + 2u], i32(round(q.z)));
     atomicAdd(&G[k + 3u], i32(round(wt * mass * FX_MASS)));
+    if (m.c.w > 0.0) { atomicAdd(&G[k + 4u], i32(round(wt * mass * m.c.w * 0.001 * FX_STICK))); }
   }
 }

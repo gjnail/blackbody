@@ -151,6 +151,24 @@ def test_a_cached_frame_is_drawn_as_it_was(engine):
     assert np.abs(live_img[30:70, 60:100] - live_img[5:10, 60:100].mean((0, 1))).mean() > 10   # (the clay is there)
 
 
+def test_packing_snow_thrown_at_a_wall_sticks_to_it_and_dry_sand_does_not(engine):
+    from blackbody.scene import components
+    sc = components.new_scene('fire', 'person')
+    sc.emitters = []
+    sc.add_collider(name='Wall', shape='box', position=(0.6, 0.8, 0.0), size=(0.06, 0.8, 0.8), material='brick')
+    for name, mat, z in (('Snowball', 'packing_snow', -0.35), ('Sand ball', 'sand', 0.35)):
+        sc.add_matter(name=name, material=mat, shape='sphere', position=(-0.4, 1.0, z), size=(0.08, 0.08, 0.08),
+                      velocity=(6.0, 1.0, 0.0))
+    sc.data['domain'].update(size_x=2.0, size_y=1.8, size_z=1.6, resolution=32, preroll=0.0, matter_detail=128)
+    engine.prepare(sc, final=False)
+    engine.simulate_to(sc, sc.start + 48, cache=False)
+    P, x = live(engine.matter)
+    snow = np.round(P[:, 3]) == [k.key for k in engine.matter._mats].index('packing_snow')
+    high = (x[:, 0] > 0.45) & (x[:, 1] > 0.5)                     # on the wall, near where it hit
+    assert high[snow].mean() > 0.5                                # the snowball stays on it
+    assert high[~snow].mean() < 0.05                              # the sand runs down it to the ground
+
+
 def test_a_blast_throws_sand_away_from_it(gpu):
     M = matter(gpu, [MatterSpec(material='sand', shape='box', pos=(0.15, 0.05, 0.0), size=(0.15, 0.05, 0.15))])
     run(M, 0.2)

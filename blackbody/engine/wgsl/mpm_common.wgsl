@@ -23,7 +23,8 @@ struct MMat {
   a: vec4<f32>,   // model (0 jelly, 1 sand, 2 snow, 3 mud, 4 clay), mu (Pa), lambda (Pa), density (kg/m^3)
   b: vec4<f32>,   // sand: Drucker-Prager alpha, cohesion (strain); snow: theta_c, theta_s, hardening xi;
                   // mud, clay: yield stress (Pa), share of the excess relaxed per second (mud), holds tension (1/0)
-  c: vec4<f32>,   // friction against the ground and objects, largest hardening (snow), _, _
+  c: vec4<f32>,   // friction against the ground and objects, largest hardening (snow), metal (look), how hard it
+                  // sticks to the objects it touches (Pa)
   d: vec4<f32>,   // look: albedo (linear rgb), roughness
   e: vec4<f32>,   // look: clear (jelly: light through it), sparkle, wrap (light into it: snow), colour variation
 };
@@ -31,7 +32,8 @@ struct MMat {
 const MAX_MATS: u32 = 16u;
 const FX_P: f32 = 16384.0;       // momentum fixed point (2^14): m/s times mass (in particles of 1000 kg/m^3)
 const FX_MASS: f32 = 1048576.0;  // mass fixed point (2^20)
-const NODE: u32 = 4u;            // accumulator slots per node: momentum x, y, z, mass
+const NODE: u32 = 5u;            // accumulator slots per node: momentum x, y, z, mass, mass x how hard it sticks
+const FX_STICK: f32 = 4096.0;    // mass (particles of water) x how hard it sticks (kPa), fixed point
 
 // Particle kernels run 64 threads per workgroup, dispatched in 2D past 65535 workgroups.
 fn lin_id(gid: vec3<u32>, nwg: vec3<u32>) -> u32 {

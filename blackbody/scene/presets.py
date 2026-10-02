@@ -787,8 +787,8 @@ PRESETS = {
     },
     'snowballs': {
         'name': 'Snowballs at a wall', 'category': 'Sand, snow and mud', 'size': '18 cm snowballs',
-        'blurb': 'Three snowballs of packing snow thrown one after another at a brick wall: each splats flat, packs where it '
-                 'hits, and breaks into lumps that fall to the ground. Matter in Packing snow, thrown.',
+        'blurb': 'Three snowballs of packing snow thrown one after another at a brick wall: each squashes where it hits '
+                 'and sticks to the bricks. Matter in Packing snow, thrown.',
         'render': {'end': 60},
         'domain': {'size_x': 3.0, 'size_y': 1.8, 'size_z': 1.8, 'resolution': 32, 'preroll': 0.0, 'matter_detail': 160},
         'composite': {'backdrop': 'stage', 'floor': 'concrete'},

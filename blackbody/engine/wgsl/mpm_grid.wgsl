@@ -39,6 +39,20 @@ fn sheet(k: u32, tdx: f32) -> Sheet {
 }
 const RHO: f32 = 125.0;   // a node's density (kg/m^3) per unit of its mass (particles of water, eight to a node)
 
+// Matter that sticks (snow, mud, clay) held to the surface it touches (normal n, moving at vc): pulled back as it
+// starts to leave and held against sliding along it (by friction mu on the stress it sticks with), up to the speed that
+// stress takes away in the step (hold, m/s). A snowball splatted on a wall stays on it; a thick slab of it still slides.
+fn adhere(v: vec3<f32>, vc: vec3<f32>, n: vec3<f32>, mu: f32, hold: f32) -> vec3<f32> {
+  if (hold <= 0.0) { return v; }
+  var rel = v - vc;
+  let vn = dot(rel, n);
+  if (vn > 0.0) { rel -= n * min(vn, hold); }
+  let vt = rel - dot(rel, n) * n;
+  let lt = length(vt);
+  if (lt > 0.0) { rel -= vt * min(1.0, mu * hold / lt); }
+  return vc + rel;
+}
+
 fn col_normal(k: Collider, p: vec3<f32>, e: f32) -> vec3<f32> {
   let a = vec3<f32>(1.0, -1.0, -1.0);
   let b = vec3<f32>(-1.0, -1.0, 1.0);
@@ -77,6 +91,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   let p = U.o.xyz + vec3<f32>(c) * dx;      // fire-local m
   let mu = U.s.w;
+  // how hard its matter sticks (Pa, its mass's mean), as the speed that takes away from it in the step
+  let hold = f32(G[k + 4u]) / FX_STICK * 1000.0 / mass * dt / (RHO * mass * dx);
   // the ground
   if (p.y - U.o.w < 0.25 * dx) {
     v = boundary(v, vec3<f32>(0.0), vec3<f32>(0.0, 1.0, 0.0), mu);
@@ -87,7 +103,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let d = col_sdf(o, p);
     if (d >= 0.25 * dx) { continue; }
     let before = v;
-    v = boundary(v, col_velocity(o, p), col_normal(o, p, 0.5 * dx), mu);
+    let cv = col_velocity(o, p);
+    let cn = col_normal(o, p, 0.5 * dx);
+    v = adhere(boundary(v, cv, cn, mu), cv, cn, mu, hold);
     let dp = mass * (before - v);              // the momentum the object took
     if (dot(dp, dp) > 0.0) {
       let arm = p - o.a.xyz;
@@ -115,7 +133,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       let gl = length(g);
       let nrm = select(vec3<f32>(0.0, 1.0, 0.0), g / gl, gl > 1.0e-6);
       let before = v;
-      v = boundary(v, pv.xyz, nrm, mu);
+      v = adhere(boundary(v, pv.xyz, nrm, mu), pv.xyz, nrm, mu, hold);
       let dp = mass * (before - v);
       if (pv.w > 0.5 && dot(dp, dp) > 0.0) {
         let r = 96u + 6u * u32(pv.w - 0.5);     // (after the 16 objects')

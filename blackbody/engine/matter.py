@@ -82,6 +82,7 @@ class MatterMaterial:
     yield_stress: float = 0.0   # mud, clay: Pa
     relax: float = 0.0          # mud: the share of the stress past its yield it lets go per second
     tension: bool = False       # clay holds together when pulled; mud tears
+    sticks: float = 0.0         # Pa: how hard it sticks to the objects it touches (packing snow on a wall; dry sand: 0)
     colour: tuple = (0.5, 0.5, 0.5)   # linear albedo (jelly: its tint)
     roughness: float = 0.8
     clear: float = 0.0          # light through it (jelly)
@@ -125,20 +126,21 @@ MATTERS = {m.key: m for m in (
     MatterMaterial('sand', 'Sand', 'sand', 3.5e5, 0.3, 1600.0, friction=0.5, angle=34.0, colour=(0.55, 0.42, 0.25),
                    roughness=0.95, sparkle=0.6, variation=0.3),
     MatterMaterial('wet_sand', 'Wet sand', 'sand', 3.5e5, 0.3, 1900.0, friction=0.7, angle=38.0, cohesion=0.004,
-                   colour=(0.23, 0.17, 0.1), roughness=0.55, sparkle=0.2, variation=0.25),
+                   colour=(0.23, 0.17, 0.1), roughness=0.55, sparkle=0.2, variation=0.25, sticks=300.0),
     # (sand the water has soaked through: its grains let go of each other. What wet sand under the water becomes)
     MatterMaterial('soaked_sand', 'Soaked sand', 'sand', 3.5e5, 0.3, 2000.0, friction=0.45, angle=30.0,
                    colour=(0.2, 0.145, 0.085), roughness=0.3, sparkle=0.1, variation=0.25),
     MatterMaterial('snow', 'Snow', 'snow', 1.4e5, 0.2, 400.0, friction=0.3, theta_c=0.025, theta_s=0.0075, xi=10.0, h_max=3.0,
-                   colour=(0.85, 0.88, 0.92), roughness=0.8, sparkle=1.0, wrap=0.6, variation=0.04),
+                   colour=(0.85, 0.88, 0.92), roughness=0.8, sparkle=1.0, wrap=0.6, variation=0.04, sticks=200.0),
     MatterMaterial('packing_snow', 'Packing snow', 'snow', 2.5e5, 0.2, 600.0, friction=0.4, theta_c=0.019, theta_s=0.0075,
-                   xi=10.0, h_max=3.0, colour=(0.8, 0.83, 0.87), roughness=0.7, sparkle=0.6, wrap=0.5, variation=0.04),
+                   xi=10.0, h_max=3.0, colour=(0.8, 0.83, 0.87), roughness=0.7, sparkle=0.6, wrap=0.5, variation=0.04,
+                   sticks=700.0),
     MatterMaterial('mud', 'Mud', 'mud', 1.5e5, 0.4, 1700.0, friction=0.9, yield_stress=400.0, relax=800.0,
-                   colour=(0.11, 0.075, 0.045), roughness=0.3, variation=0.15),
+                   colour=(0.11, 0.075, 0.045), roughness=0.3, variation=0.15, sticks=1500.0),
     MatterMaterial('jelly', 'Jelly', 'jelly', 3.0e4, 0.42, 1050.0, friction=0.6, colour=(0.92, 0.22, 0.26), roughness=0.08,
                    clear=0.85, variation=0.0),
     MatterMaterial('clay', 'Clay', 'clay', 4.0e5, 0.35, 1800.0, friction=0.8, yield_stress=2.0e4, tension=True,
-                   colour=(0.48, 0.22, 0.12), roughness=0.7, variation=0.08),
+                   colour=(0.48, 0.22, 0.12), roughness=0.7, variation=0.08, sticks=6000.0),
     # things that melt: a solid (clay's model, firm) and its melt (mud's: runny, or thick as chocolate is), each turning
     # into the other at the melting point. A melt's small yield stress stands in for its surface tension, which keeps
     # a puddle as deep as it is for real (its yield stress / (density g): molten iron's some 7 mm) instead of spreading
@@ -533,7 +535,8 @@ class Matter:
                     b = (m.theta_c, m.theta_s, m.xi, 0.0)
                 else:
                     b = (m.yield_stress, m.relax, 1.0 if m.tension else 0.0, 0.0)
-                u.v4(model, mu, la, m.density).v4(*b).v4(m.friction, m.h_max, m.metal).v4(*(colour or m.colour), m.roughness) \
+                u.v4(model, mu, la, m.density).v4(*b).v4(m.friction, m.h_max, m.metal, m.sticks) \
+                 .v4(*(colour or m.colour), m.roughness) \
                  .v4(m.clear, m.sparkle, m.wrap, m.variation)
             else:
                 u.v4(0.0, 1.0, 1.0, 1000.0).v4().v4().v4().v4()
@@ -551,7 +554,7 @@ class Matter:
         self._buf['HG'] = g.buffer(nodes * 2 * 4, 'matter-heat-grid')
         self._buf['HL'] = g.buffer(HEAT_LIGHTS * 32, 'matter-heat-sources')
         self._buf['HLC'] = g.buffer(16, 'matter-heat-source-count')
-        self._buf['G'] = g.buffer(nodes * 4 * 4, 'matter-grid')
+        self._buf['G'] = g.buffer(nodes * 5 * 4, 'matter-grid')    # (mpm_common.wgsl NODE)
         self._buf['S'] = g.buffer(nodes * 13 * 4, 'matter-surface-sums')
         self._buf['react_i'] = g.buffer((16 + MAX_PIECES) * 6 * 4, 'matter-react-step')   # (objects', then pieces')
         self._buf['react'] = g.buffer(16 * 6 * 4, 'matter-react')

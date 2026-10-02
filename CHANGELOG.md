@@ -105,6 +105,8 @@ Notable changes to Blackbody. The format follows
 - Things that burn: dry leaves, sawdust and coal (Matter › Made of) catch where the fire's heat takes them past their
   ignition point, give the fire their fuel as they burn (so it runs through a pile by itself: leaves in a flare of
   flame, sawdust smouldering, coal glowing) and burn down to a little ash.
+- Snow, mud, clay and wet sand stick to the objects they touch, each as hard as it really does: a packing-snow ball
+  thrown at a wall stays on it, powder snow slides off, dry sand does not stick.
 - Cloth that tears (Fabric › Tears, Tear strength): it rips where it is pulled too far, caught on something moving
   through it or overloaded, the rip running on from where it starts.
 - Cloth and sand, snow, mud, jelly and clay meet: matter cannot pass through fabric, from either side. Sand poured onto

@@ -188,10 +188,15 @@ fn matter_uvw(p: vec3<f32>) -> vec3<f32> {
 }
 
 // The distance from fire-local p to the matter's surface (m): its field (distances from everywhere in its grid:
-// mpm_jfa.wgsl), and outside the grid, the distance to it plus the field at its edge.
+// mpm_jfa.wgsl). Outside the grid, as far as can be told for sure: at least the way to the grid (all the matter is in
+// it), and at least the field at its edge less that way. (The way plus the field at the edge is only an upper bound: a
+// march stepping by it from outside steps past a ball of snow near the grid's edge.)
 fn matter_d(p: vec3<f32>) -> f32 {
   let q = clamp(p, U.mlo.xyz, U.mhi.xyz);
-  return length(p - q) + textureSampleLevel(m_phi, lin, matter_uvw(q), 0.0).x;
+  let out = length(p - q);
+  let f = textureSampleLevel(m_phi, lin, matter_uvw(q), 0.0).x;
+  if (out <= 0.0) { return f; }
+  return max(out, f - out);
 }
 
 fn matter_normal(p: vec3<f32>) -> vec3<f32> {
@@ -503,21 +508,31 @@ fn soft_shadow_opaque(p: vec3<f32>, l: vec3<f32>, tmax: f32, k: f32, want: f32, 
   let span = bound_span(p, l);
   if (span.x > span.y) { return 1.0; }
   var res = 1.0;
-  // (the first step jittered per sample: what bands are left round a heap become noise the samples average away)
-  var t = max(t0, span.x) * (1.0 + 0.5 * g_jit);
+  var t = max(t0, span.x);
   let lim = min(tmax, span.y);
   var ph = 1.0e20;
   for (var i = 0; i < 64; i++) {
     if (t >= lim) { break; }
     let d = scene_d(p + l * t, want).x;
     // the closest the ray comes to what is near it between this step and the last (Quilez's improved soft shadow), not
-    // only at the steps: the steps' pattern changes from pixel to pixel and drew contours round a heap
-    let y = select(d * d / (2.0 * ph), 0.0, i == 0);
-    let dd = sqrt(max(d * d - y * y, 0.0));
-    res = min(res, k * dd / max(t - y, 1e-4));
+    // only at the steps: the steps' pattern changes from pixel to pixel and drew contours round a heap. Only where the
+    // last step's sphere reaches that far (y < d): just off a surface the last sphere is tiny, and the formula would
+    // put a shadow where there is none (dark speckles)
+    var dd = d;
+    var ty = t;
+    let y = d * d / (2.0 * ph);
+    if (i > 0 && y < d) {
+      dd = sqrt(d * d - y * y);
+      ty = t - y;
+    }
+    res = min(res, k * dd / max(ty, 1e-4));
     if (res < 0.002) { return 0.0; }
     ph = d;
-    t += clamp(d, 0.5 * t0, 0.25 * max(lim, 0.1));
+    // (the first step jittered per sample, by up to half of itself: what bands are left round a heap become noise the
+    // samples average away)
+    var step = clamp(d, 0.5 * t0, 0.25 * max(lim, 0.1));
+    if (i == 0) { step *= 0.5 + g_jit; }
+    t += step;
   }
   let s = clamp(res, 0.0, 1.0);
   return s * s * (3.0 - 2.0 * s);
