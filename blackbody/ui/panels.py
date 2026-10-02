@@ -14,7 +14,7 @@ from ..scene import kinds as K
 from ..scene import presets
 from ..scene.params import (COLLIDER_PARAMS, EMITTER_PARAMS, FABRIC_PARAMS, LIGHT_PARAMS, SECTION_TITLES, SECTIONS, applies,
                             param)
-from ..scene.params import MATTER_MATERIALS, MATTER_PARAMS
+from ..scene.params import MATTER_MATERIALS, MATTER_PARAMS, STRAND_KINDS, STRAND_PARAMS
 from . import essentials, icons, theme
 from .params import Group, ParamPanel, ParamRow, Switch, pick_mesh_file
 
@@ -380,7 +380,8 @@ class ObjectList(QWidget):
                        'light': LIGHT_KINDS.get(d.get('kind'), 'Light'),
                        'fabric': f'{str(d.get("material", "")).capitalize()} fabric',
                        'matter': (dict(MATTER_MATERIALS).get(d.get('material'), 'Matter')
-                                  + (' poured' if d.get('pours') else ''))}[kind]
+                                  + (' poured' if d.get('pours') else '')),
+                       'strands': dict(STRAND_KINDS).get(d.get('kind'), 'Grass')}[kind]
                 it.setToolTip(0, tip + ' · double-click to rename, right-click for more')
                 it.setData(0, Qt.UserRole, (kind, i))
                 it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable | Qt.ItemIsUserCheckable)
@@ -477,6 +478,10 @@ def fill_add_menu(m, doc, parent):
     subf = m.addMenu(icons.glyph_icon('fabric', theme.OBJECT_COLOURS['fabric'], 16), 'Fabric')
     for k, (label, _) in FABRIC_KINDS.items():
         subf.addAction(label, lambda k=k: add_fabric(doc, k, parent))
+    if hasattr(doc.scene, 'add_strands'):
+        subg = m.addMenu(icons.glyph_icon('grass', theme.OBJECT_COLOURS['strands'], 16), 'Grass')
+        for k, label in STRAND_KINDS:
+            subg.addAction(label, lambda k=k: doc.add_strands(kind=k))
     if hasattr(doc.scene, 'add_matter'):
         subm = m.addMenu(icons.glyph_icon('matter', theme.OBJECT_COLOURS['matter'], 16), 'Sand, snow & mud')
         for k, label in MATTER_MATERIALS:
@@ -500,6 +505,8 @@ def object_menu(m, doc, sel, rename=None):
         m.addAction(icons.glyph_icon('trash', theme.TEXT, 16), 'Delete', lambda: doc.remove_light(i))
     elif kind == 'matter':
         m.addAction(icons.glyph_icon('trash', theme.TEXT, 16), 'Delete', lambda: doc.remove_matter(i))
+    elif kind == 'strands':
+        m.addAction(icons.glyph_icon('trash', theme.TEXT, 16), 'Delete', lambda: doc.remove_strands(i))
 
 
 class RowsPage(QWidget):
@@ -900,6 +907,14 @@ class Inspector(QWidget):
             if l['kind'] != 'lightning':
                 hide |= {p.key for p in LIGHT_PARAMS if p.group == 'Lightning'}
             return [p for p in LIGHT_PARAMS if p.key not in hide]
+        if kind_o == 'strands':
+            gr = sc.strands[i]
+            hide = {'name', 'enabled'}
+            if gr.get('shape') == 'disc':
+                hide |= {'yaw'}   # round: turning it changes nothing
+            if not gr.get('own_colour'):
+                hide |= {'colour'}
+            return [p for p in STRAND_PARAMS if p.key not in hide]
         if kind_o == 'matter':
             m = sc.matter[i]
             hide = {'name', 'enabled'}
@@ -952,6 +967,10 @@ class Inspector(QWidget):
         elif okind == 'light':
             hint = ('A light in the set: it lights the smoke and steam, and the smoke shadows it. A real light '
                     '(In the footage) is darkened on the ground where smoke blocks it; a CG light lights the ground too.')
+        elif okind == 'strands':
+            what = dict(STRAND_KINDS).get(d.get('kind'), 'Grass')
+            hint = (f'{what}: blades that grow from the ground, bend in the wind and the fire\'s air, part round what moves '
+                    'through them and, dry enough, catch and burn down to stubble. The outline is the patch and how tall it grows.')
         elif okind == 'matter':
             what = dict(MATTER_MATERIALS).get(d.get('material'), 'Matter')
             hint = (f'{what}{" poured from a nozzle" if d.get("pours") else ""}: grains that pile up, slide, pack, slump '

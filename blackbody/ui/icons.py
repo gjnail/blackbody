@@ -708,6 +708,41 @@ def _g_ramp(p, s):
     p.drawEllipse(QPointF(s * 0.76, s * 0.4), s * 0.09, s * 0.09)
 
 
+def _blade(p, s, x, h, lean):
+    path = QPainterPath()
+    path.moveTo(s * x, s * 0.9)
+    path.quadTo(s * (x + lean * 0.2), s * (0.9 - h * 0.6), s * (x + lean), s * (0.9 - h))
+    p.drawPath(path)
+
+
+def _g_grass(p, s):
+    """A tuft of grass blades bending in the wind."""
+    for x, h, lean in ((0.2, 0.42, 0.06), (0.32, 0.62, 0.12), (0.45, 0.76, 0.16), (0.56, 0.58, 0.14), (0.68, 0.7, 0.18),
+                       (0.8, 0.46, 0.1)):
+        _blade(p, s, x, h, lean)
+    p.drawLine(QPointF(s * 0.1, s * 0.9), QPointF(s * 0.9, s * 0.9))
+
+
+def _g_wheat(p, s):
+    """A stalk of wheat with its ear."""
+    _blade(p, s, 0.48, 0.5, 0.06)
+    for k in range(4):
+        y = 0.34 - 0.08 * k
+        p.drawEllipse(QPointF(s * 0.47, s * y), s * 0.05, s * 0.035)
+        p.drawEllipse(QPointF(s * 0.61, s * (y + 0.03)), s * 0.05, s * 0.035)
+    p.drawLine(QPointF(s * 0.54, s * 0.08), QPointF(s * 0.54, s * 0.38))
+    _blade(p, s, 0.3, 0.3, -0.08)
+    _blade(p, s, 0.7, 0.26, 0.08)
+
+
+def _g_reeds(p, s):
+    """Reeds, one with its cattail."""
+    _blade(p, s, 0.3, 0.7, -0.06)
+    _blade(p, s, 0.66, 0.66, 0.1)
+    p.drawLine(QPointF(s * 0.48, s * 0.9), QPointF(s * 0.5, s * 0.1))
+    p.drawRoundedRect(QRectF(s * 0.45, s * 0.2, s * 0.1, s * 0.26), s * 0.05, s * 0.05)
+
+
 def _g_flag(p, s):
     p.drawLine(QPointF(s * 0.18, s * 0.08), QPointF(s * 0.18, s * 0.92))
     path = QPainterPath()
@@ -798,6 +833,7 @@ GLYPHS = {
     'wall': _g_wall, 'house': _g_house, 'car': _g_car, 'hill': _g_hill, 'flag': _g_flag, 'spot': _g_spot, 'window': _g_window,
     'mesh': _g_mesh, 'crate': _g_crate, 'roto': _g_roto, 'text': _g_text, 'shape': _g_shape,
     'cart': _g_cart, 'turntable': _g_turntable, 'windmill': _g_windmill, 'ramp': _g_ramp,
+    'grass': _g_grass, 'strands': _g_grass, 'wheat': _g_wheat, 'reeds': _g_reeds,
     'matter': _g_grains, 'grains': _g_grains, 'mud': _g_mud, 'jelly': _g_jelly, 'snowball': _g_snowball, 'clay': _g_clay,
     'play': lambda p, s: p.drawPolygon(QPolygonF([QPointF(s * 0.3, s * 0.2), QPointF(s * 0.8, s * 0.5), QPointF(s * 0.3, s * 0.8)])),
     'stop': lambda p, s: p.drawRect(QRectF(s * 0.25, s * 0.25, s * 0.5, s * 0.5)),

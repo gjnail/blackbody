@@ -49,7 +49,7 @@ class Gizmo:
         g = lambda k: sc.get((kind, i, k), vp.doc.frame)
         self.g = g
         self.pos = np.asarray(g('position'), float)
-        self.yaw = float(g('yaw')) if kind in ('emitter', 'collider', 'fabric', 'matter') else 0.0
+        self.yaw = float(g('yaw')) if kind in ('emitter', 'collider', 'fabric', 'matter', 'strands') else 0.0
         self.cs, self.fire, _ = vp.camstate()
         self.W, self.H = vp.out_size()
         self.capsule = kind == 'emitter' and self.item.get('shape') == 'capsule'
@@ -91,8 +91,9 @@ class Gizmo:
             q, okq = self.screen([c + local * self.L * 0.62])
             if okq[0]:
                 out['scale_' + name] = q[0]
-        turns = not (self.kind == 'matter' and (self.item.get('pours') or self.item.get('shape') != 'box'))
-        if self.kind in ('emitter', 'collider', 'fabric', 'matter') and not self.capsule and turns:
+        turns = not ((self.kind == 'matter' and (self.item.get('pours') or self.item.get('shape') != 'box'))
+                     or (self.kind == 'strands' and self.item.get('shape') == 'disc'))
+        if self.kind in ('emitter', 'collider', 'fabric', 'matter', 'strands') and not self.capsule and turns:
             r = self.L * 0.85
             knob = c + _rot_y(np.array([r, 0.0, 0.0]), self.yaw + 45.0)   # between the arrows, clear of them
             q, okq = self.screen([knob])
@@ -118,6 +119,10 @@ class Gizmo:
             return [('x', ax[0]), ('y', ax[1]), ('z', ax[2])]
         if self.capsule:
             return [('x', _rot_y(AXES[0], 0.0))]
+        if k == 'strands':   # a patch: its width and depth (a disc: its radius), and how tall it grows
+            if self.item.get('shape') == 'disc':
+                return [('x', AXES[0]), ('y', AXES[1])]
+            return [('x', _rot_y(AXES[0], self.yaw)), ('y', AXES[1]), ('z', _rot_y(AXES[2], self.yaw))]
         if k == 'matter':
             shape = self.item.get('shape')
             if self.item.get('pours') or shape == 'sphere':   # a nozzle's or a ball's radius

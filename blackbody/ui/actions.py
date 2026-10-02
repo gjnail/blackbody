@@ -3,6 +3,8 @@ another kind, attach it to something else, send it along a path... One list, use
 object list's right-click menus and by the buttons at the top of an object's settings."""
 from __future__ import annotations
 
+import math
+
 import numpy as np
 from PySide6.QtWidgets import QMenu, QMessageBox
 
@@ -61,6 +63,12 @@ def set_on_fire(win, kind, i):
         w = float(d.get('width', 1.0))
         at = pos + (np.array([0.0, -h / 2 + 0.02, 0.0]) if d.get('orientation') != 'lying' else np.array([0.0, 0.02, 0.0]))
         r = max(0.03, 0.06 * w)
+    elif kind == 'strands':   # grass: a flame at one end of the patch, among the blades' feet
+        size = np.abs(np.asarray(sc.get((kind, i, 'size'), doc.frame), float))
+        yaw = math.radians(float(sc.get((kind, i, 'yaw'), doc.frame)))
+        off = np.array([-0.85 * size[0], 0.0, 0.0])
+        at = pos + np.array([off[0] * math.cos(yaw), 0.05, -off[0] * math.sin(yaw)])
+        r = max(0.06, min(0.25, 0.25 * size[1] + 0.05))
     else:
         size = np.asarray(sc.get((kind, i, 'size'), doc.frame), float)
         bottom = pos[1] - (size[1] if d.get('shape') != 'mesh' else 0.0)
@@ -75,7 +83,10 @@ def set_on_fire(win, kind, i):
         if target != s.kind:
             C.convert_kind(s, target)
         dd = _items(s, kind)[i]
-        dd['burnable'] = True
+        if kind == 'strands':
+            dd['burns'] = True
+        else:
+            dd['burnable'] = True
         if kind == 'collider':
             s.data['spread']['enabled'] = True
         if spec is not None:   # letters catch all over at once: a flame in their shape for 2 s, then the fire is their own
@@ -382,6 +393,29 @@ def make_of(win, i, material):
     doc.set_playing(True)
 
 
+def grass_kind(win, i, kind):
+    """What grass patch i is (lawn, long grass, wheat, reeds): its blades grow as tall as that kind's, and its name
+    follows if it was named after the old kind."""
+    from ..scene.params import STRAND_KINDS
+    from ..engine.strands import KINDS as GROW
+    doc = win.doc
+    d = doc.scene.strands[i]
+    names = dict(STRAND_KINDS)
+    old, new = names.get(d.get('kind'), ''), names.get(kind, kind)
+
+    def fn(s):
+        g = s.strands[i]
+        g['kind'] = kind
+        sz = g['size']
+        if not hasattr(sz, 'keys'):
+            g['size'] = (float(sz[0]), float(GROW[kind].height), float(sz[2]))
+        if old and g['name'].startswith(old):
+            g['name'] = new + g['name'][len(old):]
+    doc.edit(f'Make it {new.lower()}', fn, structure=True)
+    _say(win, f'It is {new.lower()} now.')
+    doc.set_playing(True)
+
+
 def pour(win, i, on=True):
     """Matter i poured from a nozzle where it is (from this frame, if the shot has started), or a body of it again."""
     doc = win.doc
@@ -416,6 +450,8 @@ def drop_to_ground(win, kind, i):
         y = 0.01 if d.get('orientation') == 'lying' else float(d.get('height', 1.0)) / 2 + 0.01
     elif kind == 'light' or (kind == 'matter' and d.get('pours')):
         return
+    elif kind == 'strands':   # its position is its blades' feet
+        y = 0.0
     else:
         size = np.asarray(sc.get((kind, i, 'size'), doc.frame), float)
         shape = d.get('shape')
@@ -469,7 +505,7 @@ def frame_it(win, kind, i):
     sc = doc.scene
     pos = np.asarray(sc.get((kind, i, 'position'), doc.frame), float)
     d = _items(sc, kind)[i]
-    if kind in ('emitter', 'collider', 'matter'):
+    if kind in ('emitter', 'collider', 'matter', 'strands'):
         r = float(np.max(np.abs(sc.get((kind, i, 'size'), doc.frame))))
     elif kind == 'fabric':
         r = max(float(d.get('width', 1.0)), float(d.get('height', 1.0))) / 2
@@ -618,6 +654,27 @@ def fill_menu(m: QMenu, win, sel, path_mode=None):
             a.setChecked(d.get('material') == k)
     if kind == 'light':
         act('Aim it at the middle', lambda: aim_light(win, i), '', 'spot')
+    if kind == 'strands':
+        from ..scene.params import STRAND_KINDS
+        act('Set it on fire', guarded(lambda: set_on_fire(win, 'strands', i)), 'A flame at one end: the fire runs through it, '
+            'faster downwind', 'flame')
+        dry = float(d.get('dryness', 0.3))
+        if dry < 0.7:
+            act('Dry it out', lambda: set_value(win, 'strands', i, 'dryness', 0.9, 'Dry as straw: it catches at a spark.'),
+                'Dry as straw: it catches easily and burns fast', 'flame')
+        else:
+            act('Make it green', lambda: set_value(win, 'strands', i, 'dryness', 0.1, 'Fresh and green: hard to light.'),
+                'Fresh and green: hard to light', 'drop')
+        sub = m.addMenu(icons.glyph_icon('grass', theme.MUTED, 16), 'Kind')
+        for k, label in STRAND_KINDS:
+            a = sub.addAction(label, lambda k=k: grass_kind(win, i, k))
+            a.setCheckable(True)
+            a.setChecked(d.get('kind') == k)
+        on_all = d.get('grows_on') == 'everything'
+        act('Grow on the ground only' if on_all else 'Grow on objects too',
+            lambda: set_value(win, 'strands', i, 'grows_on', 'ground' if on_all else 'everything',
+                              'It grows on the ground only.' if on_all else 'It grows on whatever is under it: a hillside, a mound.'),
+            'On a hillside or a mound under it as well as the ground', 'hill')
     if kind == 'matter':
         from ..scene.params import MATTER_MATERIALS
         sub = m.addMenu(icons.glyph_icon('matter', theme.MUTED, 16), 'Made of')
@@ -704,6 +761,11 @@ def quick_actions(win, sel):
                 ('Soak' if float(d.get('wetness', 0.0)) < 0.5 else 'Dry', 'drop',
                  lambda: set_value(win, 'fabric', i, 'wetness', 1.0 if float(d.get('wetness', 0.0)) < 0.5 else 0.0, 'Done.')),
                 ('Let go now', 'fabric', lambda: set_value(win, 'fabric', i, 'release', _t(win.doc), f'It falls from frame {win.doc.frame}.'))]
+    elif kind == 'strands':
+        dry = float(d.get('dryness', 0.3))
+        out += [('Set on fire', 'flame', lambda: _guard(win, lambda: set_on_fire(win, 'strands', i))),
+                ('Dry', 'flame', lambda: set_value(win, 'strands', i, 'dryness', 0.9, 'Dry as straw.')) if dry < 0.7 else
+                ('Green', 'drop', lambda: set_value(win, 'strands', i, 'dryness', 0.1, 'Fresh and green.'))]
     elif kind == 'matter':
         if d.get('pours'):
             out += [('Pour from here', 'play', lambda: set_value(win, 'matter', i, 'pour_start', max(0.0, _t(win.doc)),

@@ -144,6 +144,36 @@ def matter_lines(sc, i, frame):
     return shape_lines('box', p, s, yaw=yaw)
 
 
+def strand_lines(sc, i, frame):
+    """A grass patch: its outline on the ground (a rectangle or a disc, turned by its Rotation), dashed lines up to how
+    tall its blades grow at the corners, and a few blades along its front edge."""
+    d = K.items(sc, 'strands')[i]
+    g = lambda k: sc.get(('strands', i, k), frame)
+    p = np.asarray(g('position'), float)
+    s = np.abs(np.asarray(g('size'), float))
+    yaw = float(g('yaw'))
+    hgt = float(s[1])
+    X, Z = np.array([1.0, 0.0, 0.0]), np.array([0.0, 0.0, 1.0])
+    if d.get('shape') == 'disc':
+        r = float(s[0])
+        base = _circle(p, X * r, Z * r, 48)
+        top = _circle(p + np.array([0.0, hgt, 0.0]), X * r, Z * r, 48)
+        feet = [p + np.array([r * math.cos(a), 0.0, r * math.sin(a)]) for a in np.linspace(0, 2 * math.pi, 9)[:-1]]
+        front = [p + np.array([r * math.cos(a), 0.0, r * math.sin(a)]) for a in np.linspace(0.3, 2.84, 7)]
+    else:
+        c = np.array([[-s[0], 0.0, -s[2]], [s[0], 0.0, -s[2]], [s[0], 0.0, s[2]], [-s[0], 0.0, s[2]], [-s[0], 0.0, -s[2]]])
+        c = p + _rot_y(c, yaw)
+        base, top = c, c + np.array([0.0, hgt, 0.0])
+        feet = list(c[:4])
+        front = [p + _rot_y(np.array([x, 0.0, s[2]]), yaw) for x in np.linspace(-s[0], s[0], 9)]
+    out = [base, top]
+    out += [np.array([q, q + np.array([0.0, hgt, 0.0])]) for q in feet]
+    for k, q in enumerate(front):   # blades: a gentle curve leaning one way
+        lean = 0.18 * hgt * (1 if k % 2 else 0.6)
+        out.append(np.array([q, q + np.array([lean * 0.3, hgt * 0.55, 0.0]), q + np.array([lean, hgt, 0.0])]))
+    return out
+
+
 def _turned(c, sc, size, pos, R, frame):
     """The outline of a collider turned by R (its Rotation, Tilt and Roll) about its middle at pos."""
     base = shape_lines(c['shape'], (0.0, 0.0, 0.0), size, None, 0.0, sc.mesh_path(c['mesh']), frame - c.get('mesh_offset', 0.0))
@@ -1353,6 +1383,15 @@ class Viewport(QWidget):
             col = QColor(theme.OBJECT_COLOURS['matter'])
             col.setAlpha(240 if is_sel else 130)
             self._lines(p, cs, fire, matter_lines(sc, i, self.doc.frame), QPen(col, 1.6 if is_sel else 1.0, Qt.DashLine))
+        for i, gr in enumerate(K.items(sc, 'strands')):   # grass: the patch and how tall it grows
+            if not gr['enabled']:
+                continue
+            is_sel = ('strands', i) in chosen
+            col = QColor(theme.OBJECT_COLOURS['strands'])
+            col.setAlpha(235 if is_sel else 125)
+            lines = strand_lines(sc, i, self.doc.frame)
+            self._lines(p, cs, fire, lines[:1], QPen(col, 1.6 if is_sel else 1.0))
+            self._lines(p, cs, fire, lines[1:], QPen(col, 1.0, Qt.DashLine if not is_sel else Qt.SolidLine))
         self._paint_blasts(p, cs, fire, sc)
         floats = self.stats.get('floats') if self.stats.get('frame') == self.doc.frame else None
         for i, c in enumerate(sc.colliders):
@@ -1650,7 +1689,7 @@ class Viewport(QWidget):
             if gz.kind == 'fabric':
                 d['w0'], d['h0'] = float(g('width')), float(g('height'))
                 d['scale0'] = np.asarray(it.get('scale', (1.0, 1.0, 1.0)), float)
-            elif gz.kind in ('emitter', 'collider', 'matter'):
+            elif gz.kind in ('emitter', 'collider', 'matter', 'strands'):
                 d['size0'] = np.asarray(g('size'), float)
         elif key == 'rot':
             gp = self._ground_point(pos, gz.pos[1])
@@ -1727,7 +1766,7 @@ class Viewport(QWidget):
                 shape = it.get('shape') if it else ''
                 if shape == 'capsule' or (shape == 'sphere' and what in ('collider', 'matter')) or (what == 'matter' and it.get('pours')):
                     new[:] = ext
-                elif shape in ('cylinder', 'cone', 'ring', 'pile') and name == 'x':
+                elif (shape in ('cylinder', 'cone', 'ring', 'pile') or (what == 'strands' and shape == 'disc')) and name == 'x':
                     new[0] = new[2] = ext
                 else:
                     new[k] = ext

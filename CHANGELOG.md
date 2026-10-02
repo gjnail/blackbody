@@ -86,6 +86,9 @@ Notable changes to Blackbody. The format follows
   hinges; a Machines group in Create with icons of its own.
 - The README and website rewritten for the new features, with a 90-second film, new screen recordings of the app
   throughout, and the tutorial's screenshots retaken.
+- Grass and plants in the interface: the object list and Properties, the patch and how tall it grows drawn in the
+  viewer, Set it on fire, Dry it out, Kind and Grow on objects too from the right-click menu, a Grass chip in Create
+  with icons of its own.
 
 - Layers: several effects in one shot (a campfire in front, a waterfall behind), each its own simulation with its own
   box and scale, composited back to front in the viewer, renders and the command line.

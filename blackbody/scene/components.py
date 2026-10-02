@@ -415,21 +415,21 @@ COMPONENTS = [
                  for k, (z, roll) in enumerate(((0.2, 45.0), (0.235, 135.0)))]),
     # -- grass and plants (engine/strands.py: real size, in every kind of scene but the sky) ---------------------------------
     Component('lawn', 'Lawn', 'Grass & plants', 'A 2 m square of short, thick lawn grass: it ripples in the wind and is '
-              'flattened where things roll over it.', 'grains', room=(1.1, 0.2, 1.1),
+              'flattened where things roll over it.', 'grass', room=(1.1, 0.2, 1.1),
               objects=[_S(name='Lawn', kind='lawn', position=(0.0, 0.0, 0.0), size=(1.0, 0.08, 1.0))]),
     Component('meadow', 'Long grass', 'Grass & plants', 'A 3 \N{MULTIPLICATION SIGN} 2 m patch of long grass, 45 cm tall: it bends '
-              'in the wind in waves, parts round what moves through it, and fire runs through it, faster downwind.', 'grains',
+              'in the wind in waves, parts round what moves through it, and fire runs through it, faster downwind.', 'grass',
               room=(1.6, 0.6, 1.1),
               objects=[_S(name='Long grass', kind='meadow', position=(0.0, 0.0, 0.0), size=(1.5, 0.45, 1.0))]),
     Component('dry_grass', 'Dry grass', 'Grass & plants', 'A 4 \N{MULTIPLICATION SIGN} 3 m patch of grass dried to straw: a spark '
-              'sets it alight and the wind drives the fire through it, leaving black stubble. Drop a torch in it.', 'grains',
+              'sets it alight and the wind drives the fire through it, leaving black stubble. Drop a torch in it.', 'grass',
               room=(2.1, 0.6, 1.6),
               objects=[_S(name='Dry grass', kind='meadow', position=(0.0, 0.0, 0.0), size=(2.0, 0.4, 1.5), dryness=0.9)]),
     Component('wheat', 'Wheat', 'Grass & plants', 'A 3 \N{MULTIPLICATION SIGN} 2 m patch of ripe wheat, 90 cm tall with its ears: '
-              'it sways stiffly in the wind and burns fast.', 'grains', room=(1.6, 1.1, 1.1),
+              'it sways stiffly in the wind and burns fast.', 'wheat', room=(1.6, 1.1, 1.1),
               objects=[_S(name='Wheat', kind='wheat', position=(0.0, 0.0, 0.0), size=(1.5, 0.9, 1.0), dryness=0.95)]),
     Component('reeds', 'Reeds', 'Grass & plants', 'A clump of reeds 1.5 m tall on a 1.2 m disc: they lean and whip in the wind. '
-              'Put them at the water\N{RIGHT SINGLE QUOTATION MARK}s edge.', 'grains', room=(0.7, 1.7, 0.7),
+              'Put them at the water\N{RIGHT SINGLE QUOTATION MARK}s edge.', 'reeds', room=(0.7, 1.7, 0.7),
               objects=[_S(name='Reeds', kind='reeds', shape='disc', position=(0.0, 0.0, 0.0), size=(0.6, 1.5, 0.6))]),
     Component('grassy_hill', 'Grassy hillside', 'Grass & plants', 'The built-in hillside (8 m across) covered in long grass that '
               'grows on its slopes: a hillside for a grass fire to climb.', 'hill', room=(4.2, 3.8, 4.2),
