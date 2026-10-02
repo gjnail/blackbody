@@ -24,6 +24,7 @@ import numpy as np
 
 from . import camera as cam
 from .gpu import Uniforms
+from .liquid_render import lava_table
 from .solver import MAX_COLLIDERS, _mesh_ref, pack_colliders
 from ..scene.materials import FLOORS, PATTERNS, material
 
@@ -35,6 +36,9 @@ ROPE_ROW = MAX_COLLIDERS  # the material rows after the objects': rope (manila),
 ROPE_LOOKS = (((0.456, 0.305, 0.127), 0.85, 0.0), ((0.55, 0.56, 0.57), 0.4, 1.0))   # (colour, roughness, metal)
 LIGHTNING_ROW = ROPE_ROW + 2   # after them: lightning (its glow is per segment)
 BOLT_GLOW = 0.02          # how much of lightning's core radiance it scatters into the air round it
+GLOW_T0, GLOW_DT = 700.0, 100.0   # K: hot matter's blackbody table's first temperature and step (16 entries)
+GLOW_BLOCK = 8            # matter grid nodes to a block of hot surface lighting what is round it (matter_glow.wgsl)
+MATTER_LIGHTS = 256       # the most of those lights
 STRANDS = {0: (3.0, 7.0), 1: (6.0, 9.0), 2: (0.0, 0.0)}   # ropes.ROPE, CABLE, SPRING: strands, twist (radii per turn)
 
 
@@ -131,14 +135,34 @@ def water_light(wlook, comp=None, fire_look=None):
         fire_shadows=float(comp.surface_shadows) if comp is not None else 1.0, lamp_gain=gain)
 
 
+_LUM = {}
+
+
+def matter_glow_scale(look):
+    """(the stage radiance of a blackbody at 1300 K, the dynamic range) as the fire's look shows blackbody light: a
+    thick flame at Flame temperature is its Intensity times 2^Exposure, brighter and dimmer by the physical ratio of
+    their luminances to the power Dynamic range."""
+    from .lut import luminance
+    fk = float(look.flame_k)
+    if fk not in _LUM:
+        _LUM[fk] = math.log10(max(luminance(fk), 1e-300) / luminance(1300.0))
+    dr = float(look.dynamic_range)
+    return float(look.intensity) * 2.0 ** float(look.exposure) * 10.0 ** (-_LUM[fk] * dr), dr
+
+
 class Stage:
     def __init__(self, gpu):
         self.gpu = gpu
         self.k = gpu.kernel('stage.wgsl', ['utex3d', 'tex3d', 'tex3d', 'tex3d', 'tex3d', 'smp', 'smp', 'rbuf', 'rbuf',
                                            'rbuf', 'tex2d', 'tex2d', 'tex2d', 'tex3d', 'st2d:rgba16float:w',
                                            'rbuf', 'rbuf', 'rbuf', 'rbuf', 'st2d:rgba16float:w', 'tex3d', 'tex3d', 'tex2d',
-                                           'utex3d', 'utex3d', 'rbuf'],
+                                           'utex3d', 'utex3d', 'rbuf', 'tex3d', 'rbuf'],
                             workgroup=(8, 8, 1))
+        mg = ['utex3d', 'utex3d', 'buf', 'buf']
+        self.k_mglow = gpu.kernel('matter_glow.wgsl', mg, 'lights', workgroup=(4, 4, 4))
+        self.k_mglow_finish = gpu.kernel('matter_glow.wgsl', mg, 'finish', workgroup=(1, 1, 1))
+        self._ml = gpu.buffer((1 + 2 * MATTER_LIGHTS) * 16, 'stage-matter-lights')
+        self._mlc = gpu.buffer(16, 'stage-matter-light-count')
         self._no_matter = gpu.texture3d((1, 1, 1), 'rgba16float', 'stage-no-matter')
         self.tex = None
         self.hold = None           # the holdouts it leaves for the march (pieces' distance, the footage's matte)
@@ -414,13 +438,14 @@ class Stage:
             bufs = [self._buffer('pieces', np.zeros(24, np.float32)), self._buffer('planes', np.zeros(4, np.float32)),
                     self._buffer('cells', np.zeros(2, np.uint32)), self._buffer('list', np.zeros(1, np.uint32))]
         if surf is not None:
-            phi, look0, _look1 = surf
+            phi, look0, _look1, look2 = surf
             last = matter.origin + (np.asarray(matter.dims, float) - 1.0) * matter.dx     # (its grid's last node)
             u.v4(*matter.origin, matter.dx).v4(*matter.dims, 1.0).v4(*matter.origin).v4(*last)
             mtex = [look0, phi]
         else:
             u.v4().v4(1.0, 1.0, 1.0, 0.0).v4().v4()
             mtex = [self._no_matter, self._no_matter]
+            look2 = self._no_matter
         # lightning's glow: reaching about ten times its core's radius (at least 5 cm)
         reach = max(10.0 * max((float(c) for _p, c, _g in (bolts or [])), default=0.0), 0.05)
         u.v4(len(P) - nb if pa is not None else 0, nb, reach, BOLT_GLOW)
@@ -437,6 +462,25 @@ class Stage:
             u.v4(vol.origin[0], vol.origin[2], burns.cell, 1.0).v4(grid[0], grid[2], 1.0 if obj_burn is not None else 0.0)
         else:
             u.v4().v4(0.0, 0.0, 1.0 if obj_burn is not None else 0.0)
+        # hot matter's glow: a blackbody, shown as the fire shows one (renderer.pack_look): as bright as a thick flame
+        # at the same temperature (liquid_render.lava_table: 700 K on in 100 K steps)
+        glow = surf is not None and getattr(matter, 'thermal', False)
+        scale, dr = matter_glow_scale(scene.look(frame)) if glow else (0.0, 1.0)
+        table = [(r_, g_, b_, w_ * dr) for r_, g_, b_, w_ in lava_table(GLOW_T0, GLOW_DT, 16)]
+        u.v4(1.0 if glow else 0.0, scale, GLOW_T0, 1.0 / GLOW_DT)
+        for row in table:
+            u.v4(*row)
+        # (and the light it casts round it: its glowing surface as point lights)
+        b.clear_buffer(self._ml, 0, 16)
+        if glow:
+            b.clear_buffer(self._mlc)
+            gu = (Uniforms().v4(*matter.dims, GLOW_BLOCK).v4(*matter.origin, matter.dx)
+                  .v4(1.0, scale, GLOW_T0, 1.0 / GLOW_DT).v4(MATTER_LIGHTS))
+            for row in table:
+                gu.v4(*row)
+            res = [phi, look2, self._ml, self._mlc]
+            b.run(self.k_mglow, res, gu, groups=tuple(-(-int(d) // (4 * GLOW_BLOCK)) for d in matter.dims))
+            b.run(self.k_mglow_finish, res, gu, groups=(1, 1, 1))
         self.has_matter = surf is not None
         pack_colliders(u, cols, meshes)
         for i in range(MAX_COLLIDERS):
@@ -460,5 +504,5 @@ class Stage:
                        r.lut_plate if (footage and r.lut_plate is not None) else r._lut_none,
                        self.tex, *bufs, self.hold, *mtex, grass[0] if grass is not None else black,
                        floor_burn if floor_burn is not None else r._empty, obj_burn if obj_burn is not None else r._empty,
-                       burns.slots if obj_burn is not None else r._no_slots], u, (pw, ph, 1))
+                       burns.slots if obj_burn is not None else r._no_slots, look2, self._ml], u, (pw, ph, 1))
         return self.tex

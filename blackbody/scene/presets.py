@@ -847,6 +847,45 @@ PRESETS = {
                   + [dict(name=f'Tower {k + 1}', material='wet_sand', shape='cylinder', position=(sx * 0.115, 0.215, sz * 0.115),
                           size=(0.04, 0.075, 0.04)) for k, (sx, sz) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))],
     },
+    'iron_pour': {
+        'name': 'Pouring molten iron', 'category': 'Sand, snow and mud', 'size': '3 litres of iron',
+        'blurb': 'Molten iron at 1320 °C poured from a ladle into a mould: it glows orange and lights the floor round it, '
+                 'fills the mould, and dims to red as its skin cools and sets. Matter in Molten iron, poured.',
+        'render': {'end': 192},
+        'domain': {'size_x': 1.2, 'size_y': 0.9, 'size_z': 0.8, 'resolution': 32, 'preroll': 0.0, 'matter_detail': 192},
+        'composite': {'backdrop': 'stage', 'floor': 'concrete'},
+        'lighting': {'sun_on': True, 'sun_intensity': 0.4, 'sun_elevation': 25.0, 'sun_azimuth': -60.0, 'ambient_intensity': 0.4},
+        'camera': {'distance': 1.3, 'target_y': 0.2, 'pitch': 14, 'yaw': 20, 'focal_mm': 35},
+        'emitters': [],
+        'colliders': [
+            dict(name='Ladle', shape='cylinder', position=(-0.2, 0.42, 0.0), size=(0.07, 0.08, 0.07), hollow=0.01,
+                 opening=(0.06, 0.02, 0.06), opening_at=(0.0, 0.08, 0.0), pitch=60.0, yaw=90.0, material='steel'),
+            dict(name='Mould', shape='box', position=(0.08, 0.08, 0.0), size=(0.18, 0.08, 0.14), hollow=0.03,
+                 opening=(0.15, 0.045, 0.11), opening_at=(0.0, 0.08, 0.0), material='earth'),
+        ],
+        'matter': [dict(name='Molten iron', material='molten_iron', pours=True, position=(-0.13, 0.46, 0.0),
+                        size=(0.014, 0.014, 0.014), velocity=(0.45, 0.0, 0.0), rate=0.6, pour_start=0.2, pour_stop=3.7)],
+    },
+    'chocolate_fire': {
+        'name': 'Chocolate by a fire', 'category': 'Sand, snow and mud', 'size': '20 cm flames',
+        'blurb': 'Three pieces of chocolate on a slab beside a small fire: its radiant heat softens the side of each that '
+                 'faces it, the nearest first, and they slump and run into glossy puddles. Matter in Chocolate, with '
+                 'Heat speed 30 (it melts some thirty times quicker than for real).',
+        'render': {'end': 240},
+        'domain': {'size_x': 1.0, 'size_y': 1.0, 'size_z': 0.8, 'resolution': 64, 'preroll': 0.5, 'matter_detail': 160,
+                   'matter_heat_speed': 30.0},
+        'combustion': {'burn_rate': 8.0, 'heat': 0.9, 'soot': 0.2},
+        'shading': {'exposure': -1.5},
+        'composite': {'backdrop': 'stage', 'floor': 'tiles'},
+        'lighting': {'sun_on': True, 'sun_intensity': 2.0, 'sun_elevation': 35.0, 'sun_azimuth': -120.0, 'ambient_intensity': 1.6},
+        'camera': {'distance': 0.65, 'target_y': 0.07, 'pitch': 20, 'yaw': 15, 'focal_mm': 35},
+        'emitters': [dict(name='Fire', shape='cylinder', position=(-0.2, 0.03, 0.0), size=(0.07, 0.03, 0.1), fuel=8,
+                          temperature=0.6)],
+        'matter': [dict(name='Bar', material='chocolate', shape='box', position=(-0.05, 0.02, -0.1), size=(0.06, 0.02, 0.035),
+                        yaw=25.0),
+                   dict(name='Truffle', material='chocolate', shape='sphere', position=(-0.06, 0.035, 0.09), size=(0.035, 0.035, 0.035)),
+                   dict(name='Block', material='chocolate', shape='box', position=(0.08, 0.04, 0.0), size=(0.045, 0.04, 0.045))],
+    },
     'yard_blast': {
         'name': 'Blast in a yard', 'category': 'Things that fall', 'size': '2 kg charge',
         'blurb': 'Two kilograms of explosive go off among crates, barrels, a brick wall and a heap of sand: a fireball, the '
@@ -1092,7 +1131,7 @@ ORDER = ['campfire', 'bonfire', 'torch', 'candle', 'gas_ring', 'pool_fire', 'fir
          'curtain_fire', 'fabric_curtain', 'wet_towels', 'armchair_fire', 'room_fire', 'backdraft', 'flash_fire', 'gas_cloud', 'coloured_flames', 'road_flare',
          'grinder_sparks', 'fireworks', 'car_through_smoke', 'flag_wind', 'kettle_steam', 'steam_vent',
          'crates_in_fire', 'tower_knockdown', 'wall_smash', 'wrecking_ball', 'window_smash', 'vase_drop',
-         'yard_blast', 'lightning_strike', 'cart_jump', 'meadow_fire', 'shed_fire', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag', 'sand_castle']
+         'yard_blast', 'lightning_strike', 'cart_jump', 'meadow_fire', 'shed_fire', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag', 'sand_castle', 'iron_pour', 'chocolate_fire']
 
 
 def make(name: str, fps=None, start=None) -> Scene:

@@ -1,6 +1,6 @@
 // Matter's surface, for drawing: at each node, its distance to the surface (Zhu and Bridson 2005: from the weighted
 // mean of the particles round it, less a particle's radius; outside the band round them, the band's width) and the
-// look of the matter there.
+// look of the matter there (look2: its temperature, K, for its glow, and how metallic it is).
 //!include mpm_common.wgsl
 
 struct Params {
@@ -12,9 +12,10 @@ struct Params {
 @group(0) @binding(1) var phi: texture_storage_3d<r32float, write>;
 @group(0) @binding(2) var look0: texture_storage_3d<rgba16float, write>;
 @group(0) @binding(3) var look1: texture_storage_3d<rgba16float, write>;
+@group(0) @binding(4) var look2: texture_storage_3d<rgba16float, write>;
 @group(1) @binding(0) var<uniform> U: Params;
 
-const SURF: u32 = 11u;
+const SURF: u32 = 13u;
 const FX_S: f32 = 65536.0;
 
 @compute @workgroup_size(8, 8, 4)
@@ -30,6 +31,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     textureStore(phi, c, vec4<f32>(band));
     textureStore(look0, c, vec4<f32>(0.0));
     textureStore(look1, c, vec4<f32>(0.0));
+    textureStore(look2, c, vec4<f32>(0.0));
     return;
   }
   let iw = 1.0 / (w * FX_S);
@@ -39,4 +41,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   textureStore(phi, c, vec4<f32>(min(d, band)));
   textureStore(look0, c, vec4<f32>(vec3<f32>(f32(S[k + 4u]), f32(S[k + 5u]), f32(S[k + 6u])) * iw, f32(S[k + 7u]) * iw));
   textureStore(look1, c, vec4<f32>(f32(S[k + 8u]) * iw, f32(S[k + 9u]) * iw, f32(S[k + 10u]) * iw, 1.0));
+  textureStore(look2, c, vec4<f32>(f32(S[k + 11u]) * iw * 16.0, f32(S[k + 12u]) * iw, 0.0, 0.0));
 }

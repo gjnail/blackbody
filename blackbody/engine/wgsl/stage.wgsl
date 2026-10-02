@@ -88,6 +88,8 @@ struct Params {
   gm: vec4<f32>,        // grass on the ground (strands.py): its map's corner (fire-local x, z), size (m; 0: none)
   bf: vec4<f32>,        // the burnable floor (the simulation grid's bottom layer): its corner (fire-local x, z), cell (m), on (1/0)
   bf2: vec4<f32>,       // its cells (x, z), burnable objects (the object-burn atlas) on (1/0), _
+  mg: vec4<f32>,        // hot matter's glow: on (1/0), its radiance at 1300 K, the table's first temperature (K), 1 / its step
+  mgb: array<vec4<f32>, 16>,   // a blackbody's colour (luminance 1) and log10 of its luminance relative to 1300 K
   ccnt: vec4<f32>,      // objects (count), _
   col: array<Collider, MAX_COLLIDERS>,
   mat: array<Mat, MAT_ROWS>,
@@ -123,7 +125,9 @@ struct PieceG { a: vec4<f32>, q: vec4<f32>, v: vec4<f32>, o: vec4<f32>, r: vec4<
 @group(0) @binding(22) var gmap: texture_2d<f32>;     // the grass on the ground: how burnt, how thick (strand_map.wgsl)
 @group(0) @binding(23) var burn: texture_3d<f32>;     // the burnable floor's state (burn_common.wgsl), on the simulation grid
 @group(0) @binding(24) var burn_obj: texture_3d<f32>; // the burnable objects', each in its own frame (burnobj.wgsl)
-@group(0) @binding(25) var<storage, read> slots: array<BurnSlot>;    // its distance to the surface (m), clear, sparkle, wrap
+@group(0) @binding(25) var<storage, read> slots: array<BurnSlot>;
+@group(0) @binding(26) var m_glow: texture_3d<f32>;   // the matter's temperature (K) and how metallic it is
+@group(0) @binding(27) var<storage, read> ML: array<vec4<f32>>;   // hot matter's lights (matter_glow.wgsl): [0].x how many    // its distance to the surface (m), clear, sparkle, wrap
 @group(1) @binding(0) var<uniform> U: Params;
 
 var<private> g_tau: f32;   // this sample's time in the shutter (s): objects are moved along their motion
@@ -153,6 +157,20 @@ fn obj(i: i32) -> Collider {
 }
 
 // ---- the matter -----------------------------------------------------------------------------------------
+
+// The light of matter at T (K): a blackbody, from the table (U.mgb), in the stage's units (U.mg.y at 1300 K).
+fn matter_glow(T: f32) -> vec3<f32> {
+  let f = (T - U.mg.z) * U.mg.w;
+  if (f <= 0.0) { return vec3<f32>(0.0); }
+  let fc = min(f, 14.999);
+  let i = u32(fc);
+  let t = fc - f32(i);
+  let a = U.mgb[i];
+  let b = U.mgb[i + 1u];
+  var lg = mix(a.w, b.w, t);
+  if (f > 15.0) { lg += (f - 15.0) * (b.w - a.w); }
+  return mix(a.rgb, b.rgb, t) * pow(10.0, lg) * U.mg.y;
+}
 
 fn matter_uvw(p: vec3<f32>) -> vec3<f32> {
   return ((p - U.mo.xyz) / U.mo.w + vec3<f32>(0.5)) / U.mn.xyz;
@@ -692,6 +710,7 @@ struct Surf {
   glint: f32,        // the glint of its grains or crystals toward the key light
   gn: vec3<f32>,     // the normal of the grain that glints
   em: vec3<f32>,     // light it gives off (lightning)
+  self_glow: f32,    // 1: the hot matter itself (its glow's lights do not light it again)
 };
 
 // Light reflected toward v by surface s: the key light, the sky, the fire, the lights in the set.
@@ -776,6 +795,20 @@ fn shade(s: Surf, v: vec3<f32>) -> vec3<f32> {
       }
       diff += fd * U.fire.rgb * vis;
       spec += fs * U.fire.rgb * vis;
+    }
+  }
+  // hot matter's glow: its point lights (matter_glow.wgsl), without shadows
+  let nm = u32(ML[0].x);
+  if (nm > 0u && s.self_glow < 0.5) {
+    for (var k = 0u; k < nm; k++) {
+      let a = ML[1u + 2u * k];
+      let d = a.xyz - s.p;
+      let r2 = dot(d, d);
+      let l = d * inverseSqrt(max(r2, 1e-8));
+      let e = ML[2u + 2u * k].rgb / (r2 + a.w * a.w);
+      let c = dot(n, l);
+      diff += e * clamp((c + 0.2) / 1.2, 0.0, 1.0);
+      if (c > 0.0) { spec += e * (c * ggx(n, v, l, max(s.rough, 0.15))); }
     }
   }
   // the lights in the set
@@ -964,6 +997,13 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
     s.alb = min(lk.rgb * (1.0 + 0.12 * mot), vec3<f32>(0.95)) * (1.0 - clamp(ph.y, 0.0, 1.0));
     s.rough = clamp(lk.a, 0.02, 1.0);
     s.f0 = vec3<f32>(0.04);
+    // metal reflects in its own colour; hot matter glows as a blackbody at its temperature
+    let gl = textureSampleLevel(m_glow, lin, uvw, 0.0);
+    let metal = clamp(gl.y, 0.0, 1.0);
+    s.f0 = mix(s.f0, min(lk.rgb, vec3<f32>(1.0)), metal);
+    s.alb *= 1.0 - metal;
+    if (U.mg.x > 0.5) { s.em += matter_glow(gl.x); }
+    s.self_glow = 1.0;
     s.wrap = ph.w;
     let hr = vec3<f32>(hash31(gq), hash31(gq + vec3<f32>(17.0)), hash31(gq + vec3<f32>(41.0))) - vec3<f32>(0.5);
     s.gn = normalize(s.n + 0.7 * hr);

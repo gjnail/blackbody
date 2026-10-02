@@ -343,6 +343,20 @@
   "blurb": "A wall of water let go at a castle of damp sand: the wave breaks over it and the castle stands, then the water soaks into it, undermines it and slumps it into a mound that the sloshing water carries. Matter in Wet sand and a block of water in a closed box."
  },
  {
+  "key": "iron_pour",
+  "name": "Pouring molten iron",
+  "category": "Sand, snow and mud",
+  "size": "3 litres of iron",
+  "blurb": "Molten iron at 1320 °C poured from a ladle into a mould: it glows orange and lights the floor round it, fills the mould, and dims to red as its skin cools and sets. Matter in Molten iron, poured."
+ },
+ {
+  "key": "chocolate_fire",
+  "name": "Chocolate by a fire",
+  "category": "Sand, snow and mud",
+  "size": "20 cm flames",
+  "blurb": "Three pieces of chocolate on a slab beside a small fire: its radiant heat softens the side of each that faces it, the nearest first, and they slump and run into glossy puddles. Matter in Chocolate, with Heat speed 30 (it melts some thirty times quicker than for real)."
+ },
+ {
   "key": "water_pour",
   "name": "Pouring water",
   "category": "Liquids",

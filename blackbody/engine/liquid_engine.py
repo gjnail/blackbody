@@ -314,6 +314,7 @@ class LiquidEngine:
             solids.liquid_measures(L.read_float(len(regions), n), fdt, n, L.h, prm.rho)
         self._step_matter(scene, frame, fdt, poses, n, self.solver.meshes)
         self._melt_matter(scene, frame, fdt, None, L)
+        self._heat_matter(scene, frame, fdt, None, L)
         self._wet_matter(fdt, L)
         self.sim_frame = frame
         self.last_substeps = n

@@ -4,7 +4,7 @@ import math
 
 import numpy as np
 
-from blackbody.engine.matter import fill_points, friction_angle
+from blackbody.engine.matter import MATTERS, fill_points, friction_angle, material
 from blackbody.scene.model import Scene
 
 
@@ -38,3 +38,26 @@ def test_matter_is_saved_with_the_scene():
     assert np.allclose(specs[1].colour, (1.0, 0.214, 0.0), atol=1e-3)      # (sRGB as it is picked: linear)
     s2.matter[0]['material'] = 'packing_snow'
     assert s.sim_signature() != s2.sim_signature()
+
+
+def test_what_melts_melts_into_its_own_melt_and_sets_back():
+    melting = [m for m in MATTERS.values() if m.melt]
+    assert {m.key for m in melting} == {'wax', 'chocolate', 'aluminium', 'iron'}
+    for m in melting:
+        melt = material(m.melt)
+        assert melt.key == m.melt and melt.freeze == m.key and melt.melts_at == m.melts_at > 0.0
+        assert m.heat_capacity > 0.0 and melt.heat_capacity > 0.0 and melt.model == 'mud'
+    # (a melt's yield stress keeps a puddle about as deep as its surface tension does for real: a few millimetres)
+    for key in ('molten_wax', 'molten_aluminium', 'molten_iron'):
+        m = material(key)
+        assert 0.002 < m.yield_stress / (m.density * 9.81) < 0.012
+
+
+def test_a_melt_starts_hotter_than_its_melting_point():
+    s = Scene()
+    s.add_matter(material='molten_iron', temperature=20.0)
+    s.add_matter(material='iron', temperature=1000.0)
+    s.add_matter(material='chocolate')
+    t = [spec.temperature for spec in s.matter_specs()]
+    assert t[0] > material('iron').melts_at + 100.0      # poured hot, whatever its Temperature says
+    assert abs(t[1] - 1273.15) < 1e-6 and abs(t[2] - 293.15) < 1e-6

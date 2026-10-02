@@ -41,6 +41,12 @@ FX_R = 64.0               # mpm_grid.wgsl react's fixed point
 SURF_R = 2.0              # the surface's kernel radius (cells)
 SURF_PARTICLE = 0.55      # a particle's radius in it (cells)
 MARGIN = 3                # nodes of grid past the box all round
+HEAT_SPEED = 4.0          # matter takes on and gives off heat this many times faster than for real, unless the scene
+                          # says (Domain > Heat speed): melting in seconds
+HEAT_CONVECTION = 50.0    # W/m^2/K: the air (or the fire's gas) flowing past its surface
+HEAT_BLOCK = 4            # the gas's cells to a heat source (a block of them), for the fire's radiant heat
+HEAT_LIGHTS = 512         # the most heat sources
+FLAME_ABSORPTION = 1.0    # 1/m: how strongly the fire's hot gas absorbs, and so radiates (a sooty flame)
 SURF_SMOOTH = 2           # passes smoothing the surface
 
 # The heap sand poured onto the ground makes (its angle of repose: atan of its height over its radius) for the friction
@@ -81,6 +87,14 @@ class MatterMaterial:
     sparkle: float = 0.0        # glints from its grains or crystals
     wrap: float = 0.0           # light into it (snow)
     variation: float = 0.2      # how much its particles' colours differ
+    metal: float = 0.0          # how metallic its look is (it reflects in its own colour)
+    melts_at: float = 0.0       # K: past it, it melts (into `melt`), and below it, it sets (into `freeze`); 0: never
+    melt: str = ''              # what it becomes past its melting point
+    freeze: str = ''            # what it becomes below it
+    heat_capacity: float = 0.0  # J/kg/K (0: its temperature stays as it starts)
+    absorbs: float = 0.0        # the share of radiant heat it takes in (shiny aluminium little, chocolate most)
+    diffusivity: float = 0.0    # m^2/s: how fast heat spreads through it
+    water_cools: float = 20.0   # times faster the water cools its surface than the air does
 
     @property
     def mu(self):
@@ -118,6 +132,34 @@ MATTERS = {m.key: m for m in (
                    clear=0.85, variation=0.0),
     MatterMaterial('clay', 'Clay', 'clay', 4.0e5, 0.35, 1800.0, friction=0.8, yield_stress=2.0e4, tension=True,
                    colour=(0.48, 0.22, 0.12), roughness=0.7, variation=0.08),
+    # things that melt: a solid (clay's model, firm) and its melt (mud's: runny, or thick as chocolate is), each turning
+    # into the other at the melting point. A melt's small yield stress stands in for its surface tension, which keeps
+    # a puddle as deep as it is for real (its yield stress / (density g): molten iron's some 7 mm) instead of spreading
+    # thinner than the particles
+    MatterMaterial('wax', 'Wax', 'clay', 4.0e5, 0.35, 900.0, friction=0.5, yield_stress=1.5e4, tension=True,
+                   colour=(0.78, 0.74, 0.63), roughness=0.45, wrap=0.4, variation=0.02, melts_at=333.0,
+                   melt='molten_wax', heat_capacity=2900.0, absorbs=0.85, diffusivity=1.4e-7),
+    MatterMaterial('molten_wax', 'Molten wax', 'mud', 3.0e5, 0.42, 850.0, friction=0.2, yield_stress=30.0, relax=1.0e5,
+                   colour=(0.8, 0.73, 0.55), roughness=0.08, wrap=0.55, variation=0.0, melts_at=333.0, freeze='wax',
+                   heat_capacity=2900.0, absorbs=0.85, diffusivity=1.4e-7),
+    MatterMaterial('chocolate', 'Chocolate', 'clay', 4.0e5, 0.35, 1300.0, friction=0.6, yield_stress=2.0e4, tension=True,
+                   colour=(0.075, 0.035, 0.016), roughness=0.3, variation=0.02, melts_at=307.0, melt='molten_chocolate',
+                   heat_capacity=1600.0, absorbs=0.9, diffusivity=1.2e-7),
+    MatterMaterial('molten_chocolate', 'Melted chocolate', 'mud', 3.0e5, 0.42, 1250.0, friction=0.6, yield_stress=25.0,
+                   relax=2000.0, colour=(0.07, 0.032, 0.015), roughness=0.08, variation=0.0, melts_at=307.0,
+                   freeze='chocolate', heat_capacity=1600.0, absorbs=0.9, diffusivity=1.2e-7),
+    MatterMaterial('aluminium', 'Aluminium', 'clay', 1.5e6, 0.33, 2700.0, friction=0.6, yield_stress=4.0e5, tension=True,
+                   colour=(0.75, 0.75, 0.77), roughness=0.35, variation=0.02, metal=1.0, melts_at=933.0,
+                   melt='molten_aluminium', heat_capacity=900.0, absorbs=0.2, diffusivity=9.7e-5),
+    MatterMaterial('molten_aluminium', 'Molten aluminium', 'mud', 6.0e5, 0.42, 2400.0, friction=0.3, yield_stress=250.0,
+                   relax=1.0e5, colour=(0.75, 0.75, 0.77), roughness=0.05, variation=0.0, metal=1.0, melts_at=933.0,
+                   freeze='aluminium', heat_capacity=1100.0, absorbs=0.2, diffusivity=4.0e-5),
+    MatterMaterial('iron', 'Iron', 'clay', 1.5e6, 0.3, 7200.0, friction=0.6, yield_stress=6.0e5, tension=True,
+                   colour=(0.36, 0.34, 0.33), roughness=0.55, variation=0.03, metal=1.0, melts_at=1423.0,
+                   melt='molten_iron', heat_capacity=450.0, absorbs=0.75, diffusivity=2.0e-5),
+    MatterMaterial('molten_iron', 'Molten iron', 'mud', 6.0e5, 0.42, 7000.0, friction=0.3, yield_stress=500.0, relax=1.0e5,
+                   colour=(0.36, 0.34, 0.33), roughness=0.08, variation=0.0, metal=1.0, melts_at=1423.0, freeze='iron',
+                   heat_capacity=820.0, absorbs=0.4, diffusivity=7.0e-6),
 )}
 MODELS = {'jelly': 0, 'sand': 1, 'snow': 2, 'mud': 3, 'clay': 4}
 
@@ -143,6 +185,7 @@ class MatterSpec:
     colour: tuple = None                  # its own colour (linear), or None: the material's
     stiffness: float = 1.0                # times the material's
     seed: int = 0
+    temperature: float = 293.15           # K, as it starts
 
 
 def fill_points(shape, size, spacing, rng):
@@ -176,8 +219,8 @@ def _yaw(v, yaw):
     return np.stack([c * v[..., 0] + s * v[..., 2], v[..., 1], -s * v[..., 0] + c * v[..., 2]], -1)
 
 
-def particles(xs, mat_index, vel, release, rng):
-    """New particles (n, 32) float32 at grid positions xs (n, 3)."""
+def particles(xs, mat_index, vel, release, rng, temperature=293.15):
+    """New particles (n, 32) float32 at grid positions xs (n, 3), `temperature` K."""
     n = len(xs)
     P = np.zeros((n, 32), np.float32)
     P[:, 0:3] = xs
@@ -187,6 +230,7 @@ def particles(xs, mat_index, vel, release, rng):
     P[:, 11] = rng.random(n)            # its own random number (look)
     P[:, 15] = release                  # held until
     P[:, 20] = P[:, 25] = P[:, 30] = 1.0  # F = I
+    P[:, 23] = temperature              # (f0.w: mpm_heat.wgsl)
     return P
 
 
@@ -228,15 +272,16 @@ class Matter:
         return self.dims is not None and bool(self.specs)
 
     def configure(self, specs, box_origin, box_size, resolution=128, max_particles=1_000_000, gravity=9.81, ground=True,
-                  closed=False, fps=24.0, duration=10.0, wets=False):
+                  closed=False, fps=24.0, duration=10.0, wets=False, heat_speed=HEAT_SPEED):
         """Match the matter to the scene's sources and box. Returns True when it has to start again."""
         specs = list(specs or [])
         key = (tuple((s.material, s.shape, tuple(map(float, s.pos)), tuple(map(float, s.size)), float(s.yaw),
                       tuple(map(float, s.velocity)), float(s.release), bool(s.pour), float(s.rate), float(s.start),
-                      float(s.stop), None if s.colour is None else tuple(map(float, s.colour)), float(s.stiffness), int(s.seed))
+                      float(s.stop), None if s.colour is None else tuple(map(float, s.colour)), float(s.stiffness), int(s.seed),
+                      float(s.temperature))
                      for s in specs),
                tuple(map(float, box_origin)), tuple(map(float, box_size)), int(resolution), int(max_particles), float(gravity),
-               bool(ground), bool(closed), float(fps), float(duration), bool(wets))
+               bool(ground), bool(closed), float(fps), float(duration), bool(wets), float(heat_speed))
         if not specs:
             changed = self.dims is not None
             self.release()
@@ -294,6 +339,30 @@ class Matter:
                 self._wet[d] = [float(d), float(-1 if s is None else s), -1.0 if s is None else 1.0, 0.0]
                 if s is not None:
                     self._wet[s] = [float(d), float(s), 2.0, 0.0]
+        # things that melt: each one's melt (or what a melt sets into) gets a slot too, in the same colour; per slot
+        # (melts at, its melt's slot, what it sets into, how fast it takes on the air's temperature) and (how fast its
+        # heat evens out, how much faster the water cools it), mpm_heat.wgsl
+        for k in list(slots):
+            m = material(k[0])
+            for other in (m.melt, m.freeze):
+                if other and (other, k[1], k[2]) not in slots and len(slots) < MAX_MATS - 1:
+                    slots[(other, k[1], k[2])] = len(slots)
+                    self._mats.append(material(other))
+                    self._colours.append((k[1], k[2]))
+        # (its surface is a particle deep, half a node spacing: the rates follow from that and the material's constants,
+        # heat_speed times as fast as for real)
+        self._heat = [[0.0, -1.0, -1.0, 0.0] for _ in range(MAX_MATS)]
+        self._cond = [[0.0, 1.0, 0.0, 0.0] for _ in range(MAX_MATS)]
+        skin = self.dx / PER_AXIS
+        for k, slot in slots.items():
+            m = material(k[0])
+            if m.heat_capacity <= 0.0:
+                continue
+            melt, freeze = slots.get((m.melt, k[1], k[2]), -1), slots.get((m.freeze, k[1], k[2]), -1)
+            per_k = heat_speed / (m.density * m.heat_capacity * skin)        # K/s for a W/m^2 into its surface
+            self._heat[slot] = [m.melts_at, float(melt), float(freeze), HEAT_CONVECTION * per_k]
+            self._cond[slot] = [heat_speed * m.diffusivity / skin ** 2, m.water_cools, m.absorbs * per_k, 0.0]
+        self.thermal = any(m.heat_capacity > 0.0 for m in self._mats)
         self._mat_bytes = self._pack_materials()
         # the particles each source makes: its body at the start, or its stream over the shot
         self._rng = np.random.default_rng(12345)
@@ -337,7 +406,7 @@ class Matter:
         if not inside.all():
             self.warnings.append(f'Some of the {material(s.material).label.lower()} is outside the box: it is left out.')
         xs = xs[inside]
-        return particles(xs, self._slot[n], np.asarray(s.velocity, float), float(s.release), rng)
+        return particles(xs, self._slot[n], np.asarray(s.velocity, float), float(s.release), rng, float(s.temperature))
 
     def _pack_materials(self):
         u = Uniforms()
@@ -354,7 +423,7 @@ class Matter:
                     b = (m.theta_c, m.theta_s, m.xi, 0.0)
                 else:
                     b = (m.yield_stress, m.relax, 1.0 if m.tension else 0.0, 0.0)
-                u.v4(model, mu, la, m.density).v4(*b).v4(m.friction, m.h_max).v4(*(colour or m.colour), m.roughness) \
+                u.v4(model, mu, la, m.density).v4(*b).v4(m.friction, m.h_max, m.metal).v4(*(colour or m.colour), m.roughness) \
                  .v4(m.clear, m.sparkle, m.wrap, m.variation)
             else:
                 u.v4(0.0, 1.0, 1.0, 1000.0).v4().v4().v4().v4()
@@ -367,8 +436,13 @@ class Matter:
         self._buf['P'] = g.buffer(self.capacity * PARTICLE_BYTES, 'matter-particles')
         self._buf['C'] = g.buffer(self.capacity * 8, 'matter-compact')
         self._buf['CV'] = g.buffer(self.capacity * 8, 'matter-compact-view')
+        self._buf['CT'] = g.buffer(self.capacity * 4, 'matter-temperatures')
+        self._buf['CTV'] = g.buffer(self.capacity * 4, 'matter-temperatures-view')
+        self._buf['HG'] = g.buffer(nodes * 2 * 4, 'matter-heat-grid')
+        self._buf['HL'] = g.buffer(HEAT_LIGHTS * 32, 'matter-heat-sources')
+        self._buf['HLC'] = g.buffer(16, 'matter-heat-source-count')
         self._buf['G'] = g.buffer(nodes * 4 * 4, 'matter-grid')
-        self._buf['S'] = g.buffer(nodes * 11 * 4, 'matter-surface-sums')
+        self._buf['S'] = g.buffer(nodes * 13 * 4, 'matter-surface-sums')
         self._buf['react_i'] = g.buffer(16 * 6 * 4, 'matter-react-step')
         self._buf['react'] = g.buffer(16 * 6 * 4, 'matter-react')
         self._buf['stats'] = g.buffer(8 * 4, 'matter-stats')
@@ -379,6 +453,7 @@ class Matter:
         self._tex['seed2'] = g.texture3d(self.dims, 'rgba16float', 'matter-seeds2')
         self._tex['look0'] = g.texture3d(self.dims, 'rgba16float', 'matter-look0')
         self._tex['look1'] = g.texture3d(self.dims, 'rgba16float', 'matter-look1')
+        self._tex['look2'] = g.texture3d(self.dims, 'rgba16float', 'matter-look2')
         self._tex['surf'] = g.texture3d(self.dims, 'rgba16float', 'matter-surface')
 
     def release(self):
@@ -401,15 +476,19 @@ class Matter:
                                                        'st3d:rgba32float:w'])
         self._k['g2p'] = g.kernel('mpm_g2p.wgsl', ['buf', 'utex3d', 'buf'], workgroup=P)
         self._k['react'] = g.kernel('mpm_react.wgsl', ['buf', 'buf'], workgroup=P)
-        self._k['compact'] = g.kernel('mpm_compact.wgsl', ['rbuf', 'buf'], workgroup=P)
+        self._k['compact'] = g.kernel('mpm_compact.wgsl', ['rbuf', 'buf', 'buf'], workgroup=P)
         self._k['blast'] = g.kernel('mpm_blast.wgsl', ['buf', 'utex3d'], workgroup=P)
         self._k['melt'] = g.kernel('mpm_melt.wgsl', ['buf', 'tex3d', 'smp', 'buf', 'buf', 'rbuf'], workgroup=P)
         self._k['wet'] = g.kernel('mpm_wet.wgsl', ['buf', 'utex3d', 'utex3d'], workgroup=P)
+        heat = ['buf', 'buf', 'tex3d', 'smp', 'utex3d', 'utex3d', 'buf', 'buf']
+        self._k['heat_lights'] = g.kernel('mpm_heat.wgsl', heat, 'lights', workgroup=(4, 4, 4))
+        self._k['heat_splat'] = g.kernel('mpm_heat.wgsl', heat, 'splat', workgroup=P)
+        self._k['heat'] = g.kernel('mpm_heat.wgsl', heat, 'main', workgroup=P)
         self._k['wd_init'] = g.kernel('mpm_wetdist.wgsl', ['utex3d', 'utex3d', 'st3d:r32float:w'], 'init')
         self._k['wd_step'] = g.kernel('mpm_wetdist.wgsl', ['utex3d', 'utex3d', 'st3d:r32float:w'], 'step')
-        self._k['surf_p2g'] = g.kernel('mpm_surf_p2g.wgsl', ['rbuf', 'buf'], workgroup=P)
+        self._k['surf_p2g'] = g.kernel('mpm_surf_p2g.wgsl', ['rbuf', 'buf', 'rbuf'], workgroup=P)
         self._k['surf_norm'] = g.kernel('mpm_surf_norm.wgsl', ['rbuf', 'st3d:r32float:w', 'st3d:rgba16float:w',
-                                                               'st3d:rgba16float:w'])
+                                                               'st3d:rgba16float:w', 'st3d:rgba16float:w'])
         self._k['surf_smooth'] = g.kernel('mpm_surf_smooth.wgsl', ['utex3d', 'st3d:r32float:w'])
         self._k['jfa_init'] = g.kernel('mpm_jfa.wgsl', ['utex3d', 'st3d:rgba16float:w'], 'init')
         self._k['jfa_step'] = g.kernel('mpm_jfa.wgsl', ['utex3d', 'st3d:rgba16float:w'], 'step')
@@ -478,7 +557,7 @@ class Matter:
             xs = (pts - self.origin) / self.dx
             ok = np.all((xs >= 2.0) & (xs < np.asarray(self.dims) - 3.0), axis=1)
             if ok.any():
-                new.append(particles(xs[ok], self._slot[n], v, 0.0, rng))
+                new.append(particles(xs[ok], self._slot[n], v, 0.0, rng, float(s.temperature)))
         if not new:
             return
         P = np.concatenate(new)
@@ -561,6 +640,44 @@ class Matter:
                liquid.ctr if live else dc, liquid.freelist if live else df]
         b.run(self._k['melt'], res, u, groups=groups_1d(self.count))
         self._compact(b)            # (drawn as it is now, melted snow gone)
+        self.surface_ready = False
+
+    def heats(self):
+        """Whether any of the matter takes on heat, gives it off or melts (wax, chocolate, metal)."""
+        return self.active and bool(self.count) and getattr(self, 'thermal', False)
+
+    def heat(self, b, dt, gas=None, liquid=None, ambient_k=293.0, flame_k=1650.0):
+        """Heat through dt seconds (mpm_heat.wgsl), in batch b: its heat evening out through it, its surface taking on
+        the temperature of the gas of `gas` (a Solver; None: the ambient air) and the water of `liquid` (a Liquid, or
+        None), and melting and setting at the melting point."""
+        if not self.heats():
+            return
+        g = self.gpu
+        gas_on = gas is not None and gas.dims is not None
+        live = liquid is not None and getattr(liquid, 'dims', None) is not None
+        u = Uniforms().v4(*self.origin, self.dx).v4(*self.dims, self.count)
+        u.raw((gas._grid(0.0) if gas_on else Uniforms().v4(1, 1, 1, 1).v4().v4()).data)
+        u.v4(*(liquid.origin if live else (0.0, 0.0, 0.0)), liquid.h if live else 1.0)
+        u.v4(*(liquid.dims if live else (1, 1, 1)), 1.0 if live else 0.0)
+        u.v4(dt, ambient_k, flame_k, 1.0 if gas_on else 0.0)
+        u.v4(HEAT_BLOCK, 0.2, FLAME_ABSORPTION, HEAT_LIGHTS)
+        u.raw([x for h in self._heat for x in h]).raw([x for c in self._cond for x in c])
+        if getattr(self, '_heat_dummy', None) is None:
+            t = g.texture3d((1, 1, 1), 'rgba16float', 'matter-heat-no-gas')
+            g.upload(t, np.zeros((1, 1, 1, 4), np.float16))
+            self._heat_dummy = (t, g.texture3d((1, 1, 1), 'r32float', 'matter-heat-none'))
+        tg, tn = self._heat_dummy
+        res = [self._buf['P'], self._buf['HG'], gas.scal[0] if gas_on else tg, g.linear,
+               gas.sdf if gas_on else tn, liquid.TYPE[0] if live else tn, self._buf['HL'], self._buf['HLC']]
+        b.clear_buffer(self._buf['HLC'])
+        if gas_on:
+            # (the fire as heat sources, for its radiant heat)
+            b.run(self._k['heat_lights'], res, u, groups=tuple(-(-int(d) // (4 * HEAT_BLOCK)) for d in gas.dims))
+        if any(c[0] > 0.0 for c in self._cond):
+            b.clear_buffer(self._buf['HG'])
+            b.run(self._k['heat_splat'], res, u, groups=groups_1d(self.count))
+        b.run(self._k['heat'], res, u, groups=groups_1d(self.count))
+        self._compact(b)            # (drawn as it is now: its glow, what has melted)
         self.surface_ready = False
 
     WET_TIME = 0.5         # s: how long a grain of dry sand next to liquid takes to get damp
@@ -702,7 +819,7 @@ class Matter:
             with self.gpu.batch() as bb:
                 self._compact(bb)
             return
-        b.run(self._k['compact'], [self._buf['P'], self._buf['C']], Uniforms().v4(*self.dims, self.count),
+        b.run(self._k['compact'], [self._buf['P'], self._buf['C'], self._buf['CT']], Uniforms().v4(*self.dims, self.count),
               groups=groups_1d(self.count))
 
     def _wall_friction(self):
@@ -725,19 +842,23 @@ class Matter:
     def surface(self):
         """Build the matter's surface for drawing (if the particles moved since): (surface, look0, look1) textures on the
         grid, rgba16float: surface = the distance to the surface (m, negative inside), how clear (jelly), sparkly and
-        how much light it lets in (snow); look0 = its albedo (linear) and roughness."""
+        how much light it lets in (snow); look0 = its albedo (linear) and roughness; look2 = its temperature (K, for its
+        glow) and how metallic it is."""
         if not self.active:
             return None
         if not self.surface_ready:
             g = self.gpu
             k = self._k
-            count, src = (self.count, self._buf['C']) if self._view is None else (self._view[0], self._buf['CV'])
-            mats = Uniforms().v4(*self.dims, count).v4(SURF_R).raw(self._mat_bytes)
+            count, src, src_t = ((self.count, self._buf['C'], self._buf['CT']) if self._view is None
+                                 else (self._view[0], self._buf['CV'], self._buf['CTV']))
+            temps = self.thermal and (self._view is None or self._view[2])
+            mats = Uniforms().v4(*self.dims, count).v4(SURF_R, 1.0 if temps else 0.0).raw(self._mat_bytes)
             band = (SURF_R - SURF_PARTICLE) * self.dx
             with g.batch() as b:
                 b.clear_buffer(self._buf['S'])
-                b.run(k['surf_p2g'], [src, self._buf['S']], mats, groups=groups_1d(max(count, 1)))
-                b.run(k['surf_norm'], [self._buf['S'], self._tex['phi'], self._tex['look0'], self._tex['look1']],
+                b.run(k['surf_p2g'], [src, self._buf['S'], src_t], mats, groups=groups_1d(max(count, 1)))
+                b.run(k['surf_norm'], [self._buf['S'], self._tex['phi'], self._tex['look0'], self._tex['look1'],
+                                       self._tex['look2']],
                       Uniforms().v4(*self.dims, 0).v4(SURF_R, SURF_PARTICLE, self.dx), self.dims)
                 # smoothed a little (it shows the lie of the matter, not its particles)
                 phi = self._tex['phi']
@@ -756,7 +877,7 @@ class Matter:
                 b.run(k['surf_pack'], [phi, self._tex['look1'], src, self._tex['surf']],
                       Uniforms().v4(*self.dims, self.dx).v4(band), self.dims)
             self.surface_ready = True
-        return self._tex['surf'], self._tex['look0'], self._tex['look1']
+        return self._tex['surf'], self._tex['look0'], self._tex['look1'], self._tex['look2']
 
     def world_bounds(self):
         """(lo, hi) of the matter (fire-local m), or None."""
@@ -774,19 +895,28 @@ class Matter:
             return None
         return np.frombuffer(self.gpu.read_buffer(self._buf['C'], size=self.count * 8), np.uint16).reshape(-1, 4).copy()
 
-    def show(self, snap):
-        """Draw a cached frame's particles (snapshot()) instead of the live ones (until the next step or show_live())."""
+    def snapshot_temperatures(self):
+        """The particles' temperatures as drawn this frame (float16 K, in snapshot()'s order), when the matter has heat."""
+        if not self.active or not self.count or not self.thermal:
+            return None
+        return np.frombuffer(self.gpu.read_buffer(self._buf['CT'], size=self.count * 4), np.float32).astype(np.float16)
+
+    def show(self, snap, temps=None):
+        """Draw a cached frame's particles (snapshot(), and snapshot_temperatures()'s temps) instead of the live ones
+        (until the next step or show_live())."""
         if not self.active:
             return False
         snap = np.ascontiguousarray(snap, np.uint16).reshape(-1, 4)[:self.capacity]
         if len(snap):
             self.gpu.write_buffer(self._buf['CV'], snap)
+        if temps is not None and len(temps):
+            self.gpu.write_buffer(self._buf['CTV'], np.asarray(temps, np.float32)[:len(snap)])
         live = (snap[:, 3] >> 12) < 15
         bounds = None
         if live.any():
             q = snap[live, :3].astype(np.float64) / 65535.0 * np.asarray(self.dims, float)
             bounds = (np.floor(q.min(0)).astype(np.int64), np.ceil(q.max(0)).astype(np.int64))
-        self._view = (len(snap), bounds)
+        self._view = (len(snap), bounds, temps is not None and len(temps) > 0)
         self.surface_ready = False
         return True
 

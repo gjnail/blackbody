@@ -87,6 +87,7 @@ SECTIONS = {
         I('mesh_resolution', 'Mesh detail', 96, 32, 192, tip='Resolution of the distance field built from each mesh emitter or collider (cells along its longest side).', group='Solver', advanced=True),
         I('matter_detail', 'Matter detail', 128, 32, 384, tip='How fine sand, snow, mud, jelly and clay are simulated: grid nodes across the box’s longest side, eight particles to a cell. Finer is slower.', group='Solver', advanced=True),
         I('matter_particles', 'Most matter particles', 2000000, 10000, 20000000, tip='The most particles sand, snow, mud, jelly and clay are made of (each takes 128 bytes of GPU memory).', group='Solver', advanced=True),
+        F('matter_heat_speed', 'Heat speed', 4.0, 1.0, 50.0, '×', 1, tip='How many times faster than for real wax, chocolate and metal warm, cool and melt: 1 is real time (a bar of chocolate beside a campfire takes a minute or so to melt), 4 melts it in a few seconds.', group='Solver', log=True),
         B('disk_cache', 'Disk cache', False, tip='Also keep every simulated frame on disk (next to the project, in NAME.bbcache): frames survive closing the app, a stopped simulation resumes from its last checkpoint, and render farm machines can share one simulation.', group='Cache'),
         Param('cache_dir', 'Cache folder', 'str', '', tip='Where the disk cache goes. Empty: next to the project file (or the user cache folder for an unsaved scene).', group='Cache', advanced=True),
         I('checkpoint_every', 'Checkpoint every', 10, 1, 500, 'frames', tip='How often the whole simulation state is saved, so a simulation can resume from there. Checkpoints are several times larger than ordinary cached frames.', group='Cache', advanced=True),
@@ -693,7 +694,7 @@ COLLIDER_PARAMS = [
       'Tilt: its top leans to its left.', group='Shape'),
     F('mesh_offset', 'Mesh frame offset', 0.0, -10000.0, 10000.0, 'frames', 1, tip='A deforming mesh (sequence or animated USD) plays this many frames late (negative: early).', group='Shape', advanced=True),
     F('hollow', 'Hollow walls', 0.0, 0.0, 1.0, 'm', 3, anim=True, tip='Makes the collider hollow, with walls this thick: a room, a tank, a pipe. 0 is solid.', group='Walls and openings'),
-    V('opening', 'Opening size', (0.0, 0.0, 0.0), 0.0, 10.0, 'm', anim=True, decimals=3, tip='Half size of a box cut out of the collider: a door, a window, a vent. Keyframe it to open a door. 0 is none.', group='Walls and openings'),
+    V('opening', 'Opening size', (0.0, 0.0, 0.0), 0.0, 10.0, 'm', anim=True, decimals=3, tip='Half size of a box cut out of the collider: a door, a window, a vent. Keyframe it to open a door. 0 is none. Make it a little deeper than the wall it cuts through: one that stops flush with the wall’s inside can leave a film there that sand and the like catch on.', group='Walls and openings'),
     V('opening_at', 'Opening at', (0.0, 0.0, 0.0), -20.0, 20.0, 'm', anim=True, decimals=3, tip='Centre of the opening, measured from the collider\'s centre in its own frame (it turns with the collider).', group='Walls and openings'),
     B('holdout', 'Hides fire', True, tip='The object blocks the view of fire behind it, as the real object in your footage would. Turn off for helper colliders that are not in the shot.', group='Rendering'),
     E('look', 'Look', 'auto', (('auto', 'Automatic'), ('cg', 'CG'), ('footage', 'In the footage')),
@@ -919,14 +920,19 @@ _FABRIC_INDEX = {p.key: p for p in FABRIC_PARAMS}
 
 # Matter: sand, snow, mud, jelly and clay (engine/matter.py), simulated as particles in every kind of scene.
 MATTER_MATERIALS = (('sand', 'Sand'), ('wet_sand', 'Wet sand'), ('snow', 'Snow'), ('packing_snow', 'Packing snow'), ('mud', 'Mud'),
-                    ('jelly', 'Jelly'), ('clay', 'Clay'))
+                    ('jelly', 'Jelly'), ('clay', 'Clay'), ('wax', 'Wax'), ('chocolate', 'Chocolate'),
+                    ('aluminium', 'Aluminium'), ('iron', 'Iron'), ('molten_wax', 'Molten wax'),
+                    ('molten_chocolate', 'Melted chocolate'), ('molten_aluminium', 'Molten aluminium'),
+                    ('molten_iron', 'Molten iron'))
 MATTER_PARAMS = [
     Param('name', 'Name', 'str', 'Sand'),
     B('enabled', 'Enabled', True),
     E('material', 'Made of', 'sand', MATTER_MATERIALS, tip='Sand piles up at its angle of repose and pours; wet sand holds a '
       'steeper shape and clumps; snow packs where it is squeezed and breaks up where it is pulled; packing snow makes '
       'snowballs; mud slumps and flows until it is thin enough to stop; jelly wobbles and springs back; clay squashes and '
-      'stays squashed.', group='Matter'),
+      'stays squashed. Wax, chocolate, aluminium and iron are solid until the fire heats them past their melting point '
+      '(60, 34, 660 and 1150 °C), then run, and set again where they cool; molten ones are poured hot and set as they '
+      'cool.', group='Matter'),
     E('shape', 'Shape', 'box', (('box', 'Box'), ('sphere', 'Ball'), ('cylinder', 'Cylinder'), ('pile', 'Pile (a cone)')),
       tip='The shape of the body of it at the start (a pour: the nozzle is a disc of its Size’s first value across).',
       group='Matter'),
@@ -949,6 +955,9 @@ MATTER_PARAMS = [
     F('stiffness', 'Stiffness', 1.0, 0.1, 10.0, '×', 2, tip='Times its material’s stiffness: stiffer jelly wobbles faster; '
       'stiffer anything takes longer to simulate.', group='Matter', log=True, advanced=True),
     I('seed', 'Seed', 0, 0, 9999, tip='Another number gives other grains in it.', group='Matter', advanced=True),
+    F('temperature', 'Temperature', 20.0, -50.0, 1800.0, '°C', 0, tip='How hot it is as it starts. Wax, chocolate and '
+      'metal warm in the fire and cool in the air and the water; hot metal glows (dull red from about 600 °C, orange at '
+      '1000 °C). Molten ones start hotter than their melting point whatever this says.', group='Matter'),
 ]
 _MATTER_INDEX = {p.key: p for p in MATTER_PARAMS}
 

@@ -338,3 +338,44 @@ def test_sand_in_a_fire_box_has_no_wet_sand(engine):
     sc.add_matter(name='Heap', material='sand', shape='pile', position=(0.2, 0.25, 0.0), size=(0.5, 0.25, 0.5))
     engine.prepare(sc, final=False)
     assert [x.key for x in engine.matter._mats] == ['sand'] and not engine.matter.wets()
+
+
+# ---- heat (mpm_heat.wgsl) -------------------------------------------------------------------------------------------
+
+def test_chocolate_beside_a_fire_melts_on_the_side_facing_it(engine):
+    from blackbody.scene import components
+    sc = components.new_scene('fire', 'person')
+    sc.emitters = []
+    sc.add_emitter(name='Fire', shape='cylinder', position=(-0.12, 0.05, 0.0), size=(0.12, 0.05, 0.2), fuel=12, temperature=0.6)
+    sc.add_matter(name='Bar', material='chocolate', shape='box', position=(0.12, 0.06, 0.0), size=(0.06, 0.06, 0.12))
+    sc.data['domain'].update(size_x=1.4, size_y=1.6, size_z=1.2, resolution=64, preroll=0.0, matter_heat_speed=8.0)
+    engine.prepare(sc, final=False)
+    m = engine.matter
+    assert [k.key for k in m._mats] == ['chocolate', 'molten_chocolate'] and m.thermal
+    engine.simulate_to(sc, sc.start + 144, cache=False)
+    P = m.read_particles()
+    molten = np.round(P[:, 3]) == 1
+    assert 0.03 < molten.mean() < 0.9
+    x = P[:, 0] * m.dx + m.origin[0]
+    near = x < np.median(x)
+    assert molten[near].mean() > 3.0 * molten[~near].mean()     # (by its radiant heat: the side facing the fire)
+
+
+def test_molten_iron_poured_on_the_ground_glows_cools_and_sets(engine):
+    from blackbody.scene import components
+    sc = components.new_scene('fire', 'person')
+    sc.emitters = []
+    sc.add_matter(name='Pour', material='molten_iron', pours=True, position=(0.0, 0.45, 0.0), size=(0.02, 0.02, 0.02),
+                  velocity=(0.0, -0.5, 0.0), rate=0.3, pour_start=0.0, pour_stop=3.0)
+    sc.data['domain'].update(size_x=1.2, size_y=0.8, size_z=1.2, resolution=64, preroll=0.0)
+    engine.prepare(sc, final=False)
+    m = engine.matter
+    engine.simulate_to(sc, sc.start + 24, cache=False)
+    T0 = m.read_particles()[:, 23]
+    glow = engine.gpu.read(m.surface()[3])[..., 0]
+    assert T0.min() > 1500.0 and glow.max() > 1450.0           # (drawn at its temperature: it glows)
+    engine.simulate_to(sc, sc.start + 192, cache=False)
+    P = m.read_particles()
+    assert P[:, 23].mean() < T0.mean() - 100.0                 # it cools,
+    assert 0.2 < np.mean(np.round(P[:, 3]) == 1)               # and sets into iron
+    assert len(P) == len(m.read_particles())

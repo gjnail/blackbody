@@ -384,8 +384,20 @@ class Scene:
                                   size=tuple(abs(float(x)) for x in g('size')), yaw=math.radians(float(g('yaw'))),
                                   velocity=tuple(float(x) for x in d['velocity']), release=float(d['release']),
                                   pour=bool(d['pours']), rate=float(d['rate']) / 1000.0, start=float(d['pour_start']),
-                                  stop=float(d['pour_stop']), colour=colour, stiffness=float(d['stiffness']), seed=int(d['seed'])))
+                                  stop=float(d['pour_stop']), colour=colour, stiffness=float(d['stiffness']), seed=int(d['seed']),
+                                  temperature=self._matter_kelvin(d)))
         return out
+
+    @staticmethod
+    def _matter_kelvin(d):
+        """A body of matter's temperature as it starts (K): its own, but a melt at least a little past its melting point
+        (as it is poured: 12% hotter than it, so it runs before it sets)."""
+        from ..engine.matter import material
+        T = float(d.get('temperature', 20.0)) + 273.15
+        m = material(d['material'])
+        if m.freeze and m.melts_at > 0.0:
+            T = max(T, m.melts_at * 1.12)
+        return T
 
     def fabric_specs(self):
         """What the enabled fabrics are made of and how they are built (engine/cloth.py)."""

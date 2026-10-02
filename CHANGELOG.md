@@ -83,6 +83,12 @@ Notable changes to Blackbody. The format follows
   crater and a gully). Dry sand the water touches gets damp (darker, glossier, holding together); the water seeps on
   into it, and sand it soaks through lets go, so a sand castle the water reaches slumps and the flow carries it off.
   A Sand castle block in Create, and a preset, Sand castle and a wave.
+- Things that melt: wax, chocolate, aluminium and iron (Matter › Made of) warm in the fire, from its hot gas and its
+  radiant heat on the side they face it, cool in the air and the water, and past their melting point melt into a
+  runny or thick melt that runs and puddles and sets again as it cools. Hot metal glows as a blackbody at its
+  temperature, as bright as a flame that hot, and lights the floor and objects round it. Their melts can be poured.
+  Matter › Temperature; Domain › Heat speed (how much quicker than for real). Presets: Pouring molten iron, Chocolate
+  by a fire.
 - Sand, snow, mud, jelly and clay in the interface: the object list, Properties, outlines and handles in the viewer (a
   pour's nozzle and direction), Made of, Let go, Pour it from here and Start/Stop pouring from the right-click menu,
   timing lanes, a Sand & mud chip in Create; Effects gains Falling & breaking and Sand, snow & mud chips.

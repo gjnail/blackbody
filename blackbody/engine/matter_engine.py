@@ -35,7 +35,8 @@ class MatterEngine:
         return self.matter.configure(specs, origin, size, resolution=int(d.get('matter_detail', 128)),
                                      max_particles=int(d.get('matter_particles', 2_000_000)), gravity=gravity,
                                      ground=bool(d['ground']), closed=not bool(d['open_sides']), fps=scene.fps,
-                                     duration=duration, wets=scene.kind in ('liquid', 'both'))
+                                     duration=duration, wets=scene.kind in ('liquid', 'both'),
+                                     heat_speed=float(d.get('matter_heat_speed', 4.0)))
 
     _coupled = False
 
@@ -118,6 +119,16 @@ class MatterEngine:
         with self.gpu.batch() as b:
             m.melt(b, fdt, gas, liquid, look.ambient_k, look.flame_k)
 
+    def _heat_matter(self, scene, frame, fdt, gas=None, liquid=None):
+        """Wax, chocolate and metal through frame `frame` (fdt seconds): warming in the gas's heat, cooling in the air and
+        the water, melting and setting."""
+        m = self._matter
+        if m is None or not m.heats():
+            return
+        look = scene.look(frame)
+        with self.gpu.batch() as b:
+            m.heat(b, fdt, gas, liquid, look.ambient_k, look.flame_k)
+
     def _wet_matter(self, fdt, liquid):
         """Sand the liquid touches soaking through the frame (fdt seconds): wet sand."""
         m = self._matter
@@ -138,6 +149,9 @@ class MatterEngine:
             snap = m.snapshot()
             if snap is not None:
                 entry['matter'] = snap
+                temps = m.snapshot_temperatures()
+                if temps is not None:
+                    entry['matter_t'] = temps
 
     def matter_for(self, frame):
         """The matter to draw at `frame` (the live particles, or the cache's), or None. Its surface is built here, before
@@ -153,6 +167,6 @@ class MatterEngine:
             entry = self.cache.get(frame) if self.cache is not None else None
             if entry is None or entry.get('matter') is None:
                 return None
-            m.show(entry['matter'])
+            m.show(entry['matter'], entry.get('matter_t'))
         m.surface()
         return m

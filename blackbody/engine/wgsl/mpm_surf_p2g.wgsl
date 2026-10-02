@@ -1,19 +1,21 @@
 // Matter's surface, for drawing: each particle (in its 8-byte form: mpm_compact.wgsl) adds itself to the nodes round
 // it within R, weighted by k = (1 - (d / R)^2)^3: the weight, the weighted offset to it (for the surface: Zhu and
-// Bridson 2005) and its look.
+// Bridson 2005) and its look (with its temperature, for its glow: CT, from mpm_compact.wgsl).
 //!include mpm_common.wgsl
 
 struct Params {
   n: vec4<f32>,      // grid nodes (x, y, z), particles (count)
-  r: vec4<f32>,      // R (grid units), _, _, _
+  r: vec4<f32>,      // R (grid units), temperatures given (1/0), _, _
   mats: array<MMat, MAX_MATS>,
 };
 
 @group(0) @binding(0) var<storage, read> C: array<vec2<u32>>;
 @group(0) @binding(1) var<storage, read_write> S: array<atomic<i32>>;
+@group(0) @binding(2) var<storage, read> CT: array<f32>;
 @group(1) @binding(0) var<uniform> U: Params;
 
-const SURF: u32 = 11u;          // slots per node: w, w offset (xyz), w albedo (rgb), w roughness, clear, sparkle, wrap
+const SURF: u32 = 13u;          // slots per node: w, w offset (xyz), w albedo (rgb), w roughness, clear, sparkle, wrap,
+                                // w temperature (K / 16), w metal
 const FX_S: f32 = 65536.0;
 
 @compute @workgroup_size(64, 1, 1)
@@ -31,6 +33,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
   let x = vec3<f32>(a.x, a.y, b.x) * U.n.xyz;
   let m = U.mats[mat];
   let R = U.r.x;
+  let tk = select(0.0, CT[i], U.r.y > 0.5) / 16.0;
   // its look: the material's, its colour a little different from its neighbours'
   let shade = 1.0 + m.e.w * (rnd - 0.5);
   let alb = clamp(m.d.rgb * shade, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -57,6 +60,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
         atomicAdd(&S[k + 8u], i32(round(wt * m.e.x * FX_S)));
         atomicAdd(&S[k + 9u], i32(round(wt * m.e.y * FX_S)));
         atomicAdd(&S[k + 10u], i32(round(wt * m.e.z * FX_S)));
+        atomicAdd(&S[k + 11u], i32(round(wt * tk * FX_S)));
+        atomicAdd(&S[k + 12u], i32(round(wt * m.c.z * FX_S)));
       }
     }
   }

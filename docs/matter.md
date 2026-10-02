@@ -30,6 +30,11 @@ Right-click one in the viewer for *Made of*, *Let go at this frame*, *Pour it fr
 | Mud | Flows like a thick liquid until it is thin enough to hold itself up (its yield stress, 400 Pa), then stops. |
 | Jelly | Springs back from anything that squashes it, keeping its volume: it bounces and wobbles. It is clear and coloured. |
 | Clay | Squashes and stays squashed: it holds a shape until it is pushed harder than 20 kPa. |
+| Wax | A firm solid, ivory and a little translucent. It melts at 60 °C into runny wax. |
+| Chocolate | A firm, glossy solid. It melts at 34 °C into thick melted chocolate, which slumps and runs slowly. |
+| Aluminium | Bright metal. It melts at 660 °C into runny, mirror-like molten aluminium, barely glowing. |
+| Iron | Dark metal. It melts at 1150 °C into molten iron, glowing yellow-orange. |
+| Molten wax, Melted chocolate, Molten aluminium, Molten iron | Their melts, to pour: they start hotter than their melting point and set as they cool. |
 
 ## What moves it
 
@@ -46,6 +51,16 @@ Sand gets wet. Dry sand the water touches is damp after half a second: darker an
 
 Snow melts where hot gas touches it: in flames a snowball's surface melts away in a second or two, while snow beside a fire that its heat does not reach, or buried inside a heap, lasts. In a fire-and-liquid box its water joins the liquid and runs off; in a fire box it is simply gone. (The fire's radiant heat is not counted, so snow a little way from a fire melts only where the hot gas reaches it.)
 
+## Things that melt
+
+Wax, chocolate, aluminium and iron have a temperature (Matter › *Temperature*, how hot each body starts). They warm in the fire, from the hot gas next to them and from the fire's radiant heat on the side that faces it, so a bar of chocolate beside a fire softens on that side first. They cool in the air, and much faster in water, and give off their own heat as they glow. Heat evens out through them, quickly through metal and slowly through wax and chocolate. Past its melting point each melts into a liquid of the same stuff (runny wax and metal, thick melted chocolate) that runs and puddles, and it sets again where it cools below that point. A melt's puddle stays about as deep as its surface tension keeps it.
+
+Hot metal glows as a blackbody at its temperature: dull red from about 600 °C, orange by 1000 °C, yellow-white over 1300 °C. It glows as bright as a flame that hot (the Look's *Flame temperature*, *Intensity*, *Exposure* and *Dynamic range* set both), and it lights what is round it. Aluminium melts before it glows much, as the real metal does.
+
+Melting takes as long as it really would, times *Heat speed* (Domain): 4 unless set, so a chocolate bar by a campfire runs in seconds rather than a minute. *Pouring molten iron* pours a ladle of it into a mould, and *Chocolate by a fire* melts three pieces beside a small fire.
+
+![Pouring molten iron](media/gif/iron_pour.gif "Pouring molten iron: molten iron poured from a ladle into a mould glows orange, lights the floor round it, and dims to red as its skin cools.")
+
 ## How it looks
 
 On the stage, matter is drawn in its material's look and lit like the objects: the key light with soft shadows (it shades itself and the floor, and the objects shade it), the sky, the fire and the lights in the set. Sand and snow glint where a grain catches the sun, snow lets the light into its shadows, mud is wet and glossy, and jelly is clear and coloured: you see the set through it, bent. In your footage it goes in as CG, its shadows on the real ground. It hides the fire and the liquid behind it.
@@ -58,7 +73,7 @@ On the stage, matter is drawn in its material's look and lit like the objects: t
 - *Most matter particles* caps how many there are; each takes 128 bytes of GPU memory.
 - Its steps are as short as its stiffest material and its fastest particle need: about a hundred a frame for sand, more for packed snow. A heap of 40 litres of sand at the default detail (about 170,000 particles) takes about a tenth of a second a frame.
 
-Presets: *Sand from a hopper*, *Snowballs at a wall*, *Ball dropped on jelly*, *Crate through mud*.
+Presets: *Sand from a hopper*, *Snowballs at a wall*, *Ball dropped on jelly*, *Crate through mud*, *Sand castle and a wave*, *Pouring molten iron*, *Chocolate by a fire*.
 
 ![Crate through mud](media/gif/mud_drag.gif "Crate through mud: a crate dragged through a bed of mud ploughs a trench and leaves ridges.")
 
@@ -70,5 +85,9 @@ Presets: *Sand from a hopper*, *Snowballs at a wall*, *Ball dropped on jelly*, *
 - A body of matter is a box, a ball, a cylinder or a cone; it cannot fill a mesh yet.
 - Up to 15 materials (or colours of them) in a scene at once.
 - Snow and mud do not stick to walls: a snowball splats and falls rather than leaving a mark.
+- Objects take no heat and give none: a hot pan does not melt the chocolate in it, and molten iron does not heat its
+  mould. Hot matter's glow lights the stage (the floor, the objects, the footage) but not the smoke or the water.
+- An object's opening that stops flush with the inside of its wall can leave a film there that matter catches on: make
+  it a little deeper than the wall.
 
-Under the hood: the material point method (MLS-MPM, Hu et al. 2018) on the GPU, with sand as Drucker–Prager plasticity (Klár et al. 2016), snow after Stomakhin et al. (2013), mud and clay as von Mises plasticity (mud relaxing toward it over time), and jelly as a neo-Hookean solid. Sand's friction angle is set from the angle of repose asked for, measured on poured heaps. Particle-to-grid sums are fixed-point integers, so a simulation is the same on any GPU, every time. The water pushes the matter with its pressure, on the faces of jelly and clay and as a gradient in sand, snow and mud (the water is between their grains as well as round them), and drags it with the stress of a flow over a bed; damp sand is Drucker–Prager sand with cohesion, soaked sand without.
+Under the hood: the material point method (MLS-MPM, Hu et al. 2018) on the GPU, with sand as Drucker–Prager plasticity (Klár et al. 2016), snow after Stomakhin et al. (2013), mud and clay as von Mises plasticity (mud relaxing toward it over time), and jelly as a neo-Hookean solid. Sand's friction angle is set from the angle of repose asked for, measured on poured heaps. Particle-to-grid sums are fixed-point integers, so a simulation is the same on any GPU, every time. The water pushes the matter with its pressure, on the faces of jelly and clay and as a gradient in sand, snow and mud (the water is between their grains as well as round them), and drags it with the stress of a flow over a bed; damp sand is Drucker–Prager sand with cohesion, soaked sand without. Melting matter's solid is clay's model and its melt mud's with next to no yield stress (melted chocolate keeps some viscosity); its surface takes heat from the gas by convection and from the fire as the radiation of its hot gas cut into blocks (an optically thin flame, 4κσT⁴ a cubic metre, by the inverse square of the distance), gives off σT⁴ as it absorbs, and its heat evens out through the matter's grid.
