@@ -112,7 +112,9 @@ def set_on_fire(win, kind, i):
                   f'fire that keeps burning on it, use Create › {steady}.')
     else:
         _say(win, f'{d["name"]} catches at frame {doc.frame}: the flame at its base lasts 3 s, then the fire is its own'
-                  + (' (Spreading fire is on).' if kind == 'collider' else '.'))
+                  + (' (Spreading fire is on).' if kind == 'collider' else '.')
+                  + (' It is breakable too, so it burns piece by piece and falls in.' if kind == 'collider' and d.get('breakable')
+                     else ''))
     doc.set_playing(True)
 
 
@@ -307,8 +309,10 @@ def make_breakable(win, i, on=True, fracture=None):
     notes = ' '.join(out.get('notes') or [])
     if on and c.get('breakable'):
         into = dict(BREAKS_INTO).get(c.get('fracture'), 'pieces').lower()
+        burns = (' It is burnable too: set it on fire and it burns piece by piece and falls in.' if c.get('burnable') else
+                 ' Set it on fire too, and it burns piece by piece and falls in.')
         _say(win, f'{d["name"]} breaks into {into} where something hits it hard enough. Throw something at it, drop it, '
-                  f'or Make it fall. {notes}'.strip())
+                  f'or Make it fall.{burns} {notes}'.strip())
     elif on:
         _say(win, notes or f'{d["name"]} cannot break.')
     else:
@@ -617,7 +621,8 @@ def fill_menu(m: QMenu, win, sel, path_mode=None):
         else:
             mesh = d.get('shape') == 'mesh'
             a = act('Make it breakable', lambda: make_breakable(win, i), 'Cut into pieces that come apart where it is hit hard '
-                    'enough: bricks for brick, shards for glass, splinters for wood, chunks for the rest', 'burst', enabled=not mesh)
+                    'enough: bricks for brick, shards for glass, splinters for wood, chunks for the rest. Burnable too: it burns '
+                    'piece by piece and falls in', 'burst', enabled=not mesh)
             if mesh:
                 a.setToolTip('Meshes cannot break yet: boxes, balls and cylinders can')
             sub = m.addMenu(icons.glyph_icon('burst', theme.MUTED, 16), 'Make it break into')
