@@ -15,7 +15,7 @@ from . import icons, theme
 MATERIALS = [('cotton', 'Cotton'), ('linen', 'Linen'), ('silk', 'Silk'), ('chiffon', 'Chiffon'), ('wool', 'Wool'), ('denim', 'Denim'),
              ('canvas', 'Canvas'), ('velvet', 'Velvet'), ('polyester', 'Polyester'), ('nylon', 'Nylon')]
 PINS = [('top', 'By its top edge'), ('side', 'By one side'), ('top_corners', 'By its top corners'), ('corners', 'By four corners'),
-        ('none', 'Not at all (it falls)')]
+        ('edges', 'By all its edges'), ('none', 'Not at all (it falls)')]
 
 
 def _items(sc, kind):
