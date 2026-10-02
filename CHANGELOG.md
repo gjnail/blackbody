@@ -130,9 +130,12 @@ Notable changes to Blackbody. The format follows
   figure drawn over the footage to check. Effects then stand on the real ground at real size; drag their base over
   it, or drop blocks onto the footage.
 - Camera tracking for lined-up shots, for cameras that turn and cameras that travel (dollies, walks, cars, drones):
-  about 60 spots followed through the footage with sub-pixel affine Lucas-Kanade matching (spots that look like
-  their neighbours skipped, lost ones replaced), the camera's position and turn worked out on every frame from the
-  spots on the ground (RANSAC, then a bundle adjustment of every camera and spot together), in real metres.
+  about 60 spots followed through the footage with sub-pixel affine Lucas-Kanade matching on the picture properly
+  downsized (averaged, not every Nth pixel, so a spot lasts some 30 frames), spots that look like their neighbours
+  skipped and lost ones replaced. Each spot is placed where the rays of the frames that saw it meet (on walls, posts
+  and parked cars as well as the ground) and the camera's position and turn worked out on every frame from them, in
+  real metres: the test courtyard dolly holds within 2 px, solved in about 10 s, without needing the line-up's lens
+  to be exactly right.
 - Line up from the horizon when there is no rectangle in view, and on sloping ground with two upright lines (the world
   stays level; the slope becomes solid ground).
 - Surfaces: line up a wall, a table or platform, a ramp or stairs in the footage and it becomes a solid there (in every

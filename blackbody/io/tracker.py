@@ -12,15 +12,25 @@ import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 
 
-def to_gray(frame, max_width=960):
-    """RGBA uint8/float16 frame -> float32 luminance, downscaled so tracking is fast."""
+def to_gray(frame, max_width=960, smooth=True):
+    """RGBA uint8/float16 frame -> float32 luminance, downscaled so tracking is fast: each pixel the average of the
+    step x step block it covers (so a pixel's middle is the block's, and the sensor's noise averages out rather than
+    being sampled), then lightly blurred (a 3x3 binomial): noisy footage (dusk, high ISO, compression) otherwise
+    matches from frame to frame too poorly to follow."""
     a = np.asarray(frame)
     step = max(1, int(math.ceil(a.shape[1] / max_width)))
-    a = a[::step, ::step, :3].astype(np.float32)
+    h, w = a.shape[0] // step * step, a.shape[1] // step * step
+    a = a[:h, :w, :3].astype(np.float32)
     if frame.dtype == np.uint8:
         a /= 255.0
     g = a @ np.array([0.299, 0.587, 0.114], np.float32)
-    return g, step
+    if step > 1:
+        g = g.reshape(h // step, step, w // step, step).mean(axis=(1, 3))
+    if smooth and g.shape[0] > 2 and g.shape[1] > 2:
+        p = np.pad(g, 1, mode='edge')
+        g = (p[:-2] + 2 * p[1:-1] + p[2:]) / 4
+        g = (g[:, :-2] + 2 * g[:, 1:-1] + g[:, 2:]) / 4
+    return np.ascontiguousarray(g, np.float32), step
 
 
 def _bilinear_patch(img, cx, cy, r):

@@ -821,6 +821,7 @@ def load_court(app, win, got):
         app.processEvents()
         time.sleep(0.01)
     win.set_workspace('shot')
+    doc.set_playing(False)   # a loaded shot plays: the slab's corners are those of the first frame
     doc.set_frame(doc.scene.start)
     settle(app, got, seconds=40)
 
@@ -848,6 +849,10 @@ def rec_lineup(app, win, got, out):
         rec.move(rec.where(vp, vp.to_widget((px * W / TW, py * H / TH))), 0.8, widget=vp)
         rec.release(vp)
         rec.pump(0.25)
+    # then exactly on the slab's corners, as a careful hand would zoom in to put them: a drag lands on the nearest
+    # screen pixel (about two of the footage's), and the lens from a slab seen this low swings 20-40 mm with one pixel
+    vp._gm['g']['corners'] = [[x / TW, y / TH] for x, y in truth['slab']]
+    vp._ground_apply()
     rec.say('The lens, tilt and height come from the slab', 2.4)
     rec.pump(2.4)
     done = next(b for b in vp.groundbar.findChildren(QPushButton) if b.text() == 'Done')
