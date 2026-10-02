@@ -41,7 +41,8 @@ const PI: f32 = 3.14159265;
 const FLOOR: i32 = 100;
 const PIECE: i32 = 1000;   // a hit on piece k has id PIECE + k
 const ROPE_ROW: i32 = 16;  // = MAX_COLLIDERS: the material rows of ropes (then steel cables and springs) follow the objects'
-const MAT_ROWS: u32 = 18u;
+const MAT_ROWS: u32 = 19u;
+const LIGHTNING_ROW: i32 = 18;   // lightning: segments that glow (their r.xyz), casting no shadow
 const MATTER: i32 = 200;   // a hit on the matter (sand, snow, mud, jelly, clay: matter.py)
 
 struct Mat {
@@ -81,6 +82,7 @@ struct Params {
   mn: vec4<f32>,        // its nodes (x, y, z), matter drawn (1/0)
   mlo: vec4<f32>,       // the matter's grid's extent (fire-local m: its first and last nodes), _
   mhi: vec4<f32>,
+  bolt: vec4<f32>,      // lightning: its first segment (piece index), how many, its glow's reach (m), its glow's strength
   ccnt: vec4<f32>,      // objects (count), _
   col: array<Collider, MAX_COLLIDERS>,
   mat: array<Mat, MAT_ROWS>,
@@ -680,6 +682,7 @@ struct Surf {
   wrap: f32,         // light wrapping into it past where it faces away (snow)
   glint: f32,        // the glint of its grains or crystals toward the key light
   gn: vec3<f32>,     // the normal of the grain that glints
+  em: vec3<f32>,     // light it gives off (lightning)
 };
 
 // Light reflected toward v by surface s: the key light, the sky, the fire, the lights in the set.
@@ -827,6 +830,19 @@ fn background(rd: vec3<f32>, px: vec2<f32>) -> vec3<f32> {
 fn rope_surface(s0: Surf, kp: u32, pose: array<vec4<f32>, 2>, pl: vec4<f32>, row: i32, fw: f32) -> Surf {
   var s = s0;
   let P = PC[kp];
+  if (row == LIGHTNING_ROW) {
+    // lightning: all glow, brightest in the middle of its channel
+    let qi = vec4<f32>(-pose[1].xyz, pose[1].w);
+    let ql = quat_rotate(qi, s.p - pose[0].xyz);
+    let rad = max(PL[u32(P.v.w)].w, 1e-5);
+    let core = 1.0 - clamp(length(ql.xz) / rad, 0.0, 1.0);
+    s.n = quat_rotate(pose[1], normalize(vec3<f32>(ql.x, 0.0, ql.z) + vec3<f32>(1e-6, 0.0, 0.0)));
+    s.alb = vec3<f32>(0.0);
+    s.f0 = vec3<f32>(0.0);
+    s.rough = 1.0;
+    s.em = P.r.xyz * (0.6 + 0.8 * core);
+    return s;
+  }
   let m = U.mat[row];
   let qi = vec4<f32>(-pose[1].xyz, pose[1].w);
   let ql = quat_rotate(qi, s.p - pose[0].xyz);
@@ -947,6 +963,40 @@ fn exit_t(i: i32, ro: vec3<f32>, rd: vec3<f32>, eps: f32) -> f32 {
   return t;
 }
 
+// Lightning's glow along a ray from ro (fire-local) as far as tmax: the light its channel scatters in the air round it.
+// Each segment adds its glow over its length, falling off as 1 / (1 + (d / G)^2)^1.5 with the ray's distance d from it:
+// summed along a long straight channel, that is 2 / (1 + (d / G)^2).
+fn bolt_glow(ro: vec3<f32>, rd: vec3<f32>, tmax: f32) -> vec3<f32> {
+  var g = vec3<f32>(0.0);
+  let n = u32(U.bolt.y);
+  if (n == 0u) { return g; }
+  let G = U.bolt.z;
+  let first = u32(U.bolt.x);
+  for (var j = 0u; j < n; j++) {
+    let P = PC[first + j];
+    let pose = piece_pose(first + j);
+    let half = PL[u32(P.v.w) + 8u].w;              // (its end plane: half its length)
+    let ax = quat_rotate(pose[1], vec3<f32>(0.0, 1.0, 0.0));
+    // the closest the ray (ro + t rd, 0 <= t <= tmax) and the segment (c + s ax, |s| <= half) come
+    let w0 = ro - pose[0].xyz;
+    let b = dot(rd, ax);
+    let d = dot(rd, w0);
+    let e = dot(ax, w0);
+    let den = 1.0 - b * b;
+    var t = 0.0;
+    var s = 0.0;
+    if (den > 1e-6) {
+      t = clamp((b * e - d) / den, 0.0, tmax);
+    }
+    s = clamp(dot(ro + rd * t - pose[0].xyz, ax), -half, half);
+    t = clamp(dot(pose[0].xyz + ax * s - ro, rd), 0.0, tmax);
+    let dist = length(ro + rd * t - (pose[0].xyz + ax * s));
+    let q = dist / G;
+    g += P.r.xyz * ((2.0 * half / G) / pow(1.0 + q * q, 1.5));
+  }
+  return g * U.bolt.w;
+}
+
 // What the camera sees along one ray (fire-local), px the plate pixel, puv its plate uv, rd_w the ray
 // in world axes.
 fn see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w: vec3<f32>) -> Seen {
@@ -1013,7 +1063,7 @@ fn see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w: vec3
     t_all += h.t;
     let s = surface_at(h, ro, rd, 1.0);
     let v = -rd;
-    var c = shade(s, v);
+    var c = shade(s, v) + s.em;
     let dist = length(s.p - ro0);
     if (h.id == FLOOR) {
       // far off, the floor fades into the sky at the horizon
@@ -1032,7 +1082,7 @@ fn see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w: vec3
       clear = clamp(textureSampleLevel(m_phi, lin, uvw, 0.0).y, 0.0, 1.0);
       tint_c = textureSampleLevel(m_look, lin, uvw, 0.0).rgb;
       ior = 1.35;
-    } else if (h.id < FLOOR || h.id >= PIECE) {
+    } else if ((h.id < FLOOR || h.id >= PIECE) && row != LIGHTNING_ROW) {
       clear = clamp(U.mat[row].d.y, 0.0, 1.0);
       tint_c = U.mat[row].c.rgb;
       ior = max(U.mat[row].e.w, 1.0);
@@ -1127,7 +1177,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let ro = (U.w2l * vec4<f32>(ro_w, 1.0)).xyz;
     let rd = normalize((U.w2l * vec4<f32>(rd_w, 0.0)).xyz);
     let s = see(ro, rd, pp, puv, rd_w);
-    acc += s.c;
+    acc += s.c + bolt_glow(ro, rd, select(1.0e4, s.t, s.t > 0.0));
     cov += s.cg;
     let to_near = U.fwd.w / max(dot(rd_w, U.fwd.xyz), 1e-3);   // camera to where the ray starts (m)
     var near = 1.0e9;

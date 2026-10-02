@@ -58,6 +58,10 @@ def _apply(scene: Scene, spec: dict):
         scene.matter = []
         for m in spec['matter']:
             scene.add_matter(**m)
+    if 'lights' in spec:
+        scene.lights = []
+        for l in spec['lights']:
+            scene.add_light(**l)
 
 
 PRESETS = {
@@ -849,6 +853,28 @@ PRESETS = {
                              breakable=True, fracture='bricks')],
         'matter': [dict(name='Sand', material='sand', shape='pile', position=(-2.2, 0.2, 0.2), size=(0.5, 0.2, 0.5))],
     },
+    'lightning_strike': {
+        'name': 'Lightning strikes a post', 'category': 'Fires', 'size': '4 m bolt',
+        'blurb': 'At dusk, lightning strikes a wooden post: three flashes down a branching channel light up the yard, and the '
+                 'post catches and burns. A light of the Lightning kind, and Spreading fire.',
+        'render': {'end': 144},
+        'domain': {'size_x': 3.0, 'size_y': 4.6, 'size_z': 3.0, 'resolution': 112, 'preroll': 0.0},
+        'combustion': {'burn_rate': 5.0, 'heat': 0.6, 'soot': 0.35, 'cooling': 2.2, 'flame_life': 0.08},
+        'motion': {'buoyancy': 5.5, 'turbulence': 3.0, 'turb_freq': 2.5, 'vorticity': 1.6},
+        'spread': {'enabled': True, 'ground': False, 'coverage': 1.0, 'burn_time': 20.0, 'fuel': 9.0, 'heat': 0.5, 'smoke': 1.0,
+                   'catch_temp': 0.3, 'catch_time': 0.2, 'creep': 0.08, 'smoulder': 4.0},
+        'shading': {'flame_k': 1650, 'max_k': 2250, 'smoke_density': 2.0, 'smoke_albedo': (0.5, 0.49, 0.48)},
+        'composite': {'backdrop': 'stage', 'floor': 'dirt'},
+        'lighting': {'sun_on': True, 'sun_intensity': 0.08, 'sun_elevation': 6.0, 'sun_azimuth': -60.0, 'ambient': (0.2, 0.25, 0.4),
+                     'ambient_intensity': 0.25},
+        'camera': {'distance': 6.5, 'target_y': 1.9, 'pitch': 4, 'yaw': 15, 'focal_mm': 35},
+        'emitters': [],
+        'colliders': [dict(name='Post', shape='cylinder', position=(0.3, 0.6, 0.0), size=(0.08, 0.6, 0.08), material='wood',
+                           burnable=True),
+                      dict(name='Crate', shape='box', position=(-0.9, 0.25, 0.4), size=(0.25, 0.25, 0.25), material='wood')],
+        'lights': [dict(name='Lightning', kind='lightning', position=(-0.6, 4.2, -0.3), end=(0.3, 1.2, 0.0), intensity=600000.0,
+                        strike_at=0.25, strokes=3, branching=0.6, thickness=0.03, colour=(0.8, 0.85, 1.0))],
+    },
     'window_smash': {
         'name': 'Stone through a window', 'category': 'Things that fall', 'size': '1 m pane',
         'blurb': 'A stone thrown through a pane of window glass held in its frame: it punches a hole, shards break away '
@@ -940,7 +966,7 @@ ORDER = ['campfire', 'bonfire', 'torch', 'candle', 'gas_ring', 'pool_fire', 'fir
          'curtain_fire', 'fabric_curtain', 'wet_towels', 'armchair_fire', 'room_fire', 'backdraft', 'flash_fire', 'gas_cloud', 'coloured_flames', 'road_flare',
          'grinder_sparks', 'fireworks', 'car_through_smoke', 'flag_wind', 'kettle_steam', 'steam_vent',
          'crates_in_fire', 'tower_knockdown', 'wall_smash', 'wrecking_ball', 'window_smash', 'vase_drop',
-         'yard_blast', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag']
+         'yard_blast', 'lightning_strike', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag']
 
 
 def make(name: str, fps=None, start=None) -> Scene:
@@ -1012,6 +1038,8 @@ def apply_to(scene: Scene, name: str, keep_camera=True, keep_render=True):
     scene.colliders = fresh.colliders
     scene.fabrics = fresh.fabrics
     scene.matter = fresh.matter
+    # the shot's own lights stay (they are its set); a preset's lightning is part of its effect
+    scene.lights = [l for l in scene.lights if l.get('kind') != 'lightning'] + [l for l in fresh.lights if l.get('kind') == 'lightning']
     scene.footage, scene.track = footage, track
     scene.preset = name
     return scene

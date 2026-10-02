@@ -728,7 +728,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine):
         pieces = self.piece_poses(frame)   # (broken things: drawn, and holding out what is behind them, in every view)
         ropes = self.rope_poses(frame)
         matter = self.matter_for(frame) if mode == 'composite' else None
-        stage_on = stage_mod.wanted(scene, footage, mode) or bool(pieces) or bool(ropes) or matter is not None
+        bolts = scene.bolts(frame) if mode == 'composite' and scene.lights else None   # (lightning)
+        stage_on = stage_mod.wanted(scene, footage, mode) or bool(pieces) or bool(ropes) or matter is not None or bool(bolts)
         r.hold_stage = None
 
         with self.gpu.batch() as b:
@@ -742,7 +743,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine):
                 size = r.plate_size if footage else (W, H)
                 stage = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, size,
                                         plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage, vol=vol,
-                                        ground_y=vol.origin[1], frame=frame, pieces=pieces, ropes=ropes, matter=matter)
+                                        ground_y=vol.origin[1], frame=frame, pieces=pieces, ropes=ropes, matter=matter, bolts=bolts)
                 if self.stage.has_pieces or self.stage.has_matter:   # the march stops at the pieces and the matter too
                     r.hold_stage = self.stage.hold
                     r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])

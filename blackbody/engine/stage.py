@@ -33,6 +33,8 @@ HORIZON_FADE = 150.0     # m: far off, the floor fades into the sky at the horiz
 INPUT_LINEAR = 2         # composite.wgsl input transform: scene-linear
 ROPE_ROW = MAX_COLLIDERS  # the material rows after the objects': rope (manila), then steel (cables, springs)
 ROPE_LOOKS = (((0.456, 0.305, 0.127), 0.85, 0.0), ((0.55, 0.56, 0.57), 0.4, 1.0))   # (colour, roughness, metal)
+LIGHTNING_ROW = ROPE_ROW + 2   # after them: lightning (its glow is per segment)
+BOLT_GLOW = 0.02          # how much of lightning's core radiance it scatters into the air round it
 STRANDS = {0: (3.0, 7.0), 1: (6.0, 9.0), 2: (0.0, 0.0)}   # ropes.ROPE, CABLE, SPRING: strands, twist (radii per turn)
 
 
@@ -170,11 +172,11 @@ class Stage:
         return b
 
     @staticmethod
-    def piece_arrays(scene, pieces, shutter=0.0, ropes=None, ground_y=None):
+    def piece_arrays(scene, pieces, shutter=0.0, ropes=None, ground_y=None, bolts=None):
         """The pieces of broken objects and the segments of ropes and springs, for the shader: (pieces (n, 5, 4),
         planes (p, 4), grid corner, cell size, grid dims, cells (g, 2) uint32, list uint32), or None.
         pieces: {collider index: Solids.piece_poses entry}; ropes: {collider index: Solids.rope_poses entry};
-        ground_y: the ground's height (a snapped rope hangs down to it)."""
+        ground_y: the ground's height (a snapped rope hangs down to it); bolts: lightning (Scene.bolts)."""
         from .ropes import num, prism_planes, rope_points, segments
         from .solids import fractured
         enabled = [i for i, c in enumerate(scene.colliders) if c['enabled']][:MAX_COLLIDERS]
@@ -217,6 +219,17 @@ class Stage:
                 first += len(pl)
                 centres.append(centre)
                 radii.append(bound + float(np.linalg.norm(v)) * 0.5 * shutter)
+        # lightning: glowing segments along its channels (their r: the glow, linear rgb)
+        for pts, core, glow in (bolts or []):
+            rad = max(float(core), 1e-4)
+            for centre, quat, v, half, _along in segments(np.asarray(pts, float), np.zeros((len(pts), 3)), rad):
+                pl = prism_planes(rad, half)
+                bound = math.hypot(half, rad)
+                P.append([[*centre, len(pl)], [*quat], [0.0, 0.0, 0.0, first], [0.0, 0.0, 0.0, LIGHTNING_ROW], [*glow, bound]])
+                PL.append(pl)
+                first += len(pl)
+                centres.append(centre)
+                radii.append(bound)
         if not P:
             return None
         P = np.asarray(P, np.float32)
@@ -295,7 +308,7 @@ class Stage:
 
     def draw(self, b, r, scene, camstate, fire, colliders, meshes, light: StageLight, comp, size, plate_fit=(1.0, 1.0),
              samples=1, shutter=0.0, footage=False, vol=None, ground_y=0.0, frame=0, objects=True, floor=True,
-             pieces=None, ropes=None, matter=None):
+             pieces=None, ropes=None, matter=None, bolts=None):
         """Draw the stage into self.tex (size: the plate's, footage or output) and return it.
         r: the Renderer (its footage plate and holdouts, light volume, fire lights and lamp buffer);
         colliders: the objects as the solver has them (ColliderGPU, moving ones where they are this frame);
@@ -305,7 +318,7 @@ class Stage:
         floor: draw the floor (not under bottomless water);
         pieces: the pieces of broken objects, {collider index: Solids.piece_poses entry};
         ropes: the ropes and springs, {collider index: Solids.rope_poses entry};
-        matter: the sand, snow, mud, jelly and clay (matter.Matter), or None."""
+        matter: the sand, snow, mud, jelly and clay (matter.Matter), or None; bolts: lightning (Scene.bolts)."""
         g = self.gpu
         pw, ph = int(size[0]), int(size[1])
         self._ensure(pw, ph)
@@ -383,13 +396,15 @@ class Stage:
              .v4(1.0 if env is not None else 0.0, math.radians(light.env_rotation), light.env_strength, 0.0)
              .v4(r._shaper_lo, r._shaper_hi, 1.0 if r.lut_plate_log else 0.0, r.lut_size)
              .v4(*centre, radius))
-        pa = self.piece_arrays(scene, pieces, shutter, ropes, ground_y) if (pieces or ropes) else None
+        pa = self.piece_arrays(scene, pieces, shutter, ropes, ground_y, bolts) if (pieces or ropes or bolts) else None
         self.has_pieces = pa is not None
         if pa is not None:
             P, PL, glo, gcell, gdims, GC, GL = pa
             u.v4(*glo, gcell).v4(*gdims, len(P))
+            nb = int(np.sum(P[:, 3, 3] == LIGHTNING_ROW))       # (lightning's segments come last)
             bufs = [self._buffer('pieces', P), self._buffer('planes', PL), self._buffer('cells', GC), self._buffer('list', GL)]
         else:
+            nb = 0
             u.v4().v4()
             bufs = [self._buffer('pieces', np.zeros(20, np.float32)), self._buffer('planes', np.zeros(4, np.float32)),
                     self._buffer('cells', np.zeros(2, np.uint32)), self._buffer('list', np.zeros(1, np.uint32))]
@@ -401,6 +416,9 @@ class Stage:
         else:
             u.v4().v4(1.0, 1.0, 1.0, 0.0).v4().v4()
             mtex = [self._no_matter, self._no_matter]
+        # lightning's glow: reaching about ten times its core's radius (at least 5 cm)
+        reach = max(10.0 * max((float(c) for _p, c, _g in (bolts or [])), default=0.0), 0.05)
+        u.v4(len(P) - nb if pa is not None else 0, nb, reach, BOLT_GLOW)
         self.has_matter = surf is not None
         pack_colliders(u, cols, meshes)
         for i in range(MAX_COLLIDERS):
@@ -411,6 +429,7 @@ class Stage:
                 u.v4().v4().v4()
         for colour, rough, metal in ROPE_LOOKS:
             u.v4(*colour, rough).v4(metal, 0.0, 0.0, float(CG)).v4(*colour, 1.5)
+        u.v4(0.0, 0.0, 0.0, 1.0).v4(0.0, 1.0, 0.0, float(CG)).v4(0.0, 0.0, 0.0, 1.0)   # (lightning: lets the light by)
         black = r._black
         b.run(self.k, [meshes.atlas if meshes is not None else r._empty_r32,
                        r.L0 if vol_on else r._empty, r.L1 if vol_on else r._empty, r.E if vol_on else r._empty,

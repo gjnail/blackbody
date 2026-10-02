@@ -98,6 +98,9 @@ def _from_json_value(p, v):
     return coerce(p, v)
 
 
+BOLT_RADIANCE = 50.0   # lightning's channel at the peak of a flash (scene-linear: white is 1)
+
+
 class Scene:
     def __init__(self):
         self.name = 'Untitled'
@@ -371,10 +374,91 @@ class Scene:
             aim = aim / n if (n := float(np.linalg.norm(aim))) > 1e-9 else np.array([0.0, -1.0, 0.0])
             half = math.radians(max(0.5, float(d['cone'])))
             soft = min(max(float(d['softness']), 0.0), 1.0)
+            if d['kind'] == 'lightning':
+                out += self._lightning_lamps(i, d, frame, col, g)
+                continue
             out.append(dict(kind=d['kind'], position=tuple(float(x) for x in g('position')), direction=tuple(float(x) for x in aim),
                             power=tuple(float(x) for x in col * max(float(g('intensity')), 0.0)),
                             radius=float(d['radius']), cos_outer=math.cos(half), cos_inner=math.cos(half * (1.0 - soft)),
                             shadows=bool(d['shadows']), in_footage=bool(d.get('in_footage', True))))
+        return out
+
+    LIGHTNING_LAMPS = 4
+
+    def _lightning(self, i, d, frame):
+        """A lightning light at `frame`: (its channels (engine/lightning.py bolt), how bright the flash is over the frame,
+        how bright its first flash is), or None while it is dark."""
+        from ..engine import lightning as LG
+        b, first = LG.brightness(self.seconds(frame), float(d['strike_at']), int(d['strokes']), int(d['bolt_seed']),
+                                 exposure=1.0 / self.fps)
+        if b <= 1e-4:
+            return None
+        top = tuple(float(x) for x in self.get(('light', i, 'position'), frame))
+        end = tuple(float(x) for x in self.get(('light', i, 'end'), frame))
+        return LG.cached_bolt(top, end, int(d['bolt_seed']), float(d['branching'])), b, first
+
+    def _lightning_lamps(self, i, d, frame, col, g):
+        """A lightning light as point lamps along its main channel, as bright as its flash over the frame."""
+        got = self._lightning(i, d, frame)
+        if got is None:
+            return []
+        channels, b, _first = got
+        main = channels[0][0]
+        seg = np.linalg.norm(np.diff(main, axis=0), axis=1)
+        along = np.concatenate([[0.0], np.cumsum(seg)])
+        n = self.LIGHTNING_LAMPS
+        power = col * max(float(g('intensity')), 0.0) * b / n
+        out = []
+        for k in range(n):
+            s = (k + 0.5) / n * along[-1]
+            j = min(int(np.searchsorted(along, s)), len(main) - 1)
+            out.append(dict(kind='point', position=tuple(float(x) for x in main[j]), direction=(0.0, -1.0, 0.0),
+                            power=tuple(float(x) for x in power), radius=max(along[-1] / (2.0 * n), 0.05), cos_outer=-1.0,
+                            cos_inner=-1.0, shadows=bool(d['shadows']), in_footage=False))
+        return out
+
+    def bolts(self, frame):
+        """The lightning to draw at `frame`: [(points (n, 3) fire-local m, core radius (m), glow (linear rgb, the radiance of
+        its core))], each channel as bright as its share of the flash over the frame (the branches in the first flash only)."""
+        out = []
+        for i, d in enumerate(self.lights):
+            if not d['enabled'] or d['kind'] != 'lightning':
+                continue
+            got = self._lightning(i, d, frame)
+            if got is None:
+                continue
+            channels, b, first = got
+            col = np.asarray(d['colour'], float)
+            if d['temperature'] > 0:
+                from ..engine.lut import blackbody_lut
+                t = float(d['temperature'])
+                bb = blackbody_lut(8, max(400.0, t - 1.0), t + 1.0)[4, :3]
+                col = col * bb / max(float(bb.max()), 1e-9)
+            glow = col * BOLT_RADIANCE        # (how it looks; its Intensity is how much it lights the set)
+            core = 0.5 * float(d['thickness'])
+            for pts, thick, bright, first_only in channels:
+                level = (first if first_only else b) * bright
+                if level > 1e-3:
+                    out.append((pts, core * thick, tuple(float(x) for x in glow * level)))
+        return out
+
+    def lightning_fires(self, frame):
+        """Where lightning that sets fire strikes, as emitters: a burst of flame for a quarter of a second from the stroke."""
+        from ..engine.solver import EmitterGPU
+        out = []
+        if self.kind not in ('fire', 'both'):
+            return out
+        t = self.seconds(frame)
+        for i, d in enumerate(self.lights):
+            if not d['enabled'] or d['kind'] != 'lightning' or not d.get('ignites'):
+                continue
+            t0 = float(d['strike_at'])
+            if not (t0 <= t < t0 + 0.25):
+                continue
+            end = tuple(float(x) for x in self.get(('light', i, 'end'), frame))
+            env = 1.0 - (t - t0) / 0.25
+            out.append(EmitterGPU(shape='sphere', pos=end, size=(0.15, 0.15, 0.15), fuel=15.0 * env, temp=1.1 * env, radial=1.5,
+                                  vel_blend=0.3 * env, noise=0.8, noise_freq=6.0, seed=float(31 * i + 7)))
         return out
 
     # -- engine mapping --------------------------------------------------------------------------
@@ -578,6 +662,8 @@ class Scene:
                 color=tuple(float(x) * amount for x in e['color']), thickness=e['thickness'],
                 mesh=self.item_source(e), volume_mode=VOLUME_MODES.get(e.get('volume_mode', 'fill'), 0) if e['shape'] == 'volume' else 0,
                 **self._mesh_time(e, frame)))
+        if not embers_only and self.lights:
+            out = out + self.lightning_fires(frame)     # (flames where lightning strikes)
         return out[:MAX_EMITTERS]
 
     def item_source(self, d):
@@ -1086,6 +1172,9 @@ class Scene:
             'emitters': [{k: _to_json_value(v) for k, v in e.items() if k != 'name'} for e in self.emitters],
             'colliders': [{k: _to_json_value(v) for k, v in c.items() if k != 'name'} for c in self.colliders],
             'fabrics': [{k: _to_json_value(v) for k, v in f.items() if k != 'name'} for f in self.fabrics],
+            # (lightning that sets fire adds flames where it strikes)
+            'lightning': [{k: _to_json_value(l[k]) for k in ('position', 'end', 'strike_at', 'kind')}
+                          for l in self.lights if l.get('kind') == 'lightning' and l.get('ignites') and l.get('enabled')],
             'matter': [{k: _to_json_value(v) for k, v in m.items() if k != 'name'} for m in getattr(self, 'matter', None) or []],
             'fps': self.fps, 'start': self.start, 'layout': [list(x) if isinstance(x, tuple) else x for x in self.sim_layout(final)],
             'embers': {k: _to_json_value(v) for k, v in self.data['embers'].items()},

@@ -68,3 +68,27 @@ def test_a_rope_is_drawn_from_its_anchor_down_to_what_hangs_on_it(engine):
     assert len(ys) > 30
     assert np.ptp(ys) > 40 and np.ptp(xs) < 12          # a thin upright line
     assert abs(float(np.median(hold[ys, xs])) - 4.0) < 0.6   # about as far off as the ball (4 m)
+
+
+def test_lightning_is_drawn_glowing_down_its_channel(engine):
+    """A bolt from high above down to the ground, at its first flash: a bright line down the picture with a glow round it,
+    the set lit, and nothing drawn before it strikes."""
+    s = scene_of()
+    s.data['lighting'].update(sun_on=False, ambient_intensity=0.2)
+    s.add_light(kind='lightning', position=(0.0, 1.9, 0.0), end=(0.1, 0.0, 0.0), intensity=2e5, strike_at=0.2, branching=0.0,
+                thickness=0.03)
+    at = s.start + int(round(0.2 * s.fps))
+    engine.invalidate()
+    engine.prepare(s, final=False)
+    engine.simulate_to(s, at, cache=False)
+    engine.render(s, at, (320, 180))
+    st = engine.gpu.read(engine.stage.tex).astype(np.float32)[..., :3].max(-1)
+    col = st[20:160].max(0)                                      # the brightest down each column
+    assert col.max() > 5.0                                       # its core: far brighter than anything lit
+    assert np.sum(col > 1.0) < 80                                # a line, wandering as lightning does (its glow dimmer)
+    glow = st[90, int(np.argmax(col)) + 15]
+    assert 0.02 < glow < col.max()
+    engine.simulate_to(s, at - 3, cache=False)
+    engine.render(s, at - 3, (320, 180))
+    before = engine.gpu.read(engine.stage.tex).astype(np.float32)[..., :3].max()
+    assert before < 2.0

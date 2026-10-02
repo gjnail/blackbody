@@ -443,6 +443,11 @@ COMPONENTS = [
     Component('spot', 'Spotlight', 'Lights', 'A stage spot aimed down at the effect: its beam shows in the smoke.', 'bulb',
               scales=True, objects=[_L(name='Spotlight', kind='spot', position=(1.5, 3.0, 1.0), direction=(-0.45, -0.8, -0.3), intensity=20000.0,
                           cone=18.0, colour=(1.0, 0.95, 0.88))]),
+    Component('lightning', 'Lightning', 'Lights', 'A bolt of lightning from 4 m up striking the ground at half a second: it '
+              'flashes three times down a branching channel and lights the set, and sets fire to anything burnable it strikes '
+              '(move where it Strikes).', 'sparks', scales=True,
+              objects=[_L(name='Lightning', kind='lightning', position=(-0.5, 4.0, -0.3), end=(0.0, 0.0, 0.0), intensity=600000.0,
+                          strike_at=0.5, strokes=3, branching=0.6, thickness=0.03, colour=(0.8, 0.85, 1.0))]),
     Component('window', 'Window light', 'Lights', 'Soft light from a window to one side (an area light).', 'bulb',
               scales=True, objects=[_L(name='Window', kind='area', position=(-2.0, 1.6, 0.5), direction=(1.0, -0.2, 0.0), intensity=3000.0,
                           radius=0.6, colour=(0.85, 0.9, 1.0))]),

@@ -772,8 +772,9 @@ COLLIDER_PARAMS = [
 LIGHT_PARAMS = [
     Param('name', 'Name', 'str', 'Light'),
     B('enabled', 'Enabled', True),
-    E('kind', 'Kind', 'point', (('point', 'Point (a bulb, a lamp)'), ('spot', 'Spot'), ('area', 'Area (a window, a panel)')),
-      tip='A point light shines every way; a spot in a cone along its aim; an area light from a flat panel facing its aim, brightest straight in front.', group='Light'),
+    E('kind', 'Kind', 'point', (('point', 'Point (a bulb, a lamp)'), ('spot', 'Spot'), ('area', 'Area (a window, a panel)'),
+                               ('lightning', 'Lightning (a bolt or an arc)')),
+      tip='A point light shines every way; a spot in a cone along its aim; an area light from a flat panel facing its aim, brightest straight in front. Lightning is a bolt from Position to where it Strikes: a branching channel that flashes, lighting the set.', group='Light'),
     V('position', 'Position', (1.5, 2.0, 1.0), -100.0, 100.0, 'm', anim=True, decimals=3, group='Light'),
     V('direction', 'Aim', (0.0, -1.0, 0.0), -1.0, 1.0, '', anim=True, decimals=3, tip='The direction a spot or area light shines (any length).', group='Light'),
     C('colour', 'Colour', (1.0, 0.86, 0.68), group='Light'),
@@ -783,6 +784,19 @@ LIGHT_PARAMS = [
     F('cone', 'Cone angle', 30.0, 1.0, 90.0, '°', 1, tip='Spot: half-angle of the beam.', group='Light'),
     F('softness', 'Cone edge', 0.25, 0.0, 1.0, '', 2, tip='Spot: how soft the edge of the beam is.', group='Light'),
     B('shadows', 'Smoke shadows', True, tip='Smoke and steam between the light and a point shade it (beams through smoke).', group='Light'),
+    V('end', 'Strikes', (0.0, 0.0, 0.0), -1000.0, 1000.0, 'm', decimals=3, tip='Lightning: where the bolt strikes. It runs '
+      'from Position to here, jagged, branching on the way.', group='Lightning'),
+    F('strike_at', 'Strikes at', 0.5, -10.0, 600.0, 's', 2, tip='Lightning: when it strikes, in seconds from the first frame.',
+      group='Lightning'),
+    I('strokes', 'Flashes', 3, 1, 12, tip='Lightning: how many times it flashes down the same channel (its return strokes), '
+      'tens of milliseconds apart.', group='Lightning'),
+    F('branching', 'Branches', 0.5, 0.0, 1.0, '', 2, tip='Lightning: how many branches leave its channel (they show in the '
+      'first flash only).', group='Lightning'),
+    F('thickness', 'Thickness', 0.03, 0.002, 2.0, 'm', 3, tip='Lightning: how wide the bright core of its channel is; its glow '
+      'spreads much wider.', group='Lightning', log=True),
+    I('bolt_seed', 'Bolt seed', 0, 0, 9999, tip='Lightning: another number gives another bolt.', group='Lightning'),
+    B('ignites', 'Sets fire where it strikes', True, tip='Lightning: a burst of flame where it strikes (in a scene with fire), '
+      'which catches whatever there will burn.', group='Lightning'),
     B('in_footage', 'In the footage', True, tip='On for a real light on the set: the footage already shows its light, so the smoke only takes away the light it shadows from the ground and objects. Off for a light added in CG: it lights the ground and the objects in the shot as well, shadowed by them and by the smoke.', group='Light'),
 ]
 
