@@ -69,6 +69,12 @@ Notable changes to Blackbody. The format follows
   grass is hard to light. Drawn in the same light as the smoke, glowing where the sun is behind it, in fire and in
   liquid scenes. A preset, Meadow fire, and a guide, docs/grass.md.
 - Cloth and grass are drawn into one layer, so each hides what is behind it of the other.
+- Burnt things look burnt on the stage: a burnable object browns as it heats, blackens with glowing embers as it
+  burns, greys with ash and smoulders; the burnt floor blackens too.
+- Things that break and burn: an object both Breakable and Burnable burns piece by piece. Each piece catches where
+  flames touch it or from a burning piece glued to it, burns (thicker ones longer), feeding the fire, smoulders, and
+  most crumble to ash; the glue between pieces weakens as they char, so a burning structure falls in. A preset, Shed
+  on fire.
 - Sand, snow, mud, jelly and clay in the interface: the object list, Properties, outlines and handles in the viewer (a
   pour's nozzle and direction), Made of, Let go, Pour it from here and Start/Stop pouring from the right-click menu,
   timing lanes, a Sand & mud chip in Create; Effects gains Falling & breaking and Sand, snow & mud chips.

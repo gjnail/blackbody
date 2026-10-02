@@ -17,6 +17,8 @@ Add a block from the *Grass & plants* group in Create: a lawn, long grass, dry g
 - *Stiffness* and *Blade width* (advanced): times its kind's. Stiffer grass bends less in the wind and springs back faster.
 - *Own colour*: a colour of its own instead of its kind's (dried toward straw by its *Dryness*).
 
+Right-click a patch in the viewer for *Set it on fire* (a flame at one end), *Dry it out* or *Make it green*, *Kind*, and *Grow on objects too* or *on the ground only*. Its outline in the viewer shows the patch and how tall it grows.
+
 The blades are spread evenly over the patch, in tufts a little taller or shorter than their neighbours, thinning and shortening raggedly toward its edge.
 
 | Kind | Height | Blades a m² | What it does |

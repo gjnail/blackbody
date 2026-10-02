@@ -45,6 +45,8 @@ class StrandsEngine:
             hooks.append(self.cloth.hook)
         if self.strands_on and self._strands.burns:
             hooks.append(self._strands.hook)
+        if self.solids.active and self.solids.burning:   # (things that break and burn: engine._burn_pieces)
+            hooks.append(self.piece_fire.hook)
         if not hooks:
             return None
         if len(hooks) == 1:

@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Fire, water, cloth, destruction, sand and weather, simulated on your GPU and put into your footage.</b><br>
-  Build an effect from nothing or start from one of 93 presets, line it up with your shot, and render a finished composite or the passes your compositor wants.
+  Build an effect from nothing or start from one of 94 presets, line it up with your shot, and render a finished composite or the passes your compositor wants.
 </p>
 
 <p align="center">
@@ -73,7 +73,7 @@ Curtains, flags and towels are made from real fabrics with their measured weight
 
 <img src="docs/media/gif/tower_knockdown.gif" width="49%" alt="A bowling ball knocking down a tower of wooden blocks beside a falling domino run"> <img src="docs/media/gif/wall_smash.gif" width="49%" alt="A steel ball punching through a brick wall, the bricks above caving in">
 
-Any object can fall: it tumbles, slides, bounces, stacks and knocks things over, in real materials (wood, stone, brick, steel, glass, rubber and more), and the smoke, the water and the wind push it about. Things break where they are hit hard enough: a brick wall comes apart at the mortar, a window shatters round the stone thrown through it, a vase smashes on the tiles, in a puff of dust. Burning ones keep burning as they tumble, and lights or flames attached to them go along. [The guide](docs/physics.md)
+Any object can fall: it tumbles, slides, bounces, stacks and knocks things over, in real materials (wood, stone, brick, steel, glass, rubber and more), and the smoke, the water and the wind push it about. Things break where they are hit hard enough: a brick wall comes apart at the mortar, a window shatters round the stone thrown through it, a vase smashes on the tiles, in a puff of dust. Burning ones keep burning as they tumble, and lights or flames attached to them go along. Things that break and burn go piece by piece: a shed on fire chars, sags and falls in, its burnt pieces crumbling to ash. [The guide](docs/physics.md)
 
 <img src="docs/media/gif/wrecking_ball.gif" width="49%" alt="A wrecking ball on a crane's cable swinging through a brick wall"> <img src="docs/media/gif/window_smash.gif" width="49%" alt="A stone thrown through a window, shards breaking away and falling">
 
@@ -157,7 +157,7 @@ Blackbody opens in **Build**: an empty stage with a camera of your own. Put in o
 
 - **Animate it.** Click the ◆ next to a setting to keyframe it. The animation editor lists every animated setting with its keys, and the timeline shows each source's start and stop, each cloth's let-go time and each pour as bars you drag.
 - **Layers and roto.** Layers put several effects in one shot, such as a campfire in front and a waterfall behind, each its own simulation, composited back to front. Roto shapes drawn round what is in front of the effect, and keyed over the shot, put the effect behind them.
-- **Start from an effect.** The Effects tab has 93 presets, from a candle to a thunderstorm, sorted into fire, liquids, fabric, the sea, smoke, blasts, ice, weather, falling and breaking, and sand, snow and mud. Click one and it simulates live.
+- **Start from an effect.** The Effects tab has 94 presets, from a candle to a thunderstorm, sorted into fire, liquids, fabric, the sea, smoke, blasts, ice, weather, falling and breaking, and sand, snow and mud. Click one and it simulates live.
 
 <img src="docs/media/gif/ui-effects.gif" width="100%" alt="The Effects tab: the Falling and breaking chip and the wrecking ball, the Sand chip and the hopper, the Fire chip and the campfire">
 
@@ -212,7 +212,7 @@ The [tutorial](docs/tutorial.md) takes a shot from footage to final render in ab
 |---|---|
 | [Install and first steps](docs/getting-started.md) | Requirements, install, the window, building anything, putting an effect in your shot, text and logos, layers, animation |
 | [Tutorial: your first shot](docs/tutorial.md) | Footage, placing, matching, tracking, keyframes, rendering |
-| [Presets](docs/presets.md) | All 93 built-in effects |
+| [Presets](docs/presets.md) | All 94 built-in effects |
 | [Fire, smoke and sparks](docs/fire.md) | Puffing, swirl, sparks, colour, steam, spreading fire, rooms, flame fronts, meshes |
 | [Fabric and burning cloth](docs/fabric.md) | Real fabrics, burning through, soaking, dripping and steaming |
 | [Things that fall](docs/physics.md) | Rigid bodies, materials, breaking, ropes, springs and hinges, explosions, lightning, tilted objects, motors, the CG stage, CG objects in footage |

@@ -36,6 +36,8 @@
 //!include colour.wgsl
 //!include meshsdf.wgsl
 //!include colliders.wgsl
+//!include burn_common.wgsl
+//!include burnobj.wgsl
 
 const PI: f32 = 3.14159265;
 const FLOOR: i32 = 100;
@@ -84,6 +86,8 @@ struct Params {
   mhi: vec4<f32>,
   bolt: vec4<f32>,      // lightning: its first segment (piece index), how many, its glow's reach (m), its glow's strength
   gm: vec4<f32>,        // grass on the ground (strands.py): its map's corner (fire-local x, z), size (m; 0: none)
+  bf: vec4<f32>,        // the burnable floor (the simulation grid's bottom layer): its corner (fire-local x, z), cell (m), on (1/0)
+  bf2: vec4<f32>,       // its cells (x, z), burnable objects (the object-burn atlas) on (1/0), _
   ccnt: vec4<f32>,      // objects (count), _
   col: array<Collider, MAX_COLLIDERS>,
   mat: array<Mat, MAT_ROWS>,
@@ -108,7 +112,7 @@ struct Params {
 // o = spin (rad/s, world), material row; r = its centre in the object's frame before it broke, bounding radius.
 // A segment of a rope or a spring (material row ROPE_ROW on) is a prism along its y axis, its first planes round
 // its sides; its r = strands (0: a plain wire), its middle's distance along the rope (m), twist (radii per turn), _.
-struct PieceG { a: vec4<f32>, q: vec4<f32>, v: vec4<f32>, o: vec4<f32>, r: vec4<f32> };
+struct PieceG { a: vec4<f32>, q: vec4<f32>, v: vec4<f32>, o: vec4<f32>, r: vec4<f32>, b: vec4<f32> };   // b: its fire (burn_common.wgsl)
 @group(0) @binding(15) var<storage, read> PC: array<PieceG>;
 @group(0) @binding(16) var<storage, read> PL: array<vec4<f32>>;   // n, d in the piece's frame (n . x <= d); a cut face's n is 2 long
 @group(0) @binding(17) var<storage, read> GC: array<vec2<u32>>;   // per grid cell: first, count in GL
@@ -116,7 +120,10 @@ struct PieceG { a: vec4<f32>, q: vec4<f32>, v: vec4<f32>, o: vec4<f32>, r: vec4<
 @group(0) @binding(19) var out_hold: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(20) var m_look: texture_3d<f32>;   // the matter's albedo (linear rgb), roughness
 @group(0) @binding(21) var m_phi: texture_3d<f32>;
-@group(0) @binding(22) var gmap: texture_2d<f32>;     // the grass on the ground: how burnt, how thick (strand_map.wgsl)    // its distance to the surface (m), clear, sparkle, wrap
+@group(0) @binding(22) var gmap: texture_2d<f32>;     // the grass on the ground: how burnt, how thick (strand_map.wgsl)
+@group(0) @binding(23) var burn: texture_3d<f32>;     // the burnable floor's state (burn_common.wgsl), on the simulation grid
+@group(0) @binding(24) var burn_obj: texture_3d<f32>; // the burnable objects', each in its own frame (burnobj.wgsl)
+@group(0) @binding(25) var<storage, read> slots: array<BurnSlot>;    // its distance to the surface (m), clear, sparkle, wrap
 @group(1) @binding(0) var<uniform> U: Params;
 
 var<private> g_tau: f32;   // this sample's time in the shutter (s): objects are moved along their motion
@@ -879,6 +886,35 @@ fn rope_surface(s0: Surf, kp: u32, pose: array<vec4<f32>, 2>, pl: vec4<f32>, row
   return s;
 }
 
+// A burnable surface as the fire has left it (b: its spot's state, burn_common.wgsl): browned where it is heating, black
+// with char where it has burnt, flecked with grey ash where its fuel is nearly gone, glowing in cracks where it burns and
+// a dull red where it smoulders.
+fn burnt(s_in: Surf, b: vec4<f32>) -> Surf {
+  return burnt_at(s_in, b, s_in.p);
+}
+
+// The same, its flecks and embers placed by q (a piece's own frame, so they stay on it as it falls).
+fn burnt_at(s_in: Surf, b: vec4<f32>, q: vec3<f32>) -> Surf {
+  var s = s_in;
+  if (b.z < 0.5) { return s; }
+  // (burning wood blackens at once; it goes on charring deeper as its fuel goes)
+  let ch = max(burn_char(b), select(0.0, 0.8, burn_alight(b)));
+  let toast = select(0.0, clamp(b.y, 0.0, 1.0), b.y > 0.0 && b.y < 1.0 && b.z < 1.5);
+  s.alb = mix(s.alb, s.alb * vec3<f32>(0.45, 0.3, 0.14), 0.8 * toast);
+  let fleck = hash31(floor(q / 0.012) + vec3<f32>(3.0, 1.0, 7.0));
+  let ash = smoothstep(0.7, 1.0, ch) * smoothstep(0.65, 0.92, fleck) * 0.8;
+  s.alb = mix(s.alb, mix(vec3<f32>(0.026, 0.023, 0.02), vec3<f32>(0.25, 0.24, 0.23), ash), ch);
+  s.rough = mix(s.rough, 0.95, ch);
+  s.f0 = mix(s.f0, vec3<f32>(0.02), ch);
+  let flick = 0.75 + 0.5 * hash31(floor(q / 0.03) + vec3<f32>(floor(U.depth.z * 0.5), 5.0, 0.0));
+  if (burn_alight(b)) {
+    s.em += vec3<f32>(2.2, 0.55, 0.08) * (0.02 + 1.2 * smoothstep(0.78, 0.97, fleck)) * flick;
+  } else if (b.w > 0.0) {
+    s.em += vec3<f32>(0.8, 0.14, 0.02) * (b.w * smoothstep(0.75, 0.95, fleck)) * flick;
+  }
+  return s;
+}
+
 // The surface at a hit: where, which way it faces, and its material there.
 fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
   var s: Surf;
@@ -900,6 +936,13 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
         let ash = 0.7 * smoothstep(0.86, 0.97, hash31(vec3<f32>(floor(s.p.xz / 0.012), 7.0)));
         s.alb = mix(s.alb, mix(vec3<f32>(0.028, 0.025, 0.022), vec3<f32>(0.22, 0.21, 0.2), ash), 0.94 * gg.x);
         s.rough = mix(s.rough, 0.95, gg.x);
+      }
+    }
+    if (U.bf.w > 0.5) {
+      // the burnable floor (Spreading fire, Ground): its spot under here
+      let cg = vec2<i32>(floor((s.p.xz - U.bf.xy) / U.bf.z));
+      if (cg.x >= 0 && cg.y >= 0 && cg.x < i32(U.bf2.x) && cg.y < i32(U.bf2.y)) {
+        s = burnt(s, textureLoad(burn, vec3<i32>(cg.x, 0, cg.y), 0));
       }
     }
     s.f0 = vec3<f32>(0.04);
@@ -947,6 +990,7 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
     s.rough = clamp(select(m.c.w + pt.w, 0.9, cut), 0.02, 1.0);
     s.alb = min(base, vec3<f32>(0.95)) * ((1.0 - metal) * (1.0 - clamp(m.d.y, 0.0, 1.0)));
     s.f0 = mix(vec3<f32>(0.04), min(base, vec3<f32>(1.0)), metal);
+    if (P.b.z > 0.5) { s = burnt_at(s, P.b, q); }   // (a piece of something that burns: its own fire)
     return s;
   }
   let k = obj(h.id);
@@ -961,6 +1005,11 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
   s.rough = clamp(m.c.w + pt.w, 0.02, 1.0);
   s.alb = min(base, vec3<f32>(0.95)) * ((1.0 - metal) * (1.0 - clamp(m.d.y, 0.0, 1.0)));
   s.f0 = mix(vec3<f32>(0.04), min(base, vec3<f32>(1.0)), metal);
+  if (U.bf2.z > 0.5 && i32(k.m2.w) >= 0) {
+    // a burnable object: its spot just off the surface (its region of the object-burn atlas, in its own frame)
+    let slot = slots[i32(k.m2.w)];
+    s = burnt(s, obj_burn_at(k, slot, s.p + s.n * (0.75 * slot.dims.w)));
+  }
   return s;
 }
 

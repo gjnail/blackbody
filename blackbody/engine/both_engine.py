@@ -326,9 +326,12 @@ class BothEngine:
             ggust = scene.v('motion', 'gust', frame)
         pieces = poses is not None and self._pieces_for(scene, self.solver)
         lpieces = poses is not None and self._pieces_for(scene, L, 'liquid')
+        burning = poses is not None and self._burn_pieces(scene, fdt)   # (things that break and burn)
         dust = self.solids.dust(scene, fdt, n) if (poses is not None and self.solids.sets) else None
         with self.gpu.batch() as b:
             self._footage_solid(b, scene, frame)
+            if burning:
+                self.piece_fire.splat(b, self.solver)
             regions = solids.regions(scene) if solids else []
             if regions:
                 L.clear_float(b)
@@ -661,7 +664,7 @@ class BothEngine:
                                                plate_fit=plate_fit, samples=samples, shutter=lshutter, footage=footage,
                                                vol=vol, ground_y=vol.origin[1], frame=frame, objects=objects,
                                                floor=not wlook.bottomless, pieces=pieces, ropes=ropes, matter=matter, bolts=bolts,
-                                               grass=self._strands.ground_map(b) if grass else None)
+                                               grass=self._strands.ground_map(b) if grass else None, burns=surfaces)
                 if self.stage.has_pieces or self.stage.has_matter:   # the fire and the liquids stop at the pieces and the matter
                     r.hold_stage = self.stage.hold
                     r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])

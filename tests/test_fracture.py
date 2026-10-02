@@ -156,3 +156,94 @@ def test_breaking_is_deterministic():
     S2, m2 = run(scene_of(WALL, ball(4.0)), 1.0)
     assert len(S1.breaks) == len(S2.breaks)
     assert np.array_equal(m1[0], m2[0])
+
+
+# ---- breaking and burning (Breakable and Burnable: each piece burns on its own) ----------------------------------------
+
+SPREAD = dict(catch_temp=0.3, catch_time=0.4, creep=0.06, burn_time=2.0, smoulder=3.0, fuel=8.0, heat=0.5, smoke=1.0,
+              smoulder_smoke=1.0)
+POST = dict(name='Post', shape='box', position=(0.0, 0.8, 0.0), size=(0.07, 0.8, 0.07), material='wood', breakable=True,
+            burnable=True, pieces=14, held='base')
+
+
+def burning_post(**kw):
+    sc = scene_of(dict(POST, **kw))
+    sc.data['spread']['enabled'] = True
+    S = Solids()
+    S.configure(sc, ((96, 96, 96), 12.0 / 96, (-6.0, 0.0, -6.0)))
+    S.reset()
+    return sc, S
+
+
+def flames_at_foot(S, height=0.3):
+    """The gas temperature at fire_points(): a flame round the post's foot, up to `height`."""
+    pts, own = S.fire_points()
+    return np.where(pts[:, 1] < height, 1.0, 0.0), own
+
+
+def test_a_burnable_breakable_burns_piece_by_piece_and_falls_when_its_foot_burns_through():
+    sc, S = burning_post()
+    ps = S.sets[0]
+    assert ps.burnable and S.burning and (ps.fire[:, 0] == 1.0).all()
+    for f in range(sc.start + 1, sc.start + 1 + 24 * 20):
+        T, own = flames_at_foot(S)
+        S.burn(1.0 / 24.0, T, own, SPREAD)
+        S.advance(sc, f, 1.0 / 24.0, 1)
+        if f == sc.start + 24:
+            y = S.data.xipos[ps.bodies][:, 1]
+            alight = (ps.fire[:, 1] >= 1.0) & (ps.fire[:, 0] > 0.0)
+            assert alight[y < 0.3].all() and not alight[y > 0.9].any()   # its foot caught in the flames within a second
+    assert (ps.fire[:, 2] >= 1.5).all()                              # the fire crept up it, and it burnt through
+    assert S.data.xipos[ps.bodies[~ps.gone]][:, 1].max() < 0.3        # it fell
+    assert 0 < ps.gone.sum() < len(ps.gone)                          # most crumbled to ash, some charcoal is left
+    assert (S.piece_poses()[0]['pos'][ps.gone][:, 1] < -1.0e3).all()  # (the ash is drawn nowhere)
+
+
+def test_a_breakable_that_does_not_burn_or_is_not_near_fire_stays_whole():
+    sc, S = burning_post(burnable=False)
+    assert not S.burning
+    sc, S = burning_post()
+    for f in range(sc.start + 1, sc.start + 1 + 24 * 3):
+        pts, own = S.fire_points()
+        S.burn(1.0 / 24.0, np.zeros(len(pts)), own, SPREAD)
+        S.advance(sc, f, 1.0 / 24.0, 1)
+    ps = S.sets[0]
+    assert (ps.fire[:, 1] == 0.0).all() and S.data.xipos[ps.bodies][:, 1].max() > 1.4     # (still standing, unlit)
+
+
+def test_burning_pieces_feed_the_fire_and_their_glue_weakens_with_their_char():
+    sc, S = burning_post()
+    ps = S.sets[0]
+    for _ in range(24):
+        T, own = flames_at_foot(S)
+        S.burn(1.0 / 24.0, T, own, SPREAD)
+    pts, val = S.fuel_points(SPREAD)
+    alight = ((ps.fire[:, 1] >= 1.0) & (ps.fire[:, 0] > 0.0)).sum()
+    assert len(pts) == 7 * alight > 0 and (val[:, 0] > 0.0).all() and (val[:, 1] == 0.5).all()
+    for _ in range(24 * 2):
+        T, own = flames_at_foot(S)
+        S.burn(1.0 / 24.0, T, own, SPREAD)
+    W = S._w
+    char = 1.0 - ps.fire[:, 0]
+    worst = np.maximum(char[W['first']], np.where(W['other'] >= 0, char[np.maximum(W['other'], 0)], 0.0))
+    assert np.allclose(W['strength'], W['strength0'] * (1.0 - worst) ** 2)
+    assert W['strength'].min() < 0.5 * W['strength0'].max()
+
+
+def test_burning_is_kept_with_the_state_and_undone_by_a_reset():
+    sc, S = burning_post()
+    ps = S.sets[0]
+    for f in range(sc.start + 1, sc.start + 1 + 24 * 12):
+        T, own = flames_at_foot(S)
+        S.burn(1.0 / 24.0, T, own, SPREAD)
+        S.advance(sc, f, 1.0 / 24.0, 1)
+    assert ps.gone.any()
+    st = S.state()
+    fire, gone = ps.fire.copy(), ps.gone.copy()
+    S.reset()
+    assert not ps.gone.any() and (ps.fire[:, 0] == 1.0).all() and np.allclose(S._w['strength'], S._w['strength0'])
+    g = int(S.model.body_geomadr[int(ps.bodies[np.nonzero(gone)[0][0]])])
+    assert S.model.geom_contype[g] != 0                              # (the ash is whole again)
+    assert S.load_state(st)
+    assert np.array_equal(ps.fire, fire) and np.array_equal(ps.gone, gone)
+    assert S.model.geom_contype[g] == 0

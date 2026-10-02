@@ -136,7 +136,8 @@ class Stage:
         self.gpu = gpu
         self.k = gpu.kernel('stage.wgsl', ['utex3d', 'tex3d', 'tex3d', 'tex3d', 'tex3d', 'smp', 'smp', 'rbuf', 'rbuf',
                                            'rbuf', 'tex2d', 'tex2d', 'tex2d', 'tex3d', 'st2d:rgba16float:w',
-                                           'rbuf', 'rbuf', 'rbuf', 'rbuf', 'st2d:rgba16float:w', 'tex3d', 'tex3d', 'tex2d'],
+                                           'rbuf', 'rbuf', 'rbuf', 'rbuf', 'st2d:rgba16float:w', 'tex3d', 'tex3d', 'tex2d',
+                                           'utex3d', 'utex3d', 'rbuf'],
                             workgroup=(8, 8, 1))
         self._no_matter = gpu.texture3d((1, 1, 1), 'rgba16float', 'stage-no-matter')
         self.tex = None
@@ -188,16 +189,20 @@ class Stage:
                 continue
             frac = fractured(scene.colliders[ci], pose['size'], num(pose.get('hollow', 0.0)))
             n = min(len(frac.pieces), len(pose['pos']))
+            burn = pose.get('burn')
             for k in range(n):
                 pc = frac.pieces[k]
+                pos = np.asarray(pose['pos'][k], float)
+                if pos[1] < -1.0e3:
+                    continue                         # (burnt to ash)
                 pl = pc.planes.copy()
                 pl[:, 3] -= pl[:, :3] @ pc.centroid
                 pl[pc.inner, :3] *= 2.0              # (a cut face: drawn in the inside colour)
                 rad = float(np.linalg.norm(pc.verts - pc.centroid, axis=1).max())
-                pos = np.asarray(pose['pos'][k], float)
                 vel = np.asarray(pose['vel'][k], float)
                 P.append([[*pos, len(pl)], [*np.asarray(pose['quat'][k], float)], [*vel, first],
-                          [*np.asarray(pose['omega'][k], float), row_of[ci]], [*pc.centroid, rad]])
+                          [*np.asarray(pose['omega'][k], float), row_of[ci]], [*pc.centroid, rad],
+                          [*(np.asarray(burn[k], float) if burn is not None and k < len(burn) else (0.0, 0.0, 0.0, 0.0))]])
                 PL.append(pl)
                 first += len(pl)
                 centres.append(pos)
@@ -214,7 +219,7 @@ class Stage:
             for centre, quat, v, half, along in segments(pts, vel, rad):
                 pl = prism_planes(rad, half)
                 bound = math.hypot(half, rad)
-                P.append([[*centre, len(pl)], [*quat], [*v, first], [0.0, 0.0, 0.0, row], [strands, along, twist, bound]])
+                P.append([[*centre, len(pl)], [*quat], [*v, first], [0.0, 0.0, 0.0, row], [strands, along, twist, bound], [0.0] * 4])
                 PL.append(pl)
                 first += len(pl)
                 centres.append(centre)
@@ -225,7 +230,7 @@ class Stage:
             for centre, quat, v, half, _along in segments(np.asarray(pts, float), np.zeros((len(pts), 3)), rad):
                 pl = prism_planes(rad, half)
                 bound = math.hypot(half, rad)
-                P.append([[*centre, len(pl)], [*quat], [0.0, 0.0, 0.0, first], [0.0, 0.0, 0.0, LIGHTNING_ROW], [*glow, bound]])
+                P.append([[*centre, len(pl)], [*quat], [0.0, 0.0, 0.0, first], [0.0, 0.0, 0.0, LIGHTNING_ROW], [*glow, bound], [0.0] * 4])
                 PL.append(pl)
                 first += len(pl)
                 centres.append(centre)
@@ -308,7 +313,7 @@ class Stage:
 
     def draw(self, b, r, scene, camstate, fire, colliders, meshes, light: StageLight, comp, size, plate_fit=(1.0, 1.0),
              samples=1, shutter=0.0, footage=False, vol=None, ground_y=0.0, frame=0, objects=True, floor=True,
-             pieces=None, ropes=None, matter=None, bolts=None, grass=None):
+             pieces=None, ropes=None, matter=None, bolts=None, grass=None, burns=None):
         """Draw the stage into self.tex (size: the plate's, footage or output) and return it.
         r: the Renderer (its footage plate and holdouts, light volume, fire lights and lamp buffer);
         colliders: the objects as the solver has them (ColliderGPU, moving ones where they are this frame);
@@ -406,7 +411,7 @@ class Stage:
         else:
             nb = 0
             u.v4().v4()
-            bufs = [self._buffer('pieces', np.zeros(20, np.float32)), self._buffer('planes', np.zeros(4, np.float32)),
+            bufs = [self._buffer('pieces', np.zeros(24, np.float32)), self._buffer('planes', np.zeros(4, np.float32)),
                     self._buffer('cells', np.zeros(2, np.uint32)), self._buffer('list', np.zeros(1, np.uint32))]
         if surf is not None:
             phi, look0, _look1 = surf
@@ -424,6 +429,14 @@ class Stage:
             u.v4(*grass[1], *grass[2])
         else:
             u.v4()
+        # what the fire has done to the burnable floor and objects (Renderer SurfaceInputs: the frame's burn state)
+        floor_burn = burns.burn if (burns is not None and vol is not None) else None
+        obj_burn = burns.burn_obj if (burns is not None and burns.slots is not None) else None
+        if floor_burn is not None:
+            grid = tuple(burns.grid)
+            u.v4(vol.origin[0], vol.origin[2], burns.cell, 1.0).v4(grid[0], grid[2], 1.0 if obj_burn is not None else 0.0)
+        else:
+            u.v4().v4(0.0, 0.0, 1.0 if obj_burn is not None else 0.0)
         self.has_matter = surf is not None
         pack_colliders(u, cols, meshes)
         for i in range(MAX_COLLIDERS):
@@ -445,5 +458,7 @@ class Stage:
                        r.hold if (footage and r.hold is not None and any(r.hold_on)) else black,
                        env if env is not None else black,
                        r.lut_plate if (footage and r.lut_plate is not None) else r._lut_none,
-                       self.tex, *bufs, self.hold, *mtex, grass[0] if grass is not None else black], u, (pw, ph, 1))
+                       self.tex, *bufs, self.hold, *mtex, grass[0] if grass is not None else black,
+                       floor_burn if floor_burn is not None else r._empty, obj_burn if obj_burn is not None else r._empty,
+                       burns.slots if obj_burn is not None else r._no_slots], u, (pw, ph, 1))
         return self.tex

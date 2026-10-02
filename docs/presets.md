@@ -1,6 +1,6 @@
 # Presets
 
-Blackbody comes with 93 presets. Click one in the app's Effects panel to load it into your shot; every one is an ordinary scene you can change and save as your own. On the website the gallery plays a clip of each one that has one: <https://gjnail.github.io/blackbody/presets.html>.
+Blackbody comes with 94 presets. Click one in the app's Effects panel to load it into your shot; every one is an ordinary scene you can change and save as your own. On the website the gallery plays a clip of each one that has one: <https://gjnail.github.io/blackbody/presets.html>.
 
 ## Fire and smoke
 
@@ -54,6 +54,7 @@ Blackbody comes with 93 presets. Click one in the app's Effects panel to load it
 | <img src="../blackbody/assets/presets/vase_drop.png" width="200" alt=""> | **Vase off a table**<br>35 cm vase | A pottery vase knocked off the edge of a table: it tips, falls a metre, lands on its rim and shatters across the tiles. A breakable hollow cylinder of Ceramic. |
 | <img src="../blackbody/assets/presets/yard_blast.png" width="200" alt=""> | **Blast in a yard**<br>2 kg charge | Two kilograms of explosive go off among crates, barrels, a brick wall and a heap of sand: a fireball, the crates and barrels thrown clear, the wall blown down brick by brick, the sand flattened, then a column of smoke. An emitter with Blast set. |
 | <img src="../blackbody/assets/presets/cart_jump.png" width="200" alt=""> | **Cart off a ramp**<br>1 m cart, 6 m run | A cart with a fire on its back, its four wheels turned by motors, races up a ramp, jumps off its end and bowls over a tower of blocks, trailing flame and smoke, and brakes into a barrier. Motors on hinges (Joint › Motor speed, keyed down to brake), a tilted plank (Shape › Roll) and a fire attached to the cart. |
+| <img src="../blackbody/assets/presets/shed_fire.png" width="200" alt=""> | **Shed on fire**<br>2 m wooden shed | A fire inside a wooden shed: its walls and posts catch, char and weaken until the posts burn through, the roof falls in and the walls break up, the burnt pieces smouldering and crumbling to ash. Objects that are both Breakable and Burnable burn piece by piece. |
 
 ## Sand, snow and mud
 

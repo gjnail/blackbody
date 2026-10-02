@@ -301,6 +301,13 @@
   "blurb": "A line of fire lit along the edge of a field of dry long grass: the wind drives the front across it, the grass bending ahead of the flames, catching, burning down to black stubble and feeding the fire as it goes. Grass & plants: Long grass, dried."
  },
  {
+  "key": "shed_fire",
+  "name": "Shed on fire",
+  "category": "Things that fall",
+  "size": "2 m wooden shed",
+  "blurb": "A fire inside a wooden shed: its walls and posts catch, char and weaken until the posts burn through, the roof falls in and the walls break up, the burnt pieces smouldering and crumbling to ash. Objects that are both Breakable and Burnable burn piece by piece."
+ },
+ {
   "key": "sand_hopper",
   "name": "Sand from a hopper",
   "category": "Sand, snow and mud",

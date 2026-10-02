@@ -315,9 +315,12 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine)
             wind = scene.wind(frame, scene.v('camera', 'fire_yaw', frame))
             gust = scene.v('motion', 'gust', frame)
             ground_on = bool(d['ground'])
+        burning = poses is not None and self._burn_pieces(scene, fdt)   # (things that break and burn)
         pieces = poses is not None and self._pieces_for(scene, self.solver)
         dust = self.solids.dust(scene, fdt, n) if (poses is not None and self.solids.sets) else None
         with self.gpu.batch() as b:
+            if burning:
+                self.piece_fire.splat(b, self.solver)
             for i in range(n):
                 # emitters and colliders move within the frame, so fast ones leave a continuous trail
                 fs = frame - 1 + (i + 0.5) / n
@@ -377,11 +380,36 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine)
         p4 = np.zeros((cap, 4), np.float32)
         p4[:n, :3] = pts
         g.write_buffer(pb, p4)
-        k = g.kernel('solids_air.wgsl', ['tex3d', 'smp', 'rbuf', 'buf'], workgroup=(64, 1, 1))
+        k = g.kernel('solids_air.wgsl', ['tex3d', 'tex3d', 'smp', 'rbuf', 'buf'], workgroup=(64, 1, 1))
         with g.batch() as b:
-            b.run(k, [s.vel[0], g.linear, pb, vb], Uniforms().v4(*s.origin, s.h).v4(*s.dims, n), groups=groups_1d(n))
+            b.run(k, [s.vel[0], s.scal[0], g.linear, pb, vb], Uniforms().v4(*s.origin, s.h).v4(*s.dims, n), groups=groups_1d(n))
         out = np.frombuffer(g.read_buffer(vb, n * 16), np.float32).reshape(n, 4)
         self.solids.set_air(np.nan_to_num(out[:, :3]))
+
+    _pfire = None
+
+    @property
+    def piece_fire(self):
+        if self._pfire is None:
+            from .piece_fire import PieceFire
+            self._pfire = PieceFire(self.gpu)
+        return self._pfire
+
+    def _burn_pieces(self, scene, fdt):
+        """Things that break and burn (solids.py): the gas's heat round each piece, their fire through the frame, and the
+        fuel the burning ones give the gas this frame. True when some burn. (Before the frame's batch: it reads back.)"""
+        if not (self.solids.active and self.solids.burning and self.solver.dims):
+            if self._pfire is not None:
+                self._pfire.n = 0
+            return False
+        pf = self.piece_fire
+        pts, own = self.solids.fire_points()
+        T = pf.temperatures(self.solver, pts)
+        sp = scene.data['spread']
+        self.solids.burn(fdt, T, own, sp)
+        fp, fv = self.solids.fuel_points(sp)
+        pf.prepare_frame(self.solver, fp, fv)
+        return pf.n > 0
 
     def snapshot(self, scene=None):
         if self.kind == 'liquid':
@@ -763,7 +791,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine)
                 stage = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, size,
                                         plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage, vol=vol,
                                         ground_y=vol.origin[1], frame=frame, pieces=pieces, ropes=ropes, matter=matter, bolts=bolts,
-                                        grass=self._strands.ground_map(b) if grass else None)
+                                        grass=self._strands.ground_map(b) if grass else None, burns=surfaces)
                 if self.stage.has_pieces or self.stage.has_matter:   # the march stops at the pieces and the matter too
                     r.hold_stage = self.stage.hold
                     r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])

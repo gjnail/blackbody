@@ -63,6 +63,12 @@ The *Things that fall* blocks include a brick wall, a glass pane in its frame, a
 
 ![Ball through a brick wall](media/gif/wall_smash.gif "Ball through a brick wall: a 260 kg steel ball punches through, the bricks above cave in and the dust rolls out.")
 
+## Breaking and burning
+
+An object that both *Breaks* and is *Burnable* (with Spreading fire on) burns piece by piece. Each piece heats where flames or hot gas touch any part of it, or from a burning piece glued to it as the fire creeps across, and catches. It burns through its fuel over Spreading fire's *Burn time*, longer the thicker it is, giving the fire its fuel, heat and smoke. Then it smoulders, glowing as it dies down, and most pieces crumble to ash, while some stay as black charcoal. The glue between two pieces is only as strong as the less charred of them lets it be, so a burning structure sags and falls in: a post burnt through at its foot topples, and a shed's posts give way under its roof. Pieces that have fallen burn on where they lie.
+
+Preset: *Shed on fire*, a fire inside a wooden shed, its posts, walls and roof all breakable and burnable.
+
 ## Joints and ropes
 
 *Joined by* (Properties › *Joint*) holds an object to another object or to a fixed point. An object with a joint falls (it needs no *Falls*).
@@ -120,7 +126,7 @@ The *Machines* blocks (Create › *Machines*) are a motor cart (four rubber whee
 
 ## How they look
 
-Without footage, objects are drawn in CG in their materials (wood, stone, brick and so on), lit in the same light as the smoke: the key light with soft shadows, the sky (darker in corners and under things), the fire's own light with shadows, and the lights in the set. Glass and ice are clear: you see the fire and the set through them, bent, and the sky in them. *Own colour* draws one in a colour of its own.
+Without footage, objects are drawn in CG in their materials (wood, stone, brick and so on), lit in the same light as the smoke: the key light with soft shadows, the sky (darker in corners and under things), the fire's own light with shadows, and the lights in the set. Glass and ice are clear: you see the fire and the set through them, bent, and the sky in them. *Own colour* draws one in a colour of its own. What fire does to a burnable object shows: it browns as it heats, blackens as it burns, with embers glowing in its char, then greys with ash and dies down to a dull red smoulder. The floor where it has burnt (Spreading fire, *Ground*) blackens the same way.
 
 Behind them is the stage (Composite › *No footage*): a floor out to the horizon under a sky in the ambient light of Lighting (or the environment HDRI), or a flat background colour. *Floor* is what the floor is made of: studio grey, concrete, wooden boards, tiles, dirt, grass, sand or a 1 m checker for judging scale. The fire lights the floor and the objects around it, and smoke shades them. Presets keep the flat background they were made on; set *Backdrop* to *Floor and sky* to put them on the stage.
 

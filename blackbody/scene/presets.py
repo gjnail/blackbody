@@ -987,6 +987,43 @@ PRESETS = {
         ],
         'strands': [dict(name='Dry grass', kind='meadow', position=(0.0, 0.0, 0.0), size=(4.2, 0.45, 2.6), dryness=0.85)],
     },
+    'shed_fire': {
+        'name': 'Shed on fire', 'category': 'Things that fall', 'size': '2 m wooden shed',
+        'blurb': 'A fire inside a wooden shed: its walls and posts catch, char and weaken until the posts burn through, '
+                 'the roof falls in and the walls break up, the burnt pieces smouldering and crumbling to ash. Objects '
+                 'that are both Breakable and Burnable burn piece by piece.',
+        'render': {'end': 480},
+        'domain': {'size_x': 4.2, 'size_y': 4.4, 'size_z': 3.6, 'resolution': 160, 'preroll': 0.0},
+        'combustion': {'burn_rate': 6.0, 'heat': 0.6, 'soot': 0.45, 'cooling': 2.2, 'flame_life': 0.08},
+        'motion': {'buoyancy': 5.5, 'turbulence': 3.0, 'turb_freq': 2.0, 'vorticity': 1.6, 'disturbance': 2.0,
+                   'disturb_block': 0.04},
+        'spread': {'enabled': True, 'ground': False, 'coverage': 1.0, 'burn_time': 3.5, 'fuel': 6.0, 'heat': 0.5, 'smoke': 1.4,
+                   'catch_temp': 0.32, 'catch_time': 1.0, 'creep': 0.05, 'smoulder': 6.0, 'smoulder_smoke': 1.0},
+        'shading': {'flame_k': 1650, 'max_k': 2250, 'smoke_density': 4.5, 'smoke_albedo': (0.22, 0.21, 0.2), 'exposure': -1.0},
+        'lighting': {'sun_on': True, 'sun_intensity': 0.5, 'sun_azimuth': -60.0, 'sun_elevation': 8.0,
+                     'ambient': (0.32, 0.38, 0.5), 'ambient_intensity': 0.45},
+        'composite': {'backdrop': 'stage', 'floor': 'dirt'},
+        'embers': {'rate': 90, 'launch': 1.6, 'lifetime': 2.4},
+        'camera': {'distance': 7.0, 'target_y': 1.2, 'pitch': 8, 'yaw': 28, 'anchor_x': 0.5, 'anchor_y': 0.62, 'focal_mm': 35},
+        'colliders': [
+            *[dict(name=f'Post {k + 1}', shape='box', position=(sx * 0.95, 1.0, sz * 0.75), size=(0.06, 1.0, 0.06), material='wood',
+                   breakable=True, burnable=True, pieces=8, held='base')
+              for k, (sx, sz) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))],
+            dict(name='Back wall', shape='box', position=(0.0, 0.97, -0.75), size=(0.885, 0.95, 0.025), material='wood',
+                 breakable=True, burnable=True, fracture='splinters', pieces=24, held='base'),
+            dict(name='Left wall', shape='box', position=(-0.95, 0.97, 0.0), size=(0.025, 0.95, 0.685), material='wood',
+                 breakable=True, burnable=True, fracture='splinters', pieces=20, held='base'),
+            dict(name='Right wall', shape='box', position=(0.95, 0.97, 0.0), size=(0.025, 0.95, 0.685), material='wood',
+                 breakable=True, burnable=True, fracture='splinters', pieces=20, held='base'),
+            # (resting on the posts, held by nothing else)
+            dict(name='Roof', shape='box', position=(0.0, 2.045, 0.0), size=(1.08, 0.04, 0.88), material='wood',
+                 breakable=True, burnable=True, fracture='splinters', pieces=28, held='free'),
+        ],
+        'emitters': [
+            dict(name='Fire inside', shape='cylinder', position=(0.2, 0.06, -0.45), size=(0.2, 0.06, 0.2), fuel=8,
+                 temperature=0.5, noise_rise=1.5),
+        ],
+    },
     'crates_in_fire': {
         'name': 'Crates into a fire', 'category': 'Things that fall', 'size': '1 m campfire',
         'blurb': 'Three wooden crates dropped onto a campfire one after another: they land on the burning logs, shove '
@@ -1036,7 +1073,7 @@ ORDER = ['campfire', 'bonfire', 'torch', 'candle', 'gas_ring', 'pool_fire', 'fir
          'curtain_fire', 'fabric_curtain', 'wet_towels', 'armchair_fire', 'room_fire', 'backdraft', 'flash_fire', 'gas_cloud', 'coloured_flames', 'road_flare',
          'grinder_sparks', 'fireworks', 'car_through_smoke', 'flag_wind', 'kettle_steam', 'steam_vent',
          'crates_in_fire', 'tower_knockdown', 'wall_smash', 'wrecking_ball', 'window_smash', 'vase_drop',
-         'yard_blast', 'lightning_strike', 'cart_jump', 'meadow_fire', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag']
+         'yard_blast', 'lightning_strike', 'cart_jump', 'meadow_fire', 'shed_fire', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag']
 
 
 def make(name: str, fps=None, start=None) -> Scene:

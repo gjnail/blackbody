@@ -149,6 +149,15 @@ class PieceSet:
     held: bool = False          # held by its keys last step
     throw: np.ndarray = field(default_factory=lambda: np.zeros(3))   # Thrown at (m/s) and Spinning at (rad/s, world)
     spin: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    burnable: bool = False      # its pieces burn (burnable, with Spreading fire on)
+    fire: np.ndarray = None     # (n, 4) each piece as a burnable spot is (burn_common.wgsl): fuel left, catching (1:
+                                # alight), 1 (2 once burnt out), smoulder left
+    gone: np.ndarray = None     # (n,) crumbled to ash: no longer there
+    thick: np.ndarray = None    # (n,) its thinnest dimension (m)
+    area: np.ndarray = None     # (n,) its surface (m^2)
+    half: np.ndarray = None     # (n, 3) its half extents in its frame (m)
+    pairs: np.ndarray = None    # (b, 2) the pieces glued to each other
+    crumble: np.ndarray = None  # (n,) how far its smoulder dies down before it falls to ash (0..1)
 
 
 ROPE_BOUNCE = 0.3       # the share of its speed a falling thing keeps when its rope snaps taut
@@ -165,6 +174,8 @@ def blast_impulse(kg, r):
     r = max(float(r), w ** (1.0 / 3.0) / 3.0)
     return 2.0 * 200.0 * w ** (2.0 / 3.0) / r
 
+CHAR_DEPTH = 0.05       # m: a piece this thick burns for Spreading fire's Burn time; thicker ones longer, in proportion
+FIRE_AREA_DEPTH = 0.025 # m: a burning piece gives off fuel as a burning surface does over this depth of cells
 SPRING_DAMPING = 0.05   # a spring's damping ratio (with the object on its end)
 HINGE_SPAN = 0.05       # m: a hinge's two pins are at least this far apart
 MOTOR_STEPS = 4         # a motor closes the gap to its speed over about this many steps (fewer would overshoot)
@@ -437,6 +448,17 @@ class Solids:
                 g.priority = 1
                 contact(g, r['friction'], r['bounce'])
                 ps.names.append(b.name)
+            # (what burning needs: each piece's size and surface, and which are glued together)
+            ext = np.array([np.ptp(p.verts, axis=0) for p in frac.pieces], float)
+            ps.half = 0.5 * ext
+            ps.thick = np.maximum(ext.min(1), 1e-3)
+            ps.area = 2.0 * (ext[:, 0] * ext[:, 1] + ext[:, 1] * ext[:, 2] + ext[:, 2] * ext[:, 0])
+            ps.pairs = np.array([(bd.i, bd.j) for bd in frac.bonds], np.int64).reshape(-1, 2)
+            ps.burnable = bool(c.get('burnable')) and bool(scene.data['spread']['enabled'])
+            rng = np.random.default_rng(31 * i + 7)
+            # (most burnt-out pieces fall to ash as their embers die; some stay, black charcoal)
+            ps.crumble = np.where(rng.random(len(frac.pieces)) < 0.6, rng.random(len(frac.pieces)) * 0.8, -1.0)
+            self._reset_fire(ps)
             # the bonds: welds between pieces that share a cut
             stiff = [-k, -2.0 * math.sqrt(k)]
             for n, bond in enumerate(frac.bonds):
@@ -450,7 +472,7 @@ class Solids:
                 data = np.array(e.data, float)
                 data[0:3] = np.asarray(bond.centre, float) - frac.pieces[bond.j].centroid
                 e.data = data
-                ps.welds.append((e.name, bond.i, np.asarray(bond.normal, float), float(bond.area), strength))
+                ps.welds.append((e.name, bond.i, np.asarray(bond.normal, float), float(bond.area), strength, bond.j))
             # standing where it is: glued to the world along its base (or its base and sides)
             held = c.get('held', 'base')
             if not dynamic and held != 'free':
@@ -479,7 +501,7 @@ class Solids:
                     data = np.array(e.data, float)
                     data[0:3] = np.asarray(cg.pos, float) + R0 @ fc     # (the world's frame: where its glued face is)
                     e.data = data
-                    ps.welds.append((e.name, n, nrm, area, strength))
+                    ps.welds.append((e.name, n, nrm, area, strength, -1))
             sets.append(ps)
             if len(frac.pieces) > 150:
                 self.warnings.append(f'{c["name"]}: {len(frac.pieces)} pieces take a while to simulate')
@@ -490,10 +512,10 @@ class Solids:
         import mujoco
         m = self.model
         rows = []
-        for ps in self.sets:
-            for name, first, nrm, area, strength in ps.welds:
+        for si, ps in enumerate(self.sets):
+            for name, first, nrm, area, strength, other in ps.welds:
                 rows.append((mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_EQUALITY, name), int(ps.bodies[first]), nrm, area, strength,
-                             ps.index))
+                             ps.index, si, first, other))
         if not rows:
             self._w = None
             return
@@ -502,7 +524,10 @@ class Solids:
         lookup[eq] = np.arange(len(rows))
         self._w = dict(eq=eq, body=np.array([r[1] for r in rows], np.int64), normal=np.array([r[2] for r in rows], float),
                        area=np.array([r[3] for r in rows], float), strength=np.array([r[4] for r in rows], float),
-                       collider=np.array([r[5] for r in rows], np.int64), lookup=lookup, over=np.zeros(len(rows), np.int64))
+                       collider=np.array([r[5] for r in rows], np.int64), lookup=lookup, over=np.zeros(len(rows), np.int64),
+                       set=np.array([r[6] for r in rows], np.int64), first=np.array([r[7] for r in rows], np.int64),
+                       other=np.array([r[8] for r in rows], np.int64))
+        self._w['strength0'] = self._w['strength'].copy()
 
     def _build_joints(self, scene, spec, by_index, bodies, sets, mocap, k, dt):
         """The objects' ropes, springs, hinges and ball joints (Properties › Joint): sites on the two bodies, and a
@@ -789,7 +814,188 @@ class Solids:
                                  vel=np.stack([d.qvel[a:a + 3] for a in ps.vadr]) if len(ps.vadr) else np.zeros((0, 3)),
                                  omega=np.einsum('bij,bj->bi', rot, w_local), size=np.asarray(ps.size, float),
                                  hollow=np.float32(ps.hollow))
+            if ps.burnable:
+                e = out[ps.index]
+                e['burn'] = ps.fire.astype(np.float32).copy()
+                if ps.gone.any():       # (crumbled to ash: far below, where nothing draws or meets it)
+                    e['pos'][ps.gone] = (0.0, -1.0e4, 0.0)
+                    e['vel'][ps.gone] = 0.0
+                    e['omega'][ps.gone] = 0.0
         return out
+
+    # -- burning pieces ------------------------------------------------------------------------------
+
+    @property
+    def burning(self):
+        """Whether any breakable here burns (its pieces each burn on their own)."""
+        return any(ps.burnable for ps in self.sets)
+
+    @staticmethod
+    def _reset_fire(ps):
+        n = len(ps.names)
+        ps.fire = np.zeros((n, 4))
+        ps.fire[:, 0] = 1.0
+        ps.fire[:, 2] = 1.0 if ps.burnable else 0.0
+        ps.gone = np.zeros(n, bool)
+
+    # where on a piece the gas's temperature is taken: a 3 x 3 grid just off each of its six faces (its own frame, in half
+    # extents; the 1.0 across a face is moved 2 cm further out)
+    _FACE = np.array([[sgn * (ax == 0), sgn * (ax == 1), sgn * (ax == 2)] for ax in range(3) for sgn in (-1.0, 1.0)], float)
+    _GRID = np.array([(u, v) for u in (-0.7, 0.0, 0.7) for v in (-0.7, 0.0, 0.7)], float)
+
+    def _probe(self):
+        if getattr(self, '_probe_pts', None) is None:
+            pts = []
+            for f in self._FACE:
+                ax = int(np.argmax(np.abs(f)))
+                others = [a for a in range(3) if a != ax]
+                for u, v in self._GRID:
+                    q = f.copy()
+                    q[others[0]], q[others[1]] = u, v
+                    pts.append(q)
+            self._probe_pts = np.array(pts)          # (54, 3)
+        return self._probe_pts
+
+    def fire_points(self):
+        """Where to take the gas's temperature round the pieces that can still catch: a grid of points just off each of
+        their faces, so a flame licking any part of one is felt. (points (m, 3) fire-local, owners (m, 2): set, piece)."""
+        pts, own = [], []
+        if self.data is None:
+            return np.zeros((0, 3)), np.zeros((0, 2), np.int64)
+        d = self.data
+        probe = self._probe()
+        out = np.abs(probe) > 0.99                    # (the face's own axis: 2 cm further out)
+        for si, ps in enumerate(self.sets):
+            if not ps.burnable:
+                continue
+            live = np.nonzero(~ps.gone & (ps.fire[:, 2] < 1.5) & (ps.fire[:, 0] > 0.0) & (ps.fire[:, 1] < 1.0))[0]
+            if not len(live):
+                continue
+            c = d.xipos[ps.bodies[live]]
+            R = d.xmat[ps.bodies[live]].reshape(-1, 3, 3)
+            local = probe[None] * ps.half[live][:, None, :] + out[None] * np.sign(probe)[None] * 0.02     # (m, 54, 3)
+            p = c[:, None, :] + np.einsum('bij,bkj->bki', R, local)
+            pts.append(p.reshape(-1, 3))
+            own.append(np.stack([np.full(len(live) * len(probe), si), np.repeat(live, len(probe))], 1))
+        if not pts:
+            return np.zeros((0, 3)), np.zeros((0, 2), np.int64)
+        return np.concatenate(pts), np.concatenate(own).astype(np.int64)
+
+    def burn(self, dt, temps, owners, sp):
+        """Burn the pieces through dt seconds. temps: the gas temperature (field units) at fire_points(), owners its
+        owners; sp: the scene's Spreading fire (catch_temp, catch_time, creep, burn_time, smoulder). A piece heats in gas
+        hotter than catching temperature, or from a piece glued to it that burns (the fire creeping across it), and
+        catches; it burns through its fuel over Burn time (thicker pieces for longer), then smoulders, and when its
+        smoulder has died down far enough it crumbles to ash. Returns the pieces that crumbled: [(where, size)]."""
+        crumbled = []
+        if self.data is None:
+            return crumbled
+        catch_t = max(float(sp['catch_temp']), 1e-3)
+        inv_catch = 1.0 / max(float(sp['catch_time']), 1e-3)
+        creep = float(sp['creep'])
+        inv_smoulder = 1.0 / max(float(sp['smoulder']), 1e-3)
+        hot = {}
+        if len(temps):
+            for (si, k), T in zip(owners, temps):
+                key = (int(si), int(k))
+                hot[key] = max(hot.get(key, 0.0), float(T))
+        for si, ps in enumerate(self.sets):
+            if not ps.burnable:
+                continue
+            F = ps.fire
+            n = len(F)
+            T = np.array([hot.get((si, k), 0.0) for k in range(n)])
+            alight = (F[:, 2] < 1.5) & (F[:, 1] >= 1.0) & (F[:, 0] > 0.0) & ~ps.gone
+            nb = np.zeros(n, bool)
+            if len(ps.pairs):
+                a, b = ps.pairs[:, 0], ps.pairs[:, 1]
+                nb[b[alight[a]]] = True
+                nb[a[alight[b]]] = True
+            warming = ~alight & (F[:, 0] > 0.0) & (F[:, 2] < 1.5) & ~ps.gone
+            x = np.clip((T - catch_t) / (0.5 * catch_t + 0.02), 0.0, 1.0)
+            heat = x * x * (3.0 - 2.0 * x) * inv_catch + creep / ps.thick * nb
+            up = warming & (heat > 0.0)
+            F[up, 1] = np.minimum(F[up, 1] + heat[up] * dt, 1.0)
+            cool = warming & (heat <= 0.0)
+            F[cool, 1] = np.maximum(F[cool, 1] - 0.25 * inv_catch * dt, 0.0)
+            # burning: through its fuel, thicker pieces for longer
+            life = float(sp['burn_time']) * (1.0 + ps.thick / CHAR_DEPTH)
+            F[alight, 0] = np.maximum(F[alight, 0] - dt / life[alight], 0.0)
+            out = alight & (F[:, 0] <= 0.0)
+            F[out, 2] = 2.0
+            F[out, 3] = 1.0
+            done = (F[:, 2] >= 1.5) & ~ps.gone
+            F[done & ~out, 3] = np.maximum(F[done & ~out, 3] - inv_smoulder * dt, 0.0)
+            # to ash once its smoulder has died down far enough
+            for k in np.nonzero(done & (F[:, 3] <= ps.crumble))[0]:
+                crumbled.append((self.data.xipos[ps.bodies[k]].copy(), float(np.linalg.norm(ps.half[k]))))
+                self._crumble(si, ps, int(k))
+        self._weaken()
+        return crumbled
+
+    def _crumble(self, si, ps, k):
+        """Piece k of set ps falls to ash: unglued, meeting nothing, and drawn nowhere (piece_poses)."""
+        m, d = self.model, self.data
+        ps.gone[k] = True
+        bid = int(ps.bodies[k])
+        self.breaks.append((self.time, d.xipos[bid].copy(), 0.25 * float(ps.area[k]), ps.index))   # (a puff of ash)
+        g0, ng = int(m.body_geomadr[bid]), int(m.body_geomnum[bid])
+        m.geom_contype[g0:g0 + ng] = 0
+        m.geom_conaffinity[g0:g0 + ng] = 0
+        d.qvel[ps.vadr[k]:ps.vadr[k] + 6] = 0.0
+        W = self._w
+        if W is not None:
+            mine = (W['set'] == si) & ((W['first'] == k) | (W['other'] == k))
+            d.eq_active[W['eq'][mine]] = 0
+            W['over'][mine] = -(1 << 40)
+
+    def _weaken(self):
+        """The glue between burning pieces: as strong as the less charred of the two lets it be, (1 - char)^2."""
+        W = self._w
+        if W is None or not self.burning:
+            return
+        char = np.zeros(len(W['eq']))
+        for si, ps in enumerate(self.sets):
+            if not ps.burnable:
+                continue
+            rows = W['set'] == si
+            c = 1.0 - ps.fire[:, 0]
+            a = c[W['first'][rows]]
+            o = W['other'][rows]
+            b = np.where(o >= 0, c[np.maximum(o, 0)], 0.0)
+            char[rows] = np.maximum(a, b)
+        W['strength'] = W['strength0'] * (1.0 - np.clip(char, 0.0, 1.0)) ** 2
+
+    def fuel_points(self, sp):
+        """What the burning pieces give the gas: (points (m, 3) fire-local, per point (fuel F m^3/s, heat (field
+        temperature), smoke /s)): each burning piece's middle and its faces, as a burning surface its size would."""
+        if self.data is None or not self.burning:
+            return np.zeros((0, 3)), np.zeros((0, 3))
+        d = self.data
+        pts, val = [], []
+        for ps in self.sets:
+            if not ps.burnable:
+                continue
+            on = np.nonzero((ps.fire[:, 2] < 1.5) & (ps.fire[:, 1] >= 1.0) & (ps.fire[:, 0] > 0.0) & ~ps.gone)[0]
+            sm = np.nonzero((ps.fire[:, 2] >= 1.5) & (ps.fire[:, 3] > 0.0) & ~ps.gone)[0]
+            for idx, flame in ((on, True), (sm, False)):
+                if not len(idx):
+                    continue
+                c = d.xipos[ps.bodies[idx]]
+                R = d.xmat[ps.bodies[idx]].reshape(-1, 3, 3)
+                off = np.einsum('bij,kbj->kbi', R, (self.SIDES[:, None, :] * (0.5 * ps.half[idx])[None]))
+                p = np.concatenate([c[None], c[None] + off], 0).reshape(-1, 3)
+                rate = float(sp['fuel']) * ps.area[idx] * FIRE_AREA_DEPTH / 7.0
+                if flame:
+                    v = np.stack([rate, np.full(len(idx), float(sp['heat'])), rate * float(sp['smoke'])], 1)
+                else:   # smouldering: a little smoke and warmth, no fuel
+                    w = ps.fire[idx, 3]
+                    v = np.stack([np.zeros(len(idx)), 0.45 * float(sp['heat']) * w, rate * float(sp['smoulder_smoke']) * w], 1)
+                pts.append(p)
+                val.append(np.tile(v, (7, 1)))
+        if not pts:
+            return np.zeros((0, 3)), np.zeros((0, 3))
+        return np.concatenate(pts), np.concatenate(val)
 
     def _mesh_boxes(self, scene, c, most=600):
         """A fixed mesh collider as boxes filling its inside, in its own frame (m): [(half extents, centre)], or
@@ -1026,6 +1232,7 @@ class Solids:
         self.joints = joints
         self.snaps = []
         self._tendon0 = (m.tendon_limited.copy(), m.tendon_stiffness.copy(), m.tendon_damping.copy())
+        self._contype0, self._conaff0 = m.geom_contype.copy(), m.geom_conaffinity.copy()   # (a piece burnt to ash meets nothing)
         for n, bd in enumerate(bodies):
             bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, f'body{n}')
             bd.body_id = bid
@@ -1227,6 +1434,7 @@ class Solids:
         self.snaps = []
         self._pushed = {}
         self._unsnap_all()
+        self._unash()
         if self._w is not None:
             self._w['over'][:] = 0
         for ps in self.sets:
@@ -1622,7 +1830,8 @@ class Solids:
                     eq_active=d.eq_active.copy(), over=None if self._w is None else self._w['over'].copy(),
                     pieces={int(k): {kk: np.asarray(vv, np.float32) for kk, vv in v.items()} for k, v in self.piece_poses().items()},
                     joints=[bool(jt.broken) for jt in self.joints],
-                    ropes={int(k): {kk: np.asarray(vv, np.float32) for kk, vv in v.items()} for k, v in self.rope_poses().items()})
+                    ropes={int(k): {kk: np.asarray(vv, np.float32) for kk, vv in v.items()} for k, v in self.rope_poses().items()},
+                    fire=[None if not ps.burnable else (ps.fire.copy(), ps.gone.copy()) for ps in self.sets])
 
     def load_state(self, st):
         """Carry on from a saved state (state()). False if it does not fit the current model."""
@@ -1649,10 +1858,36 @@ class Solids:
         for jt, broken in zip(self.joints, st.get('joints') or []):
             if broken:
                 self._snap(jt)
+        self._unash()
+        for si, (ps, f) in enumerate(zip(self.sets, st.get('fire') or [])):
+            if f is not None and ps.burnable and np.shape(f[0]) == ps.fire.shape:
+                ps.fire[:] = f[0]
+                for k in np.nonzero(np.asarray(f[1], bool))[0]:
+                    self._crumble(si, ps, int(k))
+        if self._w is not None and st.get('over') is not None and np.shape(st['over']) == self._w['over'].shape:
+            self._w['over'][:] = st['over']
+        self._weaken()
         self.snaps = []
         self.started = True
         self._last = self._poses()
         return True
+
+    def _unash(self):
+        """Every burnt piece whole again (its contacts as built), and every piece unburnt."""
+        if self.model is None:
+            return
+        m = self.model
+        for ps in self.sets:
+            if ps.gone is not None and ps.gone.any():
+                for k in np.nonzero(ps.gone)[0]:
+                    bid = int(ps.bodies[k])
+                    g0, ng = int(m.body_geomadr[bid]), int(m.body_geomnum[bid])
+                    m.geom_contype[g0:g0 + ng] = self._contype0[g0:g0 + ng]
+                    m.geom_conaffinity[g0:g0 + ng] = self._conaff0[g0:g0 + ng]
+            if ps.fire is not None:
+                self._reset_fire(ps)
+        if self._w is not None:
+            self._w['strength'] = self._w['strength0'].copy()
 
     @staticmethod
     def overrides_from(state):
