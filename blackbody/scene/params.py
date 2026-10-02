@@ -870,6 +870,10 @@ FABRIC_PARAMS = [
       'folds (starched, waxed); lower crumples finely.', group='Fabric', log=True),
     B('self_collide', 'Folds on itself', True, tip='The cloth cannot pass through itself as it folds and crumples.', group='Fabric',
       advanced=True),
+    B('tears', 'Tears', False, tip='It rips where it is pulled too far: caught on something moving through it (a wrecking ball, a '
+      'falling crate), or overloaded (sand heaped on a sling). The rip runs on from where it starts, ragged.', group='Fabric'),
+    F('tear_strength', 'Tear strength', 1.0, 0.2, 5.0, '×', 2, tip='Times how far its threads stretch before they break (canvas '
+      'and nylon ripstop hold out longest, chiffon and linen give soonest).', group='Fabric', log=True),
     B('burnable', 'Burnable', True, tip='It catches where the gas around it is hot enough, burns (feeding the fire), chars and burns '
       'through. Synthetics shrink away from the heat and melt first.', group='Burning'),
     F('flammability', 'Flammability', 1.0, 0.1, 5.0, '×', 2, tip='How readily it catches and how much fuel it gives off, times the '

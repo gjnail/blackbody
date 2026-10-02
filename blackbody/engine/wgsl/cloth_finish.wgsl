@@ -48,9 +48,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var st = S_in[i];
   if (gone(st)) {
     // burnt off: a flake of char (or a drop of melt) carried by the air. It cools toward the gas round
-    // it in a moment, glowing as it goes (in the flames it stays hot); w counts its age (s)
+    // it in a moment, glowing as it goes (in the flames it stays hot); w counts its age (s). (Torn away,
+    // cloth_tear.wgsl: z -1, and no flake.)
     let tg0 = gas_kelvin(X[i].xyz);
-    S_out[i] = vec4<f32>(tg0 + (st.x - tg0) * exp(-dt / 0.6), st.y, 0.0, st.w + dt);
+    S_out[i] = vec4<f32>(tg0 + (st.x - tg0) * exp(-dt / 0.6), st.y, select(0.0, -1.0, st.z < -0.5), st.w + dt);
     return;
   }
   let mat = M[u32(fi + 0.5)];

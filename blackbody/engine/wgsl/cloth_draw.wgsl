@@ -94,7 +94,8 @@ fn vs(@builtin(vertex_index) vid: u32) -> VOut {
   // burnt away: a triangle goes when all of it has, or when what has burnt off it has drifted away
   // as ash (it would stretch across the gap); otherwise its hole opens inside it (the fragments)
   let g3 = vec3<bool>(gone(S[t.x]), gone(S[t.y]), gone(S[t.z]));
-  var cut = all(g3);
+  // (torn away, cloth_tear.wgsl: a rip opens at once, with no burnt edge)
+  var cut = all(g3) || S[t.x].z < -0.5 || S[t.y].z < -0.5 || S[t.z].z < -0.5;
   if (any(g3) && !cut) {
     let e0 = length(X[t.x].xyz - X[t.y].xyz) / max(length(UV[t.x].xy - UV[t.y].xy), 1e-6);
     let e1 = length(X[t.y].xyz - X[t.z].xyz) / max(length(UV[t.y].xy - UV[t.z].xy), 1e-6);

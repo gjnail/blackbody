@@ -105,6 +105,8 @@ Notable changes to Blackbody. The format follows
 - Things that burn: dry leaves, sawdust and coal (Matter › Made of) catch where the fire's heat takes them past their
   ignition point, give the fire their fuel as they burn (so it runs through a pile by itself: leaves in a flare of
   flame, sawdust smouldering, coal glowing) and burn down to a little ash.
+- Cloth that tears (Fabric › Tears, Tear strength): it rips where it is pulled too far, caught on something moving
+  through it or overloaded, the rip running on from where it starts.
 - Cloth and sand, snow, mud, jelly and clay meet: matter cannot pass through fabric, from either side. Sand poured onto
   a sling heaps in it and weighs it down, and a sheet dropped onto a heap drapes over it and leaves it standing.
   Preset: Sand into a sling.

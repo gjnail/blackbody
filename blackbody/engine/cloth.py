@@ -90,39 +90,43 @@ class Material:
     soak: float = 1.5      # s for it to soak through under water (synthetics and wool shed water at first)
     wick: float = 1.0e-5   # m^2/s: how fast water spreads along it by capillarity (h^2 = wick * t, Lucas-Washburn)
     retain: float = 0.5    # share of a soaking (absorb) it keeps once it has drained: the rest runs down and drips
+    tears_at: float = 0.6  # how far past its length a thread stretches before it breaks (with Tears on: cloth_tear.wgsl;
+                           # the cloth's soft stretch's, not the fibre's: a sling laden with sand stretches some 20 to 35%)
 
 
 MATERIALS = {
     'cotton': Material('Cotton (shirting, sheets)', 0.15, 3000.0, 60.0, 1.0e-5, 0.4, 0.5, 0.0008, 620.0, 4.0, 1100.0, 0.9, 0.08,
                        (0.78, 0.74, 0.66), 0.35, 0.55, translucency=0.25, pitch=0.0003,
-                       fibre=1540.0, absorb=2.0, wick=1.20e-05, retain=0.55, soak=1.0),
+                       fibre=1540.0, absorb=2.0, wick=1.20e-05, retain=0.55, soak=1.0, tears_at=0.6),
     'linen': Material('Linen', 0.18, 5000.0, 90.0, 2.0e-5, 0.4, 0.5, 0.0009, 620.0, 4.0, 1100.0, 0.9, 0.08,
                       (0.72, 0.66, 0.55), 0.25, 0.6, translucency=0.2, pitch=0.0005,
-                      fibre=1500.0, absorb=1.8, wick=1.50e-05, retain=0.5, soak=1.0),
+                      fibre=1500.0, absorb=1.8, wick=1.50e-05, retain=0.5, soak=1.0, tears_at=0.45),
     'silk': Material('Silk', 0.06, 2000.0, 20.0, 1.0e-6, 0.3, 0.3, 0.0004, 840.0, 6.0, 900.0, 0.6, 0.12,
                      (0.62, 0.08, 0.10), 0.25, 0.35, spec=0.6, spec_rough=(0.12, 0.45), translucency=0.45, pitch=0.0001,
-                     fibre=1340.0, absorb=1.2, wick=8.00e-06, retain=0.5, soak=2.0),
+                     fibre=1340.0, absorb=1.2, wick=8.00e-06, retain=0.5, soak=2.0, tears_at=0.7),
     'chiffon': Material('Chiffon', 0.035, 800.0, 8.0, 3.0e-7, 0.3, 0.3, 0.0003, 700.0, 2.0, 1050.0, 0.9, 0.1,
                         (0.9, 0.86, 0.84), 0.3, 0.4, spec=0.15, translucency=0.7, pitch=0.00015,
-                        fibre=1380.0, absorb=0.6, wick=3.00e-06, retain=0.3, soak=3.0),
+                        fibre=1380.0, absorb=0.6, wick=3.00e-06, retain=0.3, soak=3.0, tears_at=0.5),
     'wool': Material('Wool', 0.28, 1500.0, 40.0, 3.0e-5, 0.6, 0.6, 0.0015, 870.0, 8.0, 700.0, 0.35, 0.2,
                      (0.35, 0.3, 0.26), 0.5, 0.8, translucency=0.08, pitch=0.001, weave='twill',
-                     fibre=1310.0, absorb=1.8, wick=2.50e-06, retain=0.6, soak=4.0),
+                     fibre=1310.0, absorb=1.8, wick=2.50e-06, retain=0.6, soak=4.0, tears_at=1.0),
     'denim': Material('Denim', 0.4, 8000.0, 150.0, 1.0e-4, 0.5, 0.6, 0.0012, 640.0, 6.0, 1100.0, 0.9, 0.1,
                       (0.12, 0.2, 0.36), 0.15, 0.6, translucency=0.02, pitch=0.0006, weave='twill', weave_depth=0.7,
-                      fibre=1540.0, absorb=1.6, wick=8.00e-06, retain=0.6, soak=2.0),
+                      fibre=1540.0, absorb=1.6, wick=8.00e-06, retain=0.6, soak=2.0, tears_at=0.8),
     'canvas': Material('Canvas (tents, sails)', 0.4, 10000.0, 300.0, 3.0e-4, 0.6, 0.6, 0.0012, 640.0, 7.0, 1100.0, 0.9, 0.1,
                        (0.66, 0.6, 0.47), 0.1, 0.7, translucency=0.03, pitch=0.0008, weave_depth=0.7,
-                       fibre=1540.0, absorb=1.4, wick=8.00e-06, retain=0.6, soak=3.0),
+                       fibre=1540.0, absorb=1.4, wick=8.00e-06, retain=0.6, soak=3.0, tears_at=1.0),
     'velvet': Material('Velvet', 0.3, 3000.0, 60.0, 4.0e-5, 0.7, 0.7, 0.002, 620.0, 5.0, 1100.0, 0.9, 0.12,
                        (0.35, 0.03, 0.06), 1.0, 0.3, translucency=0.02, pitch=0.0003, weave='pile',
-                       fibre=1450.0, absorb=2.4, wick=1.00e-05, retain=0.6, soak=1.5),
+                       fibre=1450.0, absorb=2.4, wick=1.00e-05, retain=0.6, soak=1.5, tears_at=0.7),
     'polyester': Material('Polyester', 0.12, 4000.0, 50.0, 1.5e-5, 0.3, 0.35, 0.0007, 760.0, 3.0, 1050.0, 1.0, 0.35,
                           (0.8, 0.8, 0.82), 0.3, 0.45, spec=0.2, translucency=0.2, pitch=0.0003,
-                          soften=470.0, melt=530.0, shrink=0.3, fibre=1380.0, absorb=0.6, wick=1.50e-06, retain=0.25, soak=5.0),
+                          soften=470.0, melt=530.0, shrink=0.3, fibre=1380.0, absorb=0.6, wick=1.50e-06, retain=0.25, soak=5.0,
+                          tears_at=1.0),
     'nylon': Material('Nylon (flags)', 0.07, 3000.0, 30.0, 2.0e-6, 0.2, 0.3, 0.0004, 700.0, 2.5, 1050.0, 1.0, 0.3,
                       (0.75, 0.08, 0.06), 0.25, 0.4, spec=0.3, spec_rough=(0.15, 0.5), translucency=0.35, pitch=0.0004,
-                      weave='ripstop', soften=450.0, melt=490.0, shrink=0.35, fibre=1140.0, absorb=0.6, wick=1.50e-06, retain=0.25, soak=4.0),
+                      weave='ripstop', soften=450.0, melt=490.0, shrink=0.35, fibre=1140.0, absorb=0.6, wick=1.50e-06, retain=0.25, soak=4.0,
+                      tears_at=1.5),
 }
 
 WEAVES = {'none': 0.0, 'plain': 1.0, 'twill': 2.0, 'pile': 3.0, 'ripstop': 4.0}
@@ -149,6 +153,8 @@ class FabricSpec:
     flammability: float = 1.0
     colour: tuple | None = None
     self_collide: bool = True
+    tears: bool = False             # it tears where a thread is pulled past its breaking stretch (cloth_tear.wgsl)
+    tear_strength: float = 1.0      # times the material's breaking stretch
 
     def key(self):
         return (self.shape, self.mesh, round(self.width, 6), round(self.height, 6), round(self.fullness, 4),
@@ -542,6 +548,10 @@ class Cloth:
         self.k_collide = g.kernel('cloth_collide.wgsl', ['buf', 'rbuf', 'rbuf', 'rbuf', 'rbuf', 'utex3d', 'tex3d', 'utex3d', 'smp'],
                                   workgroup=(64, 1, 1))
         self.matter_link = None       # the matter this frame (matter.py cloth_link): it drapes over it and is pushed by it
+        tear = ['rbuf', 'rbuf', 'buf', 'rbuf', 'rbuf', 'rbuf', 'buf']
+        self.k_tear_load = g.kernel('cloth_tear.wgsl', tear, entry='load', workgroup=(64, 1, 1))
+        self.k_tear_mark = g.kernel('cloth_tear.wgsl', tear, entry='mark', workgroup=(64, 1, 1))
+        self.k_tear = g.kernel('cloth_tear.wgsl', tear, entry='tear', workgroup=(64, 1, 1))
         self.k_finish = g.kernel('cloth_finish.wgsl', ['rbuf', 'buf', 'buf', 'rbuf', 'rbuf', 'buf', 'rbuf', 'rbuf', 'tex3d', 'smp'],
                                  workgroup=(64, 1, 1))
         self.k_normals = g.kernel('cloth_normals.wgsl', ['rbuf', 'rbuf', 'rbuf', 'rbuf', 'buf'], workgroup=(64, 1, 1))
@@ -599,6 +609,7 @@ class Cloth:
         mk = lambda name, arr: self._upload(name, np.ascontiguousarray(arr))
         for name in ('X', 'P', 'V', 'S', 'S2', 'N', 'D', 'IMP', 'MP'):
             self.bufs[name] = g.buffer(max(16, n * 16), f'cloth-{name}')
+        self.bufs['TR'] = g.buffer(max(16, n * 16), 'cloth-tear')
         mk('R', np.concatenate([B.rest, B.inv_mass[:, None]], 1).astype(np.float32))
         mk('UV', B.uv)
         mk('T', B.tris)
@@ -679,7 +690,8 @@ class Cloth:
                       m.cn, m.ct, m.ignition, m.burn_time,
                       m.burn_temp, m.fuel, m.smoke, tau,
                       m.soften, m.melt, m.shrink, 1.0 if s.burnable else 0.0,
-                      m.spread, m.char_shrink, max(s.flammability, 0.0), 0.0,
+                      m.spread, m.char_shrink, max(s.flammability, 0.0),
+                      m.tears_at * max(s.tear_strength, 0.01) if s.tears else 0.0,
                       m.fibre, m.absorb, m.soak, 0.0,
                       m.wick, m.retain, 0.0, 0.0)
             col = s.colour if s.colour is not None else m.colour
@@ -779,6 +791,7 @@ class Cloth:
         cell = 3.5 * B.radius
         rad = np.zeros(16, np.float32)
         rad[:len(B.radii)] = B.radii
+        tears = any(s.tears for s in self.specs)
         radiant = RADIANT and gas and self._radiation(b, solver, amb, flame, maxk)
         for _ in range(max(1, steps)):
             u = Uniforms().v4(h, n, 9.81, 1.0 if gas else 0.0)
@@ -832,6 +845,15 @@ class Cloth:
                 cu.v4().v4(1.0, 1.0, 1.0, 0.0)
                 msurf, mvel = self._dummy(), self._dummy_u()
             b.run(self.k_collide, [k['X'], k['P'], k['D'], k['V'], k['M'], atlas, msurf, mvel, lin], cu, (n, 1, 1))
+            if tears:
+                # threads pulled past their breaking stretch tear (cloth_tear.wgsl)
+                b.clear_buffer(k['TR'])
+                ne = len(B.stretch)
+                tu = Uniforms().v4(ne, n)
+                res = [k['X'], k['C'], k['S'], k['V'], k['M'], k['UV'], k['TR']]
+                b.run(self.k_tear_load, res, tu, (ne, 1, 1))
+                b.run(self.k_tear_mark, res, tu, (ne, 1, 1))
+                b.run(self.k_tear, res, tu, (n, 1, 1))
             fu = Uniforms().v4(h, n, 1.0 if gas else 0.0)
             fu.raw(grid.data)
             fu.v4(amb, flame, maxk)

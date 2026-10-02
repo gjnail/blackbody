@@ -414,7 +414,8 @@ class Scene:
                 pins=d['pins'], material=d['material'], stiffness=float(d['stiffness']), bend=float(d['bend']),
                 weight=float(d['weight']), burnable=bool(d['burnable']), flammability=float(d['flammability']),
                 wetness=float(d.get('wetness', 0.0)),
-                colour=tuple(float(x) for x in d['colour']), self_collide=bool(d['self_collide'])))
+                colour=tuple(float(x) for x in d['colour']), self_collide=bool(d['self_collide']),
+                tears=bool(d.get('tears', False)), tear_strength=float(d.get('tear_strength', 1.0))))
         return out[:MAX_FABRICS]
 
     def fabrics_at(self, frame, moved=None):

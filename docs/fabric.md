@@ -12,6 +12,10 @@
 
 *Material* is a real fabric with its measured weight, stretch and bending stiffness: cotton, linen, silk, chiffon, wool, denim, canvas, velvet, polyester and nylon. Silk and chiffon flow and crumple finely, canvas and denim fold in big rounded folds. *Weight*, *Stretch* and *Stiffness* scale the material's.
 
+## Tearing
+
+*Tears* (off unless you turn it on) lets the cloth rip where it is pulled too far: caught on something moving through it (a box swung through a hanging sheet punches a ragged hole and goes on) or overloaded (a weak sling heaped with sand splits and the sand pours out). The rip runs on from where it starts, a stitch at a time. *Tear strength* scales how far its threads stretch before they break: canvas, wool, polyester and nylon ripstop hold out longest, chiffon and linen give soonest. At 1, a cotton sheet holds ten litres of sand heaped on it, and a flag does not tear in a gale.
+
 ## Burning
 
 *Burnable* fabric heats in the gas around it and in the fire's radiation (thin cloth quickly, heavy cloth slowly; cloth beside a fire, out of its flames, toasts in the heat it radiates), catches at its ignition temperature, and burns: it gives off fuel, heat and smoke that the fire burns, and burns the way real cloth does: a halo of brown toasting ahead of the flame, a thin bright line of glowing fibre where it catches, black char behind with embers smouldering in it, greying to ash, then a dull glowing rim as it crumbles into ragged holes that spread, until it falls apart. The bands are as sharp as the picture, whatever the cloth's *Detail*. Char shrinks and curls. Burnt-through cloth breaks into flakes of ash and embers: glowing as they leave the flame, then black char and grey ash, tumbling up in the fire's plume or fluttering down. Fire climbs a curtain far faster than it creeps down or sideways, as the hot gas rises along it. Wool puts itself out once the flame against it is gone; polyester and nylon shrink away from the heat and melt through before they burn. *Flammability* scales how readily it catches and how much it feeds the fire (flame-retardant cloth is about 0.3).

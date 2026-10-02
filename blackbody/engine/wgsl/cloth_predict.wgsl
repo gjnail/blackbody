@@ -118,6 +118,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     wet += (1.0 - wet) * (1.0 - exp(-sub * dt / max(mat.f.z, 0.05)));
   }
   P[i] = vec4<f32>(x.xyz, wet);
+  if (gone && st.z < -0.5) {
+    // torn away (cloth_tear.wgsl): it stays where it tore, out of everything (as if pinned, so nothing moves it)
+    V[i] = vec4<f32>(0.0, 0.0, 0.0, V[i].w);
+    X[i] = vec4<f32>(x.xyz, 0.0);
+    return;
+  }
   if (r.w < 0.0 && fb.scl.w < 0.5 && !gone) {
     // pinned: it follows its pin (the fabric's placement, animated or not)
     let goal = fabric_to_world(fb, r.xyz);
@@ -167,6 +173,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let a = air_at(x.xyz);
     v = mix(v, mix(a.xyz, lq.xyz, sub), 1.0 - exp(-8.0 * dt));
   }
-  X[i] = vec4<f32>(x.xyz + v * dt, 1.0 / (1.0 / max(abs(r.w), 1e-9) + load));
+  // (in the constraints, a laden vertex weighs at most ten times its own: past that the threads converge too
+  // slowly and a laden sling stretches like elastic)
+  let m0 = 1.0 / max(abs(r.w), 1e-9);
+  X[i] = vec4<f32>(x.xyz + v * dt, 1.0 / (m0 + min(load, 10.0 * m0)));
   V[i] = vec4<f32>(v, V[i].w);
 }

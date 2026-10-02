@@ -438,3 +438,44 @@ def test_fabric_exports_as_meshes(engine, tmp_path):
     st = Usd.Stage.Open(str(tmp_path / 'cloth.usda'))
     prim = st.GetPrimAtPath('/World/Fabric/' + FM._safe(m['name']))
     assert prim and len(UsdGeom.Mesh(prim).GetPointsAttr().Get(f)) == n
+
+
+def _box_through_a_sheet(engine, tears):
+    from blackbody.scene import components
+    sc = components.new_scene('fire', 'person')
+    sc.emitters = []
+    sc.add_fabric(name='Sheet', width=1.0, height=1.2, position=(0.0, 1.3, 0.0), pins='top', material='cotton', tears=tears)
+    sc.add_collider(name='Box', shape='box', position=(0.0, 1.15, -0.6), size=(0.15, 0.15, 0.15), material='steel')
+    sc.set_key(('collider', 0, 'position'), sc.start, (0.0, 1.15, -0.6))
+    sc.set_key(('collider', 0, 'position'), sc.start + 36, (0.0, 1.15, 0.9))
+    sc.data['domain'].update(size_x=1.6, size_y=2.2, size_z=2.0, resolution=32, preroll=0.0)
+    engine.invalidate()
+    engine.prepare(sc, final=False)
+    engine.simulate_to(sc, sc.start + 48, cache=False)
+    st = engine.cloth.state()
+    return st, engine.cloth.positions()[0]
+
+
+def test_a_box_rips_through_a_sheet_that_tears_and_slides_off_one_that_does_not(engine):
+    st, X = _box_through_a_sheet(engine, True)
+    torn = st[:, 2] < -0.5
+    assert torn.sum() > 30                                # ripped where the box went through
+    assert (st[torn, 1] >= 1.0).all()                    # (gone, as burnt-away cloth is)
+    assert (np.abs(X[:, 2]) > 1.5).mean() < 0.1          # and most of it still hangs (a flap may go with the box)
+    st, _ = _box_through_a_sheet(engine, False)
+    assert not (st[:, 2] < -0.5).any() and not (st[:, 1] >= 1.0).any()   # whole
+
+
+def test_a_sling_that_tears_holds_its_sand_unless_it_is_weak(engine):
+    from blackbody.scene import presets
+    out = {}
+    for strength in (1.0, 0.2):
+        sc = presets.make('sand_sling')
+        sc.fabrics[0]['tears'], sc.fabrics[0]['tear_strength'] = True, strength
+        engine.invalidate()
+        engine.prepare(sc, final=False)
+        engine.simulate_to(sc, sc.start + 84, cache=False)
+        x = engine.matter.positions()[0]
+        out[strength] = (int((engine.cloth.state()[:, 2] < -0.5).sum()), float((x[:, 1] < 0.3).mean()))
+    assert out[1.0] == (0, 0.0)                           # cotton holds 10 litres of sand
+    assert out[0.2][0] > 0 and out[0.2][1] > 0.5          # a weak one rips and the sand pours through
