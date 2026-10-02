@@ -46,7 +46,8 @@ Notable changes to Blackbody. The format follows
   through mud. The guide: docs/matter.md.
 - Explosions: an emitter's Blast (kilograms of TNT) goes off when it ignites, and its blast wave throws the things
   that fall, blows breakable things apart piece by piece and scatters sand and snow, by the impulse a blast that size
-  gives at that distance. An Explosion block (Fire) and a preset, Blast in a yard.
+  gives at that distance. The viewer marks each charge, its fireball's size and when it goes off. An Explosion block
+  (Fire) and a preset, Blast in a yard.
 - Sand, snow, mud, jelly and clay in the interface: the object list, Properties, outlines and handles in the viewer (a
   pour's nozzle and direction), Made of, Let go, Pour it from here and Start/Stop pouring from the right-click menu,
   timing lanes, a Sand & mud chip in Create; Effects gains Falling & breaking and Sand, snow & mud chips.

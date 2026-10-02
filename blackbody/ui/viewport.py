@@ -1343,6 +1343,7 @@ class Viewport(QWidget):
             col = QColor(theme.OBJECT_COLOURS['matter'])
             col.setAlpha(240 if is_sel else 130)
             self._lines(p, cs, fire, matter_lines(sc, i, self.doc.frame), QPen(col, 1.6 if is_sel else 1.0, Qt.DashLine))
+        self._paint_blasts(p, cs, fire, sc)
         floats = self.stats.get('floats') if self.stats.get('frame') == self.doc.frame else None
         for i, c in enumerate(sc.colliders):
             if not c['enabled']:
@@ -1415,6 +1416,28 @@ class Viewport(QWidget):
             p.setPen(QPen(QColor(theme.ACCENT if hot else '#ffffff'), 1.2))
             p.setBrush(QColor(theme.ACCENT if hot else '#ffffff'))
             p.drawRect(QRectF(top.x() - 4, top.y() - 4, 8, 8))
+
+    def _paint_blasts(self, p, cs, fire, sc):
+        """Each explosive charge (a source's Blast): a burst the size of its fireball where it is, bright as it goes off,
+        and when."""
+        try:
+            blasts = sc.blasts() if hasattr(sc, 'blasts') else []
+        except Exception:
+            return
+        X, Y, Z = np.eye(3)
+        for f_b, where, kg in blasts:
+            c = np.asarray(where, float)
+            r = max(0.03, float(kg) ** (1.0 / 3.0) / 3.0)   # the fireball (engine/solids.blast_impulse)
+            hot = 0 <= self.doc.frame - f_b < 6
+            col = QColor(255, 120, 60, 240 if hot else 120)
+            dirs = [np.array([math.cos(a), 0.0, math.sin(a)]) for a in np.linspace(0, 2 * math.pi, 8, endpoint=False)] + [Y]
+            lines = [_circle(c, X * r, Z * r, 32)] + [np.array([c + d * r * 0.45, c + d * r * (1.6 if hot else 1.25)]) for d in dirs]
+            self._lines(p, cs, fire, lines, QPen(col, 1.8 if hot else 1.0))
+            px, ok = self._project_local(cs, fire, [c + Y * r * 1.4])
+            if ok[0]:
+                q = self.to_widget(px[0])
+                p.setPen(col)
+                p.drawText(q + QPointF(6, -4), f'blast {kg:g} kg · frame {int(round(f_b))}')
 
     def _paint_joints(self, p, cs, fire, sc, floats):
         """Ropes and springs as they hang (from the simulation), or, before it has run, where each joint is."""
