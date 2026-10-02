@@ -19,7 +19,7 @@ from .params import guard_wheel
 MIME = 'application/x-blackbody-component'
 GROUP_COLOURS = {'Fire': theme.ACCENT, 'Smoke, steam & sparks': '#c9c9d1', 'Liquids': '#6fb6ff', 'Fabric': '#d59cff',
                  'Weather': '#a8e0ff', 'Forces': '#9fe0c8', 'Objects': '#9fb0c4', 'Things that fall': '#b4e6a0',
-                 'Ropes and hinges': '#d6b684',
+                 'Ropes and hinges': '#d6b684', 'Sand, snow & mud': '#e3c08a',
                  'Lights': '#ffdc78', 'Mine': '#f0c674'}
 GROUP_HINTS = {'Fire': 'Sources of flame, and things that burn.', 'Smoke, steam & sparks': 'Smoke, steam and sparks without flame.',
                'Liquids': 'Water, honey, ink and lava: sources, standing water. With fire in the scene too, the two meet.',
@@ -32,10 +32,13 @@ GROUP_HINTS = {'Fire': 'Sources of flame, and things that burn.', 'Smoke, steam 
                'Things that fall': 'Real objects that fall, tumble, bounce, stack and topple, pushed by smoke and water. '
                                    'Any object can: right-click it and Make it fall.',
                'Ropes and hinges': 'Things that swing, bounce and turn: on ropes, springs, hinges and ball joints. Any object '
-                                   'can: right-click it and Hang it on a rope, Hinge it, or Tie it to another.'}
+                                   'can: right-click it and Hang it on a rope, Hinge it, or Tie it to another.',
+               'Sand, snow & mud': 'Grains that pile, pour, pack, slump and wobble: sand, snow, mud, jelly and clay. Objects '
+                                   'and water push them about and they push back. Right-click one to change what it is made of.'}
 STARTERS = ['burner', 'pour', 'flag', 'snow', 'smoke', 'box']   # one of each kind, shown first under All
 DOMAINS = [('all', 'All', None), ('fire', 'Fire', ('Fire', 'Smoke, steam & sparks')), ('liquid', 'Liquids', ('Liquids',)),
-           ('fabric', 'Fabric', ('Fabric',)), ('weather', 'Weather', ('Weather',)), ('forces', 'Forces', ('Forces',)),
+           ('fabric', 'Fabric', ('Fabric',)), ('matter', 'Sand & mud', ('Sand, snow & mud',)), ('weather', 'Weather', ('Weather',)),
+           ('forces', 'Forces', ('Forces',)),
            ('objects', 'Objects', ('Objects', 'Things that fall', 'Ropes and hinges', 'Lights')), ('mine', 'Yours', ('Mine',))]
 
 
@@ -212,7 +215,7 @@ class CreatePanel(QWidget):
         self.domain_group = QButtonGroup(self)
         self.domain_buttons = {}
         for key, label, _ in DOMAINS:
-            b = QPushButton(label)
+            b = QPushButton(label.replace('&', '&&'))
             b.setObjectName('chip')
             b.setCheckable(True)
             b.setCursor(Qt.PointingHandCursor)

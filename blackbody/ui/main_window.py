@@ -15,6 +15,7 @@ import blackbody
 
 from ..io.footage import IMAGE_EXT, VIDEO_EXT
 from ..scene import PROJECT_EXT
+from ..scene import kinds as K
 from . import actions, icons, theme
 from .document import Document
 from .export_dialog import ExportDialog, RenderProgress
@@ -604,8 +605,7 @@ class MainWindow(QMainWindow):
             QApplication.focusWidget().selectAll()
             return
         sc = self.doc.scene
-        every = [(k, i) for k, items in (('emitter', sc.emitters), ('collider', sc.colliders), ('fabric', sc.fabrics),
-                                        ('light', sc.lights)) for i in range(len(items))]
+        every = [(k, i) for k, items in K.lists(sc).items() for i in range(len(items))]
         if every:
             self.doc.set_selected(every, self.doc.selection if self.doc.selection in every else every[0])
             self.msg.setText(f'All {len(every)} things selected.')
@@ -1279,7 +1279,7 @@ class MainWindow(QMainWindow):
         if card is None:
             return
         sc = self.doc.scene
-        empty = (not (sc.emitters or sc.colliders or sc.fabrics or sc.lights) and sc.kind != 'cloud'
+        empty = (not K.count(sc) and sc.kind != 'cloud'
                  and not (sc.kind != 'fire' and (sc.data['liquid']['water_level'] > 0 or sc.data['liquid']['rain'] > 0
                                                  or sc.data['weather']['precip'] != 'none')))
         show = empty and getattr(self, 'workspace', 'build') == 'build'

@@ -10,6 +10,7 @@ from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen, Q
 from PySide6.QtWidgets import QMenu, QWidget
 
 from ..engine import camera as cam
+from ..scene import kinds as K
 from . import theme
 
 MODE_NAMES = {'composite': 'Composite', 'fire': 'Effect over black', 'alpha': 'Alpha', 'emission': 'Emission',
@@ -115,6 +116,32 @@ def fabric_lines(sc, i, frame):
         if len(seg) == 2:
             out.append(p + _rot_y(np.array(seg) + [0, 0.02, 0], yaw))
     return out
+
+
+def matter_lines(sc, i, frame):
+    """The outline of matter i where it starts; a pour: its nozzle, and an arrow the way it pours."""
+    m = K.items(sc, 'matter')[i]
+    g = lambda k: sc.get(('matter', i, k), frame)
+    p = np.asarray(g('position'), float)
+    s = np.abs(np.asarray(g('size'), float))
+    if m.get('pours'):
+        v = np.asarray(g('velocity'), float)
+        n = v / np.linalg.norm(v) if np.linalg.norm(v) > 1e-6 else np.array([0.0, -1.0, 0.0])
+        a = np.cross(n, [0.0, 0.0, 1.0] if abs(n[2]) < 0.9 else [1.0, 0.0, 0.0])
+        a /= np.linalg.norm(a)
+        b = np.cross(n, a)
+        r = max(float(s[0]), 0.005)
+        L = max(0.12, 5.0 * r)
+        tip = p + n * L
+        return [_circle(p, a * r, b * r, 32), np.array([p, tip]),
+                np.array([tip - n * 0.3 * L + a * 0.15 * L, tip, tip - n * 0.3 * L - a * 0.15 * L])]
+    shape = m.get('shape', 'box')
+    yaw = float(g('yaw'))
+    if shape == 'sphere':
+        return shape_lines('sphere', p, (s[0], s[0], s[0]))
+    if shape in ('cylinder', 'pile'):
+        return shape_lines('cone' if shape == 'pile' else 'cylinder', p, (s[0], s[1], s[0]), yaw=yaw)
+    return shape_lines('box', p, s, yaw=yaw)
 
 
 def _falls(c):
@@ -289,7 +316,7 @@ class Viewport(QWidget):
 
     def start_path(self, kind, i):
         sc = self.doc.scene
-        items = {'emitter': sc.emitters, 'collider': sc.colliders, 'light': sc.lights, 'fabric': sc.fabrics}[kind]
+        items = K.items(sc, kind)
         if i >= len(items):
             return
         self.doc.select((kind, i), force=True)
@@ -322,7 +349,7 @@ class Viewport(QWidget):
         from .actions import path_keys
         kind, i = tgt
         sc = self.doc.scene
-        items = {'emitter': sc.emitters, 'collider': sc.colliders, 'light': sc.lights, 'fabric': sc.fabrics}[kind]
+        items = K.items(sc, kind)
         name = items[i]['name']
         f0 = self.doc.frame
         end_off = None
@@ -332,7 +359,7 @@ class Viewport(QWidget):
         def fn(s):
             s.links = [l for l in getattr(s, 'links', []) if list(l['child']) != [kind, name]]
             curve = path_keys(s, kind, i, pts, f0, secs)
-            d = {'emitter': s.emitters, 'collider': s.colliders, 'light': s.lights, 'fabric': s.fabrics}[kind][i]
+            d = K.items(s, kind)[i]
             d['position'] = curve
             if end_off is not None:
                 from ..scene.anim import Curve
@@ -1309,6 +1336,13 @@ class Viewport(QWidget):
             is_sel = ('fabric', i) in chosen
             pen = QPen(QColor(150, 210, 255, 240 if is_sel else 130), 1.6 if is_sel else 1.0, Qt.DashLine)
             self._lines(p, cs, fire, fabric_lines(sc, i, self.doc.frame), pen)
+        for i, mt in enumerate(K.items(sc, 'matter')):   # sand, snow, mud: where it starts (the render draws the grains)
+            if not mt['enabled']:
+                continue
+            is_sel = ('matter', i) in chosen
+            col = QColor(theme.OBJECT_COLOURS['matter'])
+            col.setAlpha(240 if is_sel else 130)
+            self._lines(p, cs, fire, matter_lines(sc, i, self.doc.frame), QPen(col, 1.6 if is_sel else 1.0, Qt.DashLine))
         floats = self.stats.get('floats') if self.stats.get('frame') == self.doc.frame else None
         for i, c in enumerate(sc.colliders):
             if not c['enabled']:
@@ -1424,10 +1458,10 @@ class Viewport(QWidget):
 
     def _gizmo(self):
         sel = self.doc.selection
-        if not sel or sel[0] not in ('emitter', 'collider', 'light', 'fabric') or self.roto_mode:
+        if not sel or sel[0] not in K.KINDS or self.roto_mode:
             return None
         sc = self.doc.scene
-        items = {'emitter': sc.emitters, 'collider': sc.colliders, 'light': sc.lights, 'fabric': sc.fabrics}[sel[0]]
+        items = K.items(sc, sel[0])
         if sel[1] >= len(items) or not items[sel[1]]['enabled']:
             return None
         from .gizmo import Gizmo
@@ -1538,7 +1572,7 @@ class Viewport(QWidget):
             if gz.kind == 'fabric':
                 d['w0'], d['h0'] = float(g('width')), float(g('height'))
                 d['scale0'] = np.asarray(it.get('scale', (1.0, 1.0, 1.0)), float)
-            elif gz.kind in ('emitter', 'collider'):
+            elif gz.kind in ('emitter', 'collider', 'matter'):
                 d['size0'] = np.asarray(g('size'), float)
         elif key == 'rot':
             gp = self._ground_point(pos, gz.pos[1])
@@ -1582,8 +1616,7 @@ class Viewport(QWidget):
             grow = t - d['t0']
             name = d['name']
             k = AXIS_NAMES.index(name)
-            it = {'emitter': self.doc.scene.emitters, 'collider': self.doc.scene.colliders,
-                  'fabric': self.doc.scene.fabrics}.get(what, [None] * (i + 1))[i]
+            it = K.items(self.doc.scene, what)[i] if what in K.KINDS else None
             if what == 'fabric' and it.get('shape') == 'mesh':
                 s0 = d['scale0']
                 f = max(0.02, 1.0 + grow / max(d['L'], 1e-6))
@@ -1605,9 +1638,9 @@ class Viewport(QWidget):
                     ext = max(snap / 2, round(ext * 2 / snap) * snap / 2)
                 new = s0.copy()
                 shape = it.get('shape') if it else ''
-                if shape == 'capsule' or (shape == 'sphere' and what == 'collider'):
+                if shape == 'capsule' or (shape == 'sphere' and what in ('collider', 'matter')) or (what == 'matter' and it.get('pours')):
                     new[:] = ext
-                elif shape in ('cylinder', 'cone', 'ring') and name == 'x':
+                elif shape in ('cylinder', 'cone', 'ring', 'pile') and name == 'x':
                     new[0] = new[2] = ext
                 else:
                     new[k] = ext
@@ -1780,7 +1813,7 @@ class Viewport(QWidget):
         cs, fire, _ = self.camstate()
         best, bd = None, 12.0
         floats = self.stats.get('floats') if self.stats.get('frame') == self.doc.frame else None
-        for kind, items in (('emitter', sc.emitters), ('collider', sc.colliders), ('light', sc.lights), ('fabric', sc.fabrics)):
+        for kind, items in K.lists(sc).items():
             for i, it in enumerate(items):
                 if not it['enabled']:
                     continue
@@ -1815,7 +1848,7 @@ class Viewport(QWidget):
                 self._path_pts.append(gp)
                 sc = self.doc.scene
                 kind, i = self.path_target
-                items = {'emitter': sc.emitters, 'collider': sc.colliders, 'light': sc.lights, 'fabric': sc.fabrics}[kind]
+                items = K.items(sc, kind)
                 self.pathbar.sync(items[i]['name'], len(self._path_pts), self.doc.frame)
                 self.update()
             return
@@ -2078,7 +2111,7 @@ class Viewport(QWidget):
         sc = self.doc.scene
         cs, fire, _ = self.camstate()
         found = []
-        for kind, items in (('emitter', sc.emitters), ('collider', sc.colliders), ('fabric', sc.fabrics), ('light', sc.lights)):
+        for kind, items in K.lists(sc).items():
             for i, it in enumerate(items):
                 if not it['enabled']:
                     continue
@@ -2195,7 +2228,7 @@ class Viewport(QWidget):
         hit = self._hit(e.pos().toPointF() if hasattr(e.pos(), 'toPointF') else QPointF(e.pos()))
         if isinstance(hit, str) and hit.startswith('gz:'):
             hit = self.doc.selection
-        if isinstance(hit, tuple) and hit[0] in ('emitter', 'collider', 'light', 'fabric'):
+        if isinstance(hit, tuple) and hit[0] in K.KINDS:
             self.doc.select(hit, force=True)
             from .actions import fill_menu
             m = QMenu(self)

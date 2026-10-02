@@ -12,11 +12,7 @@ import numpy as np
 
 from .anim import Curve
 
-LISTS = {'emitter': 'emitters', 'collider': 'colliders', 'light': 'lights', 'fabric': 'fabrics'}
-
-
-def items(scene, kind):
-    return getattr(scene, LISTS[kind])
+from .kinds import LISTS, items   # noqa: F401  (the kinds of object, and each one's list)
 
 
 def _turn_xz(v, theta):

@@ -7,6 +7,7 @@ import numpy as np
 from PySide6.QtWidgets import QMenu, QMessageBox
 
 from ..scene import components as C
+from ..scene import kinds as K
 from . import icons, theme
 
 MATERIALS = [('cotton', 'Cotton'), ('linen', 'Linen'), ('silk', 'Silk'), ('chiffon', 'Chiffon'), ('wool', 'Wool'), ('denim', 'Denim'),
@@ -16,7 +17,7 @@ PINS = [('top', 'By its top edge'), ('side', 'By one side'), ('top_corners', 'By
 
 
 def _items(sc, kind):
-    return {'emitter': sc.emitters, 'collider': sc.colliders, 'light': sc.lights, 'fabric': sc.fabrics}[kind]
+    return K.items(sc, kind)
 
 
 def _say(win, text):
@@ -161,7 +162,7 @@ def save_block(win, sel):
     from ..scene import blocks
     from . import blockdialog
     sc = win.doc.scene
-    sel = [s for s in sel if s[0] in ('emitter', 'collider', 'light', 'fabric')]
+    sel = [s for s in sel if s[0] in K.KINDS]
     if not sel:
         QMessageBox.information(win, 'Save as a block', 'Select what you built first (click it in the viewer or the object list).')
         return
@@ -363,6 +364,49 @@ def turn_into(win, i, key, label):
     doc.set_playing(True)
 
 
+def make_of(win, i, material):
+    """What matter i is made of (sand, snow, mud...): its name follows if it was named after the old one."""
+    from ..scene.params import MATTER_MATERIALS
+    doc = win.doc
+    d = doc.scene.matter[i]
+    names = dict(MATTER_MATERIALS)
+    old, new = names.get(d.get('material'), ''), names.get(material, material)
+
+    def fn(s):
+        m = s.matter[i]
+        m['material'] = material
+        if old and m['name'].startswith(old):
+            m['name'] = new + m['name'][len(old):]
+    doc.edit(f'Make it {new.lower()}', fn, structure=True)
+    _say(win, f'It is {new.lower()} now.')
+    doc.set_playing(True)
+
+
+def pour(win, i, on=True):
+    """Matter i poured from a nozzle where it is (from this frame, if the shot has started), or a body of it again."""
+    doc = win.doc
+    d = doc.scene.matter[i]
+    t = max(0.0, _t(doc))
+
+    def fn(s):
+        m = s.matter[i]
+        m['pours'] = bool(on)
+        if on:
+            m['pour_start'] = t
+            if float(m.get('pour_stop', 5.0)) <= t:
+                m['pour_stop'] = t + 4.0
+            sz = m['size']
+            if not hasattr(sz, 'keys') and float(sz[0]) > 0.1:   # a body's size would be a very wide nozzle
+                m['size'] = (0.04, 0.04, 0.04)
+            v = m['velocity']
+            if not hasattr(v, 'keys') and not any(float(x) for x in v):
+                m['velocity'] = (0.0, -0.5, 0.0)
+    doc.edit(f'{d["name"]} pours' if on else f'{d["name"]} stops pouring', fn, structure=True)
+    _say(win, f'{d["name"]} pours from here at frame {doc.frame}: drag its arrow tip in Properties (Thrown at) to aim it.'
+         if on else f'{d["name"]} is a body of it again.')
+    doc.set_playing(True)
+
+
 def drop_to_ground(win, kind, i):
     doc = win.doc
     sc = doc.scene
@@ -370,12 +414,13 @@ def drop_to_ground(win, kind, i):
     pos = np.asarray(sc.get((kind, i, 'position'), doc.frame), float)
     if kind == 'fabric':
         y = 0.01 if d.get('orientation') == 'lying' else float(d.get('height', 1.0)) / 2 + 0.01
-    elif kind == 'light':
+    elif kind == 'light' or (kind == 'matter' and d.get('pours')):
         return
     else:
         size = np.asarray(sc.get((kind, i, 'size'), doc.frame), float)
         shape = d.get('shape')
-        y = 0.0 if shape == 'mesh' else float(size[0] if (shape == 'sphere' and kind == 'collider') or shape == 'capsule' else size[1])
+        y = 0.0 if shape == 'mesh' else float(size[0] if (shape == 'sphere' and kind in ('collider', 'matter')) or shape == 'capsule'
+                                              else size[1])
     new = (float(pos[0]), y, float(pos[2]))
     doc.set((kind, i, 'position'), new, merge=False)
     if kind == 'emitter' and d.get('shape') == 'capsule':
@@ -410,8 +455,7 @@ def duplicate(win, kind, i):
 
 def delete(win, kind, i):
     doc = win.doc
-    {'emitter': doc.remove_emitter, 'collider': doc.remove_collider, 'light': doc.remove_light,
-     'fabric': doc.remove_fabric}[kind](i)
+    doc.remove_object(kind, i)
 
 
 def frame_it(win, kind, i):
@@ -425,7 +469,7 @@ def frame_it(win, kind, i):
     sc = doc.scene
     pos = np.asarray(sc.get((kind, i, 'position'), doc.frame), float)
     d = _items(sc, kind)[i]
-    if kind in ('emitter', 'collider'):
+    if kind in ('emitter', 'collider', 'matter'):
         r = float(np.max(np.abs(sc.get((kind, i, 'size'), doc.frame))))
     elif kind == 'fabric':
         r = max(float(d.get('width', 1.0)), float(d.get('height', 1.0))) / 2
@@ -574,8 +618,27 @@ def fill_menu(m: QMenu, win, sel, path_mode=None):
             a.setChecked(d.get('material') == k)
     if kind == 'light':
         act('Aim it at the middle', lambda: aim_light(win, i), '', 'spot')
+    if kind == 'matter':
+        from ..scene.params import MATTER_MATERIALS
+        sub = m.addMenu(icons.glyph_icon('matter', theme.MUTED, 16), 'Made of')
+        for k, label in MATTER_MATERIALS:
+            a = sub.addAction(label, lambda k=k: make_of(win, i, k))
+            a.setCheckable(True)
+            a.setChecked(d.get('material') == k)
+        if d.get('pours'):
+            act(f'Start pouring at this frame ({doc.frame})', lambda: set_value(win, 'matter', i, 'pour_start', max(0.0, _t(doc)),
+                                                                                  f'It pours from frame {doc.frame}.'), '', 'play')
+            act(f'Stop pouring at this frame ({doc.frame})', lambda: set_value(win, 'matter', i, 'pour_stop', max(0.0, _t(doc)),
+                                                                                 f'It stops pouring at frame {doc.frame}.'), '', 'stop')
+            act('Make it a body of it', lambda: pour(win, i, on=False), 'A heap, a block or a ball of it at the start, instead of a pour',
+                'matter')
+        else:
+            act(f'Let go at this frame ({doc.frame})', lambda: set_value(win, 'matter', i, 'release', _t(doc),
+                                                                           f'It is held where it is until frame {doc.frame}, then let go.'),
+                'Held in its shape until then (a column of sand that collapses)', 'matter')
+            act('Pour it from here', lambda: pour(win, i), 'A stream from a nozzle where it is, from this frame', 'pour')
     m.addSeparator()
-    others = [(k2, j, x['name']) for k2 in ('emitter', 'collider', 'fabric', 'light') for j, x in enumerate(_items(sc, k2))
+    others = [(k2, j, x['name']) for k2 in K.KINDS for j, x in enumerate(_items(sc, k2))
               if not (k2 == kind and j == i)]
     link = sc.link_of(kind, d['name'])
     if link is not None:
@@ -641,6 +704,16 @@ def quick_actions(win, sel):
                 ('Soak' if float(d.get('wetness', 0.0)) < 0.5 else 'Dry', 'drop',
                  lambda: set_value(win, 'fabric', i, 'wetness', 1.0 if float(d.get('wetness', 0.0)) < 0.5 else 0.0, 'Done.')),
                 ('Let go now', 'fabric', lambda: set_value(win, 'fabric', i, 'release', _t(win.doc), f'It falls from frame {win.doc.frame}.'))]
+    elif kind == 'matter':
+        if d.get('pours'):
+            out += [('Pour from here', 'play', lambda: set_value(win, 'matter', i, 'pour_start', max(0.0, _t(win.doc)),
+                                                                  f'It pours from frame {win.doc.frame}.')),
+                    ('Stop here', 'stop', lambda: set_value(win, 'matter', i, 'pour_stop', max(0.0, _t(win.doc)),
+                                                            f'It stops pouring at frame {win.doc.frame}.'))]
+        else:
+            out += [('Let go now', 'matter', lambda: set_value(win, 'matter', i, 'release', _t(win.doc),
+                                                               f'It is let go at frame {win.doc.frame}.')),
+                    ('Pour', 'pour', lambda: pour(win, i))]
     elif kind == 'emitter':
         out += [('Start here', 'play', lambda: set_value(win, 'emitter', i, 'start', _t(win.doc), f'It starts at frame {win.doc.frame}.')),
                 ('Stop here', 'stop', lambda: set_value(win, 'emitter', i, 'stop', _t(win.doc), f'It stops at frame {win.doc.frame}.'))]

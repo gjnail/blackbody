@@ -47,6 +47,9 @@ Notable changes to Blackbody. The format follows
 - Explosions: an emitter's Blast (kilograms of TNT) goes off when it ignites, and its blast wave throws the things
   that fall, blows breakable things apart piece by piece and scatters sand and snow, by the impulse a blast that size
   gives at that distance. An Explosion block (Fire) and a preset, Blast in a yard.
+- Sand, snow, mud, jelly and clay in the interface: the object list, Properties, outlines and handles in the viewer (a
+  pour's nozzle and direction), Made of, Let go, Pour it from here and Start/Stop pouring from the right-click menu,
+  timing lanes, a Sand & mud chip in Create; Effects gains Falling & breaking and Sand, snow & mud chips.
 - Make it fall and Drop it at this frame on any object (right-click it, the Fall chip on its page, or Ctrl+K), and
   Stop it falling. Falling things are drawn and picked where the simulation has them in the viewer, tilted as they
   tumble, and outlined in green. In Build, liquid scenes show objects in their materials instead of grey stand-ins.

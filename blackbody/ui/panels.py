@@ -10,9 +10,11 @@ from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractButton, QAbstractItemView, QFrame, QHBoxLayout, QLabel, QLineEdit, QMenu, QPushButton, QScrollArea,
                                QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
+from ..scene import kinds as K
 from ..scene import presets
 from ..scene.params import (COLLIDER_PARAMS, EMITTER_PARAMS, FABRIC_PARAMS, LIGHT_PARAMS, SECTION_TITLES, SECTIONS, applies,
                             param)
+from ..scene.params import MATTER_MATERIALS, MATTER_PARAMS
 from . import essentials, icons, theme
 from .params import Group, ParamPanel, ParamRow, Switch, pick_mesh_file
 
@@ -186,7 +188,7 @@ def add_collider(doc, shape, parent=None):
 
 
 
-OBJECT_KINDS = ('emitter', 'collider', 'light', 'fabric')
+OBJECT_KINDS = K.KINDS
 NAV_GLYPHS = {'essentials': 'star', 'objects': 'cube', 'combustion': 'flame', 'motion': 'wind', 'shading': 'palette',
               'lighting': 'bulb', 'embers': 'sparks', 'spread': 'spread', 'domain': 'box', 'camera': 'camera',
               'composite': 'layers', 'render': 'film', 'liquid': 'drop', 'water': 'waves', 'lava': 'lava',
@@ -290,7 +292,7 @@ class NavBar(QWidget):
 
 
 def _object_lists(sc):
-    return {'emitter': sc.emitters, 'collider': sc.colliders, 'light': sc.lights, 'fabric': sc.fabrics}
+    return K.lists(sc)
 
 
 class ObjectList(QWidget):
@@ -352,8 +354,7 @@ class ObjectList(QWidget):
         sc = self.doc.scene
         liquid = sc.kind == 'liquid'
         n = 0
-        groups = (('emitter', 'Sources', sc.emitters), ('collider', 'Objects (colliders)', sc.colliders),
-                  ('light', 'Lights', sc.lights), ('fabric', 'Fabric', sc.fabrics))
+        groups = tuple((k, K.TITLES[k], v) for k, v in K.lists(sc).items())
         for kind, title, items in groups:
             if not items:
                 continue
@@ -377,7 +378,9 @@ class ObjectList(QWidget):
                 tip = {'emitter': f'{SHAPE_NAMES.get(d.get("shape"), d.get("shape"))} {"source" if liquid else "emitter"}',
                        'collider': f'{SHAPE_NAMES.get(d.get("shape"), d.get("shape"))} collider',
                        'light': LIGHT_KINDS.get(d.get('kind'), 'Light'),
-                       'fabric': f'{str(d.get("material", "")).capitalize()} fabric'}[kind]
+                       'fabric': f'{str(d.get("material", "")).capitalize()} fabric',
+                       'matter': (dict(MATTER_MATERIALS).get(d.get('material'), 'Matter')
+                                  + (' poured' if d.get('pours') else ''))}[kind]
                 it.setToolTip(0, tip + ' · double-click to rename, right-click for more')
                 it.setData(0, Qt.UserRole, (kind, i))
                 it.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsEditable | Qt.ItemIsUserCheckable)
@@ -474,6 +477,11 @@ def fill_add_menu(m, doc, parent):
     subf = m.addMenu(icons.glyph_icon('fabric', theme.OBJECT_COLOURS['fabric'], 16), 'Fabric')
     for k, (label, _) in FABRIC_KINDS.items():
         subf.addAction(label, lambda k=k: add_fabric(doc, k, parent))
+    if hasattr(doc.scene, 'add_matter'):
+        subm = m.addMenu(icons.glyph_icon('matter', theme.OBJECT_COLOURS['matter'], 16), 'Sand, snow & mud')
+        for k, label in MATTER_MATERIALS:
+            subm.addAction(label, lambda k=k: doc.add_matter(material=k, shape='pile' if k in ('sand', 'wet_sand', 'mud') else 'box',
+                                                             position=(0.0, 0.2, 0.0), size=(0.2, 0.2, 0.2)))
 
 
 def object_menu(m, doc, sel, rename=None):
@@ -490,6 +498,8 @@ def object_menu(m, doc, sel, rename=None):
         m.addAction(icons.glyph_icon('trash', theme.TEXT, 16), 'Delete', lambda: doc.remove_collider(i))
     elif kind == 'light':
         m.addAction(icons.glyph_icon('trash', theme.TEXT, 16), 'Delete', lambda: doc.remove_light(i))
+    elif kind == 'matter':
+        m.addAction(icons.glyph_icon('trash', theme.TEXT, 16), 'Delete', lambda: doc.remove_matter(i))
 
 
 class RowsPage(QWidget):
@@ -881,6 +891,18 @@ class Inspector(QWidget):
             elif l['kind'] == 'area':
                 hide |= {'cone', 'softness'}
             return [p for p in LIGHT_PARAMS if p.key not in hide]
+        if kind_o == 'matter':
+            m = sc.matter[i]
+            hide = {'name', 'enabled'}
+            if m.get('pours'):
+                hide |= {'shape', 'yaw', 'release'}
+            else:
+                hide |= {'rate', 'pour_start', 'pour_stop'}
+                if m.get('shape') != 'box':
+                    hide |= {'yaw'}   # round: turning it changes nothing
+            if not m.get('own_colour'):
+                hide |= {'colour'}
+            return [p for p in MATTER_PARAMS if p.key not in hide]
         f = sc.fabrics[i]
         hide = {'name', 'enabled'}
         if f['shape'] == 'mesh':
@@ -921,6 +943,11 @@ class Inspector(QWidget):
         elif okind == 'light':
             hint = ('A light in the set: it lights the smoke and steam, and the smoke shadows it. A real light '
                     '(In the footage) is darkened on the ground where smoke blocks it; a CG light lights the ground too.')
+        elif okind == 'matter':
+            what = dict(MATTER_MATERIALS).get(d.get('material'), 'Matter')
+            hint = (f'{what}{" poured from a nozzle" if d.get("pours") else ""}: grains that pile up, slide, pack, slump '
+                    'or wobble as the material does. It is pushed by and pushes on objects, water and the air. '
+                    'The outline is where it starts; the render shows it as it goes.')
         else:
             hint = ('Cloth: it hangs from what holds it, drapes over objects, blows in the fire\'s air and the wind, '
                     'and if burnable catches, chars and burns through. In water it soaks; wet, it drips and steams.')
@@ -955,11 +982,10 @@ class Inspector(QWidget):
             b.clicked.connect(fn)
             h.addWidget(b)
         win = self.window()
-        if okind in ('emitter', 'fabric', 'collider', 'light'):
+        if okind in K.KINDS:
             from . import actions as A
             tb('copy', 'Duplicate', lambda: A.duplicate(win, okind, i))
-        tb('trash', 'Delete', lambda: {'emitter': self.doc.remove_emitter, 'collider': self.doc.remove_collider,
-                                        'light': self.doc.remove_light, 'fabric': self.doc.remove_fabric}[okind](i))
+        tb('trash', 'Delete', lambda: self.doc.remove_object(okind, i))
         if hasattr(win, 'doc'):
             from .actions import fill_menu, quick_actions, selected_actions
             from .library import FlowLayout

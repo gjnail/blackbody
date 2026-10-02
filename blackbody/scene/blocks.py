@@ -17,6 +17,7 @@ import zipfile
 from pathlib import Path
 
 from .anim import Curve
+from . import kinds as K
 from .files import object_sources, rebase, source_files
 from .model import Scene
 
@@ -24,8 +25,8 @@ EXT = '.bbblock'
 FORMAT = 'blackbody-block'
 DIR = None          # set by the app: where your blocks live (a folder of .bbblock files)
 _CACHE = {}         # path -> (mtime, Component)
-LISTS = ('emitters', 'colliders', 'lights', 'fabrics', 'matter')
-KIND_OF = {'emitters': 'emitter', 'colliders': 'collider', 'lights': 'light', 'fabrics': 'fabric', 'matter': 'matter'}
+LISTS = tuple(K.LISTS[k] for k in K.KINDS)
+KIND_OF = {lst: k for k, lst in K.LISTS.items()}
 
 
 def folder():
@@ -41,8 +42,7 @@ def slug(name):
 
 
 def _items(scene, kind):
-    return {'emitter': scene.emitters, 'collider': scene.colliders, 'light': scene.lights, 'fabric': scene.fabrics,
-            'matter': scene.matter}[kind]
+    return K.items(scene, kind)
 
 
 def with_attached(scene, sel):
@@ -57,7 +57,7 @@ def with_attached(scene, sel):
                 names.add(c)
                 grow = True
     out = []
-    for kind in ('emitter', 'collider', 'fabric', 'light'):
+    for kind in K.KINDS:
         for i, d in enumerate(_items(scene, kind)):
             if (kind, d['name']) in names:
                 out.append((kind, i))
@@ -138,7 +138,7 @@ def save(scene, sel, name, tip='', frame=None, path=None):
     else:
         want = 'any'
     glyph = ('flame' if 'fire' in need else 'lava' if 'lava' in need else 'drop' if 'liquid' in need else
-             'fabric' if block.fabrics else 'cube' if block.colliders else 'bulb')
+             'fabric' if block.fabrics else 'matter' if K.items(block, 'matter') else 'cube' if block.colliders else 'bulb')
     height = max(top - float(lo[1]), 0.1)
     room = (0.0, top + 2.5 * height, 0.0) if 'fire' in need else (0.0, 0.0, 0.0)
     objs = {k: v for k, v in block.to_dict().items() if k in LISTS}

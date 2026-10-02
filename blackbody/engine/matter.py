@@ -123,7 +123,7 @@ class MatterSpec:
     """One source of matter (Scene.matter_specs): a body of it at the start, or a stream poured from a nozzle."""
     material: str = 'sand'
     shape: str = 'box'          # box, sphere, cylinder, pile (a cone: radius size x, height size y)
-    pos: tuple = (0.0, 0.5, 0.0)          # fire-local m: its middle (a pile, a pour: its base's middle, the nozzle)
+    pos: tuple = (0.0, 0.5, 0.0)          # fire-local m: its middle, whatever its shape (a pour: the nozzle)
     size: tuple = (0.25, 0.25, 0.25)      # half extents, or radius and half height
     yaw: float = 0.0                      # radians
     velocity: tuple = (0.0, 0.0, 0.0)     # m/s as it starts (a thrown snowball) or as it pours

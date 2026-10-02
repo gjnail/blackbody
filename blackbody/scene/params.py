@@ -907,8 +907,8 @@ MATTER_PARAMS = [
     E('shape', 'Shape', 'box', (('box', 'Box'), ('sphere', 'Ball'), ('cylinder', 'Cylinder'), ('pile', 'Pile (a cone)')),
       tip='The shape of the body of it at the start (a pour: the nozzle is a disc of its Size’s first value across).',
       group='Matter'),
-    V('position', 'Position', (0.0, 0.5, 0.0), -50.0, 50.0, 'm', decimals=3, tip='Its middle (a pile: the middle of its base; '
-      'a pour: the nozzle).', group='Matter'),
+    V('position', 'Position', (0.0, 0.5, 0.0), -50.0, 50.0, 'm', decimals=3, tip='Its middle, whatever its shape (a pile’s base '
+      'is Size’s height below it); a pour: the nozzle.', group='Matter'),
     V('size', 'Size', (0.25, 0.25, 0.25), 0.005, 20.0, 'm', decimals=3, tip='Half its width, height and depth (a ball: its '
       'radius; a cylinder or a pile: its radius and half its height).', group='Matter'),
     F('yaw', 'Rotation', 0.0, -180.0, 180.0, '°', 1, group='Matter'),

@@ -20,19 +20,22 @@ THUMB = QSize(176, 99)   # the size saved user-preset thumbnails are made at (tw
 # The presets' own categories, gathered into fewer, plainer ones for the chips
 CATEGORIES = [('all', 'All'), ('fire', 'Fire'), ('water', 'Liquids'), ('fabric', 'Fabric'), ('sky', 'Weather & sky'),
               ('sea', 'Sea'), ('smoke', 'Smoke & steam'), ('blast', 'Blasts & sparks'), ('ice', 'Ice & heat'),
-              ('both', 'Mixed'), ('mine', 'Mine')]
+              ('both', 'Mixed'), ('physics', 'Falling & breaking'), ('matter', 'Sand, snow & mud'), ('mine', 'Mine')]
 CATEGORY_TIPS = {'all': 'Every effect', 'fire': 'Fires and small flames', 'blast': 'Explosions, fireballs and sparks',
                  'smoke': 'Smoke and steam', 'water': 'Liquids: pours, splashes, honey, ink, lava', 'sea': 'Oceans, surf and rivers',
                  'fabric': 'Cloth: curtains, flags and towels that blow, burn and soak', 'ice': 'Ice, freezing, boiling and steam',
                  'sky': 'Rain, snow, hail, clouds and storms', 'both': 'Fire and liquid in one simulation',
+                 'physics': 'Things that fall, tumble, break, swing on ropes and turn on hinges',
+                 'matter': 'Sand that piles and pours, snowballs, mud, jelly and clay',
                  'mine': 'The presets you saved'}
 CATEGORY_OF = {'Fires': 'fire', 'Small flames': 'fire', 'Explosions': 'blast', 'Sparks': 'blast', 'Smoke': 'smoke',
                'Steam': 'smoke', 'Liquids': 'water', 'Sea': 'sea', 'Ice and steam': 'ice', 'Weather': 'sky',
-               'Sky and weather': 'sky', 'Fire and liquid': 'both'}
+               'Sky and weather': 'sky', 'Fire and liquid': 'both', 'Things that fall': 'physics', 'Ropes and hinges': 'physics',
+               'Breaking': 'physics', 'Sand, snow and mud': 'matter', 'Sand, snow & mud': 'matter'}
 # presets whose subject is not the category they were filed under
 CATEGORY_KEY = {'fabric_curtain': 'fabric', 'curtain_fire': 'fabric', 'wet_towels': 'fabric', 'flag_wind': 'fabric',
                 'towel_dip': 'fabric', 'rain_pond': 'sky'}
-ROUND_ROBIN = ['fire', 'water', 'fabric', 'sky', 'sea', 'smoke', 'blast', 'ice', 'both']
+ROUND_ROBIN = ['fire', 'water', 'fabric', 'sky', 'sea', 'smoke', 'blast', 'ice', 'both', 'physics', 'matter']
 
 
 def mixed_order(keys):

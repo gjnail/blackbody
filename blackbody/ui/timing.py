@@ -11,6 +11,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import QMenu, QWidget
 
+from ..scene import kinds as K
 from ..scene.anim import Curve
 from . import icons, theme
 
@@ -29,6 +30,8 @@ def rows_of(scene):
         out.append(('emitter', i, 'fill' if e.get('liquid_mode') == 'fill' and _liquid(scene, e) else 'span'))
     for i, f in enumerate(scene.fabrics):
         out.append(('fabric', i, 'release'))
+    for i, m in enumerate(K.items(scene, 'matter')):
+        out.append(('matter', i, 'span' if m.get('pours') else 'release'))
     for kind, items in (('collider', scene.colliders), ('light', scene.lights)):
         for i, d in enumerate(items):
             if any(isinstance(v, Curve) for v in d.values()):
@@ -41,7 +44,19 @@ def _liquid(scene, e):
 
 
 def _items(scene, kind):
-    return {'emitter': scene.emitters, 'collider': scene.colliders, 'light': scene.lights, 'fabric': scene.fabrics}[kind]
+    return K.items(scene, kind)
+
+
+POUR_KEYS = {'start': 'pour_start', 'stop': 'pour_stop'}
+
+
+def _times(kind, d):
+    """An object's times as the lanes read them: a pour's from and until as a source's start and stop."""
+    if kind != 'matter' or not d.get('pours'):
+        return d
+    x = dict(d)
+    x['start'], x['stop'] = float(d.get('pour_start', 0.0)), float(d.get('pour_stop', 5.0))
+    return x
 
 
 def key_frames(d):
@@ -117,7 +132,7 @@ class TimingEditor(QWidget):
         if pos.x() < LABEL_W:
             return ('label', r)
         kind, i, what = self.rows[r]
-        d = _items(self.doc.scene, kind)[i]
+        d = _times(kind, _items(self.doc.scene, kind)[i])
         for fr in key_frames(d):
             if abs(self._x(fr) - pos.x()) < 6 and abs(pos.y() - (HEAD_H + (r - self.scroll) * ROW_H + ROW_H - 6)) < 7:
                 return ('key', r, fr)
@@ -167,7 +182,7 @@ class TimingEditor(QWidget):
         x0, x1 = self._x(a), self._x(b)
         for r in range(self.scroll, min(len(self.rows), self.scroll + visible)):
             kind, i, what = self.rows[r]
-            d = _items(sc, kind)[i]
+            d = _times(kind, _items(sc, kind)[i])
             y = HEAD_H + (r - self.scroll) * ROW_H
             row = QRectF(0, y, self.width(), ROW_H)
             if (kind, i) in chosen:
@@ -249,6 +264,9 @@ class TimingEditor(QWidget):
     # -- editing ------------------------------------------------------------------------------------------
 
     def _set_times(self, kind, i, vals, label, merge=True):
+        if kind == 'matter':   # a pour's from and until; 'to the end' and 'already going' within their ranges
+            vals = {POUR_KEYS.get(k, k): (600.0 if k == 'stop' and float(v) < 0 else max(-10.0, float(v))) for k, v in vals.items()}
+
         def fn(s):
             d = _items(s, kind)[i]
             for k, v in vals.items():
@@ -269,7 +287,7 @@ class TimingEditor(QWidget):
             return
         r = h[1]
         kind, i, what = self.rows[r]
-        d = _items(self.doc.scene, kind)[i]
+        d = _times(kind, _items(self.doc.scene, kind)[i])
         if (kind, i) not in self.doc.selected_objects():
             self.doc.select((kind, i), force=True)
         if h[0] == 'label':
@@ -351,7 +369,10 @@ class TimingEditor(QWidget):
             win = self.window()
             kind, i, _ = self.rows[h[1]]
             if hasattr(win, 'props'):
-                win.props.reveal((kind, i, 'start' if kind == 'emitter' else 'release' if kind == 'fabric' else 'position'))
+                d = _items(self.doc.scene, kind)[i]
+                key = ('start' if kind == 'emitter' else 'release' if kind == 'fabric' else
+                       ('pour_start' if d.get('pours') else 'release') if kind == 'matter' else 'position')
+                win.props.reveal((kind, i, key))
 
     def wheelEvent(self, e):
         self.scroll = max(0, self.scroll - int(round(e.angleDelta().y() / 120)))

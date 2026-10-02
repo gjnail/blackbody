@@ -366,7 +366,7 @@ COMPONENTS = [
                           material='steel')]),
     # -- sand, snow, mud, jelly, clay (engine/matter.py: real size, in every kind of scene but the sky) -----------------------
     Component('sand_pile', 'Sand pile', 'Sand, snow & mud', 'A heap of dry sand 60 cm across, at its angle of repose: knock '
-              'into it or drop something on it and it slides.', 'hill', room=(0.4, 0.3, 0.4),
+              'into it or drop something on it and it slides.', 'matter', room=(0.4, 0.3, 0.4),
               objects=[_M(name='Sand pile', material='sand', shape='pile', position=(0.0, 0.1, 0.0), size=(0.3, 0.1, 0.3))]),
     Component('sand_pour', 'Sand pour', 'Sand, snow & mud', 'Sand poured from 80 cm up at a litre a second for four seconds: '
               'it builds a heap that slides as it grows.', 'pour', room=(0.4, 1.0, 0.4),
@@ -377,20 +377,20 @@ COMPONENTS = [
               objects=[_M(name='Sand column', material='sand', shape='cylinder', position=(0.0, 0.3, 0.0), size=(0.12, 0.3, 0.12),
                           release=0.5)]),
     Component('snowball', 'Snowball', 'Sand, snow & mud', 'A 14 cm snowball of packing snow thrown at 6 m/s: it splats on '
-              'what it hits and breaks into lumps.', 'snow', room=(0.3, 0.8, 0.3),
+              'what it hits and breaks into lumps.', 'snowball', room=(0.3, 0.8, 0.3),
               objects=[_M(name='Snowball', material='packing_snow', shape='sphere', position=(0.0, 0.7, 0.0),
                           size=(0.07, 0.07, 0.07), velocity=(6.0, 1.0, 0.0))]),
     Component('snow_drift', 'Snow drift', 'Sand, snow & mud', 'A bank of fresh snow 25 cm deep: things that land in it sink in '
               'and pack it.', 'snow', room=(0.7, 0.3, 0.4),
               objects=[_M(name='Snow drift', material='snow', shape='box', position=(0.0, 0.125, 0.0), size=(0.6, 0.125, 0.3))]),
     Component('mud', 'Mud', 'Sand, snow & mud', 'A heap of thick mud let go: it slumps and flows until it is thin enough to '
-              'stop.', 'hill', room=(0.8, 0.4, 0.8),
+              'stop.', 'mud', room=(0.8, 0.4, 0.8),
               objects=[_M(name='Mud', material='mud', shape='pile', position=(0.0, 0.15, 0.0), size=(0.3, 0.15, 0.3))]),
     Component('jelly_block', 'Jelly', 'Sand, snow & mud', 'A 16 cm block of jelly dropped from 30 cm: it squashes, bounces, '
-              'wobbles and settles.', 'cube', room=(0.3, 0.6, 0.3),
+              'wobbles and settles.', 'jelly', room=(0.3, 0.6, 0.3),
               objects=[_M(name='Jelly', material='jelly', shape='box', position=(0.0, 0.38, 0.0), size=(0.08, 0.08, 0.08))]),
     Component('clay_lump', 'Lump of clay', 'Sand, snow & mud', 'A 16 cm lump of clay dropped from 30 cm: it lands with a flat '
-              'base and keeps it.', 'cube', room=(0.3, 0.6, 0.3),
+              'base and keeps it.', 'clay', room=(0.3, 0.6, 0.3),
               objects=[_M(name='Clay', material='clay', shape='box', position=(0.0, 0.38, 0.0), size=(0.08, 0.08, 0.08))]),
     # -- fabric -------------------------------------------------------------------------------------------------------------
     Component('curtain', 'Curtain', 'Fabric', 'A cotton curtain hanging from a rail (real size). It blows in the air and burns.',

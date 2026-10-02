@@ -10,6 +10,7 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPolygonF
 from PySide6.QtWidgets import QMenu, QWidget
 
+from ..scene import kinds as K
 from ..scene.anim import Curve
 from ..scene.params import SECTION_TITLES
 from . import theme
@@ -31,7 +32,7 @@ def animated_paths(scene):
                 except KeyError:
                     label = k
                 out.append(((sec, k), label, SECTION_TITLES.get(sec, sec)))
-    for kind, items in (('emitter', scene.emitters), ('collider', scene.colliders), ('light', scene.lights), ('fabric', scene.fabrics)):
+    for kind, items in K.lists(scene).items():
         for i, d in enumerate(items):
             for k, v in d.items():
                 if isinstance(v, Curve):

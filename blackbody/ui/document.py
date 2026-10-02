@@ -15,6 +15,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QUndoCommand, QUndoStack
 
 from ..scene import PROJECT_EXT, Scene, presets
+from ..scene import kinds as K
 from ..scene.anim import Curve
 
 
@@ -399,7 +400,7 @@ class Document(QObject):
 
     def _counts(self):
         sc = self.scene
-        return (len(sc.emitters), len(sc.colliders), len(sc.lights), len(sc.fabrics), self.active)
+        return tuple(len(v) for v in K.lists(sc).values()) + (self.active,)
 
     def _restore(self, snap):
         counts = self._counts()
@@ -424,7 +425,7 @@ class Document(QObject):
             self.selection = ('section', 'domain')
         if self.selection[0] == 'light' and self.selection[1] >= len(self.scene.lights):
             self.selection = ('section', 'lighting')
-        if self.selection[0] == 'fabric' and self.selection[1] >= len(self.scene.fabrics):
+        if self.selection[0] in ('fabric', 'matter') and self.selection[1] >= len(K.items(self.scene, self.selection[0])):
             self.selection = ('section', 'domain')
         if counts != self._counts():   # things came or went: only the main selection stays
             self.picked = []
@@ -474,8 +475,7 @@ class Document(QObject):
         key = ('set', path, self._gen) if merge else None
         link = None
         if len(path) == 3 and path[2] in ('position', 'end') and getattr(self.scene, 'links', None):
-            items = {'emitter': self.scene.emitters, 'collider': self.scene.colliders, 'light': self.scene.lights,
-                     'fabric': self.scene.fabrics}[path[0]]
+            items = K.items(self.scene, path[0])
             link = self.scene.link_of(path[0], items[path[1]].get('name'))
 
         def fn(s):
@@ -507,9 +507,8 @@ class Document(QObject):
         if b is None:
             return None
         try:
-            if path[0] in ('emitter', 'collider', 'light', 'fabric'):
-                lists = {'emitter': 'emitters', 'collider': 'colliders', 'light': 'lights', 'fabric': 'fabrics'}[path[0]]
-                cur, base = getattr(self.scene, lists), getattr(b, lists)
+            if path[0] in K.KINDS:
+                cur, base = K.items(self.scene, path[0]), K.items(b, path[0])
                 if path[1] >= len(base) or base[path[1]].get('name') != cur[path[1]].get('name'):
                     return None
             return b.get(path, self.frame)
@@ -656,6 +655,19 @@ class Document(QObject):
         self.edit('Delete fabric', lambda s: s.fabrics.pop(i), structure=True)
         self.select(('section', 'domain'))
 
+    def add_matter(self, **extra):
+        """Sand, snow, mud, jelly or clay (Scene.add_matter names it after what it is made of)."""
+        self.edit('Add ' + str(extra.get('material', 'sand')).replace('_', ' '), lambda s: s.add_matter(**extra), structure=True)
+        self.select(('matter', len(K.items(self.scene, 'matter')) - 1))
+
+    def remove_matter(self, i):
+        self.edit('Delete ' + K.items(self.scene, 'matter')[i]['name'], lambda s: s.matter.pop(i), structure=True)
+        self.select(('section', 'domain'))
+
+    def remove_object(self, kind, i):
+        {'emitter': self.remove_emitter, 'collider': self.remove_collider, 'light': self.remove_light,
+         'fabric': self.remove_fabric, 'matter': self.remove_matter}[kind](i)
+
     def add_component(self, key, at=None, mesh=None):
         """Add a building block (scene/components.py) as one undoable step, select what it added and return
         notes for the user. Raises ValueError if the scene cannot take it."""
@@ -715,7 +727,7 @@ class Document(QObject):
     def attach(self, child, parent):
         """Attach object child (kind, i) to parent (kind, i): from now on it goes where the parent goes."""
         sc = self.scene
-        lists = {'emitter': sc.emitters, 'collider': sc.colliders, 'light': sc.lights, 'fabric': sc.fabrics}
+        lists = K.lists(sc)
         c = lists[child[0]][child[1]]
         p = lists[parent[0]][parent[1]]
         cp = np.asarray(sc.get((child[0], child[1], 'position'), self.frame), float)
@@ -731,14 +743,14 @@ class Document(QObject):
 
     def detach(self, kind, i):
         sc = self.scene
-        items = {'emitter': sc.emitters, 'collider': sc.colliders, 'light': sc.lights, 'fabric': sc.fabrics}[kind]
+        items = K.items(sc, kind)
         name = items[i]['name']
         self.edit(f'Detach {name}', lambda s: setattr(s, 'links', [l for l in s.links if list(l['child']) != [kind, name]]),
                   structure=True)
 
     def rename(self, kind, i, name):
         def fn(s):
-            items = {'emitter': s.emitters, 'collider': s.colliders, 'light': s.lights, 'fabric': s.fabrics}[kind]
+            items = K.items(s, kind)
             old = items[i]['name']
             items[i]['name'] = name
             for l in getattr(s, 'links', None) or []:   # links follow the name
@@ -762,8 +774,7 @@ class Document(QObject):
     # -- several things at once -------------------------------------------------------------------------
 
     def _lists(self):
-        sc = self.scene
-        return {'emitter': sc.emitters, 'collider': sc.colliders, 'light': sc.lights, 'fabric': sc.fabrics}
+        return K.lists(self.scene)
 
     def selected_objects(self):
         """The objects selected: the main one (whose settings show) first, then the others selected with it."""
@@ -812,7 +823,7 @@ class Document(QObject):
 
         def fn(s):
             names = {(k, d['name']) for (k, _), d in starts.items()}
-            lists = {'emitter': s.emitters, 'collider': s.colliders, 'light': s.lights, 'fabric': s.fabrics}
+            lists = K.lists(s)
             for (kind, i), d0 in starts.items():
                 items = lists[kind]
                 if i >= len(items):
@@ -838,7 +849,7 @@ class Document(QObject):
         n = len(sels)
 
         def fn(s):
-            lists = {'emitter': s.emitters, 'collider': s.colliders, 'light': s.lights, 'fabric': s.fabrics}
+            lists = K.lists(s)
             for kind, i in sorted(sels, key=lambda x: (x[0], -x[1])):
                 if i < len(lists[kind]):
                     lists[kind].pop(i)
@@ -873,7 +884,7 @@ class Document(QObject):
         def fn(s):
             pp = np.asarray(s.get((parent[0], parent[1], 'position'), f), float)
             for kind, i in sels[1:]:
-                c = {'emitter': s.emitters, 'collider': s.colliders, 'light': s.lights, 'fabric': s.fabrics}[kind][i]
+                c = K.items(s, kind)[i]
                 s.links = [l for l in s.links if list(l['child']) != [kind, c['name']]]
                 cp = np.asarray(s.get((kind, i, 'position'), f), float)
                 link = {'child': [kind, c['name']], 'parent': [parent[0], pname], 'offset': [float(x) for x in cp - pp]}
@@ -1031,6 +1042,7 @@ class Document(QObject):
             s.colliders = other.colliders
             s.lights = other.lights
             s.fabrics = other.fabrics
+            s.matter = K.items(other, 'matter')
             s.preset = other.preset
         self._begin_load(Path(path).stem)
         self.edit(f'Preset: {Path(path).stem}', fn, structure=True)

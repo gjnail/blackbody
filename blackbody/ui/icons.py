@@ -599,6 +599,76 @@ def _g_hill(p, s):
     p.drawLine(QPointF(s * 0.04, s * 0.86), QPointF(s * 0.96, s * 0.86))
 
 
+def _grain(p, s, x, y, r=0.045):
+    p.save()
+    p.setBrush(p.pen().color())
+    p.drawEllipse(QPointF(s * x, s * y), s * r, s * r)
+    p.restore()
+
+
+def _g_grains(p, s):
+    """A heap of sand, grainy."""
+    path = QPainterPath()
+    path.moveTo(s * 0.04, s * 0.86)
+    path.cubicTo(s * 0.26, s * 0.84, s * 0.36, s * 0.3, s * 0.5, s * 0.3)
+    path.cubicTo(s * 0.64, s * 0.3, s * 0.74, s * 0.84, s * 0.96, s * 0.86)
+    path.closeSubpath()
+    p.drawPath(path)
+    for x, y in ((0.36, 0.74), (0.5, 0.62), (0.64, 0.74), (0.5, 0.46)):
+        _grain(p, s, x, y, 0.05)
+
+
+def _g_mud(p, s):
+    """A heap of mud slumping out flat, with a lump dropping onto it."""
+    path = QPainterPath()
+    path.moveTo(s * 0.04, s * 0.84)
+    path.cubicTo(s * 0.16, s * 0.84, s * 0.2, s * 0.66, s * 0.34, s * 0.62)
+    path.cubicTo(s * 0.4, s * 0.5, s * 0.62, s * 0.48, s * 0.66, s * 0.62)
+    path.cubicTo(s * 0.8, s * 0.64, s * 0.84, s * 0.84, s * 0.96, s * 0.84)
+    path.closeSubpath()
+    p.drawPath(path)
+    drop = QPainterPath()
+    drop.moveTo(s * 0.5, s * 0.1)
+    drop.cubicTo(s * 0.6, s * 0.24, s * 0.58, s * 0.34, s * 0.5, s * 0.34)
+    drop.cubicTo(s * 0.42, s * 0.34, s * 0.4, s * 0.24, s * 0.5, s * 0.1)
+    p.drawPath(drop)
+
+
+def _g_jelly(p, s):
+    """A wobbling block of jelly with a shine on it."""
+    path = QPainterPath()
+    path.moveTo(s * 0.16, s * 0.86)
+    path.cubicTo(s * 0.1, s * 0.62, s * 0.22, s * 0.42, s * 0.18, s * 0.24)
+    path.cubicTo(s * 0.4, s * 0.14, s * 0.6, s * 0.3, s * 0.82, s * 0.2)
+    path.cubicTo(s * 0.78, s * 0.44, s * 0.9, s * 0.64, s * 0.84, s * 0.86)
+    path.closeSubpath()
+    p.drawPath(path)
+    shine = QPainterPath()
+    shine.moveTo(s * 0.32, s * 0.36)
+    shine.cubicTo(s * 0.29, s * 0.46, s * 0.33, s * 0.54, s * 0.3, s * 0.64)
+    p.drawPath(shine)
+
+
+def _g_snowball(p, s):
+    """A snowball flying, with lumps coming off it."""
+    p.drawEllipse(QPointF(s * 0.56, s * 0.46), s * 0.26, s * 0.26)
+    for a, b in (((0.06, 0.36), (0.22, 0.36)), ((0.1, 0.52), (0.24, 0.52)), ((0.04, 0.68), (0.2, 0.62))):
+        p.drawLine(QPointF(s * a[0], s * a[1]), QPointF(s * b[0], s * b[1]))
+    _grain(p, s, 0.86, 0.82, 0.05)
+    _grain(p, s, 0.72, 0.88, 0.04)
+
+
+def _g_clay(p, s):
+    """A lump of clay squashed flat where it landed."""
+    path = QPainterPath()
+    path.moveTo(s * 0.1, s * 0.84)
+    path.lineTo(s * 0.9, s * 0.84)
+    path.cubicTo(s * 0.92, s * 0.6, s * 0.76, s * 0.4, s * 0.52, s * 0.42)
+    path.cubicTo(s * 0.3, s * 0.38, s * 0.1, s * 0.56, s * 0.1, s * 0.84)
+    p.drawPath(path)
+    p.drawLine(QPointF(s * 0.34, s * 0.62), QPointF(s * 0.5, s * 0.58))
+
+
 def _g_flag(p, s):
     p.drawLine(QPointF(s * 0.18, s * 0.08), QPointF(s * 0.18, s * 0.92))
     path = QPainterPath()
@@ -688,6 +758,7 @@ GLYPHS = {
     'spiral': _g_spiral, 'steam': _g_steam, 'pour': _g_pour, 'fountain': _g_fountain, 'ball': _g_ball, 'pillar': _g_pillar,
     'wall': _g_wall, 'house': _g_house, 'car': _g_car, 'hill': _g_hill, 'flag': _g_flag, 'spot': _g_spot, 'window': _g_window,
     'mesh': _g_mesh, 'crate': _g_crate, 'roto': _g_roto, 'text': _g_text, 'shape': _g_shape,
+    'matter': _g_grains, 'grains': _g_grains, 'mud': _g_mud, 'jelly': _g_jelly, 'snowball': _g_snowball, 'clay': _g_clay,
     'play': lambda p, s: p.drawPolygon(QPolygonF([QPointF(s * 0.3, s * 0.2), QPointF(s * 0.8, s * 0.5), QPointF(s * 0.3, s * 0.8)])),
     'stop': lambda p, s: p.drawRect(QRectF(s * 0.25, s * 0.25, s * 0.5, s * 0.5)),
 }

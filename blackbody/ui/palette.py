@@ -10,6 +10,7 @@ from PySide6.QtGui import QColor, QFont, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import (QDialog, QFrame, QLineEdit, QListWidget, QListWidgetItem, QMenu, QStyledItemDelegate, QStyle,
                                QVBoxLayout)
 
+from ..scene import kinds as K
 from . import icons, theme
 
 KINDS = {'do': ('Do', theme.ACCENT, 0), 'add': ('Add', '#9fe0c8', 1), 'command': ('Command', '#c9c9d1', 2),
@@ -64,10 +65,10 @@ def gather(win, keep=None):
     out = []
     # what can be done to the selected thing
     sel = doc.selection
-    if sel and sel[0] in ('emitter', 'collider', 'light', 'fabric'):
+    if sel and sel[0] in K.KINDS:
         m = QMenu(win)
         actions.fill_menu(m, win, sel, path_mode=getattr(getattr(win, 'viewport', None), 'start_path', None))
-        items = {'emitter': sc.emitters, 'collider': sc.colliders, 'light': sc.lights, 'fabric': sc.fabrics}[sel[0]]
+        items = K.items(sc, sel[0])
         _menu_entries(m, [items[sel[1]]['name']], 'do', out)
         if keep is not None:
             keep.append(m)
@@ -80,9 +81,9 @@ def gather(win, keep=None):
     # the menus
     _menu_entries(win.menuBar(), [], 'command', out, skip=('Search everything…',))
     # the things in the scene
-    for kind, items in (('emitter', sc.emitters), ('collider', sc.colliders), ('light', sc.lights), ('fabric', sc.fabrics)):
+    for kind, items in K.lists(sc).items():
         for i, d in enumerate(items):
-            out.append(Entry('object', d['name'], {'emitter': 'Source', 'collider': 'Object', 'light': 'Light', 'fabric': 'Fabric'}[kind],
+            out.append(Entry('object', d['name'], K.NOUNS[kind],
                              (lambda s=(kind, i): (doc.select(s, force=True), _show_props(win))), glyph=kind,
                              key=f'object:{kind}:{d["name"]}'))
     # every setting of the scene

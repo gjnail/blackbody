@@ -30,7 +30,7 @@ BAD = '#e5534b'
 VIEWER = '#0c0c0d'    # viewport surround, neutral for colour judgement
 
 # what each kind of object in the scene is drawn with, in the viewer and the lists
-OBJECT_COLOURS = {'emitter': '#ff9a4a', 'collider': '#78beff', 'light': '#ffdc78', 'fabric': '#96d2ff'}
+OBJECT_COLOURS = {'emitter': '#ff9a4a', 'collider': '#78beff', 'light': '#ffdc78', 'fabric': '#96d2ff', 'matter': '#e3c08a'}
 
 
 def _asset_dir():

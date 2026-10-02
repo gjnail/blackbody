@@ -190,7 +190,7 @@ class ShotSteps(QFrame):
         c = sc.data['camera']
         g = sc.ground or {}
         flat = bool(c.get('use_anchor')) and not g
-        has_fx = bool(sc.emitters or sc.colliders or sc.fabrics)
+        has_fx = bool(sc.emitters or sc.colliders or sc.fabrics or getattr(sc, 'matter', None))
         tracked = bool(g.get('tracked')) or (isinstance(c.get('position'), Curve) and not c.get('use_anchor')) \
             or bool(sc.track and sc.track.get('points'))
         out = [
