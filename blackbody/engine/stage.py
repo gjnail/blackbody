@@ -161,6 +161,7 @@ class Stage:
                             workgroup=(8, 8, 1))
         # Lume's caustics: light traced from the lights through curved glass (lume.wgsl caustics), same bindings
         self.k_caustics = gpu.kernel('stage.wgsl', self.k.bindings, 'caustics', workgroup=(64, 1, 1))
+        self.k_lume = None   # Lume's camera kernel (lume.wgsl lume_main): compiled the first time Lume draws
         mg = ['utex3d', 'utex3d', 'buf', 'buf']
         self.k_mglow = gpu.kernel('matter_glow.wgsl', mg, 'lights', workgroup=(4, 4, 4))
         self.k_mglow_finish = gpu.kernel('matter_glow.wgsl', mg, 'finish', workgroup=(1, 1, 1))
@@ -346,6 +347,13 @@ class Stage:
         centre = 0.5 * (lo + hi)
         return tuple(centre), float(np.linalg.norm(hi - lo) * 0.5)
 
+    def lume_kernel(self):
+        """Lume's camera kernel (lume.wgsl lume_main), compiled the first time it is wanted: the classic stage's main
+        without the classic shading in it, and the classic one without Lume's (each one's code slows the other)."""
+        if self.k_lume is None:
+            self.k_lume = self.gpu.kernel('stage.wgsl', self.k.bindings, 'lume_main', workgroup=(8, 8, 1))
+        return self.k_lume
+
     def draw(self, b, r, scene, camstate, fire, colliders, meshes, light: StageLight, comp, size, plate_fit=(1.0, 1.0),
              samples=1, shutter=0.0, footage=False, vol=None, ground_y=0.0, frame=0, objects=True, floor=True,
              pieces=None, ropes=None, matter=None, bolts=None, grass=None, burns=None, final=False):
@@ -420,7 +428,7 @@ class Stage:
         if lume.on:
             # (Lume: the passes added up, one path per pixel each in the viewer; a final render traces several per pass,
             # so a simple set is not held up by the passes themselves)
-            ns = LU.FINAL_PER_PASS if (final and lume.samples >= 4 * LU.FINAL_PER_PASS) else 1
+            ns = LU.final_per_pass(pw, ph, lume.samples) if final else 1
         u = (Uniforms().m4(camstate.inv_view_proj).m4(w2l)
              .v4(pw, ph, ns, shutter)
              .v4(*fit, float(comp.lens_k1), pix)
@@ -548,22 +556,29 @@ class Stage:
         # (Clamp bright paths: a bounce's light capped at that many times the sky's brightness; 0: none)
         cap = float(lume.clamp) * max(float(np.dot(np.asarray(sky, float), (0.2126, 0.7152, 0.0722))), 1e-4) if lume.clamp > 0 else 0.0
         ew, eh = L.env_dims if env is not None else (0, 0)
+        # (the HDRI's light on an upward surface, roughly: how often a bounce's light is picked from it, lume.wgsl lu_wt)
+        env_w = (math.pi * float(np.dot(np.asarray(self.env_sky or (0.0, 0.0, 0.0), float), (0.2126, 0.7152, 0.0722)))
+                 * float(light.env_strength)) if env is not None else 0.0
         # caustics: the curved clear things in the set (not over footage, for now), the camera, how many light paths
-        targets = LU.caustic_targets(scene, cols, rows, meshes, matter if surf is not None else None) if not footage else []
+        targets, tmask = LU.caustic_targets(scene, cols, rows, meshes, matter if surf is not None else None) if not footage else ([], 0)
         caust = Uniforms()
-        n_paths = (pw * ph) // LU.CAUSTIC_SHARE if targets else 0
+        # (traced from: the lamps, the key light, and the HDRI when its light is gathered in a sun)
+        env_traced = env is not None and L.env_traced and L.env_dims[0] > 0
+        traced = bool(light.lamps) or max(light.sun) > 0.0 or env_traced
+        n_paths = (pw * ph * max(ns, 4)) // LU.CAUSTIC_SHARE if (targets and traced) else 0
+        tmask |= (1 << 17) if env_traced else 0
         eye_l = w2l @ np.append(np.asarray(camstate.eye, float), 1.0)
-        caust.v4(n_paths, len(targets), 1.0 / max(n_paths * pix * pix, 1e-30) if n_paths else 0.0, 1.0 if n_paths else 0.0)
+        caust.v4(n_paths, len(targets), 1.0 / max(n_paths * pix * pix, 1e-30) if n_paths else 0.0, float(tmask) if targets else 0.0)
         caust.v3(eye_l[:3], 0.0).m4(camstate.view_proj).m4(l2w)
         for k in range(LU.TARGETS):
             caust.v4(*(targets[k] if k < len(targets) else (0.0, 0.0, 0.0, 0.0)))
         for i in range(count):
             up = Uniforms()
-            up.data = base + [1.0, float(first + i), float(lume.bounces), cap, float(ew), float(eh), clear_on, 0.0] + caust.data
+            up.data = base + [1.0, float(first + i), float(lume.bounces), cap, float(ew), float(eh), clear_on, env_w] + caust.data
             if n_paths:
                 b.clear_buffer(L.cau)
                 b.run(self.k_caustics, res, up, groups=(-(-n_paths // 64), 1, 1))
-            b.run(self.k, res, up, (pw, ph, 1))
+            b.run(self.lume_kernel(), res, up, (pw, ph, 1))
             if final and (i + 1) % max(1, LU.FINAL_SUBMIT // ns) == 0 and i + 1 < count:
                 b.submit(restart=True)
         if count > 0 or final:

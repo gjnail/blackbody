@@ -45,6 +45,9 @@ def look_at_euler(eye, target):
     return euler_xyz(R)
 
 
+NO_PATTERN = -2   # (stage.wgsl pattern, floor_look: below 0, none at all: plain surfaces are otherwise a little uneven)
+
+
 def build(spec, sky_path):
     """A Blackbody scene for a benchmark scene, and the exact looks of its objects (stage.looks rows)."""
     from blackbody.engine.renderer import LAMP_SCALE
@@ -69,7 +72,7 @@ def build(spec, sky_path):
         sc.add_collider(name=f'o{len(rows)}', shape=shape, position=tuple(o['pos']), size=tuple(o['size']), material='plaster',
                         look='cg')
         alb = tuple(float(x) for x in o['alb'])
-        rows.append((CG, alb, float(o.get('rough', 0.5)), float(o.get('metal', 0.0)), float(o.get('clear', 0.0)), 0, alb,
+        rows.append((CG, alb, float(o.get('rough', 0.5)), float(o.get('metal', 0.0)), float(o.get('clear', 0.0)), NO_PATTERN, alb,
                      float(o.get('ior', 1.5))))
     for L in spec['lamps']:
         p = np.asarray(L['power'], float)
@@ -84,7 +87,7 @@ def patch(spec, rows):
     from blackbody.engine import stage
     from blackbody.scene import materials
     fl = spec['floor'] or dict(alb=(0.5, 0.5, 0.5), rough=0.5)
-    materials.FLOORS['bench'] = materials.Floor('bench', 'Bench', tuple(fl['alb']), float(fl['rough']), 0)
+    materials.FLOORS['bench'] = materials.Floor('bench', 'Bench', tuple(fl['alb']), float(fl['rough']), NO_PATTERN)
     stage.FLOORS['bench'] = materials.FLOORS['bench']
     stage.HORIZON_FADE = 1.0e9
     stage.looks = lambda scene, footage: list(rows)

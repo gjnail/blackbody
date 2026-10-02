@@ -18,11 +18,22 @@ from .gpu import Uniforms
 ENV_WIDTH = 512           # the HDRI's brightness map: at most this many columns (and half as many rows)
 VIEWER_PASSES = 2         # passes the viewer adds per refinement
 FINAL_SUBMIT = 4          # a final render submits its passes this many at a time (each command list stays short)
-FINAL_PER_PASS = 4        # paths per pixel each pass of a final render traces
+FINAL_PER_PASS = 4        # paths per pixel each pass of a final render traces, at 1080p: more on fewer pixels
+FINAL_PASS_MAX = 16       # ... at most (final_per_pass)
 TARGETS = 8               # caustics: at most this many curved clear things the lights are traced through
-CAUSTIC_SHARE = 4         # caustics: one light path per this many pixels, each pass
+CAUSTIC_SHARE = 16        # caustics: one light path per this many paths from the camera (per 4 pixels in the viewer)
+MIRROR_ROUGH = 0.35       # caustics: bare metal smoother than this focuses light (lume.wgsl LU_MIRROR_ROUGH)
 TAIL_FLOATS = 8 + 8 + 32 + 4 * TARGETS   # the stage's parameters after its materials: Lume's (lume, lume2, caustics)
 ATROUS_STEPS = (1, 2, 4, 8, 16)
+
+
+def final_per_pass(w, h, samples):
+    """Paths per pixel each pass of a final render of w x h traces: FINAL_PER_PASS at 1080p, more on fewer pixels (up to
+    FINAL_PASS_MAX: each pass's own cost, its launch and its sums, held up a small picture by a third), so a pass is never
+    longer than one at 1080p (a dispatch running seconds would have the driver reset the GPU); fewer when there are not
+    many samples."""
+    n = min(FINAL_PASS_MAX, max(FINAL_PER_PASS, FINAL_PER_PASS * 1920 * 1080 // max(int(w) * int(h), 1)))
+    return max(1, min(n, int(samples) // 4))
 
 
 @dataclass
@@ -75,31 +86,59 @@ def env_table(img, width=ENV_WIDTH):
     return table, w, h
 
 
+ENV_TRACE_SHARE = 0.25    # caustics: an HDRI with this much of its light in its brightest 0.5% (a sun) is traced
+
+
+def env_peaked(table, w, h):
+    """Whether an HDRI (its env_table) gathers its light in a small bright part (a sun): ENV_TRACE_SHARE of it or more in
+    its brightest 0.5% of the sky. Its light is then traced from it for caustics (lume.wgsl caustics); an even sky's is
+    found well by bouncing."""
+    pdf = np.asarray(table[h + w * h:], np.float64).reshape(h, w)
+    st = np.sin((np.arange(h) + 0.5) / h * math.pi)
+    solid = np.broadcast_to(st[:, None], (h, w)).ravel()          # (each pixel's solid angle, relatively)
+    power = pdf.ravel()                                            # (its share of the light, relatively)
+    order = np.argsort(-(power / np.maximum(solid, 1e-9)))         # (brightest first)
+    cum = np.cumsum(solid[order]) / solid.sum()
+    top = order[: max(1, int(np.searchsorted(cum, 0.005)) + 1)]
+    return float(power[top].sum() / max(power.sum(), 1e-30)) >= ENV_TRACE_SHARE
+
+
 def caustic_targets(scene, cols, rows, meshes, matter=None):
-    """The curved clear things in the set (glass, ice or jelly balls, cylinders, meshes, clear matter) as spheres round
-    them, fire-local (x, y, z, radius): what the lights are traced through for caustics (lume.wgsl caustics). Flat ones
+    """What the lights are traced at for caustics (lume.wgsl caustics): the curved clear things in the set (glass, ice or
+    jelly balls, cylinders, meshes, clear matter) and the mirrors (bare smooth metal, any shape), as spheres round them,
+    fire-local (x, y, z, radius); and which they are (a bit for each object row, bit 16 the matter). Flat clear things
     (boxes, broken pieces) are left out: their straight-through shadow is exact."""
     from .solver import _mesh_ref
     out = []
-    for c, row in zip(cols, rows):
-        if row[0] == 0 or row[4] <= 0.0 or c.shape not in ('sphere', 'cylinder', 'mesh'):   # (0: not drawn)
+    mask = 0
+    for i, (c, row) in enumerate(zip(cols, rows)):
+        if len(out) >= TARGETS:
+            break
+        glass = row[4] > 0.0 and c.shape in ('sphere', 'cylinder', 'mesh')
+        mirror = row[4] <= 0.0 and row[3] >= 1.0 - 1e-6 and row[2] < MIRROR_ROUGH and c.shape in ('sphere', 'box', 'cylinder', 'mesh')
+        if row[0] == 0 or not (glass or mirror):   # (0: not drawn)
             continue
         s = np.abs(np.asarray(c.size, float))
         if c.shape == 'sphere':
             r = s[0]
         elif c.shape == 'cylinder':
             r = math.hypot(s[0], s[1])
+        elif c.shape == 'box':
+            r = float(np.linalg.norm(s))
         else:
             m0, m1 = _mesh_ref(meshes, c.mesh, c.mesh_frame, c.mesh_fps)[:2]
             ext = np.maximum(np.abs(np.asarray(m0[:3], float)), np.abs(np.asarray(m1[:3], float)))
             r = float(np.linalg.norm(ext * s))
         out.append((float(c.pos[0]), float(c.pos[1]), float(c.pos[2]), float(r) * 1.02 + 1e-3))
+        mask |= 1 << i
     if matter is not None and any(str(m.get('material', '')) == 'jelly' for m in (getattr(scene, 'matter', None) or [])):
         b = matter.world_bounds()
         if b is not None:
             lo, hi = np.asarray(b[0], float), np.asarray(b[1], float)
-            out.append((*((lo + hi) / 2).tolist(), float(np.linalg.norm(hi - lo)) / 2))
-    return out[:TARGETS]
+            if len(out) < TARGETS:
+                out.append((*((lo + hi) / 2).tolist(), float(np.linalg.norm(hi - lo)) / 2))
+                mask |= 1 << 16
+    return out, mask
 
 
 class Lume:
@@ -119,6 +158,7 @@ class Lume:
         self._env = None
         self._env_key = None
         self.env_dims = (0, 0)
+        self.env_traced = False   # the HDRI's light is traced for caustics (env_peaked)
         self._none = gpu.buffer(16, 'lume-no-env')
         self._tmp = [None, None]
         dn = ['rbuf', 'rbuf', 'tex2d', 'st2d:rgba16float:w']
@@ -155,6 +195,7 @@ class Lume:
         if key != self._env_key:
             from ..io.hdri import load_hdri
             table, w, h = env_table(load_hdri(path))
+            self.env_traced = env_peaked(table, w, h)
             if self._env is not None:
                 self._env.destroy()
             self._env = self.gpu.buffer(table.nbytes, 'lume-env')

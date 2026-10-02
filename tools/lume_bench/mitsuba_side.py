@@ -129,7 +129,7 @@ def material(o):
             'fr': float(f0[0]), 'fg': float(f0[1]), 'fb': float(f0[2]), 'rough': float(o.get('rough', 0.5))}
 
 
-def build(spec, spp):
+def build(spec, spp, sampler='independent'):
     T = mi.ScalarTransform4f
     W, H = spec['size']
     cam = spec['camera']
@@ -137,11 +137,18 @@ def build(spec, spp):
          'integrator': {'type': 'path', 'max_depth': int(spec['bounces']) + 1, 'hide_emitters': False},
          'sensor': {'type': 'perspective', 'fov': float(cam['hfov']), 'fov_axis': 'x', 'near_clip': 0.01,
                     'to_world': T().look_at(origin=list(cam['eye']), target=list(cam['target']), up=[0, 1, 0]),
-                    'sampler': {'type': 'independent', 'sample_count': int(spp)},
+                    'sampler': {'type': sampler, 'sample_count': int(spp)},
                     'film': {'type': 'hdrfilm', 'width': W, 'height': H, 'rfilter': {'type': 'box'}, 'pixel_format': 'rgb'}},
          'sky': {'type': 'constant', 'radiance': {'type': 'rgb', 'value': [float(spec['sky'])] * 3}}}
     if spec['floor'] is not None:
-        d['floor'] = {'type': 'rectangle', 'to_world': T().rotate([1, 0, 0], -90).scale(2000.0), 'bsdf': material(spec['floor'])}
+        # the ground: a square 100 m across round the set, and four long pieces round it out to 2 km. (One rectangle
+        # 4 km across puts its hits near the middle a fraction of a millimetre off the ground, and light rays from
+        # there are wrongly blocked by it: up to 14% dark under a low lamp.)
+        for k, (x0, x1, z0, z1) in enumerate([(-50, 50, -50, 50), (-2000, -50, -2000, 2000), (50, 2000, -2000, 2000),
+                                              (-50, 50, -2000, -50), (-50, 50, 50, 2000)]):
+            d[f'floor{k}'] = {'type': 'rectangle', 'bsdf': material(spec['floor']),
+                              'to_world': T().translate([(x0 + x1) / 2, 0.0, (z0 + z1) / 2]).rotate([1, 0, 0], -90)
+                                            .scale([(x1 - x0) / 2, (z1 - z0) / 2, 1.0])}
     for i, o in enumerate(spec['objects']):
         if o['shape'] == 'sphere':
             d[f'o{i}'] = {'type': 'sphere', 'center': list(o['pos']), 'radius': float(o['size'][0]), 'bsdf': material(o)}
@@ -155,8 +162,8 @@ def build(spec, spp):
     return mi.load_dict(d)
 
 
-def render(spec, spp, seed=0):
-    sc = build(spec, spp)
+def render(spec, spp, seed=0, sampler='independent'):
+    sc = build(spec, spp, sampler)
     t0 = time.perf_counter()
     img = np.array(mi.render(sc, spp=int(spp), seed=seed), np.float32)
     return img, time.perf_counter() - t0
@@ -169,6 +176,12 @@ def main():
     ap.add_argument('--ref', type=int, default=16384)
     ap.add_argument('--spp', default='4,16,64,256,1024')
     ap.add_argument('--repeat', type=int, default=3)
+    ap.add_argument('--sampler', default='independent',
+                    help="Mitsuba's sampler for the timed renders: independent (plain random), stratified, multijitter, "
+                         "orthogonal or ldsampler (low discrepancy)")
+    ap.add_argument('--ref-sampler', default='multijitter',
+                    help="its sampler for the reference (multi-jittered: far less noise for its samples than independent)")
+    ap.add_argument('--ref-from', default='', help='take the references from the mitsuba_SCENE.npz files in this folder')
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -177,20 +190,23 @@ def main():
         spec = SCENES[name]
         # the reference, in chunks of 1024 samples (each its own seed), averaged
         chunks = max(1, args.ref // 1024)
-        acc = None
-        t_ref = 0.0
-        for k in range(chunks):
-            img, dt = render(spec, min(args.ref, 1024), seed=1000 + k)
-            acc = img if acc is None else acc + img
-            t_ref += dt
-        ref = acc / chunks
-        print(f'mitsuba {name} reference {chunks * min(args.ref, 1024)} spp: {t_ref:.1f} s', flush=True)
-        render(spec, spps[0])     # (warm the JIT up: not timed)
+        if args.ref_from:
+            ref = np.load(Path(args.ref_from) / f'mitsuba_{name}.npz')['ref']
+        else:
+            acc = None
+            t_ref = 0.0
+            for k in range(chunks):
+                img, dt = render(spec, min(args.ref, 1024), seed=1000 + k, sampler=args.ref_sampler)
+                acc = img if acc is None else acc + img
+                t_ref += dt
+            ref = acc / chunks
+            print(f'mitsuba {name} reference {chunks * min(args.ref, 1024)} spp: {t_ref:.1f} s', flush=True)
+        render(spec, spps[0], sampler=args.sampler)     # (warm the JIT up: not timed)
         imgs, secs = [], []
         for spp in spps:
             dt = float('inf')
             for _ in range(args.repeat):   # (the fastest of a few: the GPU may be shared)
-                img, t = render(spec, spp, seed=7)
+                img, t = render(spec, spp, seed=7, sampler=args.sampler)
                 dt = min(dt, t)
             imgs.append(img)
             secs.append(dt)

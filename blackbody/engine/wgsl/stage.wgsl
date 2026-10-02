@@ -98,12 +98,12 @@ struct Params {
   col: array<Collider, MAX_COLLIDERS>,
   mat: array<Mat, MAT_ROWS>,
   lume: vec4<f32>,      // Lume (lume.wgsl): on (1/0), this pass (0, 1, ...), bounces, the cap on a bounce's light (0: none)
-  lume2: vec4<f32>,     // the HDRI's brightness map to pick directions from (ENV): width, height (0: none); anything clear in the set (1/0), _
-  lume3: vec4<f32>,     // caustics (lume.wgsl caustics): light paths this pass, curved clear things, 1 / (paths x a pixel's area at 1 m), on
+  lume2: vec4<f32>,     // the HDRI's brightness map to pick directions from (ENV): width, height (0: none); anything clear in the set (1/0); the HDRI's light on an upward surface (picking a light: lu_wt)
+  lume3: vec4<f32>,     // caustics (lume.wgsl caustics): light paths this pass, curved clear things, 1 / (paths x a pixel's area at 1 m), which things they are (a bit per object row, 16 the matter; 17: the HDRI's light traced too)
   ceye: vec4<f32>,      // the camera (fire-local), _
   cvp: mat4x4<f32>,     // world -> clip
   cl2w: mat4x4<f32>,    // fire-local -> world
-  ctg: array<vec4<f32>, 8>,   // the curved clear things the light is aimed at: a sphere round each (fire-local centre, radius)
+  ctg: array<vec4<f32>, 8>,   // the curved clear things and mirrors the light is aimed at: a sphere round each (fire-local centre, radius)
 };
 
 @group(0) @binding(0) var atlas: texture_3d<f32>;       // mesh distance fields (meshsdf.wgsl)
@@ -380,6 +380,15 @@ fn plain(i: i32) -> bool {
 // Where a ray (fire-local) enters plain object k past t0: its distance along the ray, or -1 where it misses it or starts
 // inside it (a ray goes on through what it starts in, as the march does).
 fn plain_hit(k: Collider, ro: vec3<f32>, rd: vec3<f32>, t0: f32) -> f32 {
+  let sp = plain_span(k, ro, rd);
+  if (sp.y >= sp.x && sp.x > t0) { return sp.x; }
+  return -1.0;
+}
+
+// Where the line of a ray (fire-local) enters and leaves plain object k, exactly: (in, out) along it, either behind the
+// ray's start; out < in where it misses.
+fn plain_span(k: Collider, ro: vec3<f32>, rd: vec3<f32>) -> vec2<f32> {
+  let miss = vec2<f32>(1.0, -1.0);
   let o = col_to_local(k, ro);
   let d = yaw_to_local(quat_rotate(vec4<f32>(-k.r.xyz, k.r.w), rd), k.b.w);
   let shape = i32(k.a.w + 0.5);
@@ -388,7 +397,7 @@ fn plain_hit(k: Collider, ro: vec3<f32>, rd: vec3<f32>, t0: f32) -> f32 {
   if (shape == 0) {
     let b = dot(o, d);
     let h = b * b - (dot(o, o) - k.b.x * k.b.x);
-    if (h < 0.0) { return -1.0; }
+    if (h < 0.0) { return miss; }
     let sq = sqrt(h);
     tn = -b - sq;
     tf = -b + sq;
@@ -400,7 +409,7 @@ fn plain_hit(k: Collider, ro: vec3<f32>, rd: vec3<f32>, t0: f32) -> f32 {
     let hi = max(t1, t2);
     tn = max(max(lo.x, lo.y), lo.z);
     tf = min(min(hi.x, hi.y), hi.z);
-    if (tf < tn) { return -1.0; }
+    if (tf < tn) { return miss; }
   } else {
     // a cylinder round y: inside its round side and between its ends
     let r = k.b.x;
@@ -411,12 +420,12 @@ fn plain_hit(k: Collider, ro: vec3<f32>, rd: vec3<f32>, t0: f32) -> f32 {
     var r1 = 1.0e30;
     if (a > 1e-12) {
       let h = bq * bq - a * cq;
-      if (h < 0.0) { return -1.0; }
+      if (h < 0.0) { return miss; }
       let sq = sqrt(h);
       r0 = (-bq - sq) / a;
       r1 = (-bq + sq) / a;
     } else if (cq > 0.0) {
-      return -1.0;
+      return miss;
     }
     var y0 = -1.0e30;
     var y1 = 1.0e30;
@@ -426,14 +435,39 @@ fn plain_hit(k: Collider, ro: vec3<f32>, rd: vec3<f32>, t0: f32) -> f32 {
       y0 = min(ta, tb);
       y1 = max(ta, tb);
     } else if (abs(o.y) > k.b.y) {
-      return -1.0;
+      return miss;
     }
     tn = max(r0, y0);
     tf = min(r1, y1);
-    if (tf < tn) { return -1.0; }
+    if (tf < tn) { return miss; }
   }
-  if (tn > t0) { return tn; }
-  return -1.0;
+  return vec2<f32>(tn, tf);
+}
+
+// The outward normal of plain object i (plain()) at p on its surface, exactly. (obj_normal's is the slope of its distance
+// field over a pixel round p, which rounds a box's edges that wide: Lume shaded them a pixel too dark or too bright.)
+fn plain_normal(i: i32, p: vec3<f32>) -> vec3<f32> {
+  let k = obj(i);
+  let q = col_to_local(k, p);
+  let shape = i32(k.a.w + 0.5);
+  var nl = q;
+  if (shape == 1) {
+    let r = abs(q) / max(k.b.xyz, vec3<f32>(1e-9));
+    if (r.x >= r.y && r.x >= r.z) {
+      nl = vec3<f32>(sign(q.x), 0.0, 0.0);
+    } else if (r.y >= r.z) {
+      nl = vec3<f32>(0.0, sign(q.y), 0.0);
+    } else {
+      nl = vec3<f32>(0.0, 0.0, sign(q.z));
+    }
+  } else if (shape == 2) {
+    if (abs(q.y) / max(k.b.y, 1e-9) >= length(q.xz) / max(k.b.x, 1e-9)) {
+      nl = vec3<f32>(0.0, sign(q.y), 0.0);
+    } else {
+      nl = vec3<f32>(q.x, 0.0, q.z);
+    }
+  }
+  return normalize(col_to_world_dir(k, nl));
 }
 
 fn trace(ro: vec3<f32>, rd: vec3<f32>, t0: f32, tmax: f32, want: f32, floor_on: bool) -> Hit {
@@ -647,6 +681,7 @@ fn grid_line(x: f32, w: f32, fw: f32) -> f32 {
 // pixel footprint fw (m): rgb = albedo multiplier, w = roughness offset (and g_over).
 fn pattern(kind: i32, q: vec3<f32>, s: vec3<f32>, n: vec3<f32>, fw: f32) -> vec4<f32> {
   g_over = vec4<f32>(0.0);
+  if (kind < 0) { return vec4<f32>(1.0, 1.0, 1.0, 0.0); }   // none at all, not even plain's unevenness (Lume's benchmark)
   if (kind == 1) {
     // wood: growth rings round the long axis, wavy, with fine fibres along it
     var ax = 0;
@@ -758,9 +793,9 @@ fn floor_look(xz: vec2<f32>, fw: f32) -> vec4<f32> {
     m = vec3<f32>(select(0.45, 1.0, ck == 1));
     let fade = smoothstep(0.2, 0.6, fw);
     m = mix(m, vec3<f32>(0.725), fade);
-  } else {
+  } else if (kind >= 0) {
     m = vec3<f32>(1.0 + 0.03 * fnoise(q * 4.0, fw * 4.0));
-  }
+  }   // (below 0: none at all, Lume's benchmark)
   return vec4<f32>(base * max(m, vec3<f32>(0.0)), clamp(rough, 0.02, 1.0));
 }
 
@@ -1265,7 +1300,6 @@ fn past_cg(ro: vec3<f32>, rd: vec3<f32>, h: Hit, ro0: vec3<f32>, px: vec2<f32>, 
 // What the camera sees along one ray (fire-local), px the plate pixel, puv its plate uv, rd_w the ray
 // in world axes.
 fn see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w: vec3<f32>) -> Seen {
-  if (U.lume.x > 0.5) { return lume_see(ro0, rd0, px, puv, rd_w); }
   let footage = U.stage.w > 0.5;
   t_piece = -1.0;
   t_footage = 1.0e9;
@@ -1381,7 +1415,11 @@ fn undistort(uv: vec2<f32>, k1: f32) -> vec2<f32> {
 }
 
 @compute @workgroup_size(8, 8, 1)
-fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+fn main(@builtin(global_invocation_id) id: vec3<u32>) { stage_pixel(id, false); }
+
+// One pixel of the stage: the classic renderer's samples, or Lume's paths (lume.wgsl lume_main: each its own kernel, so
+// neither has the other's code in it, which would slow it)
+fn stage_pixel(id: vec3<u32>, lume: bool) {
   let px = vec2<i32>(id.xy);
   if (f32(px.x) >= U.res.x || f32(px.y) >= U.res.y) { return; }
   let ns = max(i32(U.res.z + 0.5), 1);
@@ -1390,7 +1428,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var near_sum = 0.0;       // the pieces (or footage surfaces) the samples saw: their distance from the camera (m)
   var near_n = 0.0;
   let seed = u32(px.x) * 1973u + u32(px.y) * 9277u + u32(U.depth.z) * 26699u;
-  let lume = U.lume.x > 0.5;
   var aov_a = vec4<f32>(0.0);
   var aov_n = vec4<f32>(0.0);
   if (lume) { lu_seed(px, 0u); }
@@ -1401,7 +1438,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (ns > 1) {
       off = vec2<f32>(fract(f32(i) * 0.7548776662 + 0.25), fract(f32(i) * 0.5698402910 + 0.6)) - vec2<f32>(0.5);
     }
-    if (lume) { off = lu_rand2() - vec2<f32>(0.5); }
+    if (lume) {
+      lu_sample(px, u32(U.lume.y + 0.5) * u32(ns) + u32(i));
+      off = lu_rand2() - vec2<f32>(0.5);
+    }
     if (lume) { g_jit = lu_rand(); } else { g_jit = rand1(seed + u32(i) * 31337u + 17u); }
     g_tau = 0.0;
     if (U.res.w > 0.0) {
@@ -1420,7 +1460,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let rd_w = normalize(pf.xyz / pf.w - ro_w);
     let ro = (U.w2l * vec4<f32>(ro_w, 1.0)).xyz;
     let rd = normalize((U.w2l * vec4<f32>(rd_w, 0.0)).xyz);
-    let s = see(ro, rd, pp, puv, rd_w);
+    var s: Seen;
+    if (lume) { s = lume_see(ro, rd, pp, puv, rd_w); } else { s = see(ro, rd, pp, puv, rd_w); }
     acc += s.c + bolt_glow(ro, rd, select(1.0e4, s.t, s.t > 0.0));
     if (lume) {
       aov_a += vec4<f32>(lu_alb, lu_dist);
@@ -1450,7 +1491,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       nn += AOV[2u * k + 1u];
     }
     // (and the light the lights focus through curved glass onto what this pixel sees, traced from the lights this pass)
-    if (U.lume3.w > 0.5) { a = vec4<f32>(a.rgb + lu_caustic_at(k), a.a); }
+    if (U.lume3.x > 0.5) { a = vec4<f32>(a.rgb + lu_caustic_at(k), a.a); }
     ACC[k] = a;
     AOV[2u * k] = al;
     AOV[2u * k + 1u] = nn;

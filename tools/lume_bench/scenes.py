@@ -55,5 +55,8 @@ SCENES = {
 
 for _n, _b in (('cornell_direct', 1), ('cornell_2', 2)):
     SCENES[_n] = dict(SCENES['cornell'], bounces=_b)
+# The metal and plastic balls with direct light only, and with two bounces (their reflections of each other and the floor)
+for _n, _b in (('glossy_direct', 1), ('glossy_2', 2)):
+    SCENES[_n] = dict(SCENES['glossy'], bounces=_b)
 # The glass ball under the sky alone: the sky's light through it (its caustic) without the lamp's.
 SCENES['glass_sky'] = dict(SCENES['glass'], sky=1.0, lamps=[])

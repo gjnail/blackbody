@@ -206,23 +206,67 @@ def test_a_lamp_lights_the_floor_below_it_as_a_sphere_does(engine, monkeypatch):
 
 
 def test_a_glass_ball_focuses_the_lamp_into_a_caustic(engine, monkeypatch):
-    # a glass ball on a floor under a lamp (no sky): straight below it, opposite the lamp, the light it focuses is brighter
-    # than the open floor beside it (traced from the lamp: lume.wgsl caustics); the shadow round it is dark
-    spec = dict(size=(160, 120), camera=dict(eye=(0.0, 2.2, 0.6), target=(0.0, 0.0, 0.0), hfov=40.0), sky=0.0,
-                floor=dict(alb=(0.6, 0.6, 0.6), rough=0.8), bounces=4,
-                objects=[dict(shape='sphere', pos=(0.0, 0.25, 0.0), size=(0.25,) * 3, alb=(1.0, 1.0, 1.0), rough=0.03,
-                              clear=1.0, ior=1.5)],
-                lamps=[dict(pos=(0.0, 2.5, 0.0), radius=0.05, power=(4.0, 4.0, 4.0))])
-    sc = _bench_scene(spec, monkeypatch)
-    img = _stage(engine, sc, spec, samples=256, bounces=4).mean(-1)
+    # a glass ball on a floor under a lamp off to one side (no sky): in its shadow, where the line from the lamp through
+    # the ball meets the floor, the light it focuses is brighter than the open floor (traced from the lamp: lume.wgsl
+    # caustics); without the caustics, the ball's shadow lets the lamp's light straight through it, unfocused. (Seen
+    # from the front and low, as the benchmark sees it: from above, the camera sees that spot only through the ball,
+    # where its focus is not traced.)
     from blackbody.engine import camera as cam
+    from blackbody.engine import lume as LU
+    spec = dict(size=(160, 120), camera=dict(eye=(0.0, 0.8, 2.6), target=(0.0, 0.25, 0.0), hfov=40.0), sky=0.0,
+                floor=dict(alb=(0.6, 0.6, 0.6), rough=0.7), bounces=4,
+                objects=[dict(shape='sphere', pos=(-0.25, 0.25, 0.0), size=(0.25,) * 3, alb=(1.0, 1.0, 1.0), rough=0.03,
+                              clear=1.0, ior=1.5)],
+                lamps=[dict(pos=(-1.5, 2.5, 0.5), radius=0.1, power=(8.0, 8.0, 8.0))])
+    sc = _bench_scene(spec, monkeypatch)
     spec_c, fire = sc.camera(sc.start)
     cs = cam.compute(spec_c, 160 / 120, fire)
-    def at(p):
-        px, ok = cam.project(cs, np.array([p], float), 160, 120)
-        x, y = int(px[0][0]), int(px[0][1])
-        return float(img[y - 1:y + 2, x - 1:x + 2].mean())
-    under = at((0.0, 0.0, 0.0))        # (seen past the ball? the camera looks down at it from above and in front)
-    open_floor = at((0.8, 0.0, 0.0))
+
+    def px(p):
+        q, ok = cam.project(cs, np.array([p], float), 160, 120)
+        return int(q[0][0]), int(q[0][1])
+
+    # where the line from the lamp through the ball's middle meets the floor
+    lamp, ball = np.array([-1.5, 2.5, 0.5]), np.array([-0.25, 0.25, 0.0])
+    d = (ball - lamp) / np.linalg.norm(ball - lamp)
+    spot = ball + d * (ball[1] / -d[1])
+    x, y = px(spot)
+    ox, oy = px((0.6, 0.0, -0.3))   # (open floor, lit)
+    assert 1 <= x < 159 and 1 <= y < 119 and 1 <= ox < 159 and 1 <= oy < 119, (x, y, ox, oy)
+    on = _stage(engine, sc, spec, samples=256, bounces=4).mean(-1)
     assert engine.stage.lume is not None
-    assert max(under, at((0.0, 0.0, 0.06)), at((0.0, 0.0, -0.06))) > 1.5 * open_floor
+    monkeypatch.setattr(LU, 'caustic_targets', lambda *a, **k: ([], 0))
+    off = _stage(engine, sc, spec, samples=256, bounces=4).mean(-1)
+    # (the brightest place near there with the caustics, and the same place without them)
+    w = on[y - 6:y + 7, x - 8:x + 9]
+    cy, cx = np.unravel_index(int(np.argmax(w)), w.shape)
+    cy, cx = y - 6 + int(cy), x - 8 + int(cx)
+    at = lambda img, u, v: float(img[v - 1:v + 2, u - 1:u + 2].mean())
+    open_floor = at(on, ox, oy)
+    assert at(on, cx, cy) > 1.5 * open_floor
+    assert at(on, cx, cy) > 3.0 * at(off, cx, cy)   # (without them: the light the glass lets straight through)
+
+
+def test_a_mirror_ball_throws_the_lamp_onto_the_floor(engine, monkeypatch):
+    # a mirror ball (bare smooth metal) beside a lamp: the light it reflects onto the floor is traced from the lamp
+    # (lume.wgsl caustics) and agrees with the camera's own paths finding it by bouncing (the caustics off): the same
+    # light, with far less noise
+    from blackbody.engine import lume as LU
+    spec = dict(size=(128, 96), camera=dict(eye=(0.0, 1.6, 2.4), target=(0.0, 0.0, 0.0), hfov=50.0), sky=0.0,
+                floor=dict(alb=(0.6, 0.6, 0.6), rough=0.8), bounces=2,
+                objects=[dict(shape='sphere', pos=(0.0, 0.3, 0.0), size=(0.3,) * 3, alb=(0.95, 0.95, 0.95), rough=0.05,
+                              metal=1.0)],
+                lamps=[dict(pos=(-0.9, 0.5, 0.0), radius=0.1, power=(2.0, 2.0, 2.0))])
+    sc = _bench_scene(spec, monkeypatch)
+    on = _stage(engine, sc, spec, samples=256, bounces=2).mean(-1)
+    monkeypatch.setattr(LU, 'caustic_targets', lambda *a, **k: ([], 0))
+    off = _stage(engine, sc, spec, samples=2048, bounces=2).mean(-1)
+    # the floor to the right of the ball, away from the lamp, lit only by what the ball reflects
+    band = (slice(60, 90), slice(80, 120))
+    assert float(on[band].mean()) > 0.0
+    assert abs(float(on[band].mean()) / float(off[band].mean()) - 1.0) < 0.1
+    # (and with an eighth of the samples, less noise: the bounce finds a lamp in a mirror rarely, in fireflies)
+    def noise(img):
+        b = img[band]
+        return float(np.abs(b[1:-1, 1:-1] - (b[:-2, 1:-1] + b[2:, 1:-1] + b[1:-1, :-2] + b[1:-1, 2:]) / 4).mean())
+    assert noise(on) < noise(off)
