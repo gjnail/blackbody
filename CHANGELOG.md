@@ -98,6 +98,9 @@ Notable changes to Blackbody. The format follows
   temperature, as bright as a flame that hot, and lights the floor and objects round it. Their melts can be poured.
   Matter › Temperature; Domain › Heat speed (how much quicker than for real). Presets: Pouring molten iron, Chocolate
   by a fire.
+- Hot and cold objects (an object's Temperature) warm or chill the wax, chocolate and metal that touch them, as fast
+  as the two conduct heat (their thermal effusivities): chocolate melts where it sits on a hot plate, sooner on steel
+  than on wood.
 - Things that burn: dry leaves, sawdust and coal (Matter › Made of) catch where the fire's heat takes them past their
   ignition point, give the fire their fuel as they burn (so it runs through a pile by itself: leaves in a flare of
   flame, sawdust smouldering, coal glowing) and burn down to a little ash.

@@ -812,6 +812,17 @@ class Scene:
             out = [dataclasses.replace(cg, **overrides[i]) if i in overrides else cg for i, cg in zip(idx, out)]
         return out[:MAX_COLLIDERS]
 
+    def collider_heat(self):
+        """Each enabled collider's surface temperature (K) and its material's thermal effusivity, in colliders_gpu's
+        order: how it heats or chills the matter that touches it (mpm_heat.wgsl)."""
+        from .materials import MATERIALS
+        out = []
+        for c in self.colliders:
+            if c['enabled']:
+                m = MATERIALS.get(c.get('material'), MATERIALS['wood'])
+                out.append((float(c.get('temperature', 20.0)) + 273.15, float(m.effusivity)))
+        return out[:MAX_COLLIDERS]
+
     def tilted(self, i):
         """Whether collider i is tipped over (Tilt or Roll), at any frame."""
         c = self.colliders[i]

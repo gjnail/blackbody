@@ -184,13 +184,16 @@ class MatterEngine:
 
     def _heat_matter(self, scene, frame, fdt, gas=None, liquid=None):
         """Wax, chocolate and metal through frame `frame` (fdt seconds): warming in the gas's heat, cooling in the air and
-        the water, melting and setting."""
+        the water, warming or cooling where they touch objects at their own temperature, melting and setting."""
         m = self._matter
         if m is None or not m.heats():
             return
         look = scene.look(frame)
+        # (the objects where they are at the frame's end, falling ones where the rigid bodies have them)
+        cols = scene.colliders_gpu(frame, self.solids.overrides() if self.solids.active else None)
         with self.gpu.batch() as b:
-            m.heat(b, fdt, gas, liquid, look.ambient_k, look.flame_k)
+            m.heat(b, fdt, gas, liquid, look.ambient_k, look.flame_k, cols, scene.collider_heat(),
+                   getattr(self.solver, 'meshes', None))
 
     def _wet_matter(self, fdt, liquid):
         """Sand the liquid touches soaking through the frame (fdt seconds): wet sand."""

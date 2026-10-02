@@ -361,6 +361,29 @@ def test_chocolate_beside_a_fire_melts_on_the_side_facing_it(engine):
     assert molten[near].mean() > 3.0 * molten[~near].mean()     # (by its radiant heat: the side facing the fire)
 
 
+def test_chocolate_melts_where_it_sits_on_a_hot_plate_sooner_on_steel_than_on_wood(engine):
+    from blackbody.scene import components
+    sc = components.new_scene('fire', 'person')
+    sc.emitters = []
+    for name, mat, x in (('Steel plate', 'steel', -0.15), ('Board', 'wood', 0.15)):
+        sc.add_collider(name=name, shape='box', position=(x, 0.01, 0.0), size=(0.08, 0.01, 0.08), material=mat,
+                        temperature=150.0)
+        sc.add_matter(name=f'On {mat}', material='chocolate', shape='box', position=(x, 0.045, 0.0),
+                      size=(0.03, 0.02, 0.03))
+    sc.data['domain'].update(size_x=0.8, size_y=0.4, size_z=0.4, resolution=32, preroll=0.0, matter_detail=128,
+                             matter_heat_speed=30.0)
+    engine.prepare(sc, final=False)
+    engine.simulate_to(sc, sc.start + 36, cache=False)
+    P, x = live(engine.matter)
+    T = P[:, 23] - 273.15
+    molten = np.round(P[:, 3]) == 1
+    steel, wood = x[:, 0] < 0.0, x[:, 0] > 0.0
+    bottom, top = x[:, 1] < 0.03, x[:, 1] > 0.05
+    assert molten[steel & bottom].mean() > 0.15 and molten[wood & bottom].mean() > 0.15   # melted where it sits
+    assert T[steel & bottom].mean() > T[wood & bottom].mean() + 4.0     # steel gives it heat sooner than wood
+    assert not molten[top].any() and T[top].max() < 25.0                # and only there: its top is still cool
+
+
 def test_molten_iron_poured_on_the_ground_glows_cools_and_sets(engine):
     from blackbody.scene import components
     sc = components.new_scene('fire', 'person')

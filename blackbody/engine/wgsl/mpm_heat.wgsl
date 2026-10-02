@@ -8,12 +8,15 @@
 //  - splat: each particle's heat to the eight nodes round it (fixed point), for the heat to even out through the matter
 //  - main: each particle takes on its neighbourhood's temperature (the nodes'); where it meets the air, the air's (the
 //    gas's next to it in a fire box; the ambient air's otherwise), the fire's radiant heat from the side it faces out
-//    to, and the heat it radiates itself; where it meets the liquid, the water's; and melts or sets. What burns (dry
+//    to, and the heat it radiates itself; where it meets the liquid, the water's; where it touches an object, the
+//    object's (a hot pan, a cold mould: as fast as the two conduct, by their effusivities); and melts or sets. What burns (dry
 //    leaves, sawdust, coal) catches past its ignition point and burns down to ash, held at its burning temperature
 //    where the air reaches it and smouldering slowly inside a heap; mpm_fire.wgsl gives the gas its flames.
 // A particle's temperature (K) is its f0.w.
 //!include common.wgsl
 //!include mpm_common.wgsl
+//!include meshsdf.wgsl
+//!include colliders.wgsl
 
 struct Params {
   m: vec4<f32>,      // the matter's grid: node 0 (fire-local m), node spacing (m)
@@ -27,10 +30,14 @@ struct Params {
   heat: array<vec4<f32>, 16>,   // per material slot: melts at (K; 0: never), what it melts into, what it sets into (slots,
                                 // -1: none), how fast its surface takes on the air's temperature (1/s)
   cond: array<vec4<f32>, 16>,   // per material slot: how fast its heat evens out (1/s), how much faster the water cools
-                                // it than the air, how much a W/m^2 of radiant heat warms its surface (K/s), _
+                                // it than the air, how much a W/m^2 of radiant heat warms its surface (K/s), its thermal
+                                // effusivity (W s^0.5/m^2/K)
   burn: array<vec4<f32>, 16>,   // per material slot: catches at (K; 0: it does not burn), the share of it that burns away a
                                 // second, how hot it burns (K), what it burns down to (slot, -1: nothing)
   ash: array<vec4<f32>, 4>,     // per material slot (16): the share of it left as that once burnt (the rest is gone)
+  ccnt: vec4<f32>,              // the objects (solver.pack_colliders)
+  col: array<Collider, MAX_COLLIDERS>,
+  touch: array<vec4<f32>, MAX_COLLIDERS>,   // per object: its temperature (K), its effusivity (W s^0.5/m^2/K)
 };
 
 @group(0) @binding(0) var<storage, read_write> P: array<MParticle>;
@@ -41,6 +48,7 @@ struct Params {
 @group(0) @binding(5) var LTYPE: texture_3d<f32>;  // the liquid's cells: 0 air, 1 liquid, 2 solid
 @group(0) @binding(6) var<storage, read_write> HL: array<vec4<f32>>;      // heat sources: (position, _), (power W, ...)
 @group(0) @binding(7) var<storage, read_write> HLC: array<atomic<u32>>;   // how many
+@group(0) @binding(8) var atlas: texture_3d<f32>;   // the meshes' distance fields (meshsdf.wgsl)
 @group(1) @binding(0) var<uniform> U: Params;
 
 const FX_HM: f32 = 65536.0;   // weight
@@ -158,6 +166,22 @@ fn air_at(pos: vec3<f32>) -> Air {
   return a;
 }
 
+// The object pos touches, if any (within a node spacing of its surface: matter resting on it settles some three
+// quarters of one off it; the nearest):
+// its temperature (K), its effusivity, 1; or zeros.
+fn touching(pos: vec3<f32>) -> vec3<f32> {
+  var best = vec3<f32>(0.0);
+  var nearest = U.m.w;
+  for (var i = 0; i < i32(U.ccnt.x); i++) {
+    let d = col_sdf(U.col[i], pos);
+    if (d < nearest) {
+      nearest = d;
+      best = vec3<f32>(U.touch[i].x, U.touch[i].y, 1.0);
+    }
+  }
+  return best;
+}
+
 // Whether the liquid is next to pos.
 fn water_at(pos: vec3<f32>) -> bool {
   if (U.ln.w < 0.5) { return false; }
@@ -237,6 +261,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
     }
   }
   if (water_at(pos)) { T += (U.k.y - T) * (1.0 - exp(-h.w * max(cd.y, 1.0) * dt)); }
+  // an object it touches, at its own temperature: the face between them is at the temperature the two effusivities
+  // weigh them to (two bodies in contact: a steel pan gives chocolate nearly its own heat, a wooden board little), and
+  // the particle takes it on through half its own depth (twice the pace its heat spreads to the next particle)
+  if (cd.x > 0.0 && U.ccnt.x > 0.5) {
+    let t = touching(pos);
+    if (t.z > 0.5) {
+      let share = t.y / max(cd.w + t.y, 1.0e-6);
+      T += (t.x - T) * (1.0 - exp(-2.0 * cd.x * share * dt));
+    }
+  }
   // past its melting point it melts; below it, it sets (a degree either side, so it does not flicker)
   var next = -1.0;
   if (h.x > 0.0) {

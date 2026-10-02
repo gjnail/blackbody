@@ -724,7 +724,7 @@ COLLIDER_PARAMS = [
     B('own_colour', 'Own colour', False, tip='Draw it in its own colour instead of the colour of its material (CG look).', group='Rendering'),
     C('colour', 'Colour', (0.6, 0.6, 0.6), tip='Its colour with Own colour on (scene-linear).', group='Rendering'),
     B('burnable', 'Burnable', False, tip='With Spreading fire on, this object catches where hot gas touches it and fire spreads across its surface: a curtain, furniture, a wooden wall. It can move while it burns.', group='Burning'),
-    F('temperature', 'Temperature', 20.0, -200.0, 1500.0, '°C', 0, tip='Temperature of the object surface, for a liquid with Heat and phase changes on: a hot plate 150 to 250, a stove 400, a red-hot steel bar 800, ice-cold metal -20, dry ice -78, liquid nitrogen -196. Water boils on it, dances on its vapour past about 210, or freezes onto it.', group='Heat'),
+    F('temperature', 'Temperature', 20.0, -200.0, 1500.0, '°C', 0, tip='Temperature of the object surface: a hot plate 150 to 250, a stove 400, a red-hot steel bar 800, ice-cold metal -20, dry ice -78, liquid nitrogen -196. Water (with Heat and phase changes on) boils on it, dances on its vapour past about 210, or freezes onto it; wax, chocolate and metal touching it warm or cool, the faster the better it conducts (steel quickly, wood slowly).', group='Heat'),
     B('dynamic', 'Falls', False, tip='A free rigid body: it falls, tumbles, slides, bounces and knocks into other things, and the gas and '
       'the water push it. A blast blows a light one away, and in a liquid it floats or sinks by its density. Its keys set only where '
       'it starts.', group='Physics'),

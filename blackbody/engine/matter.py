@@ -440,7 +440,8 @@ class Matter:
             melt, freeze = slots.get((m.melt, k[1], k[2]), -1), slots.get((m.freeze, k[1], k[2]), -1)
             per_k = heat_speed / (m.density * m.heat_capacity * skin)        # K/s for a W/m^2 into its surface
             self._heat[slot] = [m.melts_at, float(melt), float(freeze), HEAT_CONVECTION * per_k]
-            self._cond[slot] = [heat_speed * m.diffusivity / skin ** 2, m.water_cools, m.absorbs * per_k, 0.0]
+            self._cond[slot] = [heat_speed * m.diffusivity / skin ** 2, m.water_cools, m.absorbs * per_k,
+                                m.density * m.heat_capacity * math.sqrt(m.diffusivity)]      # (effusivity)
             if m.burns_at > 0.0:
                 self._burn[slot] = [m.burns_at, m.burn_rate, m.burn_temp, float(slots.get((m.burns_to, k[1], k[2]), -1))]
                 self._flames[slot] = m.flames
@@ -594,7 +595,7 @@ class Matter:
         self._k['blast'] = g.kernel('mpm_blast.wgsl', ['buf', 'utex3d'], workgroup=P)
         self._k['melt'] = g.kernel('mpm_melt.wgsl', ['buf', 'tex3d', 'smp', 'buf', 'buf', 'rbuf'], workgroup=P)
         self._k['wet'] = g.kernel('mpm_wet.wgsl', ['buf', 'utex3d', 'utex3d'], workgroup=P)
-        heat = ['buf', 'buf', 'tex3d', 'smp', 'utex3d', 'utex3d', 'buf', 'buf']
+        heat = ['buf', 'buf', 'tex3d', 'smp', 'utex3d', 'utex3d', 'buf', 'buf', 'utex3d']
         self._k['heat_lights'] = g.kernel('mpm_heat.wgsl', heat, 'lights', workgroup=(4, 4, 4))
         self._k['heat_splat'] = g.kernel('mpm_heat.wgsl', heat, 'splat', workgroup=P)
         self._k['heat'] = g.kernel('mpm_heat.wgsl', heat, 'main', workgroup=P)
@@ -783,10 +784,11 @@ class Matter:
         """Whether any of the matter takes on heat, gives it off or melts (wax, chocolate, metal)."""
         return self.active and bool(self.count) and getattr(self, 'thermal', False)
 
-    def heat(self, b, dt, gas=None, liquid=None, ambient_k=293.0, flame_k=1650.0):
+    def heat(self, b, dt, gas=None, liquid=None, ambient_k=293.0, flame_k=1650.0, colliders=(), touch=(), meshes=None):
         """Heat through dt seconds (mpm_heat.wgsl), in batch b: its heat evening out through it, its surface taking on
-        the temperature of the gas of `gas` (a Solver; None: the ambient air) and the water of `liquid` (a Liquid, or
-        None), and melting and setting at the melting point."""
+        the temperature of the gas of `gas` (a Solver; None: the ambient air), the water of `liquid` (a Liquid, or
+        None) and the objects it touches (colliders: ColliderGPU, the solver's order; touch: each one's (temperature K,
+        effusivity), Scene.collider_heat), and melting and setting at the melting point."""
         if not self.heats():
             return
         g = self.gpu
@@ -800,13 +802,20 @@ class Matter:
         u.v4(HEAT_BLOCK, 0.2, FLAME_ABSORPTION, HEAT_LIGHTS)
         u.raw([x for h in self._heat for x in h]).raw([x for c in self._cond for x in c]).raw([x for r in self._burn for x in r])
         u.raw(self._ash)
+        from .solver import MAX_COLLIDERS, pack_colliders
+        cols = list(colliders or [])[:MAX_COLLIDERS]
+        pack_colliders(u, cols, meshes)
+        touch = list(touch or [])[:len(cols)]
+        for i in range(MAX_COLLIDERS):
+            u.v4(*(touch[i] if i < len(touch) else (0.0, 0.0)))
         if getattr(self, '_heat_dummy', None) is None:
             t = g.texture3d((1, 1, 1), 'rgba16float', 'matter-heat-no-gas')
             g.upload(t, np.zeros((1, 1, 1, 4), np.float16))
             self._heat_dummy = (t, g.texture3d((1, 1, 1), 'r32float', 'matter-heat-none'))
         tg, tn = self._heat_dummy
         res = [self._buf['P'], self._buf['HG'], gas.scal[0] if gas_on else tg, g.linear,
-               gas.sdf if gas_on else tn, liquid.TYPE[0] if live else tn, self._buf['HL'], self._buf['HLC']]
+               gas.sdf if gas_on else tn, liquid.TYPE[0] if live else tn, self._buf['HL'], self._buf['HLC'],
+               meshes.atlas if (meshes is not None and cols) else self._empty_atlas()]
         b.clear_buffer(self._buf['HLC'])
         if gas_on:
             # (the fire as heat sources, for its radiant heat)
