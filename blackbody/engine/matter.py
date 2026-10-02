@@ -365,6 +365,7 @@ class Matter:
         self._k['g2p'] = g.kernel('mpm_g2p.wgsl', ['buf', 'utex3d', 'buf'], workgroup=P)
         self._k['react'] = g.kernel('mpm_react.wgsl', ['buf', 'buf'], workgroup=P)
         self._k['compact'] = g.kernel('mpm_compact.wgsl', ['rbuf', 'buf'], workgroup=P)
+        self._k['blast'] = g.kernel('mpm_blast.wgsl', ['buf', 'utex3d'], workgroup=P)
         self._k['surf_p2g'] = g.kernel('mpm_surf_p2g.wgsl', ['rbuf', 'buf'], workgroup=P)
         self._k['surf_norm'] = g.kernel('mpm_surf_norm.wgsl', ['rbuf', 'st3d:r32float:w', 'st3d:rgba16float:w',
                                                                'st3d:rgba16float:w'])
@@ -481,6 +482,21 @@ class Matter:
                                                      np.float32(1.0).view(np.uint32)], np.uint32))
         self.forces = {}
         return dt, n
+
+    def blast(self, where, kg, depth=0.1):
+        """A blast of `kg` of TNT at `where` (fire-local m) throws the matter away from it (mpm_blast.wgsl): the impulse on
+        its surface goes into the matter within `depth` metres of it."""
+        if not self.active or not self.count or kg <= 0.0:
+            return
+        self.surface()          # (how deep each particle is)
+        u = Uniforms().v4(*self.dims, self.count).v4(*self.origin, self.dx).v4(*where, kg)             .v4(depth, max(kg, 1e-9) ** (1.0 / 3.0) / 3.0).raw(self._mat_bytes)
+        with self.gpu.batch() as b:
+            b.run(self._k['blast'], [self._buf['P'], self._tex['surf']], u, groups=groups_1d(self.count))
+        # (the fastest it can be thrown, for the next step's length: the nearest of it, the lightest of it)
+        from .solids import blast_impulse
+        bounds = self.world_bounds()
+        near = 0.0 if bounds is None else float(np.linalg.norm(np.asarray(where) - np.clip(where, bounds[0], bounds[1])))
+        self.max_speed = max(self.max_speed, blast_impulse(kg, near) / (min(m.density for m in self._mats) * depth))
 
     def step(self, dt, colliders, meshes_atlas=None, pack=None):
         """One step of dt seconds on its own, the objects where `colliders` has them; returns the push on each object

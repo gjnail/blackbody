@@ -817,6 +817,38 @@ PRESETS = {
                            position=K((0.0, (-0.95, 0.1, 0.0)), (0.3, (-0.95, 0.1, 0.0)), (2.7, (0.95, 0.1, 0.0)), interp='linear'))],
         'matter': [dict(name='Mud', material='mud', shape='box', position=(0.0, 0.05, 0.0), size=(0.8, 0.05, 0.45))],
     },
+    'yard_blast': {
+        'name': 'Blast in a yard', 'category': 'Things that fall', 'size': '2 kg charge',
+        'blurb': 'Two kilograms of explosive go off among crates, barrels, a brick wall and a heap of sand: a fireball, the '
+                 'crates and barrels thrown clear, the wall blown down brick by brick, the sand flattened, then a column of '
+                 'smoke. An emitter with Blast set.',
+        'render': {'end': 96},
+        'domain': {'size_x': 7.0, 'size_y': 5.0, 'size_z': 7.0, 'resolution': 112, 'preroll': 0.0, 'matter_detail': 128,
+                   'substeps_max': 10},
+        'combustion': {'burn_rate': 6.0, 'heat': 1.1, 'soot': 0.6, 'cooling': 2.2, 'radiative': 0.35, 'flame_life': 0.3,
+                       'flame_gain': 2.0, 'expansion': 1.5, 'rich': 3.0, 'smoke_dissipation': 0.2},
+        'motion': {'buoyancy': 8.0, 'turbulence': 6.0, 'turb_freq': 1.2, 'turb_rise': 2.0, 'vorticity': 3.0, 'disturbance': 4.0,
+                   'disturb_block': 0.2},
+        'shading': {'flame_k': 1700, 'max_k': 2400, 'smoke_density': 4.0, 'smoke_albedo': (0.1, 0.095, 0.09), 'flame_occlusion': 0.6,
+                    'flame_absorption': 1.5, 'detail_freq': 1.0, 'exposure': -1.0},
+        'embers': {'rate': 600, 'launch': 10.0, 'spread': 8.0, 'lifetime': 1.4, 'gravity': 4.0, 'drag': 1.0, 'size_max': 0.015,
+                   'shutter': 0.25},
+        'composite': {'backdrop': 'stage', 'floor': 'dirt'},
+        'lighting': {'sun_on': True, 'sun_intensity': 3.0, 'sun_elevation': 35.0, 'sun_azimuth': -130.0, 'ambient_intensity': 2.5},
+        'camera': {'distance': 7.5, 'target_y': 0.9, 'pitch': 10, 'yaw': 200, 'focal_mm': 35},
+        'emitters': [dict(name='Explosion', shape='sphere', position=(0.0, 0.3, 0.0), size=(0.3, 0.3, 0.3), fuel=25.0, temperature=1.2,
+                          radial=12.0, vel_blend=0.6, noise_freq=2.0, contrast=1.2, start=0.4, stop=0.5, fade_in=0.01, fade_out=0.08,
+                          blast=2.0)],
+        'colliders': [dict(name=f'Crate {k + 1}', shape='box', position=(x, 0.2, z), size=(0.2, 0.2, 0.2), yaw=20.0 * k,
+                           dynamic=True, material='wood', density=300.0)
+                      for k, (x, z) in enumerate(((1.3, 0.5), (-1.1, 0.9), (0.4, -1.3)))]
+                     + [dict(name=f'Barrel {k + 1}', shape='cylinder', position=(x, 0.44, z), size=(0.29, 0.44, 0.29), dynamic=True,
+                             material='steel', density=170.0, own_colour=True, colour=(0.05, 0.12, 0.32))
+                        for k, (x, z) in enumerate(((-1.3, -0.9), (1.5, -0.8)))]
+                     + [dict(name='Brick wall', shape='box', position=(0.0, 0.6, 2.1), size=(1.1, 0.6, 0.06), material='brick',
+                             breakable=True, fracture='bricks')],
+        'matter': [dict(name='Sand', material='sand', shape='pile', position=(-2.2, 0.2, 0.2), size=(0.5, 0.2, 0.5))],
+    },
     'window_smash': {
         'name': 'Stone through a window', 'category': 'Things that fall', 'size': '1 m pane',
         'blurb': 'A stone thrown through a pane of window glass held in its frame: it punches a hole, shards break away '
@@ -908,7 +940,7 @@ ORDER = ['campfire', 'bonfire', 'torch', 'candle', 'gas_ring', 'pool_fire', 'fir
          'curtain_fire', 'fabric_curtain', 'wet_towels', 'armchair_fire', 'room_fire', 'backdraft', 'flash_fire', 'gas_cloud', 'coloured_flames', 'road_flare',
          'grinder_sparks', 'fireworks', 'car_through_smoke', 'flag_wind', 'kettle_steam', 'steam_vent',
          'crates_in_fire', 'tower_knockdown', 'wall_smash', 'wrecking_ball', 'window_smash', 'vase_drop',
-         'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag']
+         'yard_blast', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag']
 
 
 def make(name: str, fps=None, start=None) -> Scene:

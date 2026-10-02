@@ -280,6 +280,21 @@ class Scene:
         self.matter.append(d)
         return len(self.matter) - 1
 
+    def blasts(self):
+        """The explosive charges (an emitter's Blast): [(the scene frame it goes off at (when it ignites), where (fire-local
+        m), kg of TNT)]. One that ignites before the pre-roll never goes off."""
+        out = []
+        first = self.start - self.data['domain']['preroll'] * self.fps
+        for i, e in enumerate(self.emitters):
+            w = float(e.get('blast', 0.0) or 0.0)
+            if not e['enabled'] or w <= 0.0:
+                continue
+            f = self.start + float(e['start']) * self.fps
+            if f < first:
+                continue
+            out.append((f, tuple(float(x) for x in self.get(('emitter', i, 'position'), f)), w))
+        return out
+
     def matter_specs(self):
         """The enabled sand, snow, mud, jelly and clay, as sources for engine/matter.py (where they start, in the box's
         frame, and what they are)."""

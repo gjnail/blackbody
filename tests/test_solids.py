@@ -170,3 +170,32 @@ def test_attached_things_ride_along():
     assert np.allclose(out[i]['velocity'], (0.0, -1.0, 0.0))
     ems = s.emitters_gpu(s.start, moved=out)
     assert any(np.allclose(e.pos, (0.7, 0.2, 0.0)) for e in ems)
+
+
+# ---- blasts ---------------------------------------------------------------------------------------------------------
+
+def test_a_blast_falls_off_with_distance_and_grows_with_its_charge():
+    from blackbody.engine.solids import blast_impulse
+    assert blast_impulse(0.0, 1.0) == 0.0
+    assert abs(blast_impulse(1.0, 2.0) / blast_impulse(1.0, 4.0) - 2.0) < 1e-9          # 1 / r
+    assert abs(blast_impulse(8.0, 3.0) / blast_impulse(1.0, 3.0) - 4.0) < 1e-9          # W^(2/3)
+    assert blast_impulse(1.0, 0.0) == blast_impulse(1.0, 1.0 / 3.0)                     # (inside its fireball: as at its edge)
+
+
+def test_a_blast_throws_what_falls_away_from_it():
+    from blackbody.engine.solids import blast_impulse
+    near = dict(name='Near', shape='box', position=(1.0, 0.2, 0.0), size=(0.2, 0.2, 0.2), dynamic=True, material='wood', density=300.0)
+    far = dict(near, name='Far', position=(-3.0, 0.2, 0.0))
+    s = scene_of(near, far)
+    s.emitters = []
+    s.add_emitter(name='Charge', shape='sphere', position=(0.0, 0.2, 0.0), size=(0.1, 0.1, 0.1), start=0.1, blast=2.0)
+    S = Solids()
+    S.configure(s, ((96, 96, 96), 12.0 / 96, (-6.0, 0.0, -6.0)))
+    S.reset()
+    for f in range(s.start + 1, s.start + 7):      # (it goes off at 0.1 s: frame 5 at 50 frames a second)
+        S.advance(s, f, 1.0 / s.fps, 1)
+    v = {i: np.asarray(S.overrides()[i]['vel']) for i in (0, 1)}
+    mass = 0.4 ** 3 * 300.0
+    want = blast_impulse(2.0, 1.0) * 0.25 * 6 * 0.4 ** 2 / mass
+    assert v[0][0] > 0.6 * want and v[0][0] < 1.05 * want          # thrown away, at about the impulse's speed (less friction)
+    assert v[1][0] < 0.0 and abs(v[1][0]) < 0.4 * v[0][0]           # the far one, the other way and slower

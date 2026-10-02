@@ -44,6 +44,7 @@ class MatterEngine:
         m = self._matter
         if m is None or not m.active or not self.solids.active or not self.solids.bodies:
             return None
+        self._blast_matter(scene, frame)
         dt, _n = m.begin(fdt)
         enabled = [i for i, c in enumerate(scene.colliders) if c['enabled']]
         atlas = meshes.atlas if meshes is not None else None
@@ -66,6 +67,7 @@ class MatterEngine:
             self._coupled = False
             m.end()
             return
+        self._blast_matter(scene, frame)
         cache = {}
 
         def cols_at(f):
@@ -75,6 +77,12 @@ class MatterEngine:
             return cache[i]
 
         m.advance(fdt, cols_at, meshes.atlas if meshes is not None else None, lambda u, c: pack_colliders(u, c, meshes))
+
+    def _blast_matter(self, scene, frame):
+        """The blasts that go off in frame `frame` throw the matter (at the frame's start)."""
+        for fb, where, kg in scene.blasts():
+            if frame - 1 <= fb < frame:
+                self._matter.blast(where, kg)
 
     def _snapshot_matter(self, entry):
         m = self._matter

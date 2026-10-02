@@ -152,6 +152,19 @@ class PieceSet:
 
 
 ROPE_BOUNCE = 0.3       # the share of its speed a falling thing keeps when its rope snaps taut
+
+
+def blast_impulse(kg, r):
+    """The impulse per area (Pa s) a blast of `kg` of TNT gives a surface facing it `r` metres off: twice the side-on
+    impulse of the shock (it reflects off the surface), which falls off about as 1 / r at blasting distances
+    (Hopkinson-Cranz scaling: about 200 Pa s for 1 kg at 1 m side-on). Inside the fireball (r < W^1/3 / 3) it is
+    taken as there."""
+    w = max(float(kg), 0.0)
+    if w <= 0.0:
+        return 0.0
+    r = max(float(r), w ** (1.0 / 3.0) / 3.0)
+    return 2.0 * 200.0 * w ** (2.0 / 3.0) / r
+
 SPRING_DAMPING = 0.05   # a spring's damping ratio (with the object on its end)
 HINGE_SPAN = 0.05       # m: a hinge's two pins are at least this far apart
 
@@ -1362,6 +1375,27 @@ class Solids:
         position)}, N and N m), applied to the falling ones through the next frame."""
         self._pushed = {int(i): (np.asarray(f, float), np.asarray(t, float)) for i, (f, t) in (forces or {}).items()}
 
+    def _blast(self, where, kg):
+        """A blast of `kg` of TNT at `where` (fire-local m): every body and every piece of a broken or breakable object is
+        thrown away from it by the impulse its face toward it takes (blast_impulse over a quarter of its surface: the
+        area a convex thing shows any one way, on average). Glued pieces thrown apart break their welds."""
+        m, d = self.model, self.data
+        hits = []
+        for bd in self.bodies:
+            if bd.held:
+                continue
+            hits.append((bd.vadr, bd.body_id, 0.25 * bd.area))
+        for ps in self.sets:
+            if ps.held:
+                continue
+            for n, p in enumerate(ps.frac.pieces):
+                hits.append((int(ps.vadr[n]), int(ps.bodies[n]), 0.25 * float(p.face_area.sum())))
+        for vadr, bid, area in hits:
+            r = d.xipos[bid] - where
+            dist = float(np.linalg.norm(r))
+            away = r / dist if dist > 1e-9 else np.array([0.0, 1.0, 0.0])
+            d.qvel[vadr:vadr + 3] += away * (blast_impulse(kg, dist) * area / max(float(m.body_mass[bid]), 1e-6))
+
     def _joint_friction(self):
         """Hinges and ball joints resist turning: a torque against the turning of one side against the other, that
         slows it down at the rate their Joint friction gives (per second)."""
@@ -1405,6 +1439,7 @@ class Solids:
         m, d = self.model, self.data
         dt = m.opt.timestep
         steps = max(1, int(math.ceil(fdt / min(dt, couple[0] if couple else dt) - 1e-9)))
+        blasts = [b for b in scene.blasts() if frame - 1 <= b[0] < frame] if hasattr(scene, 'blasts') else []
         h = fdt / steps
         m.opt.timestep = h
         marks = [(i + 0.5) / substeps * fdt for i in range(substeps)]
@@ -1418,6 +1453,9 @@ class Solids:
                 self.substep_pieces.append(self.piece_poses() if self.sets else None)
                 mi += 1
             self._keyed(scene, frame - 1 + (t + 0.5 * h) / fdt)
+            for fb, where, kg in blasts:
+                if frame - 1 + t / fdt <= fb < frame - 1 + (t + h) / fdt:
+                    self._blast(np.asarray(where, float), kg)
             self._forces()
             mujoco.mj_step(m, d)
             self._keep_in_box()

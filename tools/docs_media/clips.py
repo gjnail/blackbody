@@ -69,6 +69,7 @@ CLIPS = {
     'crates_in_fire': clip('crates_in_fire', 0.0, 144, dyaw=6.0, set={'composite': LIT}),
     'wall_smash': clip('wall_smash', 0.0, 72, dyaw=8.0, push=0.06),
     'wrecking_ball': clip('wrecking_ball', 0.0, 96, dyaw=6.0, push=0.05),
+    'yard_blast': clip('yard_blast', 0.0, 96, dyaw=6.0, push=0.05),
     'window_smash': clip('window_smash', 0.0, 48, dyaw=6.0, push=0.04),
     'vase_drop': clip('vase_drop', 0.0, 48, dyaw=6.0, push=0.04),
     # ---- sand, snow and mud (on the stage) -------------------------------------------------------------------------

@@ -82,6 +82,14 @@ The *Ropes and hinges* blocks are a wrecking ball on a crane, a rope swing, a do
 
 ![Wrecking ball](media/gif/wrecking_ball.gif "Wrecking ball: a 900 kg ball on a crane's cable swings down into a brick wall at 6 m/s and bursts through it.")
 
+## Explosions
+
+An emitter's *Blast* (in its *Motion* settings) is an explosive charge, in kilograms of TNT, that goes off when the emitter ignites (*Ignite at*). Its blast wave throws every object that falls away from it, at the speed its impulse gives the object: the impulse on the face toward it, falling off as one over the distance and growing as the charge to the power two-thirds. A kilogram a metre off gives 400 Pa s (the shock's impulse, doubled as it reflects), enough to throw a 40 cm wooden crate at 5 m/s. Breakable things are blown apart: each piece takes its own push, and the joints between pieces thrown apart break. Sand, snow, mud, jelly and clay are thrown too ([Sand, snow and mud](matter.md)). The emitter's own burst (*Fuel*, *Temperature*, *Burst speed*) makes the fireball and the smoke.
+
+The *Explosion* block in Create › *Fire* is a 2 kg charge with its fireball. Preset: *Blast in a yard*.
+
+![Blast in a yard](media/gif/yard_blast.gif "Blast in a yard: two kilograms of explosive throw crates and barrels clear, blow down a brick wall and flatten a heap of sand.")
+
 ## How they look
 
 Without footage, objects are drawn in CG in their materials (wood, stone, brick and so on), lit in the same light as the smoke: the key light with soft shadows, the sky (darker in corners and under things), the fire's own light with shadows, and the lights in the set. Glass and ice are clear: you see the fire and the set through them, bent, and the sky in them. *Own colour* draws one in a colour of its own.

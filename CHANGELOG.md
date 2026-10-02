@@ -44,6 +44,9 @@ Notable changes to Blackbody. The format follows
   in, mud is glossy and jelly clear. Sand, snow & mud blocks (sand pile, sand pour, sand column, snowball, snow
   drift, mud, jelly, lump of clay) and presets: Sand from a hopper, Snowballs at a wall, Ball dropped on jelly, Crate
   through mud. The guide: docs/matter.md.
+- Explosions: an emitter's Blast (kilograms of TNT) goes off when it ignites, and its blast wave throws the things
+  that fall, blows breakable things apart piece by piece and scatters sand and snow, by the impulse a blast that size
+  gives at that distance. An Explosion block (Fire) and a preset, Blast in a yard.
 - Make it fall and Drop it at this frame on any object (right-click it, the Fall chip on its page, or Ctrl+K), and
   Stop it falling. Falling things are drawn and picked where the simulation has them in the viewer, tilted as they
   tumble, and outlined in green. In Build, liquid scenes show objects in their materials instead of grey stand-ins.

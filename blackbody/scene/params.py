@@ -644,6 +644,7 @@ EMITTER_PARAMS = [
     F('smoke', 'Smoke', 0.0, 0.0, 50.0, '/s', 2, anim=True, tip='Smoke released directly, on top of smoke from combustion.', group='Emission'),
     V('velocity', 'Velocity', (0.0, 0.0, 0.0), -50.0, 50.0, 'm/s', anim=True, group='Motion'),
     F('radial', 'Burst speed', 0.0, -20.0, 80.0, 'm/s', 1, anim=True, tip='Outward speed from the emitter centre (explosions).', group='Motion'),
+    F('blast', 'Blast', 0.0, 0.0, 100.0, 'kg TNT', 2, tip='An explosive charge that goes off when it ignites (Ignite at): its blast wave throws the things that fall, blows broken objects apart and scatters sand and snow, harder the nearer they are. In kilograms of TNT: a firework 0.05, a hand grenade 0.2, a car bomb 100.', group='Motion'),
     F('vel_blend', 'Velocity strength', 0.0, 0.0, 1.0, '', 2, tip='How strongly the emitter forces its velocity onto the air.', group='Motion'),
     F('inherit', 'Motion inheritance', 1.0, 0.0, 1.0, '', 2, tip='How much a moving emitter (keyframed position) drags the air and its embers along with it, so the fire trails behind.', group='Motion'),
     F('swirl', 'Swirl', 0.0, -20.0, 20.0, 'm/s', 2, anim=True, tip='Spins the air around the emitter\'s vertical axis, at this speed at its edge. Rising hot gas stretches the spin into a fire whirl or dust devil. Positive turns anticlockwise seen from above.', group='Swirl'),

@@ -31,6 +31,7 @@ Add a block from the *Sand, snow & mud* group in Create: a sand pile, a sand pou
 
 - **Gravity, the ground and the box.** It rests on the ground and against the box's closed sides. Through an open side, the top, or the bottom of a box without ground, it leaves the simulation.
 - **Objects.** It piles against objects that stay put, and keyframed ones plough through it (a crate dragged through mud pushes up a bow wave). Things that fall land on it and it holds them up as its strength and their weight say: a wooden crate rests on top of sand where a steel ball of the same size sinks into it, and jelly throws a dropped ball back up. Matter and the falling objects push each other every step.
+- **Blasts.** An explosion (an emitter's *Blast*) throws it away from where it goes off, the surface hardest: a heap of sand near a charge is blown flat.
 
 ## How it looks
 

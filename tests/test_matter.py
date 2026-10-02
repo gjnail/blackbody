@@ -180,3 +180,16 @@ def test_a_cached_frame_is_drawn_as_it_was(engine):
     cached = engine.display_image().astype(int)
     assert np.abs(live_img - cached).max() <= 2
     assert np.abs(live_img[30:70, 60:100] - live_img[5:10, 60:100].mean((0, 1))).mean() > 10   # (the clay is there)
+
+
+def test_a_blast_throws_sand_away_from_it(gpu):
+    M = matter(gpu, [MatterSpec(material='sand', shape='box', pos=(0.15, 0.05, 0.0), size=(0.15, 0.05, 0.15))])
+    run(M, 0.2)
+    P0, x0 = live(M)
+    M.blast((-0.2, 0.05, 0.0), 0.05)                            # (a large firework, 20 cm off)
+    run(M, 0.4)
+    P1, x1 = live(M)
+    assert len(P1) == len(P0)
+    shift = x1[:, 0] - x0[:, 0]
+    assert shift.mean() > 0.03                                   # pushed away from it (the near sand shoving the far along)
+    assert shift.min() > -0.01                                   # and none of it toward it
