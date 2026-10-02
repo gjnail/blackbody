@@ -21,6 +21,11 @@ def to_qimage(rgba):
     return QImage(a.data, w, h, 4 * w, QImage.Format_RGBA8888).copy()
 
 
+def LU_on(scene):
+    """Whether a scene lights its set with Lume."""
+    return (scene.data.get('lume') or {}).get('engine', 'classic') == 'lume'
+
+
 def plate_fit(fw, fh, ow, oh):
     fa, oa = fw / fh, ow / oh
     if abs(fa - oa) < 1e-3:
@@ -93,6 +98,8 @@ class EngineWorker(QThread):
             timeout = None
             if idle:
                 timeout = 0.2 if (self.refine and not self._refined and self._shown is not None) else None
+                if timeout is not None and self._lume_pending():
+                    timeout = 0.005   # (Lume is gathering light paths: on at once, unless an edit comes in)
             try:
                 item = self._q.get(timeout=timeout) if idle else self._q.get_nowait()
             except queue.Empty:
@@ -123,7 +130,8 @@ class EngineWorker(QThread):
                         self._refined = False
                 elif self.refine and not self._refined and item is None:
                     self._show(self.frame, refine=True)
-                    self._refined = True
+                    # (Lume adds a few light paths per pixel each refinement: refine again until it has them all)
+                    self._refined = not self._lume_pending()
             except Exception as ex:
                 log.exception('render failed')
                 self.message.emit(f'Render failed: {ex}')
@@ -244,6 +252,14 @@ class EngineWorker(QThread):
             self._last_progress = now
             self.simProgress.emit(float(frac), int(frame))
 
+    def _lume_pending(self):
+        """Whether any layer's Lume wants more light paths of the picture it is showing (refine again)."""
+        LE = self.layer_engines
+        if LE is None:
+            return False
+        engines = [LE.base] + list(LE.extra.values())
+        return any(getattr(getattr(e, '_stage', None), 'lume_pending', False) for e in engines)
+
     def _layers(self):
         """The shot's layers to draw [(uid, scene)] back to front, and the one being edited (uid, scene)."""
         from ..render.layers import LayerEngines
@@ -295,6 +311,8 @@ class EngineWorker(QThread):
         sc = active
         st = eng.stats() if eng.sim_frame is not None or eng.cache.frames() else front.stats()
         st['refined'] = refine
+        lu = getattr(getattr(eng, '_stage', None), 'lume', None)
+        st['lume'] = (lu.passes, lu.target) if (lu is not None and LU_on(active)) else None
         st['preview'] = (w, h)
         # things that fall or float, where the simulation put them (drawn and picked there in the viewer)
         st['floats'] = eng.floating_overrides(frame) if hasattr(eng, 'floating_overrides') else None

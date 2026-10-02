@@ -443,7 +443,7 @@ class GPU:
         alim = self.adapter.limits
         # counts: ask for what the kernels need; sizes: take whatever the adapter offers
         wanted = {'max-storage-textures-per-shader-stage': 8, 'max-sampled-textures-per-shader-stage': 16,
-                  'max-storage-buffers-per-shader-stage': 10, 'max-storage-buffer-binding-size': None,
+                  'max-storage-buffers-per-shader-stage': 16, 'max-storage-buffer-binding-size': None,
                   'max-buffer-size': None, 'max-texture-dimension-2d': None, 'max-texture-dimension-3d': None,
                   'max-compute-workgroup-storage-size': None}
         limits = {}

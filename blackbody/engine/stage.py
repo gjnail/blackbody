@@ -23,6 +23,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from . import camera as cam
+from . import lume as LU
 from .gpu import Uniforms
 from .liquid_render import lava_table
 from .solver import MAX_COLLIDERS, _mesh_ref, pack_colliders
@@ -156,7 +157,7 @@ class Stage:
         self.k = gpu.kernel('stage.wgsl', ['utex3d', 'tex3d', 'tex3d', 'tex3d', 'tex3d', 'smp', 'smp', 'rbuf', 'rbuf',
                                            'rbuf', 'tex2d', 'tex2d', 'tex2d', 'tex3d', 'st2d:rgba16float:w',
                                            'rbuf', 'rbuf', 'rbuf', 'rbuf', 'st2d:rgba16float:w', 'tex3d', 'tex3d', 'tex2d',
-                                           'utex3d', 'utex3d', 'rbuf', 'tex3d', 'rbuf'],
+                                           'utex3d', 'utex3d', 'rbuf', 'tex3d', 'rbuf', 'buf', 'buf', 'rbuf'],
                             workgroup=(8, 8, 1))
         mg = ['utex3d', 'utex3d', 'buf', 'buf']
         self.k_mglow = gpu.kernel('matter_glow.wgsl', mg, 'lights', workgroup=(4, 4, 4))
@@ -173,6 +174,13 @@ class Stage:
         self._env = None
         self._env_key = None
         self.env_sky = None     # the HDRI's average colour (the sky's light), when it has one
+        self.lume = None        # Lume's state (lume.Lume), once a scene asks for Lume
+        self._lume_off = [gpu.buffer(16, 'stage-no-acc'), gpu.buffer(32, 'stage-no-aov'), gpu.buffer(16, 'stage-no-env')]
+
+    @property
+    def lume_pending(self):
+        """Whether the viewer should refine again: Lume wants more passes of the picture it is showing."""
+        return self.lume is not None and self.lume.pending
 
     def _ensure(self, w, h):
         if self.tex is not None and self.tex.size[:2] == (w, h):
@@ -337,7 +345,7 @@ class Stage:
 
     def draw(self, b, r, scene, camstate, fire, colliders, meshes, light: StageLight, comp, size, plate_fit=(1.0, 1.0),
              samples=1, shutter=0.0, footage=False, vol=None, ground_y=0.0, frame=0, objects=True, floor=True,
-             pieces=None, ropes=None, matter=None, bolts=None, grass=None, burns=None):
+             pieces=None, ropes=None, matter=None, bolts=None, grass=None, burns=None, final=False):
         """Draw the stage into self.tex (size: the plate's, footage or output) and return it.
         r: the Renderer (its footage plate and holdouts, light volume, fire lights and lamp buffer);
         colliders: the objects as the solver has them (ColliderGPU, moving ones where they are this frame);
@@ -347,7 +355,8 @@ class Stage:
         floor: draw the floor (not under bottomless water);
         pieces: the pieces of broken objects, {collider index: Solids.piece_poses entry};
         ropes: the ropes and springs, {collider index: Solids.rope_poses entry};
-        matter: the sand, snow, mud, jelly and clay (matter.Matter), or None; bolts: lightning (Scene.bolts)."""
+        matter: the sand, snow, mud, jelly and clay (matter.Matter), or None; bolts: lightning (Scene.bolts);
+        final: a final render (with Lume: all its passes now; else the viewer's, a few at a time)."""
         g = self.gpu
         pw, ph = int(size[0]), int(size[1])
         self._ensure(pw, ph)
@@ -404,6 +413,9 @@ class Stage:
         transform = INPUT_TRANSFORMS.get(comp.plate_transform, 0)
         vis = float(comp.visibility)
         ns = 1 if samples <= 1 else (8 if (shutter > 0.0 and samples >= 8) else 4)
+        lume = LU.settings(scene)
+        if lume.on:
+            ns = 1      # (Lume: one path per pixel per pass, the passes added up)
         u = (Uniforms().m4(camstate.inv_view_proj).m4(w2l)
              .v4(pw, ph, ns, shutter)
              .v4(*fit, float(comp.lens_k1), pix)
@@ -493,16 +505,48 @@ class Stage:
             u.v4(*colour, rough).v4(metal, 0.0, 0.0, float(CG)).v4(*colour, 1.5)
         u.v4(0.0, 0.0, 0.0, 1.0).v4(0.0, 1.0, 0.0, float(CG)).v4(0.0, 0.0, 0.0, 1.0)   # (lightning: lets the light by)
         black = r._black
-        b.run(self.k, [meshes.atlas if meshes is not None else r._empty_r32,
-                       r.L0 if vol_on else r._empty, r.L1 if vol_on else r._empty, r.E if vol_on else r._empty,
-                       r.LT if (vol_on and light.lamps and r.LT is not None) else r._empty,
-                       g.linear, g.repeat,
-                       r.lights if fire_on else self._zero, r.light_count if fire_on else self._zero, r._lamp_buf,
-                       r.plate if (footage and r.plate is not None) else black,
-                       r.hold if (footage and r.hold is not None and any(r.hold_on)) else black,
-                       env if env is not None else black,
-                       r.lut_plate if (footage and r.lut_plate is not None) else r._lut_none,
-                       self.tex, *bufs, self.hold, *mtex, grass[0] if grass is not None else black,
-                       floor_burn if floor_burn is not None else r._empty, obj_burn if obj_burn is not None else r._empty,
-                       burns.slots if obj_burn is not None else r._no_slots, look2, self._ml], u, (pw, ph, 1))
+        lume_bufs = self._lume_off
+        if lume.on:
+            if self.lume is None:
+                self.lume = LU.Lume(g)
+            L = self.lume
+            L.ensure(pw, ph)
+            L.environment(scene.data['lighting'].get('environment', '') if env is not None else '')
+            lume_bufs = [L.acc, L.aov, L.env_buffer()]
+            # (the picture the passes so far are of: an edit is drawn live first, which starts them afresh)
+            key = (int(frame), pw, ph, bytes(np.asarray(camstate.inv_view_proj, np.float32).tobytes()), bool(footage),
+                   float(shutter))
+            first, count = L.plan(lume, key, final, samples)
+        elif self.lume is not None:
+            self.lume.pending = False
+        res = [meshes.atlas if meshes is not None else r._empty_r32,
+               r.L0 if vol_on else r._empty, r.L1 if vol_on else r._empty, r.E if vol_on else r._empty,
+               r.LT if (vol_on and light.lamps and r.LT is not None) else r._empty,
+               g.linear, g.repeat,
+               r.lights if fire_on else self._zero, r.light_count if fire_on else self._zero, r._lamp_buf,
+               r.plate if (footage and r.plate is not None) else black,
+               r.hold if (footage and r.hold is not None and any(r.hold_on)) else black,
+               env if env is not None else black,
+               r.lut_plate if (footage and r.lut_plate is not None) else r._lut_none,
+               self.tex, *bufs, self.hold, *mtex, grass[0] if grass is not None else black,
+               floor_burn if floor_burn is not None else r._empty, obj_burn if obj_burn is not None else r._empty,
+               burns.slots if obj_burn is not None else r._no_slots, look2, self._ml, *lume_bufs]
+        if not lume.on:
+            b.run(self.k, res, u.v4().v4(), (pw, ph, 1))
+            return self.tex
+        # Lume: its passes, each a new path per pixel added to the ones before (lume.wgsl), then the denoiser
+        base = list(u.data)
+        # (Clamp bright paths: a bounce's light capped at that many times the sky's brightness; 0: none)
+        cap = float(lume.clamp) * max(float(np.dot(np.asarray(sky, float), (0.2126, 0.7152, 0.0722))), 1e-4) if lume.clamp > 0 else 0.0
+        ew, eh = L.env_dims if env is not None else (0, 0)
+        for i in range(count):
+            up = Uniforms()
+            up.data = base + [1.0, float(first + i), float(lume.bounces), cap, float(ew), float(eh), 0.0, 0.0]
+            b.run(self.k, res, up, (pw, ph, 1))
+            if final and (i + 1) % LU.FINAL_SUBMIT == 0 and i + 1 < count:
+                b.submit(restart=True)
+        if count > 0 or final:
+            L.finish(b, self.tex, first + count, lume.denoise)
+        else:
+            L.finish(b, self.tex, L.passes, False)
         return self.tex

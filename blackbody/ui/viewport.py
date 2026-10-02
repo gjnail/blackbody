@@ -1844,6 +1844,9 @@ class Viewport(QWidget):
             lines.append(f'sim {st.get("sim_ms", 0):.0f} ms · render {st.get("render_ms", 0):.0f} ms · max {st.get("max_speed", 0):.1f} m/s')
             if st.get('refined'):
                 lines.append('refined (4 samples)')
+        if st and st.get('lume'):
+            done, want = st['lume']
+            lines.append(f'Lume · {min(done, want)}/{want} light paths per pixel' + ('' if done >= want else ' · sharpening'))
         if st.get('particle_limit'):
             lines.append('particle limit reached: sources are held back (Liquid › Particle limit, advanced)')
         fm = p.fontMetrics()

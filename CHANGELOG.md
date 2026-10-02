@@ -24,6 +24,11 @@ Notable changes to Blackbody. The format follows
 - CG objects in footage: an object's Look (Automatic, CG or In the footage). A CG one goes over the footage lit by
   the shot's light, with its shadows on the real ground, hidden behind the footage's depth pass and matte.
 - Fixed mesh objects hold falling things on their real shape (between the logs of a pile, on stairs).
+- Lume, a path-traced lighting engine for the set drawn in CG (Properties › Lume, off by default): light bounces from
+  surface to surface, shadows are as soft as each light is big (the sun's disc, each fire light, hot metal, lamps,
+  through the smoke), an HDRI's own sun is found and shadowed (importance sampling with MIS), glass, ice and jelly
+  refract and bounce light inside, and highlights are GGX. The viewer sharpens while you look, and a denoiser clears
+  the grain.
 - Things that break (Properties › Breaking): objects cut beforehand into chunks, bricks in running bond, glass
   shards or wood splinters, glued at joints that give way when pulled, sheared or bent past the material's
   strength. Hollow objects break as shells (a vase, a crate). Standing ones are held by their base or their edges.

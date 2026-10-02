@@ -27,6 +27,9 @@
 // (each bounded by planes in its own frame), found through a coarse grid of the cells they overlap. Their cut faces
 // are drawn in the material's inside colour.
 //
+// With Lighting engine Lume, each pixel's light is path traced instead (lume.wgsl): one path per pixel per pass, the
+// passes added up in ACC (with the first surface's albedo, normal and distance in AOV, for the denoiser).
+//
 // out: rgb = the plate (scene-linear), a = how much of the pixel is CG. The composite does not light CG
 // pixels again with the fire and the lamps (they are lit here); footage pixels it lights as before.
 // out_hold: the holdouts the march and the liquid use: x = the footage's matte, y = the distance from the camera to
@@ -38,6 +41,7 @@
 //!include colliders.wgsl
 //!include burn_common.wgsl
 //!include burnobj.wgsl
+//!include lume.wgsl
 
 const PI: f32 = 3.14159265;
 const FLOOR: i32 = 100;
@@ -93,6 +97,8 @@ struct Params {
   ccnt: vec4<f32>,      // objects (count), _
   col: array<Collider, MAX_COLLIDERS>,
   mat: array<Mat, MAT_ROWS>,
+  lume: vec4<f32>,      // Lume (lume.wgsl): on (1/0), this pass (0, 1, ...), bounces, the cap on a bounce's light (0: none)
+  lume2: vec4<f32>,     // the HDRI's brightness map to pick directions from (ENV): width, height (0: none), _, _
 };
 
 @group(0) @binding(0) var atlas: texture_3d<f32>;       // mesh distance fields (meshsdf.wgsl)
@@ -128,12 +134,16 @@ struct PieceG { a: vec4<f32>, q: vec4<f32>, v: vec4<f32>, o: vec4<f32>, r: vec4<
 @group(0) @binding(25) var<storage, read> slots: array<BurnSlot>;
 @group(0) @binding(26) var m_glow: texture_3d<f32>;   // the matter's temperature (K) and how metallic it is
 @group(0) @binding(27) var<storage, read> ML: array<vec4<f32>>;   // hot matter's lights (matter_glow.wgsl): [0].x how many    // its distance to the surface (m), clear, sparkle, wrap
+@group(0) @binding(28) var<storage, read_write> ACC: array<vec4<f32>>;   // Lume: the passes' light added up (rgb), CG share
+@group(0) @binding(29) var<storage, read_write> AOV: array<vec4<f32>>;   // Lume: per pixel, albedo + distance, normal + _
+@group(0) @binding(30) var<storage, read> ENV: array<f32>;               // Lume: the HDRI's cumulative sums and pdf
 @group(1) @binding(0) var<uniform> U: Params;
 
 var<private> g_tau: f32;   // this sample's time in the shutter (s): objects are moved along their motion
 var<private> g_over: vec4<f32>;   // a colour a pattern puts in place of the material's (mortar), and how much
 var<private> g_plane: i32;        // the plane a piece was hit on (trace)
 var<private> g_opaque: bool;      // only what stops light counts (shadows, the sky's occlusion)
+var<private> g_jit: f32;          // this sample's random number in [0, 1) (soft shadows start their march a little apart)
 var<private> t_piece: f32;        // how far along the camera's ray the first piece is (see), -1: none
 var<private> t_footage: f32;      // and the footage's own surface (see), 1e9: none
 
@@ -407,13 +417,20 @@ fn soft_shadow_opaque(p: vec3<f32>, l: vec3<f32>, tmax: f32, k: f32, want: f32, 
   let span = bound_span(p, l);
   if (span.x > span.y) { return 1.0; }
   var res = 1.0;
-  var t = max(t0, span.x);
+  // (the first step jittered per sample: what bands are left round a heap become noise the samples average away)
+  var t = max(t0, span.x) * (1.0 + 0.5 * g_jit);
   let lim = min(tmax, span.y);
+  var ph = 1.0e20;
   for (var i = 0; i < 64; i++) {
     if (t >= lim) { break; }
     let d = scene_d(p + l * t, want).x;
-    res = min(res, k * d / t);
+    // the closest the ray comes to what is near it between this step and the last (Quilez's improved soft shadow), not
+    // only at the steps: the steps' pattern changes from pixel to pixel and drew contours round a heap
+    let y = select(d * d / (2.0 * ph), 0.0, i == 0);
+    let dd = sqrt(max(d * d - y * y, 0.0));
+    res = min(res, k * dd / max(t - y, 1e-4));
     if (res < 0.002) { return 0.0; }
+    ph = d;
     t += clamp(d, 0.5 * t0, 0.25 * max(lim, 0.1));
   }
   let s = clamp(res, 0.0, 1.0);
@@ -1099,9 +1116,49 @@ fn bolt_glow(ro: vec3<f32>, rd: vec3<f32>, tmax: f32) -> vec3<f32> {
   return g * U.bolt.w;
 }
 
+// Past the CG along a ray (h: what it hit, if anything, that is not drawn): the footage (with the CG objects' shadows on
+// it, for the camera's own ray), or the sky. t_foot: the footage's surface along the camera's ray; t_all: how far the
+// ray has come since.
+fn past_cg(ro: vec3<f32>, rd: vec3<f32>, h: Hit, ro0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, t_foot: f32, t_all: f32,
+           first: bool) -> vec3<f32> {
+  let footage = U.stage.w > 0.5;
+  if (footage) {
+    var catcher = 1.0;
+    var pr = vec3<f32>(0.0);
+    var nr = vec3<f32>(0.0, 1.0, 0.0);
+    var have = false;
+    if (h.id >= 0 && h.id < FLOOR) {
+      pr = ro + rd * h.t;
+      nr = obj_normal(h.id, pr, max(0.5 * U.fit.w * h.t, 2.0e-4));
+      have = true;
+    } else if (t_foot < 1.0e8) {
+      pr = ro + rd * (t_foot - t_all);
+      have = true;
+      nr = vec3<f32>(0.0, 1.0, 0.0);
+    } else if (U.floor_d.y > 0.5 && rd.y < -1e-6 && ro.y > U.stage.y) {
+      pr = ro + rd * ((U.stage.y - ro.y) / rd.y);
+      have = true;
+    }
+    if (have && first) {
+      // the CG objects' shadows: how much of the light that lit it they take away
+      let eps = max(2.0 * U.fit.w * length(pr - ro0), 5.0e-4);
+      let po = pr + nr * eps;
+      let sun_e = U.sun.rgb * max(dot(nr, U.sund.xyz), 0.0);
+      let sky_e = PI * U.sky.rgb * (0.6 + 0.4 * nr.y);
+      var lit = sky_e * ambient_occ(pr, nr, 2.0);
+      if (max(sun_e.r, max(sun_e.g, sun_e.b)) > 0.0) { lit += sun_e * soft_shadow(po, U.sund.xyz, 1.0e4, U.sun.w, 2.0, 2.0 * eps); }
+      catcher = luma(lit) / max(luma(sun_e + sky_e), 1e-6);
+    }
+    return footage_at(puv) * catcher;
+  } else {
+    return background(rd, px);
+  }
+}
+
 // What the camera sees along one ray (fire-local), px the plate pixel, puv its plate uv, rd_w the ray
 // in world axes.
 fn see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w: vec3<f32>) -> Seen {
+  if (U.lume.x > 0.5) { return lume_see(ro0, rd0, px, puv, rd_w); }
   let footage = U.stage.w > 0.5;
   t_piece = -1.0;
   t_footage = 1.0e9;
@@ -1129,37 +1186,7 @@ fn see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w: vec3
     if ((h.id >= PIECE || h.id == MATTER) && bounce == 0) { t_piece = h.t; }
     if (!drawn) {
       // past the CG: the footage (with the CG objects' shadows on it), or the sky
-      if (footage) {
-        var catcher = 1.0;
-        var pr = vec3<f32>(0.0);
-        var nr = vec3<f32>(0.0, 1.0, 0.0);
-        var have = false;
-        if (h.id >= 0 && h.id < FLOOR) {
-          pr = ro + rd * h.t;
-          nr = obj_normal(h.id, pr, max(0.5 * U.fit.w * h.t, 2.0e-4));
-          have = true;
-        } else if (t_foot < 1.0e8) {
-          pr = ro + rd * (t_foot - t_all);
-          have = true;
-          nr = vec3<f32>(0.0, 1.0, 0.0);
-        } else if (U.floor_d.y > 0.5 && rd.y < -1e-6 && ro.y > U.stage.y) {
-          pr = ro + rd * ((U.stage.y - ro.y) / rd.y);
-          have = true;
-        }
-        if (have && bounce == 0) {
-          // the CG objects' shadows: how much of the light that lit it they take away
-          let eps = max(2.0 * U.fit.w * length(pr - ro0), 5.0e-4);
-          let po = pr + nr * eps;
-          let sun_e = U.sun.rgb * max(dot(nr, U.sund.xyz), 0.0);
-          let sky_e = PI * U.sky.rgb * (0.6 + 0.4 * nr.y);
-          var lit = sky_e * ambient_occ(pr, nr, 2.0);
-          if (max(sun_e.r, max(sun_e.g, sun_e.b)) > 0.0) { lit += sun_e * soft_shadow(po, U.sund.xyz, 1.0e4, U.sun.w, 2.0, 2.0 * eps); }
-          catcher = luma(lit) / max(luma(sun_e + sky_e), 1e-6);
-        }
-        col += thr * footage_at(puv) * catcher;
-      } else {
-        col += thr * background(rd, px);
-      }
+      col += thr * past_cg(ro, rd, h, ro0, px, puv, t_foot, t_all, bounce == 0);
       break;
     }
     t_all += h.t;
@@ -1256,15 +1283,23 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var near_sum = 0.0;       // the pieces (or footage surfaces) the samples saw: their distance from the camera (m)
   var near_n = 0.0;
   let seed = u32(px.x) * 1973u + u32(px.y) * 9277u + u32(U.depth.z) * 26699u;
+  let lume = U.lume.x > 0.5;
+  var aov_a = vec4<f32>(0.0);
+  var aov_n = vec4<f32>(0.0);
+  if (lume) { lu_seed(px, 0u); }
   for (var i = 0; i < ns; i++) {
-    // samples on a rotated grid over the pixel, each at its own time in the shutter
+    // samples on a rotated grid over the pixel, each at its own time in the shutter (Lume: anywhere in the pixel and the
+    // shutter, a new place every pass)
     var off = vec2<f32>(0.0);
     if (ns > 1) {
       off = vec2<f32>(fract(f32(i) * 0.7548776662 + 0.25), fract(f32(i) * 0.5698402910 + 0.6)) - vec2<f32>(0.5);
     }
+    if (lume) { off = lu_rand2() - vec2<f32>(0.5); }
+    if (lume) { g_jit = lu_rand(); } else { g_jit = rand1(seed + u32(i) * 31337u + 17u); }
     g_tau = 0.0;
     if (U.res.w > 0.0) {
-      let jit = rand1(seed + u32(i) * 7919u);
+      var jit = 0.0;
+      if (lume) { jit = lu_rand(); } else { jit = rand1(seed + u32(i) * 7919u); }
       g_tau = U.res.w * ((f32(i) + jit) / f32(ns) - 0.5);
     }
     let pp = vec2<f32>(px) + vec2<f32>(0.5) + off;
@@ -1280,6 +1315,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let rd = normalize((U.w2l * vec4<f32>(rd_w, 0.0)).xyz);
     let s = see(ro, rd, pp, puv, rd_w);
     acc += s.c + bolt_glow(ro, rd, select(1.0e4, s.t, s.t > 0.0));
+    if (lume) {
+      aov_a += vec4<f32>(lu_alb, lu_dist);
+      aov_n += vec4<f32>(lu_nrm, 0.0);
+    }
     cov += s.cg;
     let to_near = U.fwd.w / max(dot(rd_w, U.fwd.xyz), 1e-3);   // camera to where the ray starts (m)
     var near = 1.0e9;
@@ -1291,7 +1330,24 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   let inv = 1.0 / f32(ns);
-  textureStore(out_plate, px, vec4<f32>(acc * inv, cov * inv));
+  var outc = vec4<f32>(acc * inv, cov * inv);
+  if (lume) {
+    // this pass added to the ones before it (pass 0 starts afresh), and their average shown
+    let k = u32(px.y) * u32(U.res.x) + u32(px.x);
+    var a = outc;
+    var al = aov_a * inv;
+    var nn = vec4<f32>(aov_n.xyz * inv, pow(luma(acc * inv), 2.0));   // (w: the pass's brightness squared, for its noise)
+    if (U.lume.y > 0.5) {
+      a += ACC[k];
+      al += AOV[2u * k];
+      nn += AOV[2u * k + 1u];
+    }
+    ACC[k] = a;
+    AOV[2u * k] = al;
+    AOV[2u * k + 1u] = nn;
+    outc = a / (U.lume.y + 1.0);
+  }
+  textureStore(out_plate, px, outc);
   var matte = 0.0;
   if (U.stage.w > 0.5 && U.foot.z > 0.5) {
     matte = clamp(textureSampleLevel(hold, lin, (vec2<f32>(px) + vec2<f32>(0.5)) / U.res.xy, 0.0).x, 0.0, 1.0);

@@ -623,7 +623,7 @@ class LiquidEngine:
                                                plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage,
                                                ground_y=vol.origin[1], frame=frame, objects=objects,
                                                floor=not look.bottomless, pieces=pieces, ropes=ropes, matter=matter, bolts=bolts,
-                                               grass=self._strands.ground_map(b) if grass else None)
+                                               grass=self._strands.ground_map(b) if grass else None, final=final)
                 if self.stage.has_pieces or self.stage.has_matter:   # the liquid is hidden behind the pieces and the matter
                     r.hold_stage = self.stage.hold
                     r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])

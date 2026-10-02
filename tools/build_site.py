@@ -37,6 +37,7 @@ GUIDES = [
     ('Water', 'lava', 'Lava, and fire with water'),
     ('Water', 'heat', 'Ice, boiling and steam'),
     ('Sky', 'weather', 'Weather and clouds'),
+    ('Your shot', 'lume', 'Lume lighting'),
     ('Your shot', 'compositing', 'Fitting it into your footage'),
     ('Your shot', 'scene-import', 'Moving shots and scene import'),
     ('Your shot', 'outputs', 'Outputs'),

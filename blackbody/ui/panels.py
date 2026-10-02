@@ -23,7 +23,7 @@ PRESET_ASSETS = Path(__file__).resolve().parents[1] / 'assets' / 'presets'
 SHAPE_NAMES = {'sphere': 'Sphere', 'box': 'Box', 'cylinder': 'Disc', 'capsule': 'Line', 'ring': 'Ring', 'cone': 'Cone', 'mesh': 'Mesh',
                'volume': 'Volume (VDB)'}
 COLLIDER_SHAPES = {'box': 'Box', 'sphere': 'Sphere', 'cylinder': 'Cylinder', 'mesh': 'Mesh'}
-SECTION_ORDER = ['combustion', 'motion', 'domain', 'shading', 'lighting', 'embers', 'spread', 'camera', 'composite', 'render']
+SECTION_ORDER = ['combustion', 'motion', 'domain', 'shading', 'lighting', 'lume', 'embers', 'spread', 'camera', 'composite', 'render']
 SECTION_HINTS = {
     'combustion': 'How fuel burns: flame height, heat and smoke.',
     'motion': 'Forces on the gas: buoyancy, swirl, turbulence and wind.',
@@ -41,8 +41,10 @@ SECTION_HINTS = {
     'weather': 'Snow, hail, sleet, freezing rain and rain falling on the scene: what the sky makes of it on the way down, the wind, and what builds up on the ground.',
     'atmosphere': 'The sky simulated: the air column (temperature, humidity and wind with height), what warms the ground and sets off thermals, and how its clouds rain, snow and hail.',
     'sky': 'How the clouds and the sky look: their brightness and silver lining, the haze of distance, the sky and the ground.',
+    'lume': 'Lume, the path-traced lighting engine: light that bounces from surface to surface, true soft shadows, glass '
+            'that bends light, the fire lighting the set from every flame.',
 }
-LIQUID_SECTION_ORDER = ['liquid', 'domain', 'water', 'weather', 'lighting', 'camera', 'composite', 'render']
+LIQUID_SECTION_ORDER = ['liquid', 'domain', 'water', 'weather', 'lighting', 'lume', 'camera', 'composite', 'render']
 LIQUID_HINTS = {
     'domain': 'The simulation box: size, resolution, boundaries and time. Liquids need finer grids than fire: keep the box tight around the action.',
     'lighting': 'Light on the liquid: the ambient (sky) colour it reflects and a key light (sun) for glints and shadows.',
@@ -105,7 +107,7 @@ CLOUD_WORDING = {
     ('camera', 'target_y'): ('Look-at height', None, 'km'),
     ('camera', 'position'): ('Position', None, 'km'),
 }
-BOTH_SECTION_ORDER = ['combustion', 'motion', 'liquid', 'domain', 'shading', 'water', 'lava', 'weather', 'lighting', 'embers', 'spread',
+BOTH_SECTION_ORDER = ['combustion', 'motion', 'liquid', 'domain', 'shading', 'water', 'lava', 'weather', 'lighting', 'lume', 'embers', 'spread',
                       'camera', 'composite', 'render']
 
 

@@ -606,6 +606,26 @@ SECTIONS = {
         B('motion_blur', 'Motion blur', True, group='Motion blur'),
         F('shutter_angle', 'Shutter angle', 180.0, 0.0, 360.0, '°', 0, tip='180° matches most film and video. Match your footage.', group='Motion blur'),
     ],
+    # Lume: path-traced light on the set drawn in CG (lume.wgsl)
+    'lume': [
+        E('engine', 'Lighting engine', 'classic', (('classic', 'Classic (fast)'), ('lume', 'Lume (path traced)')),
+          tip='Classic lights the floor and the objects drawn in CG directly: the key light, the sky, the fire and the lamps, '
+          'with soft shadows. Lume traces the light as it really travels: it bounces from surface to surface (a red wall '
+          'tints the floor beside it, a room is lit by its walls), shadows are as soft as each light is big, glass, ice and '
+          'jelly bend and tint what is seen through them, and the fire lights the set from each of its flames, through the '
+          'smoke. Slower: the viewer sharpens over a few seconds once you stop.', group='Lume'),
+        I('bounces', 'Bounces', 4, 1, 16, tip='How many times light bounces from surface to surface. 3–4 for most shots; '
+          'more for rooms and glass, which pass light on many times.', group='Lume'),
+        I('samples', 'Samples (final)', 256, 4, 8192, tip='Light paths traced per pixel in final renders. More is cleaner and '
+          'slower: 128 for a preview, 256–1024 for hero shots.', group='Lume', hard_hi=65536),
+        I('viewer_samples', 'Samples (viewer)', 64, 4, 4096, tip='Light paths per pixel the viewer gathers once you stop '
+          'moving or editing, a few at a time.', group='Lume', hard_hi=65536),
+        B('denoise', 'Denoise', True, tip='Smooth away the grain of the remaining noise, keeping edges, textures and '
+          'shadow edges (guided by the surfaces\' colour, facing and distance).', group='Lume'),
+        F('clamp', 'Clamp bright paths', 0.0, 0.0, 1000.0, '×', 1, tip='Bright single paths (fireflies: the sun glancing '
+          'off a small shiny thing, seen in a mirror) are capped at this many times the sky\'s brightness. 0 keeps every path '
+          'as it is (exact, but slower to clear).', group='Lume', advanced=True),
+    ],
 }
 
 MESH_TIP = ('A triangle mesh in OBJ or STL format, in metres with y up (the usual export settings); it need not be watertight. '
@@ -864,6 +884,7 @@ SECTION_TITLES = {
     'domain': 'Domain', 'combustion': 'Combustion', 'motion': 'Motion', 'shading': 'Shading', 'lighting': 'Lighting',
     'embers': 'Embers', 'spread': 'Spreading fire', 'camera': 'Camera', 'composite': 'Composite', 'render': 'Render',
     'liquid': 'Liquid', 'water': 'Liquid look', 'lava': 'Lava', 'weather': 'Weather', 'atmosphere': 'Atmosphere', 'sky': 'Sky',
+    'lume': 'Lume',
 }
 
 # Which sections change the simulation (and so invalidate cached frames) versus only how it looks.

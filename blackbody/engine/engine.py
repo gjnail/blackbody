@@ -795,7 +795,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine)
                 stage = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, size,
                                         plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage, vol=vol,
                                         ground_y=vol.origin[1], frame=frame, pieces=pieces, ropes=ropes, matter=matter, bolts=bolts,
-                                        grass=self._strands.ground_map(b) if grass else None, burns=surfaces)
+                                        grass=self._strands.ground_map(b) if grass else None, burns=surfaces, final=final)
                 if self.stage.has_pieces or self.stage.has_matter:   # the march stops at the pieces and the matter too
                     r.hold_stage = self.stage.hold
                     r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])

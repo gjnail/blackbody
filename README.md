@@ -223,6 +223,7 @@ The [tutorial](docs/tutorial.md) takes a shot from footage to final render in ab
 | [Lava, and fire with water](docs/lava.md) | Molten liquids and crust, and fire, water and lava together |
 | [Ice, boiling and steam](docs/heat.md) | Freezing, melting, boiling, evaporating |
 | [Weather and clouds](docs/weather.md) | Snow, sleet, freezing rain and hail, and clouds and storms |
+| [Lume lighting](docs/lume.md) | The path-traced lighting engine for the CG set: light that bounces, shadows as soft as each light is big, an HDRI's sun, glass that bends light, the denoiser |
 | [Fitting it into your footage](docs/compositing.md) | Lining up the ground, tracking, surfaces, holdouts and roto, fire light, lens, haze, noise, lights in the set, OCIO |
 | [Moving shots and scene import](docs/scene-import.md) | Camera tracking, camera solves, USD scenes, VDB volumes |
 | [Outputs](docs/outputs.md) | EXR layers, deep EXR, ProRes, PNG, composites, OpenVDB, meshes |
@@ -246,7 +247,7 @@ From source, `blackbody` is `python -m blackbody`. See [Command line and render 
 
 ## How it works
 
-Fire is an incompressible, buoyant, reacting gas on a staggered grid, solved with MacCormack advection and a geometric multigrid pressure solve. Liquids are FLIP/APIC particles with a free-surface pressure solve. Sand, snow, mud, jelly and clay are MLS-MPM particles with elastoplastic materials. Cloth uses XPBD with multigrid bending. Rigid bodies, joints and breaking run in MuJoCo, coupled both ways to the gas, the liquid and the matter. The sea is an FFT ocean spectrum, and the sky is a Boussinesq atmosphere with bulk cloud microphysics. Volumes are ray-marched with Planck emission and multiple scattering, liquids are ray traced as dielectrics, and objects, pieces and grains are drawn on a CG stage with soft shadows. It all runs in WGSL compute shaders through [wgpu](https://github.com/pygfx/wgpu-py), driven from Python and a Qt (PySide6) app. [How it works](docs/how-it-works.md) has the details.
+Fire is an incompressible, buoyant, reacting gas on a staggered grid, solved with MacCormack advection and a geometric multigrid pressure solve. Liquids are FLIP/APIC particles with a free-surface pressure solve. Sand, snow, mud, jelly and clay are MLS-MPM particles with elastoplastic materials. Cloth uses XPBD with multigrid bending. Rigid bodies, joints and breaking run in MuJoCo, coupled both ways to the gas, the liquid and the matter. The sea is an FFT ocean spectrum, and the sky is a Boussinesq atmosphere with bulk cloud microphysics. Volumes are ray-marched with Planck emission and multiple scattering, liquids are ray traced as dielectrics, and objects, pieces and grains are drawn on a CG stage with soft shadows, or lit by Lume, a path tracer. It all runs in WGSL compute shaders through [wgpu](https://github.com/pygfx/wgpu-py), driven from Python and a Qt (PySide6) app. [How it works](docs/how-it-works.md) has the details.
 
 More than 300 tests check the physics against textbook values and measurements, such as flame heights, plume speeds, wave spectra, whitecap cover, boiling rates, fall speeds, angles of repose and blast impulses:
 
