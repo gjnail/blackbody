@@ -168,13 +168,24 @@ def material(key):
     return MATTERS.get(key, MATTERS['sand'])
 
 
+def _stamp(source):
+    """A mesh file's modification time (so editing it refills the matter), or 0."""
+    if not source:
+        return 0.0
+    try:
+        from .mesh import MeshLibrary
+        return MeshLibrary._stamp(source)
+    except (OSError, ValueError):
+        return 0.0
+
+
 @dataclass
 class MatterSpec:
     """One source of matter (Scene.matter_specs): a body of it at the start, or a stream poured from a nozzle."""
     material: str = 'sand'
-    shape: str = 'box'          # box, sphere, cylinder, pile (a cone: radius size x, height size y)
+    shape: str = 'box'          # box, sphere, cylinder, pile (a cone: radius size x, height size y), mesh (it fills it)
     pos: tuple = (0.0, 0.5, 0.0)          # fire-local m: its middle, whatever its shape (a pour: the nozzle)
-    size: tuple = (0.25, 0.25, 0.25)      # half extents, or radius and half height
+    size: tuple = (0.25, 0.25, 0.25)      # half extents, or radius and half height (a mesh: its scale on each axis)
     yaw: float = 0.0                      # radians
     velocity: tuple = (0.0, 0.0, 0.0)     # m/s as it starts (a thrown snowball) or as it pours
     release: float = 0.0                  # s of simulation: held still until then
@@ -186,10 +197,14 @@ class MatterSpec:
     stiffness: float = 1.0                # times the material's
     seed: int = 0
     temperature: float = 293.15           # K, as it starts
+    mesh: str = ''                        # a mesh it fills (shape mesh): its source (mesh.load_mesh)
 
 
-def fill_points(shape, size, spacing, rng):
-    """Points filling a shape (its own frame, m), on a lattice `spacing` apart, each jittered within its cell."""
+def fill_points(shape, size, spacing, rng, sdf=None):
+    """Points filling a shape (its own frame, m), on a lattice `spacing` apart, each jittered within its cell. A mesh
+    (sdf: its mesh.MeshSDF, in its own units) is scaled by size on each axis, its own origin at the frame's."""
+    if shape == 'mesh':
+        return _fill_mesh(sdf, size, spacing, rng)
     s = np.abs(np.asarray(size, float))
     ext = np.array([s[0], s[1], s[2]]) if shape in ('box', 'cylinder', 'pile') else np.array([s[0]] * 3)
     if shape == 'cylinder':
@@ -211,6 +226,45 @@ def fill_points(shape, size, spacing, rng):
     else:
         keep = np.all(np.abs(g) <= s, axis=1)
     return g[keep]
+
+
+def _fill_mesh(sdf, size, spacing, rng):
+    if sdf is None:
+        return np.zeros((0, 3))
+    scale = np.maximum(np.abs(np.asarray(size, float)), 1e-6)
+    lo = np.asarray(sdf.mesh_min, float) * scale
+    hi = np.asarray(sdf.mesh_max, float) * scale
+    n = np.maximum(np.ceil((hi - lo) / spacing).astype(int), 1)
+    if int(np.prod(n)) > 60_000_000:
+        raise ValueError('mesh too big for the matter detail')
+    axes = [lo[k] + (np.arange(n[k]) + 0.5) * spacing for k in range(3)]
+    g = np.stack(np.meshgrid(*axes, indexing='ij'), -1).reshape(-1, 3)
+    g = g + (rng.random(g.shape) - 0.5) * spacing
+    return g[sample_sdf(sdf, g / scale) < 0.0]
+
+
+def sample_sdf(sdf, q):
+    """A mesh's baked distance (mesh.MeshSDF, negative inside) at points q (n, 3) in its own units, trilinear; outside
+    its grid, its edge's."""
+    data = np.asarray(sdf.data, np.float32)          # (nz, ny, nx)
+    dims = np.asarray(sdf.dims, int)                  # (nx, ny, nz)
+    cell = (np.asarray(sdf.bmax, float) - np.asarray(sdf.bmin, float)) / dims
+    f = (q - np.asarray(sdf.bmin, float)) / cell - 0.5
+    f = np.clip(f, 0.0, dims - 1.000001)
+    i = np.floor(f).astype(int)
+    t = f - i
+    i1 = np.minimum(i + 1, dims - 1)
+    out = np.zeros(len(q), np.float64)
+    for cx in (0, 1):
+        for cy in (0, 1):
+            for cz in (0, 1):
+                ix = i1[:, 0] if cx else i[:, 0]
+                iy = i1[:, 1] if cy else i[:, 1]
+                iz = i1[:, 2] if cz else i[:, 2]
+                w = ((t[:, 0] if cx else 1.0 - t[:, 0]) * (t[:, 1] if cy else 1.0 - t[:, 1])
+                     * (t[:, 2] if cz else 1.0 - t[:, 2]))
+                out += w * data[iz, iy, ix]
+    return out
 
 
 def _yaw(v, yaw):
@@ -278,7 +332,7 @@ class Matter:
         key = (tuple((s.material, s.shape, tuple(map(float, s.pos)), tuple(map(float, s.size)), float(s.yaw),
                       tuple(map(float, s.velocity)), float(s.release), bool(s.pour), float(s.rate), float(s.start),
                       float(s.stop), None if s.colour is None else tuple(map(float, s.colour)), float(s.stiffness), int(s.seed),
-                      float(s.temperature))
+                      float(s.temperature), str(s.mesh), _stamp(s.mesh))
                      for s in specs),
                tuple(map(float, box_origin)), tuple(map(float, box_size)), int(resolution), int(max_particles), float(gravity),
                bool(ground), bool(closed), float(fps), float(duration), bool(wets), float(heat_speed))
@@ -397,7 +451,17 @@ class Matter:
 
     def _body(self, s: MatterSpec, n, dims):
         rng = np.random.default_rng(1000 + 7 * n + int(s.seed))
-        local = fill_points(s.shape, s.size, self.dx / PER_AXIS, rng)
+        spacing = self.dx / PER_AXIS
+        sdf = None
+        if s.shape == 'mesh':
+            sdf = self._mesh_sdf(s, spacing)
+            if sdf is None:
+                return particles(np.zeros((0, 3)), self._slot[n], np.zeros(3), 0.0, rng)
+        try:
+            local = fill_points(s.shape, s.size, spacing, rng, sdf)
+        except ValueError:
+            self.warnings.append(f'The mesh {s.mesh} is too big to fill at this Matter detail: it is left out.')
+            local = np.zeros((0, 3))
         if not len(local):
             local = np.zeros((1, 3))
         world = _yaw(local, s.yaw) + np.asarray(s.pos, float)
@@ -407,6 +471,22 @@ class Matter:
             self.warnings.append(f'Some of the {material(s.material).label.lower()} is outside the box: it is left out.')
         xs = xs[inside]
         return particles(xs, self._slot[n], np.asarray(s.velocity, float), float(s.release), rng, float(s.temperature))
+
+    def _mesh_sdf(self, s, spacing):
+        """The baked distance of the mesh a body fills (mesh.load_or_bake: cached on disk), fine enough for its particles,
+        or None (with a warning) when it cannot be read."""
+        from .mesh import MeshError, load_or_bake, mesh_bounds
+        if not s.mesh:
+            self.warnings.append('A body of matter shaped as a mesh has no mesh file: it is left out.')
+            return None
+        try:
+            lo, hi = mesh_bounds(s.mesh)
+            extent = float(np.max((np.asarray(hi, float) - np.asarray(lo, float)) * np.abs(np.asarray(s.size, float))))
+            res = int(np.clip(extent / spacing * 0.75, 32, 256))
+            return load_or_bake(self.gpu, s.mesh, resolution=res)
+        except (OSError, MeshError, ValueError) as ex:
+            self.warnings.append(f'The mesh {s.mesh} could not be read ({ex}): that matter is left out.')
+            return None
 
     def _pack_materials(self):
         u = Uniforms()

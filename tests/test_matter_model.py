@@ -61,3 +61,22 @@ def test_a_melt_starts_hotter_than_its_melting_point():
     t = [spec.temperature for spec in s.matter_specs()]
     assert t[0] > material('iron').melts_at + 100.0      # poured hot, whatever its Temperature says
     assert abs(t[1] - 1273.15) < 1e-6 and abs(t[2] - 293.15) < 1e-6
+
+
+def test_a_mesh_is_filled_with_eight_particles_to_a_cell():
+    from blackbody.engine.matter import fill_points
+    from blackbody.engine.mesh import MeshSDF
+    # a ball 10 cm across as a baked distance grid, 2 mm cells
+    n, cell = 70, 0.002
+    c = (np.arange(n) + 0.5) * cell - n * cell / 2
+    z, y, x = np.meshgrid(c, c, c, indexing='ij')
+    sdf = MeshSDF(path='ball', bmin=(-n * cell / 2,) * 3, bmax=(n * cell / 2,) * 3, dims=(n, n, n),
+                  data=(np.sqrt(x * x + y * y + z * z) - 0.05).astype(np.float32), triangles=0,
+                  mesh_min=(-0.05,) * 3, mesh_max=(0.05,) * 3)
+    rng = np.random.default_rng(0)
+    pts = fill_points('mesh', (1.0, 1.0, 1.0), 0.005, rng, sdf)
+    assert abs(len(pts) / (4.0 / 3.0 * math.pi * 0.05 ** 3 / 0.005 ** 3) - 1.0) < 0.05
+    assert np.linalg.norm(pts, axis=1).max() < 0.052
+    # scaled: twice as tall
+    tall = fill_points('mesh', (1.0, 2.0, 1.0), 0.005, rng, sdf)
+    assert abs(len(tall) / len(pts) - 2.0) < 0.1 and np.ptp(tall[:, 1]) > 1.9 * np.ptp(pts[:, 1])

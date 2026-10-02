@@ -456,6 +456,13 @@ COMPONENTS = [
                        _M(name='Keep', material='wet_sand', shape='cylinder', position=(0.0, 0.24, 0.0), size=(0.065, 0.1, 0.065))]
               + [_M(name=f'Tower {k + 1}', material='wet_sand', shape='cylinder', position=(sx * 0.115, 0.215, sz * 0.115),
                     size=(0.04, 0.075, 0.04)) for k, (sx, sz) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))]),
+    Component('matter_shape', 'Matter shape', 'Sand, snow & mud', 'A mesh of your own (OBJ, STL or a USD prim) filled with '
+              'clay: choose what it is made of in Properties (chocolate, wax, jelly, sand, snow...).', 'matter', pick='mesh',
+              objects=[_M(name='Shape', material='clay', shape='mesh', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0))]),
+    Component('text_chocolate', 'Chocolate letters', 'Sand, snow & mud', 'Words in chocolate, in any font on this computer, '
+              'standing on the ground: put a fire beside them and they soften and run.', 'text', pick='text',
+              objects=[_M(name='Chocolate', material='chocolate', shape='mesh', position=(0.0, 0.0, 0.0),
+                          size=(1.0, 1.0, 1.0))]),
     Component('snowball', 'Snowball', 'Sand, snow & mud', 'A 14 cm snowball of packing snow thrown at 6 m/s: it splats on '
               'what it hits and breaks into lumps.', 'snowball', room=(0.3, 0.8, 0.3),
               objects=[_M(name='Snowball', material='packing_snow', shape='sphere', position=(0.0, 0.7, 0.0),

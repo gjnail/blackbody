@@ -379,3 +379,23 @@ def test_molten_iron_poured_on_the_ground_glows_cools_and_sets(engine):
     assert P[:, 23].mean() < T0.mean() - 100.0                 # it cools,
     assert 0.2 < np.mean(np.round(P[:, 3]) == 1)               # and sets into iron
     assert len(P) == len(m.read_particles())
+
+
+def test_matter_fills_a_mesh(engine, tmp_path):
+    from blackbody.scene import components
+    p = tmp_path / 'cube.obj'
+    # a 20 cm cube
+    v = [(-0.1, 0.0, -0.1), (0.1, 0.0, -0.1), (0.1, 0.2, -0.1), (-0.1, 0.2, -0.1),
+         (-0.1, 0.0, 0.1), (0.1, 0.0, 0.1), (0.1, 0.2, 0.1), (-0.1, 0.2, 0.1)]
+    f = [(1, 2, 3, 4), (5, 8, 7, 6), (1, 5, 6, 2), (2, 6, 7, 3), (3, 7, 8, 4), (5, 1, 4, 8)]
+    p.write_text(''.join(f'v {a} {b} {c}\n' for a, b, c in v) + ''.join(f'f {a} {b} {c} {d}\n' for a, b, c, d in f))
+    sc = components.new_scene('fire', 'person')
+    sc.emitters = []
+    sc.add_matter(name='Cube', material='clay', shape='mesh', mesh=str(p), position=(0.0, 0.1, 0.0), size=(1.0, 1.0, 1.0))
+    sc.data['domain'].update(size_x=1.0, size_y=1.0, size_z=1.0, resolution=32, preroll=0.0)
+    engine.prepare(sc, final=False)
+    m = engine.matter
+    engine.simulate_to(sc, sc.start, cache=False)
+    x = m.read_particles()[:, :3] * m.dx + np.asarray(m.origin)
+    assert abs(len(x) / (0.2 ** 3 / (m.dx / 2) ** 3) - 1.0) < 0.1          # eight particles to a cell of it
+    assert np.allclose(x.min(0), (-0.1, 0.1, -0.1), atol=0.02) and np.allclose(x.max(0), (0.1, 0.3, 0.1), atol=0.02)

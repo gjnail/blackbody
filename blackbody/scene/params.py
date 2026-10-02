@@ -933,13 +933,18 @@ MATTER_PARAMS = [
       'stays squashed. Wax, chocolate, aluminium and iron are solid until the fire heats them past their melting point '
       '(60, 34, 660 and 1150 °C), then run, and set again where they cool; molten ones are poured hot and set as they '
       'cool.', group='Matter'),
-    E('shape', 'Shape', 'box', (('box', 'Box'), ('sphere', 'Ball'), ('cylinder', 'Cylinder'), ('pile', 'Pile (a cone)')),
-      tip='The shape of the body of it at the start (a pour: the nozzle is a disc of its Size’s first value across).',
-      group='Matter'),
+    E('shape', 'Shape', 'box', (('box', 'Box'), ('sphere', 'Ball'), ('cylinder', 'Cylinder'), ('pile', 'Pile (a cone)'),
+                               ('mesh', 'Mesh')),
+      tip='The shape of the body of it at the start (a pour: the nozzle is a disc of its Size’s first value across). A '
+      'mesh: it fills its Mesh file (a chocolate bunny, a sand sculpture, a jelly from a mould).', group='Matter'),
+    Param('mesh', 'Mesh file', 'file', '', tip='A closed triangle mesh in OBJ or STL format (or a USD prim) that it fills, '
+          'in metres with y up; its own origin goes at Position and Size scales it on each axis (1: as modelled).',
+          group='Matter'),
     V('position', 'Position', (0.0, 0.5, 0.0), -50.0, 50.0, 'm', decimals=3, tip='Its middle, whatever its shape (a pile’s base '
-      'is Size’s height below it); a pour: the nozzle.', group='Matter'),
+      'is Size’s height below it); a pour: the nozzle; a mesh: where its own origin goes.', group='Matter'),
     V('size', 'Size', (0.25, 0.25, 0.25), 0.005, 20.0, 'm', decimals=3, tip='Half its width, height and depth (a ball: its '
-      'radius; a cylinder or a pile: its radius and half its height).', group='Matter'),
+      'radius; a cylinder or a pile: its radius and half its height; a mesh: its scale on each axis, 1 as modelled).',
+      group='Matter'),
     F('yaw', 'Rotation', 0.0, -180.0, 180.0, '°', 1, group='Matter'),
     V('velocity', 'Thrown at', (0.0, 0.0, 0.0), -50.0, 50.0, 'm/s', tip='How fast it moves as it starts (a thrown snowball), or '
       'as it leaves the nozzle (a pour).', group='Matter'),

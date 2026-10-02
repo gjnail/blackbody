@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-FILE_KEYS = {'emitter': ('mesh', 'volume'), 'collider': ('mesh',), 'fabric': ('mesh',), 'light': ()}
+FILE_KEYS = {'emitter': ('mesh', 'volume'), 'collider': ('mesh',), 'fabric': ('mesh',), 'light': (), 'matter': ('mesh',)}
 
 
 def object_sources(kind, d):

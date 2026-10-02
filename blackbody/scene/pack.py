@@ -58,7 +58,8 @@ def gather(shot):
             r.users.append(user)
 
     for sc in _scenes(shot):
-        for kind, items in (('emitter', sc.emitters), ('collider', sc.colliders), ('fabric', sc.fabrics)):
+        for kind, items in (('emitter', sc.emitters), ('collider', sc.colliders), ('fabric', sc.fabrics),
+                            ('matter', getattr(sc, 'matter', None) or [])):
             for d in items:
                 for k, src in object_sources(kind, d):
                     real = sc.mesh_path(src)
@@ -121,7 +122,8 @@ def apply(shot, mapping):
     """Point the shot's objects and settings at the copies (mapping from copy()). Returns how many were changed."""
     n = 0
     for sc in _scenes(shot):
-        for kind, items in (('emitter', sc.emitters), ('collider', sc.colliders), ('fabric', sc.fabrics)):
+        for kind, items in (('emitter', sc.emitters), ('collider', sc.colliders), ('fabric', sc.fabrics),
+                            ('matter', getattr(sc, 'matter', None) or [])):
             for d in items:
                 for k, src in object_sources(kind, d):
                     new = mapping.get((k, sc.mesh_path(src)))

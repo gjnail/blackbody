@@ -385,7 +385,8 @@ class Scene:
                                   velocity=tuple(float(x) for x in d['velocity']), release=float(d['release']),
                                   pour=bool(d['pours']), rate=float(d['rate']) / 1000.0, start=float(d['pour_start']),
                                   stop=float(d['pour_stop']), colour=colour, stiffness=float(d['stiffness']), seed=int(d['seed']),
-                                  temperature=self._matter_kelvin(d)))
+                                  temperature=self._matter_kelvin(d),
+                                  mesh=self.mesh_path(d.get('mesh', '')) if d['shape'] == 'mesh' else ''))
         return out
 
     @staticmethod
@@ -1306,7 +1307,8 @@ class Scene:
         """Modification times of the mesh files in use, so editing a mesh re-simulates."""
         from ..engine.mesh import MeshLibrary
         out = {}
-        for d in self.emitters + self.colliders + [f for f in self.fabrics if f.get('shape') == 'mesh']:
+        for d in (self.emitters + self.colliders + [f for f in self.fabrics if f.get('shape') == 'mesh']
+                  + [m for m in (getattr(self, 'matter', None) or []) if m.get('shape') == 'mesh']):
             p = self.item_source(d)
             if p:
                 try:

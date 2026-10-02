@@ -89,6 +89,8 @@ Notable changes to Blackbody. The format follows
   temperature, as bright as a flame that hot, and lights the floor and objects round it. Their melts can be poured.
   Matter › Temperature; Domain › Heat speed (how much quicker than for real). Presets: Pouring molten iron, Chocolate
   by a fire.
+- Matter fills meshes: Shape › Mesh fills an OBJ, STL or USD prim of your own (a chocolate bunny, a sand sculpture, a
+  jelly from a mould), scaled by Size. Blocks: Matter shape, Chocolate letters (any text, in any font).
 - Sand, snow, mud, jelly and clay in the interface: the object list, Properties, outlines and handles in the viewer (a
   pour's nozzle and direction), Made of, Let go, Pour it from here and Start/Stop pouring from the right-click menu,
   timing lanes, a Sand & mud chip in Create; Effects gains Falling & breaking and Sand, snow & mud chips.

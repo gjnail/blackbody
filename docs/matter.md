@@ -6,10 +6,11 @@ Sand, snow, mud, jelly and clay are *matter*: a body of it is made of tens or hu
 
 ## Making some
 
-Add a block from the *Sand, snow & mud* group in Create: a sand pile, a sand pour, a column of sand let go, a snowball, a snow drift, mud, a block of jelly or a lump of clay. Each is a matter object in the scene, with its settings in Properties:
+Add a block from the *Sand, snow & mud* group in Create: a sand pile, a sand pour, a column of sand let go, a sand castle, a snowball, a snow drift, mud, a block of jelly, a lump of clay, chocolate letters in any font, or a mesh of your own filled with clay (*Matter shape*). Each is a matter object in the scene, with its settings in Properties:
 
 - *Made of*: what it is (below).
-- *Shape*, *Position*, *Size*, *Rotation*: the body of it at the start: a box, a ball, a cylinder or a pile (a cone standing on its base).
+- *Shape*, *Position*, *Size*, *Rotation*: the body of it at the start: a box, a ball, a cylinder, a pile (a cone standing on its base), or a mesh it fills (*Mesh file*: a closed OBJ, STL or USD prim in metres, its own origin at *Position*, *Size* its scale on each axis).
+- *Temperature*: how hot it starts (wax, chocolate and metal: [Things that melt](#things-that-melt)).
 - *Thrown at*: how fast it moves as it starts (a thrown snowball).
 - *Let go at*: it is held where it is until then (a column of sand let go to collapse).
 - *Pours*: instead of a body of it, a stream poured from a nozzle at *Position* (its *Size*'s first value is the nozzle's radius), *Thrown at* the speed it leaves at, *Flow* in litres a second, from *Pours from* until *Pours until*.
@@ -82,7 +83,8 @@ Presets: *Sand from a hopper*, *Snowballs at a wall*, *Ball dropped on jelly*, *
 - The smoke goes round it but does not move it. The water does not flow through it: it seeps into sand only to soak it,
   so a sand dam holds the water back until the water soaks through it or goes over it. Cloth does not meet it yet.
 - Broken objects' pieces do not push it, and it does not burn.
-- A body of matter is a box, a ball, a cylinder or a cone; it cannot fill a mesh yet.
+- A mesh it fills should be closed (through a hole the fill runs out into the space round it), and it is filled once,
+  as it starts: a deforming mesh does not move it.
 - Up to 15 materials (or colours of them) in a scene at once.
 - Snow and mud do not stick to walls: a snowball splats and falls rather than leaving a mark.
 - Objects take no heat and give none: a hot pan does not melt the chocolate in it, and molten iron does not heat its
