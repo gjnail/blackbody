@@ -137,6 +137,8 @@ def matter_lines(sc, i, frame):
                 np.array([tip - n * 0.3 * L + a * 0.15 * L, tip, tip - n * 0.3 * L - a * 0.15 * L])]
     shape = m.get('shape', 'box')
     yaw = float(g('yaw'))
+    if shape == 'mesh':   # the mesh it fills: its own origin at Position, scaled by Size, as a collider's
+        return shape_lines('mesh', p, s, yaw=yaw, mesh=sc.mesh_path(m.get('mesh', '')), frame=frame)
     if shape == 'sphere':
         return shape_lines('sphere', p, (s[0], s[0], s[0]))
     if shape in ('cylinder', 'pile'):

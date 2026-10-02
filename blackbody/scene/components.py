@@ -765,6 +765,14 @@ def _extent(kind, d):
         return p - r, p + r + np.array([0.0, s[1], 0.0])
     if kind == 'matter':
         s = np.abs(np.asarray(d.get('size', (0.25, 0.25, 0.25)), float))
+        if d.get('shape') == 'mesh':   # a mesh it fills: Size scales it, as a collider's mesh
+            box = mesh_box(d.get('mesh'))
+            if box is None:
+                return p - s * 0.5, p + s * 0.5   # unread: about a metre across
+            c, r = (box[0] + box[1]) / 2 * s, (box[1] - box[0]) / 2 * s
+            if d.get('yaw'):   # turned: the box round its turned corners
+                r = np.array([math.hypot(r[0], r[2]), r[1], math.hypot(r[0], r[2])])
+            return p + c - r, p + c + r
         if d.get('shape') == 'sphere':
             s = np.array([s[0]] * 3)
         elif d.get('shape') in ('cylinder', 'pile'):
