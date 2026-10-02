@@ -65,6 +65,10 @@ def _apply(scene: Scene, spec: dict):
     if 'links' in spec:
         import copy
         scene.links = copy.deepcopy(spec['links'])
+    if 'strands' in spec:
+        scene.strands = []
+        for g in spec['strands']:
+            scene.add_strands(**g)
 
 
 PRESETS = {
@@ -961,6 +965,28 @@ PRESETS = {
         ],
         'links': [{'child': ['emitter', 'Cart fire'], 'parent': ['collider', 'Cart'], 'offset': [0.0, 0.22, 0.0]}],
     },
+    'meadow_fire': {
+        'name': 'Meadow fire', 'category': 'Fires', 'size': '8 m field of long grass',
+        'blurb': 'A line of fire lit along the edge of a field of dry long grass: the wind drives the front across it, the '
+                 'grass bending ahead of the flames, catching, burning down to black stubble and feeding the fire as it '
+                 'goes. Grass & plants: Long grass, dried.',
+        'render': {'end': 192},
+        'domain': {'size_x': 9.0, 'size_y': 3.2, 'size_z': 6.0, 'resolution': 176, 'preroll': 0.0},
+        'combustion': {'burn_rate': 6.0, 'heat': 0.6, 'soot': 0.4, 'cooling': 2.4, 'flame_life': 0.08},
+        'motion': {'buoyancy': 5.0, 'turbulence': 3.0, 'turb_freq': 2.0, 'vorticity': 1.6, 'disturbance': 2.5, 'disturb_block': 0.05,
+                   'wind_speed': 3.0, 'wind_dir': 90.0, 'gust': 0.4, 'wind_relax': 2.0},
+        'shading': {'flame_k': 1650, 'smoke_density': 3.5, 'smoke_albedo': (0.45, 0.43, 0.4)},
+        'lighting': {'sun_on': True, 'sun_intensity': 1.6, 'sun_azimuth': -50.0, 'sun_elevation': 18.0,
+                     'ambient': (0.45, 0.5, 0.6), 'ambient_intensity': 0.7},
+        'composite': {'backdrop': 'stage', 'floor': 'dirt'},
+        'embers': {'rate': 80},
+        'camera': {'distance': 10.5, 'target_y': 0.5, 'pitch': 14, 'yaw': 12, 'anchor_x': 0.5, 'anchor_y': 0.7, 'focal_mm': 35},
+        'emitters': [
+            dict(name='Fire line', shape='capsule', position=(-3.7, 0.1, -1.7), end=(-3.7, 0.1, 1.7), size=(0.15, 0.15, 0.15),
+                 fuel=12, temperature=0.6, stop=1.0, fade_out=0.3),
+        ],
+        'strands': [dict(name='Dry grass', kind='meadow', position=(0.0, 0.0, 0.0), size=(4.2, 0.45, 2.6), dryness=0.85)],
+    },
     'crates_in_fire': {
         'name': 'Crates into a fire', 'category': 'Things that fall', 'size': '1 m campfire',
         'blurb': 'Three wooden crates dropped onto a campfire one after another: they land on the burning logs, shove '
@@ -1010,7 +1036,7 @@ ORDER = ['campfire', 'bonfire', 'torch', 'candle', 'gas_ring', 'pool_fire', 'fir
          'curtain_fire', 'fabric_curtain', 'wet_towels', 'armchair_fire', 'room_fire', 'backdraft', 'flash_fire', 'gas_cloud', 'coloured_flames', 'road_flare',
          'grinder_sparks', 'fireworks', 'car_through_smoke', 'flag_wind', 'kettle_steam', 'steam_vent',
          'crates_in_fire', 'tower_knockdown', 'wall_smash', 'wrecking_ball', 'window_smash', 'vase_drop',
-         'yard_blast', 'lightning_strike', 'cart_jump', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag']
+         'yard_blast', 'lightning_strike', 'cart_jump', 'meadow_fire', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag']
 
 
 def make(name: str, fps=None, start=None) -> Scene:
@@ -1082,6 +1108,7 @@ def apply_to(scene: Scene, name: str, keep_camera=True, keep_render=True):
     scene.colliders = fresh.colliders
     scene.fabrics = fresh.fabrics
     scene.matter = fresh.matter
+    scene.strands = fresh.strands
     scene.links = fresh.links       # (what is attached to what among the effect's objects, which have all changed)
     # the shot's own lights stay (they are its set); a preset's lightning is part of its effect
     scene.lights = [l for l in scene.lights if l.get('kind') != 'lightning'] + [l for l in fresh.lights if l.get('kind') == 'lightning']

@@ -31,6 +31,7 @@ GUIDES = [
     ('Fire', 'fabric', 'Fabric and burning cloth'),
     ('Things', 'physics', 'Things that fall'),
     ('Things', 'matter', 'Sand, snow and mud'),
+    ('Things', 'grass', 'Grass and plants'),
     ('Water', 'liquids', 'Liquids'),
     ('Water', 'ocean', 'The sea, surf and rivers'),
     ('Water', 'lava', 'Lava, and fire with water'),

@@ -1,6 +1,6 @@
 # Presets
 
-Blackbody comes with 92 presets. Click one in the app's Effects panel to load it into your shot; every one is an ordinary scene you can change and save as your own. On the website the gallery plays a clip of each one that has one: <https://gjnail.github.io/blackbody/presets.html>.
+Blackbody comes with 93 presets. Click one in the app's Effects panel to load it into your shot; every one is an ordinary scene you can change and save as your own. On the website the gallery plays a clip of each one that has one: <https://gjnail.github.io/blackbody/presets.html>.
 
 ## Fire and smoke
 
@@ -40,6 +40,7 @@ Blackbody comes with 92 presets. Click one in the app's Effects panel to load it
 | <img src="../blackbody/assets/presets/kettle_steam.png" width="200" alt=""> | **Kettle steam**<br>spout plume | Steam from a kettle spout: clear right at the spout, clouding over as it cools, then evaporating as it mixes into the room. |
 | <img src="../blackbody/assets/presets/steam_vent.png" width="200" alt=""> | **Steam vent**<br>6 m plume, cold day | A pipe venting steam into freezing air: a dense white column that billows and thins as it rises. |
 | <img src="../blackbody/assets/presets/lightning_strike.png" width="200" alt=""> | **Lightning strikes a post**<br>4 m bolt | At dusk, lightning strikes a wooden post: three flashes down a branching channel light up the yard, and the post catches and burns. A light of the Lightning kind, and Spreading fire. |
+| <img src="../blackbody/assets/presets/meadow_fire.png" width="200" alt=""> | **Meadow fire**<br>8 m field of long grass | A line of fire lit along the edge of a field of dry long grass: the wind drives the front across it, the grass bending ahead of the flames, catching, burning down to black stubble and feeding the fire as it goes. Grass & plants: Long grass, dried. |
 
 ## Things that fall
 

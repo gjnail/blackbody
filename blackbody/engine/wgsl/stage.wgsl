@@ -83,6 +83,7 @@ struct Params {
   mlo: vec4<f32>,       // the matter's grid's extent (fire-local m: its first and last nodes), _
   mhi: vec4<f32>,
   bolt: vec4<f32>,      // lightning: its first segment (piece index), how many, its glow's reach (m), its glow's strength
+  gm: vec4<f32>,        // grass on the ground (strands.py): its map's corner (fire-local x, z), size (m; 0: none)
   ccnt: vec4<f32>,      // objects (count), _
   col: array<Collider, MAX_COLLIDERS>,
   mat: array<Mat, MAT_ROWS>,
@@ -114,7 +115,8 @@ struct PieceG { a: vec4<f32>, q: vec4<f32>, v: vec4<f32>, o: vec4<f32>, r: vec4<
 @group(0) @binding(18) var<storage, read> GL: array<u32>;         // piece indices
 @group(0) @binding(19) var out_hold: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(20) var m_look: texture_3d<f32>;   // the matter's albedo (linear rgb), roughness
-@group(0) @binding(21) var m_phi: texture_3d<f32>;    // its distance to the surface (m), clear, sparkle, wrap
+@group(0) @binding(21) var m_phi: texture_3d<f32>;
+@group(0) @binding(22) var gmap: texture_2d<f32>;     // the grass on the ground: how burnt, how thick (strand_map.wgsl)    // its distance to the surface (m), clear, sparkle, wrap
 @group(1) @binding(0) var<uniform> U: Params;
 
 var<private> g_tau: f32;   // this sample's time in the shutter (s): objects are moved along their motion
@@ -889,6 +891,17 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
     let fl = floor_look(s.p.xz, fw / sqrt(max(abs(rd.y), 0.03)));
     s.alb = fl.rgb;
     s.rough = fl.w;
+    if (U.gm.z > 0.0) {
+      // under grass: in the shade of thick grass; where it has burnt, black with char and flecked with grey ash
+      let uv = (s.p.xz - U.gm.xy) / U.gm.zw;
+      if (all(uv >= vec2<f32>(0.0)) && all(uv <= vec2<f32>(1.0))) {
+        let gg = textureSampleLevel(gmap, lin, uv, 0.0);
+        s.alb *= 1.0 - 0.6 * gg.y;
+        let ash = 0.7 * smoothstep(0.86, 0.97, hash31(vec3<f32>(floor(s.p.xz / 0.012), 7.0)));
+        s.alb = mix(s.alb, mix(vec3<f32>(0.028, 0.025, 0.022), vec3<f32>(0.22, 0.21, 0.2), ash), 0.94 * gg.x);
+        s.rough = mix(s.rough, 0.95, gg.x);
+      }
+    }
     s.f0 = vec3<f32>(0.04);
     return s;
   }

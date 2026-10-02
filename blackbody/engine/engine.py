@@ -25,6 +25,7 @@ from .both_engine import BothEngine
 from .cloud_engine import CloudEngine
 from .liquid_engine import LiquidEngine
 from .matter_engine import MatterEngine
+from .strands_engine import StrandsEngine
 from .renderer import Renderer, SurfaceInputs
 from . import stage as stage_mod
 from .bodyfield import BodyField
@@ -124,7 +125,7 @@ def halton(i, b):
     return r
 
 
-class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine):
+class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine):
     def __init__(self, gpu: GPU | None = None, cache_bytes=4 << 30):
         self.gpu = gpu or GPU()
         self.solver = Solver(self.gpu)
@@ -222,7 +223,9 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine):
             changed = True
         if self._prepare_matter(scene, (dims, h, origin)):
             changed = True
-        self.solver.cloth_hook = self.cloth.hook if self.cloth.active else None
+        if self._prepare_strands(scene):
+            changed = True
+        self.solver.cloth_hook = self._solver_hook()
         if changed or final != self.final or self.sig is None:
             self.sig = sig
             self.final = final
@@ -242,6 +245,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine):
         self.solids.reset()
         if self._matter is not None:
             self._matter.reset()
+        if self._strands is not None:
+            self._strands.reset()
         if self.kind == 'liquid':
             self._reset_liquid()
             self.sim_frame = None
@@ -304,6 +309,12 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine):
             self.cloth.place(scene.fabrics_at(frame - 1), look.ambient_k)
         self.cloth.prepare_frame(self.solver)   # (also clears the solver's steam-off-cloth flag without cloth)
         cloth_steps = max(1, int(math.ceil(fdt * STEPS_PER_SECOND / n)))
+        grass = self.strands_on
+        if grass:
+            self._strands.prepare_frame(self.solver)
+            wind = scene.wind(frame, scene.v('camera', 'fire_yaw', frame))
+            gust = scene.v('motion', 'gust', frame)
+            ground_on = bool(d['ground'])
         pieces = poses is not None and self._pieces_for(scene, self.solver)
         dust = self.solids.dust(scene, fdt, n) if (poses is not None and self.solids.sets) else None
         with self.gpu.batch() as b:
@@ -322,6 +333,10 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine):
                     self.cloth.step(b, self.solver, fdt / n, scene.fabrics_at(fs + 0.5 / n, moved=attached(scene, 'fabric', carried)),
                                     prm, look, self.solver.colliders, self.solver.meshes, steps=cloth_steps)
                     self.cloth.splat(b, self.solver, look)
+                if grass:
+                    # the grass in the air just stepped, then its fire onto the gas for the next substep
+                    self._step_strands(b, scene, fs, fdt / n, self.solver, self.solver.colliders, self.solver.meshes, look,
+                                       ground_on, self.solver.origin[1], wind, gust)
                 if ep.enabled:
                     ember_ems = scene.emitters_gpu(fs, embers_only=True, moved=attached(scene, 'emitter', carried))
                     if ember_ems or self.embers.count:
@@ -378,6 +393,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine):
         else:
             entry = self._snapshot_fire(scene)
         self._snapshot_matter(entry)
+        self._snapshot_strands(entry)
         return entry
 
     def _snapshot_fire(self, scene=None):
@@ -433,6 +449,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine):
                     cst = self.cloth.save_state()
                     if cst is not None:
                         entry['cloth_state'] = cst
+                    self._checkpoint_strands(entry)
                 self.cache.put(self.sim_frame, entry)
             if progress is not None:
                 progress((self.sim_frame - first) / total, self.sim_frame)
@@ -475,6 +492,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine):
                 self.embers.load_state(entry['ember_state'])
             if self.cloth.active and not self.cloth.load_state(entry.get('cloth_state')):
                 continue   # the fabric changed since: this checkpoint cannot carry on
+            if not self._resume_strands(entry):
+                continue   # (and the grass)
             self.sim_frame = c
             log.info('Resumed the simulation from the checkpoint at frame %d', c)
             return True
@@ -710,16 +729,16 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine):
         r.set_deep(deep, samples)
         ground = scene.data['domain']['ground']
         cloth = self.cloth.active and vol.cloth is not None
-        self._cloth_drawn = cloth
+        grass = self.strands_for(frame)
+        self._cloth_drawn = cloth or grass
         if cloth:
             self.cloth.use_view(None if isinstance(vol.cloth, str) else vol.cloth)
         look.time = t
 
         def cloth_pass(b, i, jit):
-            if cloth:
-                off = shutter * ((i + 0.5) / samples - 0.5) if samples > 1 else 0.0
-                self.cloth.draw(b, r, cs, fire, look, (fw, fh), jitter=jit, shutter=off, solver=vol)
-            return self.cloth.aux if cloth else None
+            # the cloth and the grass, drawn before the march (it stops at them)
+            off = shutter * ((i + 0.5) / samples - 0.5) if samples > 1 else 0.0
+            return self._draw_raster(b, r, cs, fire, look, (fw, fh), jit, off, vol, cloth, grass)
 
         if cloth:
             self.cloth.prepare_light(r.light_dims_for(vol.dims))
@@ -743,7 +762,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine):
                 size = r.plate_size if footage else (W, H)
                 stage = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, size,
                                         plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage, vol=vol,
-                                        ground_y=vol.origin[1], frame=frame, pieces=pieces, ropes=ropes, matter=matter, bolts=bolts)
+                                        ground_y=vol.origin[1], frame=frame, pieces=pieces, ropes=ropes, matter=matter, bolts=bolts,
+                                        grass=self._strands.ground_map(b) if grass else None)
                 if self.stage.has_pieces or self.stage.has_matter:   # the march stops at the pieces and the matter too
                     r.hold_stage = self.stage.hold
                     r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])
@@ -751,8 +771,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine):
                 lim = cloth_pass(b, 0, (0.0, 0.0))
                 r.march(b, vol, cs, fire, look, (fw, fh), seed=base_seed, shutter=shutter, ground=ground, time=t,
                         surfaces=surfaces, comp=comp, plate_fit=plate_fit, deep_pass=0, limit=lim)
-                if cloth:
-                    self.cloth.merge(b, r, 0, 1, 0.35 * (vol.cell or vol.h))
+                if cloth or grass:
+                    self.raster.merge(b, r, 0, 1, 0.35 * (vol.cell or vol.h))
             else:
                 self._ensure_acc(fw, fh)
                 self._ensure_acc2(fw, fh)
@@ -765,8 +785,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine):
                     lim = cloth_pass(b, i, jit)
                     r.march(b, vol, cs, fire, look, (fw, fh), jitter=jit, seed=base_seed + i, shutter=shutter,
                             ground=ground, time=t, surfaces=surfaces, comp=comp, plate_fit=plate_fit, deep_pass=i, limit=lim)
-                    if cloth:
-                        self.cloth.merge(b, r, i, samples, 0.35 * (vol.cell or vol.h))
+                    if cloth or grass:
+                        self.raster.merge(b, r, i, samples, 0.35 * (vol.cell or vol.h))
                     src_in, dst = (set0, set1) if i % 2 == 0 else (set1, set0)
                     b.run(self.k_accum, [r.beauty, r.emit, r.aux, *src_in, *dst], Uniforms().v4(fw, fh, 0, i), (fw, fh, 1))
                     s_in, s_dst = (sur0, sur1) if i % 2 == 0 else (sur1, sur0)
@@ -839,7 +859,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine):
             out['mask'] = self.gpu.read(r.mask)
             out['lamps'] = self.gpu.read(r.lamp_surf)
             if getattr(self, '_cloth_drawn', False):
-                out['fabric'] = self.gpu.read(self.cloth.fabric)
+                out['fabric'] = self.gpu.read(self.raster.fabric)
         return out
 
     def linear_comp(self):

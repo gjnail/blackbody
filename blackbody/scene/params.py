@@ -952,6 +952,41 @@ MATTER_PARAMS = [
 ]
 _MATTER_INDEX = {p.key: p for p in MATTER_PARAMS}
 
+# Grass and plants (engine/strands.py): patches of blades that sway in the wind and the fire's draught, part round
+# what moves through them, and burn.
+STRAND_KINDS = (('lawn', 'Lawn'), ('meadow', 'Long grass'), ('wheat', 'Wheat'), ('reeds', 'Reeds'))
+STRAND_PARAMS = [
+    Param('name', 'Name', 'str', 'Grass'),
+    B('enabled', 'Enabled', True),
+    E('kind', 'Kind', 'meadow', STRAND_KINDS, tip='A lawn is short and thick; long grass sways and bends over in the wind; '
+      'wheat stands stiff with its ears; reeds are tall and sparse.', group='Grass'),
+    E('shape', 'Shape', 'box', (('box', 'Rectangle'), ('disc', 'Disc')), group='Grass'),
+    V('position', 'Position', (0.0, 0.0, 0.0), -50.0, 50.0, 'm', decimals=3, tip='The middle of the patch, at the foot of '
+      'the blades.', group='Grass'),
+    V('size', 'Size', (1.0, 0.45, 1.0), 0.01, 50.0, 'm', decimals=3, tip='Half its width and depth (a disc: its radius, the '
+      'first value), and how tall the blades grow (the second).', group='Grass'),
+    F('yaw', 'Rotation', 0.0, -180.0, 180.0, '°', 1, group='Grass'),
+    F('thickness', 'Thickness', 1.0, 0.05, 4.0, '×', 2, tip='How thickly it grows: times the usual '
+      'number of blades of its kind (a lawn about 4000 a square metre, long grass 900, wheat 350, reeds 120).', group='Grass',
+      log=True),
+    F('dryness', 'Dryness', 0.3, 0.0, 1.0, '', 2, tip='0: fresh and green, hard to light; 1: dry as straw, it catches at '
+      'a spark and burns fast.', group='Grass'),
+    B('burns', 'Burns', True, tip='Fire sets it alight: it chars, burns down to stubble and feeds the flames, so fire runs '
+      'through it, faster downwind.', group='Grass'),
+    E('grows_on', 'Grows on', 'ground', (('ground', 'The ground'), ('everything', 'The ground and objects')),
+      tip='The ground: at Position’s height, but not under objects. The ground and objects: on whatever is below, '
+      'a hillside, a mound, the top of a wall (not on things that move).', group='Grass'),
+    F('stiffness', 'Stiffness', 1.0, 0.2, 5.0, '×', 2, tip='Times its kind’s stiffness: '
+      'stiffer blades bend less in the wind and spring back faster.', group='Grass', log=True, advanced=True),
+    F('blade_width', 'Blade width', 1.0, 0.25, 4.0, '×', 2, tip='Times its kind’s blade '
+      'width.', group='Look', log=True, advanced=True),
+    B('own_colour', 'Own colour', False, tip='Draw it in a colour of its own instead of its kind’s (dried toward '
+      'straw by its Dryness).', group='Look'),
+    C('colour', 'Colour', (0.1, 0.24, 0.04), group='Look'),
+    I('seed', 'Seed', 0, 0, 9999, tip='Another number gives other blades.', group='Grass', advanced=True),
+]
+_STRAND_INDEX = {p.key: p for p in STRAND_PARAMS}
+
 
 def param(section, key):
     if section == 'emitter':
@@ -962,6 +997,8 @@ def param(section, key):
         return _FABRIC_INDEX[key]
     if section == 'matter':
         return _MATTER_INDEX[key]
+    if section == 'strands':
+        return _STRAND_INDEX[key]
     if section == 'collider':
         return _COLLIDER_INDEX[key]
     return _INDEX[(section, key)]
@@ -981,6 +1018,10 @@ def fabric_defaults():
 
 def matter_defaults():
     return {p.key: p.default for p in MATTER_PARAMS}
+
+
+def strand_defaults():
+    return {p.key: p.default for p in STRAND_PARAMS}
 
 
 def light_defaults():

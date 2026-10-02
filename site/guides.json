@@ -5,6 +5,7 @@
   "fabric": {"image": "media/video/fabric_curtain.jpg", "blurb": "Curtains, flags and towels from real fabrics: blowing, burning through, soaking and steaming."},
   "physics": {"image": "media/video/tower_knockdown.jpg", "blurb": "Objects that fall, tumble, stack, break and hang on ropes and hinges, explosions and lightning, in real materials, pushed by the smoke and the water, drawn in CG on a stage or in your footage."},
   "matter": {"image": "media/video/sand_hopper.jpg", "blurb": "Sand, wet sand, snow, mud, jelly and clay as particles that pile, pour, pack, slump and wobble, with things that fall landing on them."},
+  "grass": {"image": "media/video/meadow_fire.jpg", "blurb": "Lawns, long grass, wheat and reeds, every blade bending in the wind and the fire's draught, parting round what moves through it, and burning, so fire runs through a dry field by itself."},
   "liquids": {"image": "media/video/rock_splash_slowmo.jpg", "blurb": "Sources, floating objects, viscosity, dye, whitewater, the refractive look, rain and underwater."},
   "ocean": {"image": "media/video/storm_sea.jpg", "blurb": "Open water to the horizon, an FFT ocean, whitecaps, beaches and surf, tsunamis, bores and rivers."},
   "lava": {"image": "media/video/lava.jpg", "blurb": "Molten lava that glows and crusts, and fire, water and lava together in one box."},

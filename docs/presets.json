@@ -294,6 +294,13 @@
   "blurb": "A cart with a fire on its back, its four wheels turned by motors, races up a ramp, jumps off its end and bowls over a tower of blocks, trailing flame and smoke, and brakes into a barrier. Motors on hinges (Joint › Motor speed, keyed down to brake), a tilted plank (Shape › Roll) and a fire attached to the cart."
  },
  {
+  "key": "meadow_fire",
+  "name": "Meadow fire",
+  "category": "Fires",
+  "size": "8 m field of long grass",
+  "blurb": "A line of fire lit along the edge of a field of dry long grass: the wind drives the front across it, the grass bending ahead of the flames, catching, burning down to black stubble and feeding the fire as it goes. Grass & plants: Long grass, dried."
+ },
+ {
   "key": "sand_hopper",
   "name": "Sand from a hopper",
   "category": "Sand, snow and mud",

@@ -74,6 +74,8 @@ class LiquidEngine:
             changed = True
         if self._prepare_matter(scene, (dims, h, origin)):
             changed = True
+        if self._prepare_strands(scene):
+            changed = True
         if self.kind != 'liquid':
             self.kind = 'liquid'
             changed = True
@@ -263,6 +265,12 @@ class LiquidEngine:
             cprm = SimpleNamespace(wind=tuple(scene.liquid_wind(frame)), ground=bool(d['ground']))
             cloth_steps = max(1, int(math.ceil(fdt * STEPS_PER_SECOND / n)))
         pieces = poses is not None and self._pieces_for(scene, L, 'liquid')
+        grass = self.strands_on
+        if grass:
+            # grass on the banks: the wind (there is no gas in a liquid scene)
+            glook = scene.look(frame)
+            gwind = tuple(scene.liquid_wind(frame))
+            ggust = float(scene.data['weather'].get('gust', 0.3)) if 'weather' in scene.data else 0.3
         with self.gpu.batch() as b:
             if shift != (0, 0):
                 L.shift(b, *shift, prm)
@@ -287,6 +295,9 @@ class LiquidEngine:
                     self.cloth.step(b, None, fdt / n, scene.fabrics_at(fs + 0.5 / n, moved=carried), cprm, clook,
                                     list(cols) if cols is not None else list(L.colliders or []), self.solver.meshes,
                                     steps=cloth_steps, liquid=L)
+                if grass:
+                    self._step_strands(b, scene, fs, fdt / n, None, list(cols) if cols is not None else list(L.colliders or []),
+                                       self.solver.meshes, glook, bool(d['ground']), L.origin[1], gwind, ggust)
                 if wprm is not None:
                     self._step_weather(b, scene, frame, wprm, fs, fdt / n, moving)
             L.pack(b)
@@ -569,15 +580,18 @@ class LiquidEngine:
 
         wview = self._weather_view(scene, frame, live, None if live else self.cache.get(frame))
         cloth, clook = self._cloth_for_liquid(scene, frame, live, final, look)
-        nlamps = r.pack_lamps(lamps) if cloth else 0   # (the set's lights on the fabric)
+        grass = self.strands_for(frame)
+        if grass and clook is None:
+            clook = self._raster_look(scene, frame, final, look)
+        nlamps = r.pack_lamps(lamps) if (cloth or grass) else 0   # (the set's lights on the fabric and the grass)
 
         def march(b, jit, s):
             lay = None
-            if cloth:
-                # the fabric, drawn first: the march sees it in front of the liquid and through it
-                self.cloth.draw(b, r, cs, fire, clook, (fw, fh), jitter=jit, solver=None,
-                                light_gain=2.0 ** look.exposure, fire_lights=False, lamp_count=nlamps)
-                lay = self.cloth.layer(b)
+            if cloth or grass:
+                # the fabric and the grass, drawn first: the march sees them in front of the liquid and through it
+                self._draw_raster(b, r, cs, fire, clook, (fw, fh), jit, 0.0, None, cloth, grass,
+                                  light_gain=2.0 ** look.exposure, fire_lights=False, lamp_count=nlamps)
+                lay = self.raster.layer(b)
             LR.march(b, vol, cs, fire, look, comp, (fw, fh), plate=ptex, plate_fit=plate_fit,
                      plate_transform=p_transform, plate_gain=p_gain,
                      jitter=jit, seed=s, shutter=shutter, ground=ground, time=t, lamps=lamps, cloth=lay,
@@ -603,7 +617,8 @@ class LiquidEngine:
                 stage = ptex = self.stage.draw(b, r, scene, cs, fire, vol.colliders, vol.meshes, light, comp, size,
                                                plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage,
                                                ground_y=vol.origin[1], frame=frame, objects=objects,
-                                               floor=not look.bottomless, pieces=pieces, ropes=ropes, matter=matter, bolts=bolts)
+                                               floor=not look.bottomless, pieces=pieces, ropes=ropes, matter=matter, bolts=bolts,
+                                               grass=self._strands.ground_map(b) if grass else None)
                 if self.stage.has_pieces or self.stage.has_matter:   # the liquid is hidden behind the pieces and the matter
                     r.hold_stage = self.stage.hold
                     r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])
@@ -656,12 +671,18 @@ class LiquidEngine:
             if not cl:
                 return False, None
             self.cloth.use_view(cl)
+        return True, self._raster_look(scene, frame, final, wlook)
+
+    @staticmethod
+    def _raster_look(scene, frame, final, wlook):
+        """The look the cloth and the grass are drawn in in a liquid scene: the fire look's settings, lit by the water
+        look's key light and sky."""
         clook = scene.look(frame, final)
         clook.sun_color, clook.sun_intensity = tuple(wlook.sun), 1.0
         clook.sun_azimuth, clook.sun_elevation = wlook.sun_azimuth, wlook.sun_elevation
         clook.ambient = tuple(wlook.sky)
         clook.time = scene.seconds(frame)
-        return True, clook
+        return clook
 
     def _stats_liquid(self):
         L = self.liquid

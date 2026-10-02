@@ -136,7 +136,7 @@ class Stage:
         self.gpu = gpu
         self.k = gpu.kernel('stage.wgsl', ['utex3d', 'tex3d', 'tex3d', 'tex3d', 'tex3d', 'smp', 'smp', 'rbuf', 'rbuf',
                                            'rbuf', 'tex2d', 'tex2d', 'tex2d', 'tex3d', 'st2d:rgba16float:w',
-                                           'rbuf', 'rbuf', 'rbuf', 'rbuf', 'st2d:rgba16float:w', 'tex3d', 'tex3d'],
+                                           'rbuf', 'rbuf', 'rbuf', 'rbuf', 'st2d:rgba16float:w', 'tex3d', 'tex3d', 'tex2d'],
                             workgroup=(8, 8, 1))
         self._no_matter = gpu.texture3d((1, 1, 1), 'rgba16float', 'stage-no-matter')
         self.tex = None
@@ -308,7 +308,7 @@ class Stage:
 
     def draw(self, b, r, scene, camstate, fire, colliders, meshes, light: StageLight, comp, size, plate_fit=(1.0, 1.0),
              samples=1, shutter=0.0, footage=False, vol=None, ground_y=0.0, frame=0, objects=True, floor=True,
-             pieces=None, ropes=None, matter=None, bolts=None):
+             pieces=None, ropes=None, matter=None, bolts=None, grass=None):
         """Draw the stage into self.tex (size: the plate's, footage or output) and return it.
         r: the Renderer (its footage plate and holdouts, light volume, fire lights and lamp buffer);
         colliders: the objects as the solver has them (ColliderGPU, moving ones where they are this frame);
@@ -419,6 +419,11 @@ class Stage:
         # lightning's glow: reaching about ten times its core's radius (at least 5 cm)
         reach = max(10.0 * max((float(c) for _p, c, _g in (bolts or [])), default=0.0), 0.05)
         u.v4(len(P) - nb if pa is not None else 0, nb, reach, BOLT_GLOW)
+        # the grass on the ground (strands.py ground_map): (texture, corner, size)
+        if grass is not None:
+            u.v4(*grass[1], *grass[2])
+        else:
+            u.v4()
         self.has_matter = surf is not None
         pack_colliders(u, cols, meshes)
         for i in range(MAX_COLLIDERS):
@@ -440,5 +445,5 @@ class Stage:
                        r.hold if (footage and r.hold is not None and any(r.hold_on)) else black,
                        env if env is not None else black,
                        r.lut_plate if (footage and r.lut_plate is not None) else r._lut_none,
-                       self.tex, *bufs, self.hold, *mtex], u, (pw, ph, 1))
+                       self.tex, *bufs, self.hold, *mtex, grass[0] if grass is not None else black], u, (pw, ph, 1))
         return self.tex

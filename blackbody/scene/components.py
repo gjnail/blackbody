@@ -58,6 +58,10 @@ def _M(**kw):
     return ('matter', kw)
 
 
+def _S(**kw):
+    return ('strands', kw)
+
+
 SPARKS = {'embers': {'enabled': True, 'rate': 1500.0, 'count': 32768, 'lifetime': 0.9, 'life_jitter': 0.7, 'launch': 14.0,
                      'spread': 1.2, 'direction': (1.0, -0.2, 0.0), 'cone': 12.0, 'drag': 0.35, 'gravity': 9.81, 'turbulence': 0.5,
                      'temperature': 2300.0, 'cooling': 1.6, 'size_min': 0.0006, 'size_max': 0.0025, 'brightness': 1.8,
@@ -409,6 +413,30 @@ COMPONENTS = [
                     material='painted', own_colour=True, colour=(0.85, 0.82, 0.72), joint='hinge', joint_axis=(0.0, 0.0, 1.0),
                     motor_speed=12.0, motor_torque=400.0)
                  for k, (z, roll) in enumerate(((0.2, 45.0), (0.235, 135.0)))]),
+    # -- grass and plants (engine/strands.py: real size, in every kind of scene but the sky) ---------------------------------
+    Component('lawn', 'Lawn', 'Grass & plants', 'A 2 m square of short, thick lawn grass: it ripples in the wind and is '
+              'flattened where things roll over it.', 'grains', room=(1.1, 0.2, 1.1),
+              objects=[_S(name='Lawn', kind='lawn', position=(0.0, 0.0, 0.0), size=(1.0, 0.08, 1.0))]),
+    Component('meadow', 'Long grass', 'Grass & plants', 'A 3 \N{MULTIPLICATION SIGN} 2 m patch of long grass, 45 cm tall: it bends '
+              'in the wind in waves, parts round what moves through it, and fire runs through it, faster downwind.', 'grains',
+              room=(1.6, 0.6, 1.1),
+              objects=[_S(name='Long grass', kind='meadow', position=(0.0, 0.0, 0.0), size=(1.5, 0.45, 1.0))]),
+    Component('dry_grass', 'Dry grass', 'Grass & plants', 'A 4 \N{MULTIPLICATION SIGN} 3 m patch of grass dried to straw: a spark '
+              'sets it alight and the wind drives the fire through it, leaving black stubble. Drop a torch in it.', 'grains',
+              room=(2.1, 0.6, 1.6),
+              objects=[_S(name='Dry grass', kind='meadow', position=(0.0, 0.0, 0.0), size=(2.0, 0.4, 1.5), dryness=0.9)]),
+    Component('wheat', 'Wheat', 'Grass & plants', 'A 3 \N{MULTIPLICATION SIGN} 2 m patch of ripe wheat, 90 cm tall with its ears: '
+              'it sways stiffly in the wind and burns fast.', 'grains', room=(1.6, 1.1, 1.1),
+              objects=[_S(name='Wheat', kind='wheat', position=(0.0, 0.0, 0.0), size=(1.5, 0.9, 1.0), dryness=0.95)]),
+    Component('reeds', 'Reeds', 'Grass & plants', 'A clump of reeds 1.5 m tall on a 1.2 m disc: they lean and whip in the wind. '
+              'Put them at the water\N{RIGHT SINGLE QUOTATION MARK}s edge.', 'grains', room=(0.7, 1.7, 0.7),
+              objects=[_S(name='Reeds', kind='reeds', shape='disc', position=(0.0, 0.0, 0.0), size=(0.6, 1.5, 0.6))]),
+    Component('grassy_hill', 'Grassy hillside', 'Grass & plants', 'The built-in hillside (8 m across) covered in long grass that '
+              'grows on its slopes: a hillside for a grass fire to climb.', 'hill', room=(4.2, 3.8, 4.2),
+              objects=[_C(name='Hillside', shape='mesh', mesh='builtin:hillside.png', position=(0.0, 0.0, 0.0), size=(8.0, 3.2, 8.0),
+                          material='earth'),
+                       _S(name='Hillside grass', kind='meadow', position=(0.0, 0.0, 0.0), size=(3.9, 0.4, 3.9), grows_on='everything',
+                          thickness=0.6, dryness=0.6)]),
     # -- sand, snow, mud, jelly, clay (engine/matter.py: real size, in every kind of scene but the sky) -----------------------
     Component('sand_pile', 'Sand pile', 'Sand, snow & mud', 'A heap of dry sand 60 cm across, at its angle of repose: knock '
               'into it or drop something on it and it slides.', 'matter', room=(0.4, 0.3, 0.4),
@@ -533,7 +561,7 @@ def _values(v):
     from .anim import Curve
     return [k[1] for k in v.keys] if isinstance(v, Curve) else [v]
 GROUPS = ['Fire', 'Smoke, steam & sparks', 'Liquids', 'Fabric', 'Weather', 'Forces', 'Objects', 'Things that fall',
-          'Ropes and hinges', 'Machines', 'Sand, snow & mud', 'Lights']
+          'Ropes and hinges', 'Machines', 'Sand, snow & mud', 'Grass & plants', 'Lights']
 
 # Making a scene from scratch: (label, box width in metres)
 SCALES = {'small': ('Tabletop', 0.6), 'person': ('Person-sized', 2.0), 'large': ('Car or room', 6.0), 'huge': ('Building', 20.0)}
@@ -715,6 +743,12 @@ def _extent(kind, d):
             r = np.array([w / 2, 0.05, h / 2])
             return p - r, p + r
         return p - np.array([w / 2, h / 2, 0.1]), p + np.array([w / 2, h / 2, 0.1])   # a panel's position is its middle
+    if kind == 'strands':
+        s = np.abs(np.asarray(d.get('size', (1.0, 0.45, 1.0)), float))
+        r = np.array([s[0], 0.0, s[0] if d.get('shape') == 'disc' else s[2]])
+        if d.get('yaw') and d.get('shape') != 'disc':   # turned: round its turned corners
+            r[0] = r[2] = math.hypot(r[0], r[2])
+        return p - r, p + r + np.array([0.0, s[1], 0.0])
     if kind == 'matter':
         s = np.abs(np.asarray(d.get('size', (0.25, 0.25, 0.25)), float))
         if d.get('shape') == 'sphere':
@@ -815,7 +849,7 @@ def add(scene: Scene, key, at=None, mesh=None):
         anchor = (0.0, 0.0)
     added = []
     lists = {'emitter': scene.emitters, 'collider': scene.colliders, 'light': scene.lights, 'fabric': scene.fabrics,
-             'matter': scene.matter}
+             'matter': scene.matter, 'strands': scene.strands}
     renamed = {}
     for kind, d in objs:
         d = dict(d)
@@ -869,7 +903,8 @@ def add(scene: Scene, key, at=None, mesh=None):
         renamed[(kind, base)] = d.get('name', base)
         curves = {k: v for k, v in d.items() if isinstance(v, Curve)}   # animated settings go in as they are
         i = {'emitter': scene.add_emitter, 'collider': scene.add_collider, 'light': scene.add_light,
-             'fabric': scene.add_fabric, 'matter': scene.add_matter}[kind](**{k: v for k, v in d.items() if k not in curves})
+             'fabric': scene.add_fabric, 'matter': scene.add_matter,
+             'strands': scene.add_strands}[kind](**{k: v for k, v in d.items() if k not in curves})
         lists[kind][i].update(curves)
         added.append((kind, i))
     for kind, i in added:   # its joints, to its objects as they are named here

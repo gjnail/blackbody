@@ -62,6 +62,13 @@ Notable changes to Blackbody. The format follows
   preset, Cart off a ramp: a burning cart jumps a ramp into a tower of blocks.
 - Presets can attach things to their objects (a fire riding on a cart), and loading a preset into a shot brings its
   attachments instead of keeping the shot's old ones.
+- Grass and plants (Create › Grass & plants): patches of lawn, long grass, wheat and reeds, every blade simulated. They
+  bend in the wind in rolling waves and in the fire's draught, spring back, part round what moves through them, and
+  grow on the ground or on the objects under them (a grassy hillside). Fire catches in dry grass and runs through it
+  by itself, faster downwind, burning it down to black stubble and feeding the flames with its fuel and smoke; fresh
+  grass is hard to light. Drawn in the same light as the smoke, glowing where the sun is behind it, in fire and in
+  liquid scenes. A preset, Meadow fire, and a guide, docs/grass.md.
+- Cloth and grass are drawn into one layer, so each hides what is behind it of the other.
 - Sand, snow, mud, jelly and clay in the interface: the object list, Properties, outlines and handles in the viewer (a
   pour's nozzle and direction), Made of, Let go, Pour it from here and Start/Stop pouring from the right-click menu,
   timing lanes, a Sand & mud chip in Create; Effects gains Falling & breaking and Sand, snow & mud chips.

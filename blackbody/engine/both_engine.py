@@ -124,7 +124,9 @@ class BothEngine:
             changed = True
         if self._prepare_matter(scene, (dims, h, origin)):
             changed = True
-        self.solver.cloth_hook = self.cloth.hook if self.cloth.active else None
+        if self._prepare_strands(scene):
+            changed = True
+        self.solver.cloth_hook = self._solver_hook()
         lava_on = scene.has_lava()
         if lava_on:
             V = self._lava_solver()
@@ -317,6 +319,11 @@ class BothEngine:
                 self.cloth.place(scene.fabrics_at(frame - 1), look.ambient_k)
         self.cloth.prepare_frame(self.solver)   # (also clears the solver's steam-off-cloth flag without cloth)
         cloth_steps = max(1, int(math.ceil(fdt * STEPS_PER_SECOND / n)))
+        grass = self.strands_on
+        if grass:
+            self._strands.prepare_frame(self.solver)
+            gwind = scene.wind(frame, scene.v('camera', 'fire_yaw', frame))
+            ggust = scene.v('motion', 'gust', frame)
         pieces = poses is not None and self._pieces_for(scene, self.solver)
         lpieces = poses is not None and self._pieces_for(scene, L, 'liquid')
         dust = self.solids.dust(scene, fdt, n) if (poses is not None and self.solids.sets) else None
@@ -373,6 +380,10 @@ class BothEngine:
                                     list(cols) if cols is not None else self.solver.colliders, self.solver.meshes,
                                     steps=cloth_steps, liquid=L)
                     self.cloth.splat(b, self.solver, look)
+                if grass:
+                    self._step_strands(b, scene, fs, dt, self.solver, list(cols) if cols is not None else self.solver.colliders,
+                                       self.solver.meshes, look, bool(scene.data['domain']['ground']), self.solver.origin[1],
+                                       gwind, ggust)
                 if ep.enabled:
                     ember_ems = scene.emitters_gpu(fs, embers_only=True, moved=attached(scene, 'emitter', carried))
                     if ember_ems or self.embers.count:
@@ -538,10 +549,12 @@ class BothEngine:
         # fabric (cloth.py): lit by the fire and shadowing it, seen by the water's march in front of the
         # liquids and through them
         cloth = self.cloth.active and vol.cloth is not None
+        grass = self.strands_for(frame)
         self._cloth_drawn = False
         if cloth:
             self.cloth.use_view(None if isinstance(vol.cloth, str) else vol.cloth)
             self.cloth.prepare_light(r.light_dims_for(vol.dims))
+        if cloth or grass:
             look.time = t
         T = self._both
         # the set drawn in CG behind and under it all (stage.py), in place of the footage
@@ -582,9 +595,9 @@ class BothEngine:
             b.run(self.k_bfp, [r.beauty, ptex if ptex is not None else r._black, self.gpu.linear, T['fp']], fp_u, size)
             water_plate = T['fp']
             lay = None
-            if cloth:
-                self.cloth.draw(b, r, cs, fire, look, (fw, fh), jitter=jit, solver=vol, light_gain=2.0 ** wlook.exposure)
-                lay = self.cloth.layer(b)
+            if cloth or grass:
+                self._draw_raster(b, r, cs, fire, look, (fw, fh), jit, 0.0, vol, cloth, grass, light_gain=2.0 ** wlook.exposure)
+                lay = self.raster.layer(b)
             if kv is not None:
                 # the lava over the fire and the footage; then that is what the water refracts
                 VR.march(b, kv, cs, fire, klook, comp, (fw, fh), plate=T['fp'], plate_fit=(1.0, 1.0),
@@ -647,7 +660,8 @@ class BothEngine:
                 stage = ptex = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, ssize,
                                                plate_fit=plate_fit, samples=samples, shutter=lshutter, footage=footage,
                                                vol=vol, ground_y=vol.origin[1], frame=frame, objects=objects,
-                                               floor=not wlook.bottomless, pieces=pieces, ropes=ropes, matter=matter, bolts=bolts)
+                                               floor=not wlook.bottomless, pieces=pieces, ropes=ropes, matter=matter, bolts=bolts,
+                                               grass=self._strands.ground_map(b) if grass else None)
                 if self.stage.has_pieces or self.stage.has_matter:   # the fire and the liquids stop at the pieces and the matter
                     r.hold_stage = self.stage.hold
                     r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])

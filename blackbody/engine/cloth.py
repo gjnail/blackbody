@@ -549,7 +549,7 @@ class Cloth:
                                 workgroup=(64, 1, 1))
         self.k_air = g.kernel('cloth_air.wgsl', ['utex3d', 'rbuf', f'st3d:{vf}:w'], defines={'VELFMT': vf}, workgroup=(4, 4, 4))
         self.k_feed = g.kernel('cloth_feed.wgsl', ['utex3d', 'rbuf', 'st3d:rgba16float:w'], workgroup=(4, 4, 4))
-        self.k_merge = g.kernel('cloth_merge.wgsl', ['utex2d'] * 8 + ['st2d:rgba16float:w'] * 4, workgroup=(8, 8, 1))
+        self.raster = None    # the raster layer it draws into (raster.py; the engine's, shared with the grass)
         self.k_mgwet = g.kernel('cloth_mg_wet.wgsl', ['buf'] + ['rbuf'] * 4, workgroup=(64, 1, 1))
         self._may_be_wet = False      # the cloth may hold water (it has been in a liquid, or starts wet)
         self.k_oclear = g.kernel('cloth_occ.wgsl', ['rbuf'] * 4 + ['buf'], entry='clear', workgroup=(64, 1, 1))
@@ -557,7 +557,6 @@ class Cloth:
         self.OCC = None
         self._occ_cells = 0
         self._pipe = None
-        self._draw_size = None
         self.couple_dims = None
         self.G = None
         self._view = None      # arrays of a cached frame being drawn (else the live cloth)
@@ -1131,9 +1130,21 @@ class Cloth:
             return self._view
         return self.bufs
 
+    def _raster(self):
+        if self.raster is None:
+            from .raster import Raster
+            self.raster = Raster(self.gpu)
+        return self.raster
+
+    # (the raster layer's targets, as they were the cloth's own)
+    col = property(lambda self: self._raster().col)
+    aux = property(lambda self: self._raster().aux)
+    glow = property(lambda self: self._raster().glow)
+    fabric = property(lambda self: self._raster().fabric)
+    lq = property(lambda self: self._raster().lq)
+
     def _ensure_draw(self, w, h):
         g = self.gpu
-        from .gpu import TU
         if self._pipe is None:
             dev = g.device
             ent = []
@@ -1181,24 +1192,12 @@ class Cloth:
                 primitive={'topology': 'triangle-list', 'cull_mode': 'none'},
                 depth_stencil={'format': 'depth32float', 'depth_write_enabled': True, 'depth_compare': 'less'},
                 label='cloth-drops')
-        if self._draw_size != (w, h):
-            for name in ('col', 'aux', 'glow', 'depth', 'fab0', 'fab1'):
-                t = getattr(self, name, None)
-                if t is not None:
-                    t.destroy()
-            usage = TU.TEXTURE_BINDING | TU.STORAGE_BINDING | TU.COPY_SRC | TU.RENDER_ATTACHMENT
-            self.col = g.texture2d(w, h, 'rgba16float', 'cloth-col', usage)
-            self.aux = g.texture2d(w, h, 'rgba16float', 'cloth-aux', usage)
-            self.glow = g.texture2d(w, h, 'rgba16float', 'cloth-glow', usage)
-            self.depth = g.texture2d(w, h, 'depth32float', 'cloth-depth', TU.RENDER_ATTACHMENT)
-            self.fab0 = g.texture2d(w, h, 'rgba16float', 'cloth-fabric0', usage)
-            self.fab1 = g.texture2d(w, h, 'rgba16float', 'cloth-fabric1', usage)
-            self._draw_size = (w, h)
-            self.fabric = self.fab0
+        self._raster().ensure(w, h)
 
     def draw(self, b, renderer, camstate, fire, look, size, jitter=(0.0, 0.0), shutter=0.0, solver=None,
-             light_gain=1.0, fire_lights=True, lamp_count=None):
-        """Draw the cloth for one anti-aliasing pass (before the march; its aux is the march's limit).
+             light_gain=1.0, fire_lights=True, lamp_count=None, rp=None):
+        """Draw the cloth for one anti-aliasing pass (before the march; its aux is the march's limit), into the raster
+        layer's render pass `rp` (raster.py), or a pass of its own.
         solver: the fire's volume (its light volume lights and shadows the cloth), or None (a liquid scene:
         the key light and the sky only); light_gain: its reflected light times this (the liquid render's
         exposure); fire_lights: lit by the fire's point lights (Renderer.light's); lamp_count: the lights in the
@@ -1262,13 +1261,9 @@ class Cloth:
         pack_look(u, look, r.log_y_ref(look.flame_k), getattr(look, 'time', 0.0))
         u.v4(light_gain)
         off = b.uniform_offset(u)
-        rp = b.render_pass(
-            color_attachments=[
-                {'view': self.col.view, 'load_op': 'clear', 'store_op': 'store', 'clear_value': (0, 0, 0, 0)},
-                {'view': self.aux.view, 'load_op': 'clear', 'store_op': 'store', 'clear_value': (0, 0, 0, 0)},
-                {'view': self.glow.view, 'load_op': 'clear', 'store_op': 'store', 'clear_value': (0, 0, 0, 0)}],
-            depth_stencil_attachment={'view': self.depth.view, 'depth_clear_value': 1.0, 'depth_load_op': 'clear',
-                                      'depth_store_op': 'store'})
+        own = rp is None
+        if own:
+            rp = self._raster().begin(b, w, h)
         rp.set_pipeline(self._pipe)
         rp.set_bind_group(0, bg)
         rp.set_bind_group(1, g.arena.group, [off])
@@ -1283,22 +1278,12 @@ class Cloth:
             rp.set_bind_group(0, g.device.create_bind_group(layout=self.layout_drop, entries=ent_d))
             rp.set_bind_group(1, g.arena.group, [off])
             rp.draw(6 * DROPS, 1)
-        rp.end()
+        if own:
+            rp.end()
 
     def layer(self, b):
-        """The drawn cloth as one texture for the liquid's march (cloth_layer.wgsl): colour, and distance
-        along the ray (m; -1 where there is none)."""
-        w, h = self._draw_size
-        g = self.gpu
-        if getattr(self, 'lq', None) is None or self.lq.size[:2] != (w, h):
-            if getattr(self, 'lq', None) is not None:
-                self.lq.destroy()
-            from .gpu import TU
-            self.lq = g.texture2d(w, h, 'rgba16float', 'cloth-layer', TU.TEXTURE_BINDING | TU.STORAGE_BINDING | TU.COPY_SRC)
-        if getattr(self, 'k_layer', None) is None:
-            self.k_layer = g.kernel('cloth_layer.wgsl', ['utex2d', 'utex2d', 'st2d:rgba16float:w'], workgroup=(8, 8, 1))
-        b.run(self.k_layer, [self.col, self.aux, self.lq], Uniforms().v4(w, h), (w, h, 1))
-        return self.lq
+        """The drawn raster layer as one texture for the liquid's march (raster.py)."""
+        return self._raster().layer(b)
 
     def _no_lights(self):
         if getattr(self, '_nolights', None) is None:
@@ -1308,12 +1293,5 @@ class Cloth:
         return self._nolights
 
     def merge(self, b, renderer, pass_index, passes, hold_tolerance=0.0):
-        """Put the drawn cloth under the marched fire (and gather the fabric layer)."""
-        r = renderer
-        w, h = self._draw_size
-        src_f, dst_f = (self.fab1, self.fab0) if pass_index % 2 == 0 else (self.fab0, self.fab1)
-        u = Uniforms().v4(w, h, pass_index, 1.0 / max(1, passes)).v4(hold_tolerance + 1e-3)
-        b.run(self.k_merge, [r.beauty, r.emit, r.aux, self.col, self.aux, self.glow, r.mask, src_f,
-                             r.dof_b, r.dof_e, r.dof_x, dst_f], u, (w, h, 1))
-        b.run(r.k_copy3, [r.dof_b, r.dof_e, r.dof_x, r.beauty, r.emit, r.aux], Uniforms().v4(w, h), (w, h, 1))
-        self.fabric = dst_f
+        """Put the drawn raster layer under the marched fire (raster.py)."""
+        self._raster().merge(b, renderer, pass_index, passes, hold_tolerance)
