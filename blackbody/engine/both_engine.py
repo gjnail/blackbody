@@ -305,7 +305,9 @@ class BothEngine:
         self._cloth_meets_matter()      # (fabric and sand, snow, mud: each the other's surface this frame)
         if solids:
             self._air_for_solids()
+            self._objects_meet_cloth(fdt)
             poses = solids.advance(scene, frame, fdt, n, couple=self._matter_couple(scene, frame, fdt, self.solver.meshes))
+            self._cloth_takes_objects(fdt)
         moving = scene.colliders_animated() or bool(solids)
         wprm = scene.weather_params(frame) if (self._wx_on and self.weather is not None) else None
         filled = getattr(self, '_filled', None)

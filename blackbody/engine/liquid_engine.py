@@ -250,8 +250,12 @@ class LiquidEngine:
         solids = self.solids if self.solids.active else None
         self._push_matter(L)
         self._cloth_meets_matter()      # (fabric and sand, snow, mud: each the other's surface this frame)
+        if solids:
+            self._objects_meet_cloth(fdt)
         poses = (solids.advance(scene, frame, fdt, n, couple=self._matter_couple(scene, frame, fdt, self.solver.meshes))
                  if solids else None)
+        if solids:
+            self._cloth_takes_objects(fdt)
         moving = scene.colliders_animated() or bool(solids)
         filled = getattr(self, '_filled', None)
         if filled is None:

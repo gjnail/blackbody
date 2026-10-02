@@ -301,7 +301,9 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine)
         self._cloth_meets_matter()      # (fabric and sand, snow, mud: each the other's surface this frame)
         if self.solids.active:
             self._air_for_solids()
+            self._objects_meet_cloth(fdt)
             poses = self.solids.advance(scene, frame, fdt, n, couple=self._matter_couple(scene, frame, fdt, self.solver.meshes))
+            self._cloth_takes_objects(fdt)
         moving = scene.colliders_animated() or poses is not None
         # deforming meshes: the frames either side of this step in the atlas
         self.solver.set_meshes(scene.mesh_items(frame - 1), d['mesh_resolution'])

@@ -37,6 +37,7 @@ The numbers are handbook values. Friction is the Coulomb coefficient: a block on
 - **The air.** The gas pushes them with its drag, measured around each one every frame: a blast blows light things away, a fire's updraft lifts paper, wind slides a cardboard box. They push the gas back as they move, as every moving object does: a falling crate shoves the smoke aside.
 - **Water.** In a liquid scene they float or sink by their density, bob, drift with the flow and tip, as *Floats* objects do (*Falls* also lets them fall through the air first).
 - **Fire.** A *Burnable* one with Spreading fire on catches where flames touch it and keeps burning as it tumbles: its fire is in its own frame.
+- **Cloth.** They land on fabric and rest in it, and the fabric carries their weight: a crate dropped onto a sheet tied at its corners sags it and stays there, and a hammock holds what is put in it.
 
 Things attached to a falling object (*Attach to* in the viewer's menus) go with it: a fire on a crate, a lamp on a swinging sign, the pins of a flag on a falling pole.
 
@@ -151,5 +152,8 @@ CG objects go over the footage lit by the shot's light, and their shadows darken
 - In a liquid scene with grey stand-ins (Water › *Colliders*), things that fall or float are drawn as stand-ins in their material's colour.
 - A motor holds its speed, not its angle: things on separate motors drift a little out of step when their loads differ. Give one balanced part one motor (the windmill's sails are two bars crossed on its hub).
 - Emitters still turn only about the vertical: an emitter attached to a tilted object keeps upright.
+- Things that fall come to rest on cloth but do not bounce off it (a trampoline does not throw a ball back up): the two
+  meet once a frame, the things against the cloth as it was at the frame's start. A broken object's pieces pass
+  through cloth, and a falling mesh meets it as its hull's box.
 
-Under the hood, MuJoCo (Apache-2.0) integrates the bodies: their contacts, friction and stacking, with the time step their size needs. The gas, the water and the cloth see them as moving objects every substep.
+Under the hood, MuJoCo (Apache-2.0) integrates the bodies: their contacts, friction and stacking, with the time step their size needs. The gas, the water and the cloth see them as moving objects every substep. In each of their steps the cloth's vertices, as they were at the frame's start, hold them off with a stiff, damped contact (by their mass and their bounce), and the cloth takes what it gave them in the same frame, with their weight's worth of mass riding on it.

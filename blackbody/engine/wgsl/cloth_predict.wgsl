@@ -41,6 +41,8 @@ struct Params {
 @group(0) @binding(12) var LTYPE: texture_3d<f32>;   // its cells: 0 air, 1 liquid, 2 solid
 @group(0) @binding(13) var<storage, read> MP: array<vec4<f32>>;   // the matter's push on each vertex (N: cloth_matter.wgsl),
                                                                    // the mass riding on it (kg)
+@group(0) @binding(14) var<storage, read> OP: array<vec4<f32>>;   // the push of things lying on it or hitting it this frame
+                                                                   // (N: solids.py), the mass riding on it (kg)
 @group(1) @binding(0) var<uniform> U: Params;
 
 const MATTER_DAMP: f32 = 20.0;   // 1/s, fully laden
@@ -141,9 +143,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // sand, snow, mud and the like lying on it or landing on it: their push through the last frame, and their weight's
   // worth of mass, which rides on it (a sling of sand moves as the sand does: pushed alone, the light cloth would fly)
   let own = carry / max(abs(r.w), 1e-9);       // (kg: its fibre and the water in it)
-  let load = select(0.0, MP[i].w, !gone);
+  let load = select(0.0, MP[i].w + OP[i].w, !gone);
   v.y -= U.sim.z * dt * down / carry * (own / (own + load));
-  if (!gone) { v += MP[i].xyz * (dt / (own + load)); }
+  if (!gone) { v += (MP[i].xyz + OP[i].xyz) * (dt / (own + load)); }
   let nn = N[i];
   let area = nn.w;
   if (area > 0.0 && !gone) {
@@ -167,7 +169,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   v *= exp(-mat.a.y * dt);
   // and where it carries matter, the grains' friction takes the swing out of it (a sling of sand does not bounce)
-  v *= exp(-MATTER_DAMP * dt * load / (own + load));
+  v *= exp(-MATTER_DAMP * dt * select(0.0, MP[i].w, !gone) / (own + load));   // (sand, not a thing that fell on it)
   // a vertex that has burnt away is a flake of ash: light, and carried by the air (or the water)
   if (gone) {
     let a = air_at(x.xyz);

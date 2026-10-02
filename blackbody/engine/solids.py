@@ -125,6 +125,11 @@ class Body:
     pivot: np.ndarray = None    # the fixed point a hinge or a ball joint turns it about (world), if any: it spins about that
 
 
+CLOTH_HZ = 12.0         # a thing lying on cloth springs on it at about this rate (contact stiffness from its mass):
+                        # it sinks g / (2 pi f)^2 = 1.7 mm into its margin
+CLOTH_DAMPING = 0.7     # and damped this much of critically, for a thing that does not bounce (by its own bounce, less)
+CLOTH_MARGIN = 0.006    # m: how close to a thing's surface a vertex of cloth holds it off (resting, it stays further off
+                        # than the cloth's own thickness, or the cloth, pushed out of it each step, would let it sink)
 MORTAR = 0.3e6          # Pa: mortar in tension, the glue between the bricks of a wall
 JOINT_FRICTION = 0.6    # shear a joint holds beyond its cohesion, per newton of compression across it
 GAP = 0.001             # m: cut faces are moved in by this for the physics, so glued neighbours do not touch
@@ -229,6 +234,46 @@ def joined(c):
 def falls(c):
     """Whether collider c moves as a rigid body that falls: Falls is ticked, or it hangs on a joint."""
     return bool(c.get('dynamic')) or joined(c) is not None
+
+
+def shape_distance(shape, size, q, hull=None):
+    """Signed distance (m, negative inside) from points q (n, 3: the thing's own frame) to its shape, and the outward
+    normal there (n, 3): a sphere, a box, a cylinder standing along y, or a mesh by its hull's box (colliders.wgsl's
+    shapes)."""
+    q = np.asarray(q, float)
+    if shape == 'sphere':
+        L = np.linalg.norm(q, axis=1)
+        n = np.where(L[:, None] > 1e-12, q / np.maximum(L, 1e-12)[:, None], np.array([0.0, 1.0, 0.0]))
+        return L - float(size[0]), n
+    if shape == 'cylinder':
+        r, hh = float(size[0]), float(size[1])
+        rho = np.hypot(q[:, 0], q[:, 2])
+        radial = np.stack([q[:, 0], np.zeros(len(q)), q[:, 2]], 1) / np.maximum(rho, 1e-12)[:, None]
+        axial = np.stack([np.zeros(len(q)), np.sign(q[:, 1]) + (q[:, 1] == 0), np.zeros(len(q))], 1)
+        a = np.stack([rho - r, np.abs(q[:, 1]) - hh], 1)
+        out = np.maximum(a, 0.0)
+        lo = np.linalg.norm(out, axis=1)
+        d = lo + np.minimum(a.max(axis=1), 0.0)
+        n_out = (radial * out[:, :1] + axial * out[:, 1:]) / np.maximum(lo, 1e-12)[:, None]
+        n_in = np.where((a[:, 0] >= a[:, 1])[:, None], radial, axial)
+        return d, np.where((lo > 0.0)[:, None], n_out, n_in)
+    centre = np.zeros(3)
+    half = np.asarray(size, float)[:3]
+    if shape == 'mesh' and hull is not None and len(hull):
+        hv = np.asarray(hull, float)
+        centre = 0.5 * (hv.min(axis=0) + hv.max(axis=0))
+        half = 0.5 * (hv.max(axis=0) - hv.min(axis=0))
+    p = q - centre
+    a = np.abs(p) - half
+    out = np.maximum(a, 0.0)
+    lo = np.linalg.norm(out, axis=1)
+    d = lo + np.minimum(a.max(axis=1), 0.0)
+    s = np.where(p >= 0.0, 1.0, -1.0)
+    n_out = s * out / np.maximum(lo, 1e-12)[:, None]
+    n_in = np.zeros_like(p)
+    k = a.argmax(axis=1)
+    n_in[np.arange(len(p)), k] = s[np.arange(len(p)), k]
+    return d, np.where((lo > 0.0)[:, None], n_out, n_in)
 
 
 def surface_toward(shape, size, u, hull=None):
@@ -336,6 +381,8 @@ class Solids:
         self.snaps = []            # (time, collider index) of every joint that broke
         self._tendon0 = None       # the tendons' limits, stiffness and damping as built (a broken one has them taken away)
         self._pushed = {}          # collider index -> (force, torque) the matter (matter.py) put on it over the last frame
+        self._cloth = None         # the fabric through this frame (meet_cloth): its vertices, the ones near each thing
+        self._cloth_took = None    # what each vertex of it took from the things it held off through the frame (N s)
 
     # -- set up --------------------------------------------------------------------------------
 
@@ -1583,6 +1630,11 @@ class Solids:
                 pf, pt = self._pushed[bd.index]
                 f = f + pf
                 t = t + pt - np.cross(d.xipos[bid] - d.xpos[bid], pf)
+            if self._cloth is not None and not bd.held:
+                # cloth it lands on or hits (cloth.py): held off its vertices as they were at the frame's start
+                cf, ct = self._cloth_contact(bd, bid, mass, v, omega)
+                f = f + cf
+                t = t + ct
             d.xfrc_applied[bid, :3] = f
             d.xfrc_applied[bid, 3:] = t
         # broken objects' pieces the matter pushed (matter.py: ('piece', collider index, piece index) keys)
@@ -1600,6 +1652,84 @@ class Solids:
             d.xfrc_applied[bid, 3:] += pt - np.cross(d.xipos[bid] - d.xpos[bid], pf)
         self._joint_friction()
         self._motors()
+
+    def meet_cloth(self, x, v, alive, fdt):
+        """The fabric (cloth.py) for the frame about to be stepped: its vertices (n, 3, fire-local m), their velocities,
+        and which are still there. The things that fall meet it as it is now (_cloth_contact); what it takes from them
+        is cloth_took(), after the frame. None: no fabric."""
+        if x is None or not self.bodies:
+            self._cloth = None
+            return
+        import mujoco
+        m, d = self.model, self.data
+        x = np.asarray(x, float)
+        near = {}
+        vel6 = np.zeros(6)
+        for bd in self.bodies:
+            bid = bd.body_id
+            mujoco.mj_objectVelocity(m, d, mujoco.mjtObj.mjOBJ_BODY, bid, vel6, 0)
+            reach = self._radius(bd) + float(np.linalg.norm(vel6[3:])) * fdt + 0.05
+            idx = np.nonzero(alive & (np.linalg.norm(x - d.xpos[bid], axis=1) < reach))[0]
+            if len(idx):
+                near[bd.index] = idx
+        if not near:
+            self._cloth = None
+            return
+        self._cloth = dict(x=x, v=np.asarray(v, float), near=near)
+        self._cloth_took = np.zeros_like(x)
+
+    def cloth_took(self):
+        """What each vertex of the fabric took from the things it held off through the frame just stepped (N s, (n, 3)),
+        or None."""
+        took, self._cloth_took = (self._cloth_took if self._cloth is not None else None), None
+        self._cloth = None
+        return took
+
+    def _radius(self, bd):
+        s = np.asarray(bd.size, float)
+        if bd.shape == 'sphere':
+            return float(s[0])
+        if bd.shape == 'cylinder':
+            return float(np.hypot(s[0], s[1]))
+        if bd.shape == 'mesh' and bd.hull is not None and len(bd.hull):
+            return float(np.linalg.norm(np.asarray(bd.hull, float), axis=1).max())
+        return float(np.linalg.norm(s[:3]))
+
+    def _cloth_contact(self, bd, bid, mass, v, omega):
+        """The push (force, torque about its centre of mass) on body bd from the fabric's vertices within CLOTH_MARGIN of
+        its surface, held where they were at the frame's start: a spring of CLOTH_HZ for its mass, damped, with friction;
+        what each vertex gave, it takes (self._cloth_took)."""
+        zero = (np.zeros(3), np.zeros(3))
+        idx = self._cloth['near'].get(bd.index)
+        if idx is None:
+            return zero
+        d = self.data
+        R = d.xmat[bid].reshape(3, 3)
+        x = self._cloth['x'][idx]
+        dist, nl = shape_distance(bd.shape, bd.size, (x - d.xpos[bid]) @ R, bd.hull)
+        pen = CLOTH_MARGIN - dist
+        on = pen > 0.0
+        if not on.any():
+            return zero
+        nw = nl[on] @ R.T                                   # (outward, toward the vertex)
+        at = x[on]
+        arm = at - d.xipos[bid]
+        rel = v + np.cross(omega, arm) - self._cloth['v'][idx][on]
+        vn = np.einsum('ij,ij->i', rel, nw)
+        n = int(on.sum())
+        w = 2.0 * math.pi * CLOTH_HZ
+        # damped to bounce back as it does (restitution e: a damping ratio of -ln e / sqrt(pi^2 + ln^2 e)): a rubber
+        # ball bounces on a sheet, a crate settles
+        e = math.log(min(max(float(bd.bounce), 0.01), 0.99))
+        zeta = min(CLOTH_DAMPING, -e / math.sqrt(math.pi * math.pi + e * e))
+        push = np.maximum(mass * w * w * pen[on] + 2.0 * zeta * mass * w * vn, 0.0) / n
+        F = -nw * push[:, None]
+        vt = rel - vn[:, None] * nw
+        lt = np.linalg.norm(vt, axis=1)
+        F -= vt / np.maximum(lt, 0.05)[:, None] * (float(bd.friction) * push)[:, None]
+        if self._cloth_took is not None:
+            self._cloth_took[idx[on]] -= F * float(self.model.opt.timestep)
+        return F.sum(axis=0), np.cross(arm, F).sum(axis=0)
 
     def matter_push(self, forces, fdt=None):
         """The matter's push on the objects over the frame just stepped ({collider index: (force, torque about its

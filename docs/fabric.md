@@ -30,6 +30,10 @@ It is shaded as cloth, in the same light as the smoke: the soft sheen of its fib
 
 It casts shadows, and is shadowed: it shades the smoke behind it, other cloth and the ground and footage under it from the key light, the sky, the fire and the lights in the set (thin cloth lets some light through), and the smoke, other cloth and the objects around it shade the fire's light on it.
 
+## Things that fall
+
+Things that fall land on fabric and rest in it: a crate dropped onto a sheet tied at its corners sags it and stays there, and the cloth carries its weight. They come to rest rather than bounce back up. See [Things that fall](physics.md#what-moves-them).
+
 ## Sand, snow and mud
 
 Sand, snow, mud, jelly and clay cannot pass through cloth, from either side. A sheet held at its corners catches sand poured onto it and sags under its weight; a sheet dropped onto a heap drapes over it. See [what moves matter](matter.md#what-moves-it).

@@ -102,6 +102,27 @@ class MatterEngine:
         with self.gpu.batch() as b:
             m.cloth_field(b, c)
 
+    def _objects_meet_cloth(self, fdt):
+        """Before the rigid bodies' frame: the fabric as it is now, for the things that fall to land on and hit
+        (solids.py meet_cloth)."""
+        c = getattr(self, 'cloth', None)
+        if not self.solids.active:
+            return
+        if c is None or not c.active or not c.placed:
+            self.solids.meet_cloth(None, None, None, fdt)
+            return
+        x, gone = c.positions()
+        self.solids.meet_cloth(x, c.velocities(), ~gone, fdt)
+
+    def _cloth_takes_objects(self, fdt):
+        """After the rigid bodies' frame: what the things that fell on the fabric gave it, as a push through its own
+        frame (cloth.py object_push)."""
+        c = getattr(self, 'cloth', None)
+        if c is None or not c.active or not c.placed:
+            return
+        took = self.solids.cloth_took() if self.solids.active else None
+        c.object_push(None if took is None else took / max(fdt, 1e-6))
+
     def _push_matter(self, liquid):
         """The liquid pushing the matter through this frame, as it was at the end of the last (the matter moves in
         lockstep with the rigid bodies, before the liquid)."""

@@ -479,3 +479,20 @@ def test_a_sling_that_tears_holds_its_sand_unless_it_is_weak(engine):
         out[strength] = (int((engine.cloth.state()[:, 2] < -0.5).sum()), float((x[:, 1] < 0.3).mean()))
     assert out[1.0] == (0, 0.0)                           # cotton holds 10 litres of sand
     assert out[0.2][0] > 0 and out[0.2][1] > 0.5          # a weak one rips and the sand pours through
+
+
+def test_a_crate_dropped_onto_a_sheet_tied_at_its_corners_rests_in_it(engine):
+    from blackbody.scene import components
+    sc = components.new_scene('fire', 'person')
+    sc.emitters = []
+    sc.add_fabric(name='Sling', position=(0.0, 0.5, 0.0), width=0.9, height=0.9, orientation='lying', pins='corners',
+                  material='canvas')
+    sc.add_collider(name='Crate', shape='box', position=(0.0, 1.0, 0.0), size=(0.1, 0.1, 0.1), dynamic=True,
+                    material='wood')
+    sc.data['domain'].update(size_x=1.4, size_y=1.4, size_z=1.4, resolution=32, preroll=0.0)
+    engine.prepare(sc, final=False)
+    engine.simulate_to(sc, sc.start + 72, cache=False)
+    bottom = engine.solids.overrides()[0]['pos'][1] - 0.1
+    X = engine.cloth.positions()[0]
+    assert 0.35 < bottom < 0.5                          # in the sheet, not through it to the ground
+    assert X[:, 1].min() < 0.47                         # which sags under it

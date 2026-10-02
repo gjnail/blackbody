@@ -525,7 +525,7 @@ class Cloth:
         g = gpu
         vf = g.vel_format
         self.k_predict = g.kernel('cloth_predict.wgsl', ['buf', 'buf', 'buf', 'rbuf', 'rbuf', 'rbuf', 'rbuf', 'tex3d', 'tex3d', 'smp',
-                                                         'buf', 'utex3d', 'utex3d', 'rbuf'], workgroup=(64, 1, 1))
+                                                         'buf', 'utex3d', 'utex3d', 'rbuf', 'rbuf'], workgroup=(64, 1, 1))
         self.k_stretch = g.kernel('cloth_stretch.wgsl', ['buf', 'rbuf', 'rbuf', 'rbuf', 'rbuf', 'buf', 'rbuf'], workgroup=(64, 1, 1))
         self.k_bend = g.kernel('cloth_bend.wgsl', ['buf', 'rbuf', 'rbuf', 'buf', 'rbuf', 'rbuf', 'rbuf'], workgroup=(64, 1, 1))
         # water in the cloth: wicking and draining (cloth_wick), dripping and steam (cloth_drip), the drops
@@ -610,6 +610,7 @@ class Cloth:
         for name in ('X', 'P', 'V', 'S', 'S2', 'N', 'D', 'IMP', 'MP'):
             self.bufs[name] = g.buffer(max(16, n * 16), f'cloth-{name}')
         self.bufs['TR'] = g.buffer(max(16, n * 16), 'cloth-tear')
+        self.bufs['OP'] = g.buffer(max(16, n * 16), 'cloth-objects-push')   # (cloth_predict.wgsl: object_push)
         mk('R', np.concatenate([B.rest, B.inv_mass[:, None]], 1).astype(np.float32))
         mk('UV', B.uv)
         mk('T', B.tris)
@@ -732,6 +733,8 @@ class Cloth:
         g.write_buffer(self.bufs['D'], np.zeros((B.n, 4), np.float32))
         g.write_buffer(self.bufs['IMP'], np.zeros((B.n, 4), np.float32))
         g.write_buffer(self.bufs['MP'], np.zeros((B.n, 4), np.float32))
+        g.write_buffer(self.bufs['OP'], np.zeros((B.n, 4), np.float32))
+        self._op_on = False
         g.write_buffer(self.bufs['HOLED'], np.zeros(MAX_FABRICS, np.uint32))
         with g.batch() as b:
             self._normals(b)
@@ -800,7 +803,7 @@ class Cloth:
             self._fab_uniforms(u, places)
             u.raw(lq.data)
             b.run(self.k_predict, [k['X'], k['P'], k['V'], k['R'], k['S'], k['N'], k['M'], vel, scal, lin, k['IMP'],
-                                   lvel, ltype, k['MP']], u, (n, 1, 1))
+                                   lvel, ltype, k['MP'], k['OP']], u, (n, 1, 1))
             mg_on = self.mg is not None
             if mg_on:
                 # the panels' bending, solved (cloth_mg.py; its buffer swaps come back round within a cycle)
@@ -1125,6 +1128,27 @@ class Cloth:
                                                                     np.float32))
         self.placed = True
         return True
+
+    def velocities(self):
+        """(n, 3) velocity of every vertex now (m/s)."""
+        return np.frombuffer(self.gpu.read_buffer(self.bufs['V']), np.float32).reshape(-1, 4)[:self.built.n, :3].copy()
+
+    def object_push(self, force):
+        """The push of the things that fall on each vertex through this frame ((n, 3) N, from solids.py; None: none), and
+        its weight's worth of mass, riding on it (cloth_predict.wgsl OP)."""
+        if not self.active or not self.placed:
+            return
+        if force is None:
+            if self._op_on:
+                self.gpu.write_buffer(self.bufs['OP'], np.zeros((self.built.n, 4), np.float32))
+                self._op_on = False
+            return
+        f = np.asarray(force, np.float32).reshape(-1, 3)[:self.built.n]
+        op = np.zeros((self.built.n, 4), np.float32)
+        op[:len(f), :3] = f
+        op[:len(f), 3] = np.linalg.norm(f, axis=1) / 9.81
+        self.gpu.write_buffer(self.bufs['OP'], op)
+        self._op_on = True
 
     def forget_matter(self):
         """No more push from sand, snow or mud (cloth_matter.wgsl gather): the matter it lay under has gone."""

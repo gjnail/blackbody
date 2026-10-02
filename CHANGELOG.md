@@ -107,6 +107,8 @@ Notable changes to Blackbody. The format follows
   flame, sawdust smouldering, coal glowing) and burn down to a little ash.
 - Snow, mud, clay and wet sand stick to the objects they touch, each as hard as it really does: a packing-snow ball
   thrown at a wall stays on it, powder snow slides off, dry sand does not stick.
+- Things that fall land on cloth and rest in it, and the cloth carries their weight: a crate dropped onto a sheet tied
+  at its corners sags it and stays there.
 - Cloth that tears (Fabric › Tears, Tear strength): it rips where it is pulled too far, caught on something moving
   through it or overloaded, the rip running on from where it starts.
 - Cloth and sand, snow, mud, jelly and clay meet: matter cannot pass through fabric, from either side. Sand poured onto
