@@ -37,6 +37,8 @@ Right-click one in the viewer for *Made of*, *Let go at this frame*, *Pour it fr
 - **Objects.** It piles against objects that stay put, and keyframed ones plough through it (a crate dragged through mud pushes up a bow wave). Things that fall land on it and it holds them up as its strength and their weight say: a wooden crate rests on top of sand where a steel ball of the same size sinks into it, and jelly throws a dropped ball back up. Matter and the falling objects push each other every step.
 - **Blasts.** An explosion (an emitter's *Blast*) throws it away from where it goes off, the surface hardest: a heap of sand near a charge is blown flat.
 
+It is solid to the smoke and the water: smoke blown at a heap of sand goes round and over it, water poured on it runs off it and pools at its foot, and a pour pushes the air aside as it falls.
+
 ## How it looks
 
 On the stage, matter is drawn in its material's look and lit like the objects: the key light with soft shadows (it shades itself and the floor, and the objects shade it), the sky, the fire and the lights in the set. Sand and snow glint where a grain catches the sun, snow lets the light into its shadows, mud is wet and glossy, and jelly is clear and coloured: you see the set through it, bent. In your footage it goes in as CG, its shadows on the real ground. It hides the fire and the liquid behind it.
@@ -55,7 +57,8 @@ Presets: *Sand from a hopper*, *Snowballs at a wall*, *Ball dropped on jelly*, *
 
 ## Limits
 
-- The smoke, the water and the cloth do not meet it yet: smoke goes through a sand pile, and water does not wet sand.
+- The smoke and the water go round it but do not move it: a wave does not wash a sand castle away, and water does not
+  wet sand. Cloth does not meet it yet.
 - Broken objects' pieces do not push it, and it does not burn.
 - A body of matter is a box, a ball, a cylinder or a cone; it cannot fill a mesh yet.
 - Up to 15 materials (or colours of them) in a scene at once.

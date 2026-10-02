@@ -6,6 +6,7 @@ from __future__ import annotations
 import numpy as np
 
 from .matter import Matter
+from .matter_field import Fields, MatterField
 from .solver import pack_colliders
 
 
@@ -77,6 +78,29 @@ class MatterEngine:
             return cache[i]
 
         m.advance(fdt, cols_at, meshes.atlas if meshes is not None else None, lambda u, c: pack_colliders(u, c, meshes))
+
+    _mfields = None
+
+    def _matter_solid(self, b, solver, grid='gas'):
+        """Count the matter into a solver's cells for this frame (in batch b), so the gas or the liquid goes round it: its
+        MatterField, or None when there is no matter."""
+        m = self._matter
+        if m is None or not m.active or not m.count or solver is None or solver.dims is None:
+            return None
+        if self._mfields is None:
+            self._mfields = {}
+        f = self._mfields.get(grid)
+        if f is None:
+            f = self._mfields[grid] = MatterField(self.gpu)
+        return f if f.prepare(b, solver, m) else None
+
+    @staticmethod
+    def _solids_step(pieces, matter, i):
+        """A solver's pieces_step for substep i: the broken pieces (a BodyField, or None) and the matter (a MatterField,
+        or None) folded into its solids."""
+        if pieces is None and matter is None:
+            return None
+        return (Fields(pieces, matter), i)
 
     def _blast_matter(self, scene, frame):
         """The blasts that go off in frame `frame` throw the matter (at the frame's start)."""

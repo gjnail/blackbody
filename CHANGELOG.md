@@ -75,6 +75,8 @@ Notable changes to Blackbody. The format follows
   flames touch it or from a burning piece glued to it, burns (thicker ones longer), feeding the fire, smoulders, and
   most crumble to ash; the glue between pieces weakens as they char, so a burning structure falls in. A preset, Shed
   on fire.
+- Sand, snow, mud, jelly and clay are solid to the smoke and the water: smoke goes round a heap of sand, water poured
+  on it runs off and pools at its foot, and a pour pushes the air aside.
 - Sand, snow, mud, jelly and clay in the interface: the object list, Properties, outlines and handles in the viewer (a
   pour's nozzle and direction), Made of, Let go, Pour it from here and Start/Stop pouring from the right-click menu,
   timing lanes, a Sand & mud chip in Create; Effects gains Falling & breaking and Sand, snow & mud chips.

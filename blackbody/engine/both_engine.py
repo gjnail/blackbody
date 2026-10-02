@@ -332,6 +332,8 @@ class BothEngine:
             self._footage_solid(b, scene, frame)
             if burning:
                 self.piece_fire.splat(b, self.solver)
+            msolid = self._matter_solid(b, self.solver)          # (sand, snow and mud: solid to the gas
+            lmsolid = self._matter_solid(b, L, 'liquid')        # and to the water)
             regions = solids.regions(scene) if solids else []
             if regions:
                 L.clear_float(b)
@@ -354,11 +356,11 @@ class BothEngine:
                     L._write_sdf(b)
                     if self.LAVA_SOLID:
                         b.run(k['solid'], [V.DENS, L.SDF], L._grid(dt, lprm).v4(float(vprm.ppc)), L.dims)
-                    L.pieces_step = (self.body_field_for('liquid'), i) if lpieces else None
+                    L.pieces_step = self._solids_step(self.body_field_for('liquid') if lpieces else None, lmsolid, i)
                     L.step(b, dt, lprm, srcs, None)
                     L.pieces_step = None
                 else:
-                    L.pieces_step = (self.body_field_for('liquid'), i) if lpieces else None
+                    L.pieces_step = self._solids_step(self.body_field_for('liquid') if lpieces else None, lmsolid, i)
                     L.step(b, dt, lprm, srcs, cols)
                     L.pieces_step = None
                 if regions:
@@ -374,7 +376,7 @@ class BothEngine:
                 if self.solver.water is not None:
                     self._water_on_fire(b, scene, prm, ems, dt)
                 self._boil_drops(b, boil, dt, lava_k)
-                self.solver.pieces_step = (self.body_field, i) if pieces else None
+                self.solver.pieces_step = self._solids_step(self.body_field if pieces else None, msolid, i)
                 self.solver.step(b, dt, prm, ems, cols)
                 self.solver.pieces_step = None
                 if cloth:

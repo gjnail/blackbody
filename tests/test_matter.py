@@ -162,3 +162,44 @@ def test_a_blast_throws_sand_away_from_it(gpu):
     shift = x1[:, 0] - x0[:, 0]
     assert shift.mean() > 0.03                                   # pushed away from it (the near sand shoving the far along)
     assert shift.min() > -0.01                                   # and none of it toward it
+
+
+# ---- solid to the smoke and the water (matter_field.py) -------------------------------------------------------------
+
+def test_smoke_goes_round_a_sand_heap_not_through_it(engine):
+    from blackbody.scene import components
+    inside_smoke = []
+    for heap in (False, True):
+        sc = components.new_scene('fire', 'person')
+        sc.emitters = []
+        sc.add_emitter(name='Smoke', shape='sphere', position=(-0.8, 0.2, 0.0), size=(0.15, 0.15, 0.15), fuel=0.0, temperature=0.05,
+                       smoke=5.0, velocity=(1.5, 0.0, 0.0), embers=False)
+        if heap:
+            sc.add_matter(name='Heap', material='sand', shape='pile', position=(0.2, 0.2, 0.0), size=(0.45, 0.2, 0.45))
+        sc.data['domain'].update(size_x=2.4, size_y=1.6, size_z=1.6, resolution=64, preroll=0.0)
+        sc.data['motion'].update(wind_speed=1.5, wind_dir=90.0, gust=0.0, wind_relax=2.0, buoyancy=0.5)
+        engine.prepare(sc, final=True)
+        engine.simulate_to(sc, sc.start + 48, cache=False)
+        s = engine.solver
+        scal = engine.gpu.read(s.scal[0]).astype(np.float32)
+        nz, ny, nx = scal.shape[:3]
+        Z, Y, X = np.meshgrid(*(s.origin[a] + (np.arange(n) + 0.5) * s.h for a, n in ((2, nz), (1, ny), (0, nx))), indexing='ij')
+        inside = (np.hypot(X - 0.2, Z) < 0.25) & (Y < 0.08)
+        inside_smoke.append(float(scal[..., 2][inside].mean()))
+    assert inside_smoke[0] > 0.01 and inside_smoke[1] < 0.02 * inside_smoke[0]
+
+
+def test_water_runs_off_a_sand_heap_not_through_it(engine):
+    from blackbody.scene import components
+    deep = []
+    for heap in (False, True):
+        sc = components.new_scene('liquid', 'person')
+        sc.emitters = []
+        components.add(sc, 'pour', at=(0.15, 0.0))
+        if heap:
+            sc.add_matter(name='Heap', material='wet_sand', shape='pile', position=(0.2, 0.25, 0.0), size=(0.5, 0.25, 0.5))
+        engine.prepare(sc, final=False)
+        engine.simulate_to(sc, sc.start + 40, cache=False)
+        x = engine.liquid.read_particles()[0]
+        deep.append(int(((np.hypot(x[:, 0] - 0.2, x[:, 2]) < 0.3) & (x[:, 1] < 0.12)).sum()))
+    assert deep[0] > 100 and deep[1] == 0

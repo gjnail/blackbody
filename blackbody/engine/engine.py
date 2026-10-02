@@ -321,10 +321,11 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine)
         with self.gpu.batch() as b:
             if burning:
                 self.piece_fire.splat(b, self.solver)
+            msolid = self._matter_solid(b, self.solver)   # (sand, snow and mud: solid to the gas)
             for i in range(n):
                 # emitters and colliders move within the frame, so fast ones leave a continuous trail
                 fs = frame - 1 + (i + 0.5) / n
-                self.solver.pieces_step = (self.body_field, i) if pieces else None
+                self.solver.pieces_step = self._solids_step(self.body_field if pieces else None, msolid, i)
                 carried = poses[i] if poses else None   # (things attached to falling objects go with them)
                 ems = scene.emitters_gpu(fs, substeps=n, moved=attached(scene, 'emitter', carried))
                 if dust:

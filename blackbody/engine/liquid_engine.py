@@ -272,6 +272,7 @@ class LiquidEngine:
             gwind = tuple(scene.liquid_wind(frame))
             ggust = float(scene.data['weather'].get('gust', 0.3)) if 'weather' in scene.data else 0.3
         with self.gpu.batch() as b:
+            msolid = self._matter_solid(b, L, 'liquid')   # (sand, snow and mud: solid to the water)
             if shift != (0, 0):
                 L.shift(b, *shift, prm)
             self._footage_solid(b, scene, frame)
@@ -285,7 +286,7 @@ class LiquidEngine:
                 prm.clock = scene.seconds(fs)
                 if tide:
                     prm.water_level = scene.liquid_level(fs)   # a tide: the level at each substep
-                L.pieces_step = (self.body_field_for('liquid'), i) if pieces else None
+                L.pieces_step = self._solids_step(self.body_field_for('liquid') if pieces else None, msolid, i)
                 L.step(b, fdt / n, prm, srcs, cols)
                 L.pieces_step = None
                 if regions:
