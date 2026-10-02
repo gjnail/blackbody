@@ -70,6 +70,8 @@ CLIPS = {
     'wall_smash': clip('wall_smash', 0.0, 72, dyaw=8.0, push=0.06),
     'wrecking_ball': clip('wrecking_ball', 0.0, 96, dyaw=6.0, push=0.05),
     'yard_blast': clip('yard_blast', 0.0, 96, dyaw=6.0, push=0.05),
+    'cart_jump': clip('cart_jump', 0.4, 100, dyaw=4.0, push=0.04),   # the action runs 0.5-4.5 s
+    'lightning_strike': clip('lightning_strike', 0.0, 96, dyaw=4.0, push=0.04),   # the flash is at frames 6-10
     'window_smash': clip('window_smash', 0.0, 48, dyaw=6.0, push=0.04),
     'vase_drop': clip('vase_drop', 0.0, 48, dyaw=6.0, push=0.04),
     # ---- sand, snow and mud (on the stage) -------------------------------------------------------------------------

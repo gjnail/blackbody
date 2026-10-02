@@ -144,6 +144,13 @@ def matter_lines(sc, i, frame):
     return shape_lines('box', p, s, yaw=yaw)
 
 
+def _turned(c, sc, size, pos, R, frame):
+    """The outline of a collider turned by R (its Rotation, Tilt and Roll) about its middle at pos."""
+    base = shape_lines(c['shape'], (0.0, 0.0, 0.0), size, None, 0.0, sc.mesh_path(c['mesh']), frame - c.get('mesh_offset', 0.0))
+    p = np.asarray(pos, float)
+    return [np.asarray(l, float) @ R.T + p for l in base]
+
+
 def _falls(c):
     """Whether a collider moves as a rigid body (it falls, or hangs on a joint)."""
     return bool(c.get('dynamic')) or _joint(c) is not None
@@ -1325,6 +1332,9 @@ class Viewport(QWidget):
             pos = np.asarray(g('position'), float)
             r = max(float(l['radius']), 0.05)
             lines = shape_lines('sphere', pos, (r, r, r))
+            if l['kind'] == 'lightning':
+                self._paint_bolt(p, cs, fire, sc, i, l, is_sel)
+                continue
             if l['kind'] in ('spot', 'area'):
                 aim = np.asarray(g('direction'), float)
                 aim = aim / max(float(np.linalg.norm(aim)), 1e-9)
@@ -1354,15 +1364,20 @@ class Viewport(QWidget):
             g = (lambda k, ov=ov, i=i: (tuple(ov['pos']) if k == 'position' else math.degrees(ov['rot_y']))
                  if ov is not None and k in ('position', 'yaw') else sc.get(('collider', i, k), self.doc.frame))
             is_sel = ('collider', i) in chosen
+            R = sc.turn(i, self.doc.frame) if hasattr(sc, 'tilted') and sc.tilted(i) else None   # tipped over: its whole turn
             col = QColor(255, 140, 80) if c.get('burnable') else QColor(150, 230, 160) if _falls(c) else QColor(120, 190, 255)
             col.setAlpha(230 if is_sel else 120)
             pen = QPen(col, 1.6 if is_sel else 1.0)
             if ov is not None and is_sel and _falls(c):   # where it starts (what its handle moves), faintly
                 ghost = QColor(col)
                 ghost.setAlpha(90)
-                self._lines(p, cs, fire, shape_lines(c['shape'], sc.get(('collider', i, 'position'), self.doc.frame), g('size'), None,
-                                                     sc.get(('collider', i, 'yaw'), self.doc.frame), sc.mesh_path(c['mesh']),
-                                                     self.doc.frame - c.get('mesh_offset', 0.0)), QPen(ghost, 1.0, Qt.DashLine))
+                p0 = sc.get(('collider', i, 'position'), self.doc.frame)
+                if R is not None:
+                    lines = _turned(c, sc, g('size'), p0, R, self.doc.frame)
+                else:
+                    lines = shape_lines(c['shape'], p0, g('size'), None, sc.get(('collider', i, 'yaw'), self.doc.frame),
+                                        sc.mesh_path(c['mesh']), self.doc.frame - c.get('mesh_offset', 0.0))
+                self._lines(p, cs, fire, lines, QPen(ghost, 1.0, Qt.DashLine))
             if ov is not None and ov.get('quat') is not None:   # a tumbling thing: drawn as it lies, any way up
                 q = ov['quat']
                 x_, y_, z_, w_ = (float(v) for v in q)
@@ -1373,11 +1388,17 @@ class Viewport(QWidget):
                                    self.doc.frame - c.get('mesh_offset', 0.0))
                 pos = np.asarray(ov['pos'], float)
                 self._lines(p, cs, fire, [np.asarray(l, float) @ Rq.T + pos for l in base], pen)
+            elif R is not None and ov is None:
+                self._lines(p, cs, fire, _turned(c, sc, g('size'), g('position'), R, self.doc.frame), pen)
             else:
                 self._lines(p, cs, fire, shape_lines(c['shape'], g('position'), g('size'), None, g('yaw'), sc.mesh_path(c['mesh']),
                                                      self.doc.frame - c.get('mesh_offset', 0.0)), pen)
             op = np.asarray(g('opening'), float)
-            if (op > 0).all():  # the doorway or window cut through it
+            if (op > 0).all() and R is not None and ov is None:   # the doorway, tipped over with it
+                at = np.asarray(g('position'), float) + R @ np.asarray(g('opening_at'), float)
+                self._lines(p, cs, fire, [np.asarray(l, float) @ R.T + at for l in shape_lines('box', (0.0, 0.0, 0.0), op)],
+                            QPen(col, 1.0, Qt.DotLine))
+            elif (op > 0).all():  # the doorway or window cut through it
                 at = np.asarray(g('position'), float) + _rot_y(np.asarray(g('opening_at'), float), g('yaw'))
                 self._lines(p, cs, fire, shape_lines('box', at, op, None, g('yaw')), QPen(col, 1.0, Qt.DotLine))
         self._paint_joints(p, cs, fire, sc, floats)
@@ -1416,6 +1437,25 @@ class Viewport(QWidget):
             p.setPen(QPen(QColor(theme.ACCENT if hot else '#ffffff'), 1.2))
             p.setBrush(QColor(theme.ACCENT if hot else '#ffffff'))
             p.drawRect(QRectF(top.x() - 4, top.y() - 4, 8, 8))
+
+    def _paint_bolt(self, p, cs, fire, sc, i, l, is_sel):
+        """A lightning bolt: its channel (main and branches) from where it starts to where it strikes."""
+        g = lambda k: sc.get(('light', i, k), self.doc.frame)
+        top, end = np.asarray(g('position'), float), np.asarray(g('end'), float)
+        try:
+            from ..engine.lightning import cached_bolt
+            paths = cached_bolt(top, end, int(l.get('bolt_seed', 0)), float(g('branching')))
+        except Exception:
+            paths = [(np.array([top, end]), 1.0, 1.0, False)]
+        for k, (pts, thick, bright, _first) in enumerate(paths):
+            a = int((235 if is_sel else 170) * (1.0 if k == 0 else 0.55))
+            self._lines(p, cs, fire, [np.asarray(pts, float)], QPen(QColor(190, 210, 255, a), 1.8 if k == 0 else 1.0))
+        px, ok = self._project_local(cs, fire, [top, end])
+        for q, ok_, rad in ((px[0], ok[0], 4.0), (px[1], ok[1], 5.5)):
+            if ok_:
+                p.setPen(QPen(QColor(190, 210, 255, 230), 1.4))
+                p.setBrush(QColor(190, 210, 255, 90))
+                p.drawEllipse(self.to_widget(q), rad, rad)
 
     def _paint_blasts(self, p, cs, fire, sc):
         """Each explosive charge (a source's Blast): a burst the size of its fireball where it is, bright as it goes off,
@@ -1529,6 +1569,14 @@ class Viewport(QWidget):
             p.setPen(QPen(QColor(theme.ACCENT), 1.4))
             p.setBrush(QColor(theme.ACCENT) if hot else QColor(16, 16, 20, 220))
             p.drawEllipse(q, 5.5, 5.5)
+        q = hs.get('end')
+        if q is not None:   # where a bolt strikes: drag it over the ground
+            hot = 'end' in (drag, hover)
+            p.setPen(QPen(QColor(190, 210, 255), 1.6))
+            p.setBrush(QColor(190, 210, 255) if hot else QColor(16, 16, 20, 220))
+            p.drawPolygon(QPolygonF([q + QPointF(0, -7), q + QPointF(7, 0), q + QPointF(0, 7), q + QPointF(-7, 0)]))
+            if hot:
+                p.drawText(q + QPointF(10, -8), 'strikes here')
         q = hs.get('centre')
         if q is not None:
             hot = 'centre' in (drag, hover)
@@ -1584,6 +1632,13 @@ class Viewport(QWidget):
         g = gz.g
         if gz.capsule:
             d['end0'] = np.asarray(g('end'), float)
+        if key == 'end':   # a bolt's strike point slides over the ground at its height
+            d['end0'] = np.asarray(g('end'), float)
+            d['w0'] = self._ground_point(pos, float(d['end0'][1]))
+            if d['w0'] is None:
+                return
+            self._drag = d
+            return
         if key.startswith('move_'):
             d['axis'] = AXES[AXIS_NAMES.index(key[-1])]
             d['t0'] = self._axis_param(pos, gz.pos, d['axis'])
@@ -1616,6 +1671,15 @@ class Viewport(QWidget):
         what, i = d['what'], d['i']
         snap = d['snap'] if mods & Qt.ControlModifier else None
         key = d['key']
+        if key == 'end':
+            w = self._ground_point(pos, float(d['end0'][1]))
+            if w is not None:
+                new = d['end0'] + (np.asarray(w, float) - np.asarray(d['w0'], float))
+                if snap:
+                    new[0], new[2] = round(new[0] / snap) * snap, round(new[2] / snap) * snap
+                self.doc.set((what, i, 'end'), tuple(float(x) for x in new))
+                self._readout = (f'strikes at  {new[0]:.2f}, {new[2]:.2f} m', pos)
+            return
         if key.startswith('move_'):
             t = self._axis_param(pos, d['pos0'], d['axis'])
             if t is None:

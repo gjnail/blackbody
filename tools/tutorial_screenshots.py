@@ -128,7 +128,7 @@ def main():
         r = win.viewport.frame_rect()
         return grab(win.viewport).crop((int(r.x()) + 1, int(r.y()) + 1, int(r.right()), int(r.bottom())))
 
-    # 1. first launch: the default campfire and the Getting started card
+    # 1. first launch: the empty Build stage and its card
     settle()
     save(grab(), '01_first_launch.png')
     win._close_welcome()
@@ -137,6 +137,8 @@ def main():
     doc.import_footage(str(PLATE))
     pump(app, 30, until=lambda: doc.footage_info is not None)
     log('footage:', (doc.footage_info or {}).get('describe'))
+    win.set_workspace('shot')        # the footage is seen through the shot's camera
+    win.left.show_page('effects')
 
     # 3. load the campfire, keeping the shot
     win.library.keep.setChecked(True)

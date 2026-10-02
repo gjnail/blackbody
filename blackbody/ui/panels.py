@@ -880,8 +880,13 @@ class Inspector(QWidget):
             return worded('emitter', [p for p in params if p.key not in hide], ekind)
         if kind_o == 'collider':
             params = [p for p in COLLIDER_PARAMS if p.key not in ('name', 'enabled') and applies('collider', p.key, kind)]
-            if sc.colliders[i]['shape'] != 'mesh':
+            c = sc.colliders[i]
+            if c['shape'] != 'mesh':
                 params = [p for p in params if p.key != 'mesh']
+            if c['shape'] == 'sphere':   # a ball: tipping it over changes nothing
+                params = [p for p in params if p.key not in ('pitch', 'roll')]
+            if c.get('joint', 'none') != 'hinge':   # a motor drives a hinge only
+                params = [p for p in params if p.key not in ('motor_speed', 'motor_torque')]
             return worded('collider', params, kind)
         if kind_o == 'light':
             l = sc.lights[i]
@@ -890,6 +895,10 @@ class Inspector(QWidget):
                 hide |= {'direction', 'cone', 'softness'}
             elif l['kind'] == 'area':
                 hide |= {'cone', 'softness'}
+            elif l['kind'] == 'lightning':   # a bolt: no aim or cone
+                hide |= {'direction', 'cone', 'softness'}
+            if l['kind'] != 'lightning':
+                hide |= {p.key for p in LIGHT_PARAMS if p.group == 'Lightning'}
             return [p for p in LIGHT_PARAMS if p.key not in hide]
         if kind_o == 'matter':
             m = sc.matter[i]

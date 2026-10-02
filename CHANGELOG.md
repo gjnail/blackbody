@@ -74,6 +74,11 @@ Notable changes to Blackbody. The format follows
 - Hang it on a rope, Put it on a spring, Hinge it and Put it on a ball joint from the right-click menu, Tie it with a
   rope to and Hinge it to another object, and Take it off its joint. The viewer draws ropes and springs as they hang
   (a dashed line before the simulation has run), and renaming an object keeps what is tied to it.
+- Lightning in the viewer: the bolt drawn down its channel with its branches, and a handle to drag where it strikes.
+- Tilted objects drawn and stretched along their tilt; Tilt and Roll hidden on balls, a motor's settings shown only on
+  hinges; a Machines group in Create with icons of its own.
+- The README and website rewritten for the new features, with a 90-second film, new screen recordings of the app
+  throughout, and the tutorial's screenshots retaken.
 
 - Layers: several effects in one shot (a campfire in front, a waterfall behind), each its own simulation with its own
   box and scale, composited back to front in the viewer, renders and the command line.

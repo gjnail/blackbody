@@ -669,6 +669,45 @@ def _g_clay(p, s):
     p.drawLine(QPointF(s * 0.34, s * 0.62), QPointF(s * 0.5, s * 0.58))
 
 
+def _g_cart(p, s):
+    """A cart on two wheels."""
+    p.drawRoundedRect(QRectF(s * 0.1, s * 0.38, s * 0.8, s * 0.28), s * 0.04, s * 0.04)
+    p.drawEllipse(QPointF(s * 0.28, s * 0.74), s * 0.12, s * 0.12)
+    p.drawEllipse(QPointF(s * 0.72, s * 0.74), s * 0.12, s * 0.12)
+    p.drawLine(QPointF(s * 0.18, s * 0.38), QPointF(s * 0.28, s * 0.22))
+
+
+def _g_turntable(p, s):
+    """A disc seen from the side, spinning, with a block riding on it."""
+    p.drawEllipse(QRectF(s * 0.08, s * 0.52, s * 0.84, s * 0.26))
+    p.drawLine(QPointF(s * 0.5, s * 0.78), QPointF(s * 0.5, s * 0.92))
+    p.drawRect(QRectF(s * 0.56, s * 0.42, s * 0.16, s * 0.16))
+    path = QPainterPath()
+    path.moveTo(s * 0.16, s * 0.4)
+    path.cubicTo(s * 0.22, s * 0.22, s * 0.42, s * 0.16, s * 0.56, s * 0.2)
+    p.drawPath(path)
+    p.drawLine(QPointF(s * 0.56, s * 0.2), QPointF(s * 0.47, s * 0.14))
+    p.drawLine(QPointF(s * 0.56, s * 0.2), QPointF(s * 0.49, s * 0.27))
+
+
+def _g_windmill(p, s):
+    """A post with four sails crossed on its hub."""
+    c = QPointF(s * 0.5, s * 0.38)
+    p.drawLine(QPointF(s * 0.42, s * 0.92), c)
+    p.drawLine(QPointF(s * 0.58, s * 0.92), c)
+    for k in range(4):
+        a = math.radians(20 + 90 * k)
+        tip = c + QPointF(math.cos(a) * s * 0.34, -math.sin(a) * s * 0.34)
+        side = QPointF(math.cos(a + 1.571) * s * 0.06, -math.sin(a + 1.571) * s * 0.06)
+        p.drawPolygon(QPolygonF([c, tip, tip + side, c + side * 0.4]))
+
+
+def _g_ramp(p, s):
+    """A ramp with a ball at the top."""
+    p.drawPolygon(QPolygonF([QPointF(s * 0.06, s * 0.86), QPointF(s * 0.94, s * 0.86), QPointF(s * 0.94, s * 0.46)]))
+    p.drawEllipse(QPointF(s * 0.76, s * 0.4), s * 0.09, s * 0.09)
+
+
 def _g_flag(p, s):
     p.drawLine(QPointF(s * 0.18, s * 0.08), QPointF(s * 0.18, s * 0.92))
     path = QPainterPath()
@@ -758,6 +797,7 @@ GLYPHS = {
     'spiral': _g_spiral, 'steam': _g_steam, 'pour': _g_pour, 'fountain': _g_fountain, 'ball': _g_ball, 'pillar': _g_pillar,
     'wall': _g_wall, 'house': _g_house, 'car': _g_car, 'hill': _g_hill, 'flag': _g_flag, 'spot': _g_spot, 'window': _g_window,
     'mesh': _g_mesh, 'crate': _g_crate, 'roto': _g_roto, 'text': _g_text, 'shape': _g_shape,
+    'cart': _g_cart, 'turntable': _g_turntable, 'windmill': _g_windmill, 'ramp': _g_ramp,
     'matter': _g_grains, 'grains': _g_grains, 'mud': _g_mud, 'jelly': _g_jelly, 'snowball': _g_snowball, 'clay': _g_clay,
     'play': lambda p, s: p.drawPolygon(QPolygonF([QPointF(s * 0.3, s * 0.2), QPointF(s * 0.8, s * 0.5), QPointF(s * 0.3, s * 0.8)])),
     'stop': lambda p, s: p.drawRect(QRectF(s * 0.25, s * 0.25, s * 0.5, s * 0.5)),

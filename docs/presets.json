@@ -252,6 +252,13 @@
   "blurb": "A 260 kg steel ball into a brick wall: it punches through, the mortar gives way brick by brick, the wall above it caves in and the dust rolls out. A breakable box in Bricks."
  },
  {
+  "key": "wrecking_ball",
+  "name": "Wrecking ball",
+  "category": "Things that fall",
+  "size": "2 m wall",
+  "blurb": "A 900 kg wrecking ball on a crane’s cable swings down into a brick wall at 6 m/s and bursts through it in a cloud of dust. An object joined to the crane by a rope (Properties › Joint) and a breakable box in Bricks."
+ },
+ {
   "key": "window_smash",
   "name": "Stone through a window",
   "category": "Things that fall",
@@ -264,6 +271,55 @@
   "category": "Things that fall",
   "size": "35 cm vase",
   "blurb": "A pottery vase knocked off the edge of a table: it tips, falls a metre, lands on its rim and shatters across the tiles. A breakable hollow cylinder of Ceramic."
+ },
+ {
+  "key": "yard_blast",
+  "name": "Blast in a yard",
+  "category": "Things that fall",
+  "size": "2 kg charge",
+  "blurb": "Two kilograms of explosive go off among crates, barrels, a brick wall and a heap of sand: a fireball, the crates and barrels thrown clear, the wall blown down brick by brick, the sand flattened, then a column of smoke. An emitter with Blast set."
+ },
+ {
+  "key": "lightning_strike",
+  "name": "Lightning strikes a post",
+  "category": "Fires",
+  "size": "4 m bolt",
+  "blurb": "At dusk, lightning strikes a wooden post: three flashes down a branching channel light up the yard, and the post catches and burns. A light of the Lightning kind, and Spreading fire."
+ },
+ {
+  "key": "cart_jump",
+  "name": "Cart off a ramp",
+  "category": "Things that fall",
+  "size": "1 m cart, 6 m run",
+  "blurb": "A cart with a fire on its back, its four wheels turned by motors, races up a ramp, jumps off its end and bowls over a tower of blocks, trailing flame and smoke, and brakes into a barrier. Motors on hinges (Joint › Motor speed, keyed down to brake), a tilted plank (Shape › Roll) and a fire attached to the cart."
+ },
+ {
+  "key": "sand_hopper",
+  "name": "Sand from a hopper",
+  "category": "Sand, snow and mud",
+  "size": "40 cm hopper",
+  "blurb": "Forty litres of dry sand run out through a hole in the bottom of a hopper on legs and build a heap at its angle of repose round the legs. Matter in Sand, filling a hollow box with an opening in its floor."
+ },
+ {
+  "key": "snowballs",
+  "name": "Snowballs at a wall",
+  "category": "Sand, snow and mud",
+  "size": "18 cm snowballs",
+  "blurb": "Three snowballs of packing snow thrown one after another at a brick wall: each splats flat, packs where it hits, and breaks into lumps that fall to the ground. Matter in Packing snow, thrown."
+ },
+ {
+  "key": "jelly_ball",
+  "name": "Ball dropped on jelly",
+  "category": "Sand, snow and mud",
+  "size": "34 cm block",
+  "blurb": "A 7 kg steel ball dropped onto a block of jelly: the jelly squashes deep, throws the ball back up and wobbles. Matter in Jelly and an object that falls, pushing each other."
+ },
+ {
+  "key": "mud_drag",
+  "name": "Crate through mud",
+  "category": "Sand, snow and mud",
+  "size": "1.6 m of mud",
+  "blurb": "A crate dragged through a bed of thick mud: it ploughs a trench, pushes up a bow wave that slumps back, and leaves ridges. Matter in Mud, and an object moved by its keys."
  },
  {
   "key": "water_pour",

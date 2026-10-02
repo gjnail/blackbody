@@ -23,9 +23,9 @@ The numbers in this tutorial are for the practice plate. With your own footage, 
 
 ## 1. Find your way around
 
-Open Blackbody. The first time, a card in the viewer lists the five steps of a shot, and a campfire burns over black. Click **Got it**; **Help › Getting started** brings the card back.
+Open Blackbody. It opens in **Build**: an empty stage with a camera of your own, and a card on it to start building with fire, water, cloth, smoke, snow or an object. This tutorial puts a preset into footage instead, which happens in **Shot**, the other workspace in the header (**Tab** switches between them). Importing footage takes you there.
 
-![Blackbody on first launch, with the Getting started card](tutorial/01_first_launch.png)
+![Blackbody on first launch: the empty Build stage and its card](tutorial/01_first_launch.png)
 
 Across the top, the header holds what you do most: **Import footage**, **Open**, **Save**, undo and redo, and **Render**. Under it, the window has five parts. You will use all of them:
 
@@ -43,7 +43,9 @@ The status bar at the bottom shows the GPU Blackbody is using.
 
 Choose **File › Import footage** (**Ctrl+I**) and pick `out/practice_plate.mp4`.
 
-The header now names the clip, `practice_plate.mp4`; hover over it for the details (`Video · 1280×720 · 30.000 fps · 90 frames · h264 · 8 bit · audio`). The output size, frame rate and frame range (1 to 90) have changed to match it, so there is nothing to set up. (You can also drop a clip onto the window.)
+The header now names the clip, `practice_plate.mp4`; hover over it for the details (`Video · 1280×720 · 30.000 fps · 90 frames · h264 · 8 bit · audio`). The output size, frame rate and frame range (1 to 90) have changed to match it, so there is nothing to set up, and the viewer is in **Shot**, looking through the footage's camera. (You can also drop a clip onto the window.)
+
+A card at the top right of the viewer, *Put it in your shot*, walks through the same steps as this tutorial. This practice plate has no rectangle on the ground to line up, so this tutorial pins the fire in 2D (step 4). With your own footage, **Line up the ground** on the card (or **Ctrl+Shift+L**) gives the effect the footage's camera, at real size: see [Put an effect in your shot](getting-started.md#put-an-effect-in-your-shot).
 
 ## 3. Pick a fire
 
@@ -125,13 +127,13 @@ You do not need to light the smoke: *Lighting › Match ambient to footage* is o
 
 Play the shot. The camera pans, but the fire stays in the same place in the frame, so it slides across the ground.
 
-Choose **Tracking › Track the fire base** (**Ctrl+T**). Blackbody follows the patch of ground under the ring through the whole shot, forwards and backwards from the current frame, and the status bar reports `Tracked 90 frames.` The tracked path appears as a thin green line through the ring (short here, because the pan is slow), and the fire now stays put on the ground:
+Choose **Tracking › Track** (**Ctrl+T**). With the fire pinned in 2D, Blackbody follows the patch of ground under the ring through the whole shot, forwards and backwards from the current frame, and the status bar reports `Tracked 90 frames.` The tracked path appears as a thin green line through the ring (short here, because the pan is slow), and the fire now stays put on the ground:
 
 ![The tracked path of the fire base](tutorial/06_tracked.png)
 
 If the fire should sit slightly elsewhere, drag the ring: the whole track moves with it. **Tracking › Clear track** removes the track.
 
-The tracker follows one point in 2D, and needs texture under the ring (it tells you if there is too little). For shots with a strong change of perspective, import a camera solve instead with **File › Import camera track (.chan)** (see [Moving shots](scene-import.md#moving-shots)).
+The tracker follows one point in 2D, and needs texture under the ring (it tells you if there is too little). For shots with a strong change of perspective, line up the ground first: then **Track** works out the camera's whole move in 3D, in metres (see [Following the camera move](compositing.md#following-the-camera-move)). You can also import a camera solve with **File › Import camera track (.chan)** (see [Moving shots](scene-import.md#moving-shots)).
 
 ## 9. Make it flare up
 

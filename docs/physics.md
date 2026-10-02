@@ -11,6 +11,8 @@ Any object (collider) can fall: it drops, tumbles, slides, bounces, stacks and k
 - *Thrown at* gives it a speed when it is let go (a thrown ball, a launched crate), and *Spinning at* a spin. One with moving keys also carries on at the speed its keys gave it.
 - *Material* is what it is made of: how heavy, slippery and bouncy it is, and how it looks. *Density*, *Friction* and *Bounce* set their own values where you need them (0, or -1 for friction and bounce, uses the material's).
 
+![Dragging in a tower and a thrown ball](media/gif/ui-physics.gif "A tower of blocks and a thrown steel ball dragged in from Create › Things that fall: the ball knocks the tower down.")
+
 The *Things that fall* blocks are real size: a falling box, a bouncy ball, a 1 m boulder, a thrown steel ball, a steel drum, a domino run, a tower of blocks and a stack of crates.
 
 ## Materials
@@ -90,6 +92,32 @@ The *Explosion* block in Create › *Fire* is a 2 kg charge with its fireball. P
 
 ![Blast in a yard](media/gif/yard_blast.gif "Blast in a yard: two kilograms of explosive throw crates and barrels clear, blow down a brick wall and flatten a heap of sand.")
 
+In the viewer each charge is marked where it is, as a burst the size of its fireball, bright as it goes off, with its weight and the frame it goes off on.
+
+## Lightning
+
+A light of the *Lightning* kind is a bolt from its *Position* to where it *Strikes*. Its channel is jagged at every scale, as real lightning is (about 1.4 times as long as the straight line), with branches that light up only in its first flash. It flashes a few times down the same channel (*Flashes*: its return strokes, tens of milliseconds apart, each fading in about 20 ms). Its core glows white-hot, with a halo in the air round it, and through the flash it lights the set and the smoke like a row of lamps down its channel (*Intensity*). Where it strikes it starts a fire (*Sets fire where it strikes*), which catches whatever will burn there when Spreading fire is on. *Branches*, *Thickness* and *Bolt seed* shape it.
+
+The *Lightning* block is in Create › *Lights*. In the viewer its channel is drawn from where it starts to where it strikes; select it and drag the diamond at the bottom over the ground to choose where it strikes. Preset: *Lightning strikes a post*.
+
+![Lightning strikes a post](media/gif/lightning_strike.gif "Lightning strikes a post: three flashes down a branching channel light up the yard at dusk, and the post catches and burns.")
+
+Lightning is drawn on the stage, so in sky scenes, where there is no stage, it does not show yet.
+
+## Tilted objects
+
+*Tilt* and *Roll* (Properties › *Shape*) tip an object over, after its *Rotation* about the vertical. *Tilt* leans its top toward its front (it turns about its own sideways axis); *Roll* leans its top to its left (about its own front-to-back axis). A plank tilted 20° is a ramp; a wall can lean, a wheel lie on its side or stand on its rim. Everything meets it at its slope: smoke slides up its underside, water runs down it, sand piles on it, cloth drapes over it, and a falling thing slides down it if the slope is steeper than its friction angle (a wooden box on a wooden plank: past 24°) and stays put if not. Keyframe *Tilt* or *Roll* to tip a tray or flip a flap: what is on it is thrown by its turning.
+
+The *Ramp* block (Create › *Objects*) is a 2 m plank propped up at 20°. *Ball down a ramp* (*Things that fall*) rolls a steel ball down one into a row of dominoes.
+
+## Motors
+
+A hinge with a *Motor speed* (Properties › *Joint*, in turns a minute) is driven round at that speed: anticlockwise looking down its *Hinge axis* from its tip (negative: the other way). *Motor strength* is the most turning force the motor has, in newton metres. The motor gets up to speed as fast as that can turn what it drives, and holds the speed against the load; a load too much for it (an arm too heavy to lift, a cart on too steep a slope) stalls it. The motor pushes back on what it is joined to: four wheels hinged to a cart drive the cart along, and a fan on a fixed post just turns. Keyframe *Motor speed* to start, speed up or stop it: keyed down to 0, it brakes.
+
+The *Machines* blocks (Create › *Machines*) are a motor cart (four rubber wheels at 30 turns a minute: it drives off at half a metre a second), a turntable that spins up until the blocks on it fly off, and a windmill whose sails stir the smoke. Preset: *Cart off a ramp*, a burning cart that jumps a ramp into a tower of blocks.
+
+![Cart off a ramp](media/gif/cart_jump.gif "Cart off a ramp: a burning motor cart races up a 15° ramp, jumps, crashes through a tower of blocks and brakes into a barrier.")
+
 ## How they look
 
 Without footage, objects are drawn in CG in their materials (wood, stone, brick and so on), lit in the same light as the smoke: the key light with soft shadows, the sky (darker in corners and under things), the fire's own light with shadows, and the lights in the set. Glass and ice are clear: you see the fire and the set through them, bent, and the sky in them. *Own colour* draws one in a colour of its own.
@@ -115,5 +143,7 @@ CG objects go over the footage lit by the shot's light, and their shadows darken
 - A falling mesh collides as its convex hull: its hollows and dents are filled in.
 - Contacts are slightly soft, so bounces are within about 0.05 of a material's bounce, and the least a thing bounces is about 0.2. Things that start inside each other are thrown apart when they are let go (the log says which).
 - In a liquid scene with grey stand-ins (Water › *Colliders*), things that fall or float are drawn as stand-ins in their material's colour.
+- A motor holds its speed, not its angle: things on separate motors drift a little out of step when their loads differ. Give one balanced part one motor (the windmill's sails are two bars crossed on its hub).
+- Emitters still turn only about the vertical: an emitter attached to a tilted object keeps upright.
 
 Under the hood, MuJoCo (Apache-2.0) integrates the bodies: their contacts, friction and stacking, with the time step their size needs. The gas, the water and the cloth see them as moving objects every substep.

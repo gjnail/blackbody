@@ -1,6 +1,6 @@
 # Presets
 
-Blackbody comes with 84 presets. Click one in the app's Effects panel to load it into your shot; every one is an ordinary scene you can change and save as your own. On the website the gallery plays a clip of each one that has one: <https://gjnail.github.io/blackbody/presets.html>.
+Blackbody comes with 92 presets. Click one in the app's Effects panel to load it into your shot; every one is an ordinary scene you can change and save as your own. On the website the gallery plays a clip of each one that has one: <https://gjnail.github.io/blackbody/presets.html>.
 
 ## Fire and smoke
 
@@ -39,6 +39,7 @@ Blackbody comes with 84 presets. Click one in the app's Effects panel to load it
 | <img src="../blackbody/assets/presets/flag_wind.png" width="200" alt=""> | **Flag in smoky wind**<br>1.5 m flag | A nylon flag on a pole streams and flutters in a gusting wind while the smoke of a fire upwind blows past it; the flag stirs the smoke behind it. The flag is a Fabric held by one side: change its material, size or the wind. |
 | <img src="../blackbody/assets/presets/kettle_steam.png" width="200" alt=""> | **Kettle steam**<br>spout plume | Steam from a kettle spout: clear right at the spout, clouding over as it cools, then evaporating as it mixes into the room. |
 | <img src="../blackbody/assets/presets/steam_vent.png" width="200" alt=""> | **Steam vent**<br>6 m plume, cold day | A pipe venting steam into freezing air: a dense white column that billows and thins as it rises. |
+| <img src="../blackbody/assets/presets/lightning_strike.png" width="200" alt=""> | **Lightning strikes a post**<br>4 m bolt | At dusk, lightning strikes a wooden post: three flashes down a branching channel light up the yard, and the post catches and burns. A light of the Lightning kind, and Spreading fire. |
 
 ## Things that fall
 
@@ -47,8 +48,20 @@ Blackbody comes with 84 presets. Click one in the app's Effects panel to load it
 | <img src="../blackbody/assets/presets/crates_in_fire.png" width="200" alt=""> | **Crates into a fire**<br>1 m campfire | Three wooden crates dropped onto a campfire one after another: they land on the burning logs, shove the smoke aside, catch and burn. Burnable objects with Falls on, and Spreading fire. |
 | <img src="../blackbody/assets/presets/tower_knockdown.png" width="200" alt=""> | **Knocking down a tower**<br>1.2 m tower | A bowling ball thrown into a tower of wooden blocks beside a run of dominoes, on the stage in sunlight: the blocks tumble and bounce, the dominoes fall in turn. Objects with Falls on, drawn in their materials. |
 | <img src="../blackbody/assets/presets/wall_smash.png" width="200" alt=""> | **Ball through a brick wall**<br>1.6 m wall | A 260 kg steel ball into a brick wall: it punches through, the mortar gives way brick by brick, the wall above it caves in and the dust rolls out. A breakable box in Bricks. |
+| <img src="../blackbody/assets/presets/wrecking_ball.png" width="200" alt=""> | **Wrecking ball**<br>2 m wall | A 900 kg wrecking ball on a crane’s cable swings down into a brick wall at 6 m/s and bursts through it in a cloud of dust. An object joined to the crane by a rope (Properties › Joint) and a breakable box in Bricks. |
 | <img src="../blackbody/assets/presets/window_smash.png" width="200" alt=""> | **Stone through a window**<br>1 m pane | A stone thrown through a pane of window glass held in its frame: it punches a hole, shards break away round it and fall, the rest stays in the frame. A breakable thin box of glass in Shards. |
 | <img src="../blackbody/assets/presets/vase_drop.png" width="200" alt=""> | **Vase off a table**<br>35 cm vase | A pottery vase knocked off the edge of a table: it tips, falls a metre, lands on its rim and shatters across the tiles. A breakable hollow cylinder of Ceramic. |
+| <img src="../blackbody/assets/presets/yard_blast.png" width="200" alt=""> | **Blast in a yard**<br>2 kg charge | Two kilograms of explosive go off among crates, barrels, a brick wall and a heap of sand: a fireball, the crates and barrels thrown clear, the wall blown down brick by brick, the sand flattened, then a column of smoke. An emitter with Blast set. |
+| <img src="../blackbody/assets/presets/cart_jump.png" width="200" alt=""> | **Cart off a ramp**<br>1 m cart, 6 m run | A cart with a fire on its back, its four wheels turned by motors, races up a ramp, jumps off its end and bowls over a tower of blocks, trailing flame and smoke, and brakes into a barrier. Motors on hinges (Joint › Motor speed, keyed down to brake), a tilted plank (Shape › Roll) and a fire attached to the cart. |
+
+## Sand, snow and mud
+
+| | Preset | Notes |
+|---|---|---|
+| <img src="../blackbody/assets/presets/sand_hopper.png" width="200" alt=""> | **Sand from a hopper**<br>40 cm hopper | Forty litres of dry sand run out through a hole in the bottom of a hopper on legs and build a heap at its angle of repose round the legs. Matter in Sand, filling a hollow box with an opening in its floor. |
+| <img src="../blackbody/assets/presets/snowballs.png" width="200" alt=""> | **Snowballs at a wall**<br>18 cm snowballs | Three snowballs of packing snow thrown one after another at a brick wall: each splats flat, packs where it hits, and breaks into lumps that fall to the ground. Matter in Packing snow, thrown. |
+| <img src="../blackbody/assets/presets/jelly_ball.png" width="200" alt=""> | **Ball dropped on jelly**<br>34 cm block | A 7 kg steel ball dropped onto a block of jelly: the jelly squashes deep, throws the ball back up and wobbles. Matter in Jelly and an object that falls, pushing each other. |
+| <img src="../blackbody/assets/presets/mud_drag.png" width="200" alt=""> | **Crate through mud**<br>1.6 m of mud | A crate dragged through a bed of thick mud: it ploughs a trench, pushes up a bow wave that slumps back, and leaves ridges. Matter in Mud, and an object moved by its keys. |
 
 ## Water
 

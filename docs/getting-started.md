@@ -63,6 +63,7 @@ In **Shot**, a card at the top right of the viewer walks you through these steps
 4. **Follow the camera move.** If the camera moves at all, choose Tracking › Track (**Ctrl+T**). Blackbody follows spots all over the footage and works out where the camera is and where it looks on every frame. That works for pans, tilts and handheld shake, and for a camera that travels: a dolly, a walk, a car, a drone. Spots on the ground give the move in real metres. Spots that move by themselves (people, cars) are dropped, and the result reports how closely it fits, in pixels. The effect then stays put on the ground in perspective. For a locked-off shot, tick *It holds still*.
 5. **Anything in front?** Draw roto round what passes in front of the effect (**R**): it goes behind it. See [Roto](compositing.md#roto).
 6. **Make it sit in the footage.** Essentials has the main controls under *Blend with the footage*; Composite has all of them: fire exposure (Shading), heat haze, the effect's light on the footage, glow, grain and the lens. Smoke is lit by the average colour of the footage automatically (Lighting › Match ambient to footage). [Fitting it into your footage](compositing.md) has every tool for this.
+   <img src="media/gif/ui-lineup.gif" width="49%" alt="Lining up the ground: the grid's corners dragged onto a paving slab; the campfire then stands on it" title="Line up the ground: drag the four corners onto a slab; the lens, tilt and height are solved and the fire stands on the real ground."> <img src="media/gif/ui-track.gif" width="49%" alt="Tracking the camera: the move worked out for every frame, then the fire staying on the ground as the camera dollies in" title="Track (Ctrl+T): the camera's move is worked out in metres, and the fire stays on the ground.">
 7. **Render** (Ctrl+M). Pick one or more outputs: a finished composite, an element with alpha, multi-layer or deep EXRs, or OpenVDB volumes. See [Outputs](outputs.md).
 
    ![The render dialog](media/gif/ui-render.gif "The render dialog: tick the outputs you want, all written in one pass.")
@@ -71,13 +72,15 @@ In **Shot**, a card at the top right of the viewer walks you through these steps
 
 ![Dragging the ring onto the ground, then the square to scale the fire](media/gif/ui-place.gif "Pinned in 2D: drag the ring onto the ground, then the square to scale the fire to the shot.")
 
-![Click a preset in Effects and it simulates live](media/gif/ui-library.gif "Click a preset in Effects: it loads and simulates live.")
+![Click a preset in Effects and it simulates live](media/gif/ui-effects.gif "Pick a chip and click a preset in Effects: it loads and simulates live. Here the wrecking ball, the sand hopper and the campfire.")
 
 Space plays. The simulation runs live, so you can change settings while it plays. Frames are cached (the green bar in the timeline): scrubbing back, and changing anything about the look, camera or composite, re-renders from the cache without re-simulating.
 
 ## Build your own
 
 Blackbody opens in **Build**: an empty stage you look at with a camera of your own (drag empty space to look around, right- or middle-drag to pan, the wheel to move closer, **F** to frame everything). **Shot**, next to it in the header, is where an effect goes into your footage: the shot's camera, placement on the plate, roto, layers and the render. **Tab** or **W** switches between them; nothing you do in Build moves the shot's camera.
+
+![Building on the empty stage: a curtain from the card, moved and stretched with the gizmo, set on fire from its right-click menu, then wind](media/gif/ui-build.gif "Build: a curtain from the card on the empty stage, moved and stretched with the gizmo, set on fire from its right-click menu, then wind from Create.")
 
 1. **Put something in.** The card on the empty stage starts you with fire, water, cloth, smoke, snow or a solid object. After that, **Create** (the second tab on the left, **Ctrl+N**) has everything: fire sources (a fire, a campfire, a fuel pool, a fire line, a torch, a gas burner, a fireball, a flame jet, a fire whirl, coloured flame, burnable things), smoke, steam and sparks, **liquids** (a pour, a hose jet, a fountain, a block of water, thrown water, a waterfall, a pond, ink, lava), **fabric** (a curtain, a flag, a banner, a canopy, a tablecloth, a falling sheet, a wet towel, your own cloth mesh), **weather** (rain, snow, sleet, hail, freezing rain), **forces** (wind, a fan, an updraft, suction, a vortex: air that pushes smoke, flame, embers and cloth around), **objects** (boxes, balls, pillars, walls, a room with a door, a car, floating crates, terrain, 3D text, your own meshes) and **lights**. Click one, or drag it into the viewer and drop it where it should stand.
 2. **Move and shape it.** The selected thing has a gizmo: drag an arrow to move it along X (red), Y (green) or Z (blue), a square to stretch it along that side, the ring's knob to turn it, and its middle to slide it over the ground. Hold **Ctrl** to snap to a grid sized for the scene. The size or place shows by the cursor as you drag.
@@ -94,6 +97,8 @@ Blackbody opens in **Build**: an empty stage you look at with a camera of your o
    - **Attach to** another thing: it then goes wherever that goes (a torch in a moving hand, a flag on a moving pole, fire on a driving car). Moving it by hand keeps its new place relative to what it is attached to.
    - **Move along a path**: click points on the ground where it should go, set how long it takes, and press Enter.
    - **Drop to the ground**, **look at it** (the Build camera turns to it), duplicate, delete.
+
+   <img src="media/gif/ui-physics.gif" width="49%" alt="A tower of blocks and a thrown steel ball dragged in from Create; the ball knocks the tower down" title="Things that fall: a tower and a thrown ball dragged in from Create."> <img src="media/gif/ui-matter.gif" width="49%" alt="A sand pour building a heap, then Made of, Mud" title="A sand pour; right-click, Made of › Mud.">
 4. **Tune it** in Properties: everything about the selected thing, the Essentials of the scene, and every other setting a search away.
 
 Generic blocks are sized for the scene; real things (a torch, a car, a curtain) keep their real size. If a block does not fit, the simulation box grows to take it. Whatever you put in simulates together: water puts fire out, fire burns cloth, wind blows the smoke and the flags, lava boils the sea. The header shows what the scene simulates. Every change is one step of undo.
@@ -103,6 +108,8 @@ Generic blocks are sized for the scene; real things (a torch, a car, a curtain) 
 ### Words on fire
 
 Type text and it becomes solid 3D letters, in any font on your computer, that work like any other object:
+
+<img src="media/gif/ui-text.gif" width="49%" alt="Create, Burning text: typing FIRE and the letters catching fire" title="Create › Burning text: type the words and press Add."> <img src="media/gif/burning_text.gif" width="49%" alt="The burning letters rendered" title="The burning letters, rendered.">
 
 - **Burning text** (Create › Fire): letters with fire all over them, burning steadily. Type the words, pick a font, bold or italic, the letter height and depth (new text is sized to fit the scene), and press **Add**. The letters hide the fire behind them, so they read as dark shapes wreathed in flame. The fire stays on the letters when you move, stretch or turn them.
 - **Text** (Create › Objects): solid letters. Right-click them and **Set it on fire**: every letter catches at once, flares up and burns out. Or **Make it float**, put them under a pour of water, or blow smoke around them.
@@ -119,6 +126,8 @@ Logos and pictures work the same way: **Burning logo** (Create › Fire), **Logo
 - **Group** (**Ctrl+G**): the others are attached to the one you right-clicked and go wherever it goes. **Select its group** and **Ungroup** (**Ctrl+Shift+G**) are on the menu of anything grouped.
 - **Repeat…** (**Ctrl+R**): copies in a row (torches down a path), a ring (flame jets around a stage, each turned to face out) or scattered over the ground (spot fires, debris), with a sketch of where they go. Attached things come along, and each copy of a fire flickers in its own way.
 - **Duplicate** (**Ctrl+D**), **Delete** (**Delete**) and **Save as a block**.
+
+![Repeat in a ring: a torch, right-click, Repeat, a ring of eight](media/gif/ui-repeat.gif "Right-click › Repeat…: a ring of eight torches, each turned to face out.")
 
 ### Your own blocks
 
@@ -147,6 +156,8 @@ Any setting with a **◇** next to it can be keyframed: click the ◇ to key it 
 ## Working in the app
 
 **Search** in the header (**Ctrl+K**) finds anything: what you can do to the selected thing (*set on fire*, *float*), building blocks, menu commands, every setting of the scene, the ready-made effects and the things in the scene. Type a few letters and press Enter.
+
+![Search everything: Ctrl+K, make it fall, then set it on fire](media/gif/ui-search.gif "Ctrl+K: type what to do to the selected box (make it fall, then set it on fire) and press Enter.")
 
 **File › Pack project** copies every file the project uses (meshes and their sequences, text and logo shapes, VDB volumes, the HDRI, holdout passes and, if you want, the footage) into a folder beside it, and points the project at the copies: move or send the project and that folder together and it opens anywhere.
 

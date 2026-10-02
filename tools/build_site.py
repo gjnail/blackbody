@@ -348,8 +348,10 @@ def build_presets():
 def build_static():
     """site/*.html: {{head|TITLE|DESCRIPTION|PATH}}, {{header|KEY}}, {{footer}} and {{video|NAME|CAPTION|LABEL}}."""
     count = len(json.loads((DOCS / 'presets.json').read_text(encoding='utf-8')))
+    # the building blocks in Create, counted in the source (the site builds without the package's dependencies)
+    blocks = len(re.findall(r"^    Component\('", (ROOT / 'blackbody' / 'scene' / 'components.py').read_text(encoding='utf-8'), re.M))
     for src in SITE.glob('*.html'):
-        text = src.read_text(encoding='utf-8').replace('{{preset_count}}', str(count))
+        text = src.read_text(encoding='utf-8').replace('{{preset_count}}', str(count)).replace('{{block_count}}', str(blocks))
         text = re.sub(r'\{\{head\|([^|]*)\|([^|]*)\|([^}]*)\}\}', lambda m: head(m.group(1), m.group(2), m.group(3)), text)
         text = re.sub(r'\{\{header\|([^}]*)\}\}', lambda m: header(m.group(1)), text)
         text = text.replace('{{footer}}', footer())

@@ -25,6 +25,26 @@ python tools/docs_media/compose_ui.py place
 python tools/docs_media/encode_media.py ui place            # docs/media/video/ui-place.mp4 and docs/media/gif/ui-place.gif
 ```
 
+The recordings: `build` (the empty stage, the gizmo, right-click › Set it on fire), `text` (Burning text), `physics`
+(things dragged in from Create), `matter` (a sand pour made mud), `lineup` (lining up the ground on a paving slab),
+`track` (tracking the camera through a dolly shot), `search` (Ctrl+K), `repeat` (a ring of torches), `effects` (the
+Effects tab's chips), and `create`, `place`, `scrub`, `views`, `render`. Menus and dialogs are drawn into the frames
+where they open (the app runs on a big virtual screen, so Qt leaves them where they are asked to be).
+
+`lineup`, `track`, `place` and `views` use a procedural dusk courtyard with paving slabs to line up on:
+
+```bash
+python tools/docs_media/courtyard.py out/court_dolly --move dolly          # and --move still --frames 72 for out/court_still
+ffmpeg -framerate 24 -i out/court_dolly/court.%04d.png -c:v libx264 -crf 14 -pix_fmt yuv420p out/court_dolly.mp4
+```
+
+Copy `out/court_dolly/truth.json` to `out/court_dolly.json`: it holds the slab's corners for the line-up. With
+`BB_SAVE_DIR` set, `track` and `text` also save their projects there, to render at full quality from the command line.
+
+Long recordings make short GIFs with `--gif-speed` (`encode_media.py ui build --gif-seconds 20 --gif-speed 1.6`). To
+record in a frozen copy of the repo (so edits made meanwhile cannot break a long session), run the scripts there and
+point `BLACKBODY_MEDIA_WORK` at its `out/docs_media` when encoding into this repo's `docs/media`.
+
 ## Sizes
 
-MP4s are H.264 at CRF 23 (CRF 22 for the UI), and are about 1 MB for 5 seconds. GIFs are 480 px wide at 12 fps (960 px and 10 fps for the UI), and `encode_media.py` shrinks a GIF until it fits in 4 MB. Keep new media about this size, because every file stays in the repository's history.
+MP4s are H.264 at CRF 23 (CRF 22 for the UI), and are about 1 MB for 5 seconds. GIFs are 480 px wide at 12 fps (880 to 960 px and 10 fps for the UI), and `encode_media.py` shrinks a GIF until it fits in 4 MB (the UI recordings here used `--gif-max 3`). Keep new media about this size, because every file stays in the repository's history.

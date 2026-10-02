@@ -19,7 +19,7 @@ from .params import guard_wheel
 MIME = 'application/x-blackbody-component'
 GROUP_COLOURS = {'Fire': theme.ACCENT, 'Smoke, steam & sparks': '#c9c9d1', 'Liquids': '#6fb6ff', 'Fabric': '#d59cff',
                  'Weather': '#a8e0ff', 'Forces': '#9fe0c8', 'Objects': '#9fb0c4', 'Things that fall': '#b4e6a0',
-                 'Ropes and hinges': '#d6b684', 'Sand, snow & mud': '#e3c08a',
+                 'Ropes and hinges': '#d6b684', 'Machines': '#c9b8f0', 'Sand, snow & mud': '#e3c08a',
                  'Lights': '#ffdc78', 'Mine': '#f0c674'}
 GROUP_HINTS = {'Fire': 'Sources of flame, and things that burn.', 'Smoke, steam & sparks': 'Smoke, steam and sparks without flame.',
                'Liquids': 'Water, honey, ink and lava: sources, standing water. With fire in the scene too, the two meet.',
@@ -33,13 +33,15 @@ GROUP_HINTS = {'Fire': 'Sources of flame, and things that burn.', 'Smoke, steam 
                                    'Any object can: right-click it and Make it fall.',
                'Ropes and hinges': 'Things that swing, bounce and turn: on ropes, springs, hinges and ball joints. Any object '
                                    'can: right-click it and Hang it on a rope, Hinge it, or Tie it to another.',
+               'Machines': 'Things driven by motors: a cart on motor wheels, a turntable, a windmill. Any hinge can have '
+                           'a motor: Properties › Joint › Motor speed.',
                'Sand, snow & mud': 'Grains that pile, pour, pack, slump and wobble: sand, snow, mud, jelly and clay. Objects '
                                    'and water push them about and they push back. Right-click one to change what it is made of.'}
 STARTERS = ['burner', 'pour', 'flag', 'snow', 'smoke', 'box']   # one of each kind, shown first under All
 DOMAINS = [('all', 'All', None), ('fire', 'Fire', ('Fire', 'Smoke, steam & sparks')), ('liquid', 'Liquids', ('Liquids',)),
            ('fabric', 'Fabric', ('Fabric',)), ('matter', 'Sand & mud', ('Sand, snow & mud',)), ('weather', 'Weather', ('Weather',)),
            ('forces', 'Forces', ('Forces',)),
-           ('objects', 'Objects', ('Objects', 'Things that fall', 'Ropes and hinges', 'Lights')), ('mine', 'Yours', ('Mine',))]
+           ('objects', 'Objects', ('Objects', 'Things that fall', 'Ropes and hinges', 'Machines', 'Lights')), ('mine', 'Yours', ('Mine',))]
 
 
 class Tile(QAbstractButton):

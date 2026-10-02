@@ -1,11 +1,11 @@
-{{head|Blackbody: GPU fire, smoke and water for your footage|Blackbody simulates fire, smoke, water, the sea, lava, ice and weather on your GPU and renders them physically into live-action footage. Free and open source.|}}
+{{head|Blackbody: GPU fire, water, destruction and sand for your footage|Blackbody simulates fire, smoke, water, the sea, lava, cloth, things that fall and break, explosions, lightning, sand, snow and weather on your GPU, and puts them into live-action footage. Free and open source.|}}
 {{header|index}}
 
 <main id="main">
   <section class="hero">
     <p class="eyebrow">Free, open-source VFX simulation</p>
     <h1>Real fire. Real water. <em>Your shot.</em></h1>
-    <p class="lede">Blackbody simulates fire, smoke, liquids, the sea, lava, ice and weather on your GPU, and renders them physically into live-action footage. You can place the effect in your plate, match it to the camera and render a finished composite or the passes your compositor wants.</p>
+    <p class="lede">Blackbody simulates fire, smoke, liquids, the sea, lava, cloth, things that fall and break, explosions, lightning, sand, snow and weather on your GPU. Build an effect from nothing or start from {{preset_count}} presets, line it up with your footage, track the camera, and render a finished composite or the passes your compositor wants.</p>
     <div class="hero-actions">
       <a class="btn btn-primary" href="getting-started.html">Get started</a>
       <a class="btn btn-secondary" href="https://github.com/gjnail/blackbody">View on GitHub</a>
@@ -20,8 +20,25 @@
       </video>
       <button class="sound-btn" type="button" data-for="reel">Play with sound</button>
     </div>
-    <p class="caption">The 30-second showreel. Blackbody simulated and rendered every fire, splash and wave in it. The backplates are procedural, and the music is synthesised.</p>
+    <p class="caption">The 90-second film. Blackbody simulated and rendered every fire, splash, brick and grain in it, and the screen recordings are the app itself. The backplates are procedural, and the music is synthesised.</p>
   </div>
+
+  <!-- what's new -->
+  <section class="section" id="new">
+    <div class="section-head center">
+      <p class="kicker">New since 1.0</p>
+      <h2>Now it builds anything</h2>
+      <p class="sub">Objects that fall, break and swing. Explosions and lightning. Sand, snow and mud. Your words on fire. An empty stage to build on, and a camera that follows your footage.</p>
+    </div>
+    <div class="cards">
+      <a class="card" href="#things"><div class="card-body"><span class="tag">Physics</span><h3>Things that fall and break</h3><p>Rigid bodies in real materials, fracture into bricks, shards and splinters, ropes, cables, springs and hinges.</p></div></a>
+      <a class="card" href="#things"><div class="card-body"><span class="tag">Blasts</span><h3>Explosions and lightning</h3><p>A charge in kilograms of TNT throws and breaks what is near it. A bolt flashes, lights the set and sets fire to what it hits.</p></div></a>
+      <a class="card" href="#matter"><div class="card-body"><span class="tag">MPM</span><h3>Sand, snow and mud</h3><p>Seven materials that pile, pour, pack, slump and wobble, as hundreds of thousands of particles on the GPU.</p></div></a>
+      <a class="card" href="#text"><div class="card-body"><span class="tag">Type</span><h3>Text and logos</h3><p>Any words in any font, or an SVG or PNG, as solid letters: burning, solid, or water that falls and splashes.</p></div></a>
+      <a class="card" href="#build"><div class="card-body"><span class="tag">Build</span><h3>An empty stage and a gizmo</h3><p>{{block_count}} building blocks, a 3D gizmo, and a right-click menu that sets fire, drops, breaks and ties things.</p></div></a>
+      <a class="card" href="#footage"><div class="card-body"><span class="tag">Matchmove</span><h3>Line up, track, surfaces</h3><p>The camera from a slab on the ground, its move tracked in metres, and real walls and steps that effects meet.</p></div></a>
+    </div>
+  </section>
 
   <!-- in your footage -->
   <section class="section" id="footage">
@@ -38,11 +55,36 @@
       <input type="range" min="0" max="100" value="50" aria-label="Drag to compare the plate and the composite">
     </div>
     <div class="feature" style="margin-top:44px">
-      <div class="feature-media">{{video|in-your-footage||The yard shot}}</div>
+      <div class="feature-media">{{video|ui-lineup||Lining up the ground}}</div>
+      <div>
+        <h3>Line up the ground in four drags</h3>
+        <p>Drag a grid's corners onto anything rectangular lying on the ground in the footage: a paving slab, a rug, a parking bay. Blackbody works out the lens from the vanishing points and the camera's tilt, roll and height from the rectangle, and draws a perspective grid, the horizon and a 1.75 m figure over the footage to check. From then on the effect stands on the real ground at its real size.</p>
+        <ul>
+          <li><b>No rectangle in view?</b> Line up from the horizon.</li>
+          <li><b>Sloping ground?</b> Two upright lines keep the world level, and the slope becomes solid ground.</li>
+          <li><b>The lens recorded in the file</b> (photos, phone video) is used by itself.</li>
+        </ul>
+        <a class="more" href="compositing.html#lining-up-the-ground">Lining up the ground →</a>
+      </div>
+    </div>
+    <div class="feature flip">
+      <div class="feature-media">{{video|tracked_shot||A tracked dolly shot}}</div>
+      <div>
+        <h3>Track any camera move, in metres</h3>
+        <p>Tracking › Track (Ctrl+T) follows about 60 spots through the footage to a fraction of a pixel, drops the ones that move by themselves, and works out where the camera is and where it looks on every frame: a pan, a dolly, a walk, a car or a drone. The ground gives the move in real metres, and a bundle adjustment keeps errors from piling up along it. The effect stays put on the ground.</p>
+        <ul>
+          <li>Reports how closely it fits, in pixels</li>
+          <li>Or import a solve from your matchmover (.chan), or a whole USD scene with its camera, objects and lights</li>
+        </ul>
+        <a class="more" href="compositing.html#following-the-camera-move">Following the camera move →</a>
+      </div>
+    </div>
+    <div class="feature">
+      <div class="feature-media">{{video|ui-track||Tracking in the app}}</div>
       <div>
         <h3>It sits in the shot, not on top of it</h3>
         <ul>
-          <li><b>Matches your camera.</b> Track a handheld move with one click, or import a camera solve (.chan) or a whole USD scene.</li>
+          <li><b>Meets real surfaces.</b> Line up a wall, a table, a ramp or stairs in the footage: water runs down it, smoke flows round it, fire spreads over it, and it hides what is behind it.</li>
           <li><b>Lights your scene.</b> The fire lights the ground, the walls and the objects in the footage, shadowed by the smoke.</li>
           <li><b>Hides behind real objects.</b> It goes behind stand-in colliders, roto mattes or the footage's own depth pass.</li>
           <li><b>Looks like your camera shot it.</b> Lens blur, distortion, heat haze, highlight roll-off, and noise matched to the footage's own.</li>
@@ -57,6 +99,33 @@
       <figure class="pass"><img src="media/img/pass-depth.jpg" alt="" loading="lazy" width="640" height="360"><span>Depth</span></figure>
       <figure class="pass"><img src="media/img/pass-alpha.jpg" alt="" loading="lazy" width="640" height="360"><span>Alpha</span></figure>
       <figure class="pass"><img src="media/img/pass-light.jpg" alt="" loading="lazy" width="640" height="360"><span>Fire light</span></figure>
+    </div>
+  </section>
+
+  <!-- build anything -->
+  <section class="section" id="build">
+    <div class="section-head">
+      <p class="kicker">Build anything</p>
+      <h2>An empty stage, and everything to put on it</h2>
+      <p class="sub">Blackbody opens on a stage with a camera of your own. What you put in decides what it simulates, and fire, water, cloth, rigid bodies and sand all simulate together.</p>
+    </div>
+    <div class="feature">
+      <div class="feature-media">{{video|ui-build||Building from nothing}}</div>
+      <div>
+        <h3>Put it in, move it, make it happen</h3>
+        <p>Start from the card on the empty stage or from Create's {{block_count}} building blocks. A 3D gizmo moves, stretches and turns what you select, with snapping. Then right-click it for what it can do:</p>
+        <ul>
+          <li>Set it on fire, make it fall, make it breakable, hang it on a rope or a spring, hinge it</li>
+          <li>Make it float, sink, hot or freezing, hollow it out, soak a cloth or let it go</li>
+          <li>Pour sand from it or change what it is made of, turn a source into fire, water, lava or a force</li>
+          <li>Attach it to something, or send it along a path you click out on the ground</li>
+        </ul>
+        <a class="more" href="getting-started.html#build-your-own">Build your own →</a>
+      </div>
+    </div>
+    <div class="clips two">
+      <div class="clip">{{video|ui-physics||Dragging in things that fall}}</div>
+      <div class="clip">{{video|ui-matter||A sand pour, made mud}}</div>
     </div>
   </section>
 
@@ -127,15 +196,46 @@
       </div>
     </div>
     <div class="clips">
+      <div class="clip">{{video|wall_smash||Ball through a brick wall}}</div>
       <div class="clip">{{video|wrecking_ball||Wrecking ball}}</div>
       <div class="clip">{{video|window_smash||Stone through a window}}</div>
+    </div>
+    <div class="feature flip" style="margin-top:44px">
+      <div class="feature-media">{{video|yard_blast||Blast in a yard}}</div>
+      <div>
+        <p class="kicker">Explosions</p>
+        <h3>A blast wave that throws and breaks</h3>
+        <p>A source's Blast is an explosive charge in kilograms of TNT. When it goes off, its blast wave throws the things that fall, blows breakable things apart piece by piece and scatters sand and snow, by the impulse a blast that size gives at that distance, while the fireball and the smoke column rise. The viewer marks each charge, its fireball's size and when it goes off.</p>
+        <a class="more" href="physics.html#explosions">Explosions →</a>
+      </div>
+    </div>
+    <div class="feature">
+      <div class="feature-media">{{video|lightning_strike||Lightning strikes a post}}</div>
+      <div>
+        <p class="kicker">Lightning</p>
+        <h3>A bolt that flashes, lights the set and sets fire</h3>
+        <p>Lightning is a light: a bolt from where it starts to where it strikes, jagged at every scale, with branches that light only in its first flash. It flashes a few times down the same channel, each stroke fading in tens of milliseconds, lights the set and the smoke like a row of lamps, and starts a fire where it strikes.</p>
+        <a class="more" href="physics.html#lightning">Lightning →</a>
+      </div>
+    </div>
+    <div class="feature flip">
+      <div class="feature-media">{{video|cart_jump||Cart off a ramp}}</div>
+      <div>
+        <p class="kicker">Ramps, wheels and motors</p>
+        <h3>Things that tilt, roll and drive</h3>
+        <p>Any object can be tilted and rolled as well as turned: a plank becomes a ramp, a wall leans, a wheel stands on its rim. Things slide down a slope steeper than their friction angle and stay put on a gentler one. A hinge can have a motor, held at a speed with the strength you give it: wheels drive a cart along, a turntable spins up until what is on it flies off, a windmill's sails stir the smoke.</p>
+        <a class="more" href="physics.html#motors">Motors →</a>
+      </div>
+    </div>
+    <div class="clips two">
       <div class="clip">{{video|crates_in_fire||Crates into a fire}}</div>
+      <div class="clip">{{video|vase_drop||Vase off a table}}</div>
     </div>
   </section>
 
   <!-- sand, snow and mud -->
   <section class="section" id="matter">
-    <div class="feature">
+    <div class="feature flip">
       <div class="feature-media">{{video|sand_hopper||Sand from a hopper}}</div>
       <div>
         <p class="kicker">Sand, snow and mud</p>
@@ -154,6 +254,27 @@
       <div class="clip">{{video|jelly_ball||Ball dropped on jelly}}</div>
       <div class="clip">{{video|snowballs||Snowballs at a wall}}</div>
       <div class="clip">{{video|mud_drag||Crate through mud}}</div>
+    </div>
+  </section>
+
+  <!-- text and logos -->
+  <section class="section" id="text">
+    <div class="feature">
+      <div class="feature-media">{{video|burning_text||Burning text}}</div>
+      <div>
+        <p class="kicker">Text and logos</p>
+        <h3 style="font-size:38px">Your words, on fire</h3>
+        <p>Type words in any font on your computer and they become solid 3D letters that work like any other object. Burning text has fire all over the letters. Text is solid: set it on fire, drop it, smash it, float it. Water letters hang in the air, then fall and splash. Logos and pictures work the same way, traced from an SVG, PNG or JPG.</p>
+        <ul>
+          <li>Change the words, the font or the size later, and the fire changes with them</li>
+          <li>Invert and threshold for pictures with no transparency</li>
+        </ul>
+        <a class="more" href="getting-started.html#words-on-fire">Words on fire →</a>
+      </div>
+    </div>
+    <div class="clips two">
+      <div class="clip">{{video|ui-text||Typing the words}}</div>
+      <div class="clip">{{video|ui-repeat||Repeat in a ring}}</div>
     </div>
   </section>
 
@@ -270,30 +391,22 @@
       <p class="sub">The simulation runs live while you change it, and finished frames are cached as you go. Every setting has a tooltip and can be scrubbed by dragging its name.</p>
     </div>
     <div class="feature">
-      <div class="feature-media">{{video|ui-library||Effects panel}}</div>
+      <div class="feature-media">{{video|ui-effects||The Effects tab}}</div>
       <div>
         <h3>Start from {{preset_count}} presets</h3>
-        <p>Click a fire, a liquid, a sea or a sky in the Effects panel and it simulates live in your shot. Each one is an ordinary scene that you can change and save as your own.</p>
+        <p>Pick a chip (fire, liquids, fabric, the sea, smoke, blasts, ice, weather, falling and breaking, sand, snow and mud) and click an effect: it simulates live in your shot. Each one is an ordinary scene you can change and save as your own.</p>
         <a class="more" href="presets.html">Browse the presets →</a>
       </div>
     </div>
     <div class="feature flip">
-      <div class="feature-media">{{video|ui-create||Create}}</div>
+      <div class="feature-media">{{video|ui-search||Search everything}}</div>
       <div>
-        <h3>Or build anything</h3>
-        <p>Blackbody opens on an empty stage with a camera of your own. You can put in fire, water, cloth, smoke, weather, forces and objects, and move them with a 3D gizmo. Then right-click to set things on fire, make them float, soak them, attach them to each other or send them along a path. When it works, the Shot workspace puts it into your footage.</p>
-        <a class="more" href="getting-started.html#build-your-own">Build your own →</a>
+        <h3>Search everything (Ctrl+K)</h3>
+        <p>Type what you want and press Enter: an action on the selected thing (make it fall, set it on fire), a building block, a menu command, any setting of the scene, a preset, or a thing in the scene.</p>
+        <a class="more" href="getting-started.html#working-in-the-app">Working in the app →</a>
       </div>
     </div>
     <div class="feature">
-      <div class="feature-media">{{video|ui-place||Placing the fire}}</div>
-      <div>
-        <h3>Place it with two handles</h3>
-        <p>Drag the ring onto the ground in your footage, and drag the square to scale the effect. Alt-drag orbits the camera, and the 2D tracker follows a handheld move.</p>
-        <a class="more" href="tutorial.html">Follow the tutorial →</a>
-      </div>
-    </div>
-    <div class="feature flip">
       <div class="feature-media">{{video|ui-views||View modes}}</div>
       <div>
         <h3>Check it like a compositor</h3>
@@ -302,9 +415,12 @@
       </div>
     </div>
     <div class="cards" style="margin-top:8px">
+      <a class="card" href="getting-started.html#build-your-own"><div class="card-body"><span class="tag">Build and Shot</span><h3>Two workspaces</h3><p>Build is your own stage and camera for making the effect. Shot is the shot's camera, with your footage, roto and layers. Tab switches between them.</p></div></a>
+      <a class="card" href="getting-started.html#several-things-at-once"><div class="card-body"><span class="tag">Selection</span><h3>Several things at once</h3><p>Box-select, group, duplicate, and repeat in a row, a ring or scattered, with what is attached coming along.</p></div></a>
+      <a class="card" href="getting-started.html#your-own-blocks"><div class="card-body"><span class="tag">Blocks</span><h3>Your own blocks</h3><p>Save what you built under Yours in Create, as one file with its meshes, to add to any scene or share.</p></div></a>
       <a class="card" href="getting-started.html#layers"><div class="card-body"><span class="tag">Layers</span><h3>Several effects in one shot</h3><p>A campfire in front and a waterfall behind, each its own simulation with its own box and scale, composited back to front.</p></div></a>
       <a class="card" href="compositing.html#roto"><div class="card-body"><span class="tag">Roto</span><h3>Shapes in front of the effect</h3><p>Draw shapes around what is in front of the effect and key them over the shot. The effect goes behind them, in the viewer and in renders.</p></div></a>
-      <a class="card" href="getting-started.html#build-your-own"><div class="card-body"><span class="tag">Build and Shot</span><h3>Two workspaces</h3><p>Build is your own stage and camera for making the effect. Shot is the shot's camera, with your footage, roto and layers. Tab switches between them.</p></div></a>
+      <a class="card" href="getting-started.html#timing"><div class="card-body"><span class="tag">Timing</span><h3>When things happen</h3><p>Each source, pour and let-go as a bar on the timeline: drag it in time, or drag its ends.</p></div></a>
     </div>
   </section>
 
@@ -329,12 +445,12 @@
     <div class="section-head center">
       <p class="kicker">Under the hood</p>
       <h2>Physics, not tricks</h2>
-      <p class="sub">Everything runs in GPU compute shaders through wgpu, so it runs on Vulkan, Direct3D 12 and Metal. Nearly 300 tests check the physics against textbook values and measurements of real fires, waves and weather.</p>
+      <p class="sub">Everything runs in GPU compute shaders through wgpu, so it runs on Vulkan, Direct3D 12 and Metal. More than 300 tests check the physics against textbook values and measurements of real fires, waves, falls, sand and weather.</p>
     </div>
     <div class="stats">
       <div class="stat"><b>{{preset_count}}</b><span>built-in presets, from a candle to a thunderstorm</span></div>
-      <div class="stat"><b>5</b><span>solvers: a reacting gas, FLIP liquids, cloth, the FFT ocean and cloud microphysics</span></div>
-      <div class="stat"><b>59 fps</b><span>campfire simulated and previewed live at 96 voxels on an RTX 3090</span></div>
+      <div class="stat"><b>7</b><span>solvers: a reacting gas, FLIP liquids, MPM sand and snow, cloth, rigid bodies, the FFT ocean and cloud microphysics</span></div>
+      <div class="stat"><b>{{block_count}}</b><span>building blocks to start a scene from nothing</span></div>
       <div class="stat"><b>MIT</b><span>free for commercial work, and open to read and change. <a href="https://ko-fi.com/gnail">Support it on Ko-fi</a></span></div>
     </div>
     <p style="text-align:center;margin-top:26px"><a class="more" href="how-it-works.html">How it works →</a></p>

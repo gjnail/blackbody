@@ -222,7 +222,7 @@ COMPONENTS = [
               room=(1.0, 1.4, 0.1),
               objects=[_C(name='Wall', shape='box', position=(0.0, 0.6, -0.7), size=(0.9, 0.6, 0.04))]),
     Component('ramp', 'Ramp', 'Objects', 'A 2 m plank propped up at 20°: roll a ball down it, or drive a cart up '
-              'it. Tilt and Roll (Properties › Shape) tip any object over like this.', 'hill',
+              'it. Tilt and Roll (Properties › Shape) tip any object over like this.', 'ramp',
               scales=True, room=(1.1, 0.8, 0.5),
               # (its low end's top flush with the ground; its far end on a block)
               objects=[_C(name='Ramp', shape='box', position=(0.0, 0.314, 0.0), size=(1.0, 0.03, 0.4), roll=20.0, material='wood'),
@@ -380,7 +380,7 @@ COMPONENTS = [
                           material='steel')]),
     # -- machines: hinges driven by motors (Properties › Joint › Motor speed) ---------------------------------------------
     Component('cart', 'Motor cart', 'Machines', 'A 1 m wooden cart on four rubber wheels, each turned by a motor at 30 rpm: it '
-              'drives off at half a metre a second. Change its wheels’ Motor speed, or put a ramp in its way.', 'car',
+              'drives off at half a metre a second. Change its wheels’ Motor speed, or put a ramp in its way.', 'cart',
               room=(0.6, 0.4, 0.5),
               # (its axles along -z: Tilt -90 turns a wheel's own axis onto it, so turning forward drives it along +x)
               objects=[_C(name='Cart', shape='box', position=(0.0, 0.25, 0.0), size=(0.5, 0.06, 0.3), material='wood', dynamic=True)]
@@ -389,7 +389,7 @@ COMPONENTS = [
                     joint_axis=(0.0, 1.0, 0.0), motor_speed=30.0, motor_torque=20.0, joint_friction=0.0)
                  for k, (sx, sz) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))]),
     Component('turntable', 'Turntable', 'Machines', 'A wooden turntable a metre across that a motor spins up to 45 rpm, with three '
-              'blocks on it: they ride round, then slide off and fly.', 'ring', room=(1.6, 0.5, 1.6),
+              'blocks on it: they ride round, then slide off and fly.', 'turntable', room=(1.6, 0.5, 1.6),
               objects=[_C(name='Turntable', shape='cylinder', position=(0.0, 0.33, 0.0), size=(0.5, 0.03, 0.5), material='wood',
                           joint='hinge', joint_axis=(0.0, 1.0, 0.0), motor_speed=45.0, motor_torque=6.0, joint_friction=0.0),
                        # (a centimetre below it: rubbing on its stand would stall it)
@@ -399,7 +399,7 @@ COMPONENTS = [
                  for k, (pos, yaw) in enumerate((((0.32, 0.42, 0.0), 0.0), ((-0.16, 0.42, 0.277), -120.0),
                                                  ((-0.16, 0.42, -0.277), 120.0)))]),
     Component('windmill', 'Windmill', 'Machines', 'A 4 m windmill whose sails a motor turns at 12 rpm: they stir the smoke and '
-              'knock what comes near.', 'spiral', room=(1.4, 4.2, 0.4),
+              'knock what comes near.', 'windmill', room=(1.4, 4.2, 0.4),
               # (two balanced bars of sails crossed on the hub, one just behind the other: four sails on hinges of their own
               # would each be pulled out of step by their weight)
               objects=[_C(name='Windmill tower', shape='box', position=(0.0, 1.45, 0.0), size=(0.15, 1.45, 0.15), material='wood'),

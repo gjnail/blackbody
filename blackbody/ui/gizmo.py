@@ -53,6 +53,8 @@ class Gizmo:
         self.cs, self.fire, _ = vp.camstate()
         self.W, self.H = vp.out_size()
         self.capsule = kind == 'emitter' and self.item.get('shape') == 'capsule'
+        self.bolt = kind == 'light' and self.item.get('kind') == 'lightning'   # a bolt: a handle where it strikes
+        self.R = (sc.turn(i, vp.doc.frame) if kind == 'collider' and hasattr(sc, 'tilted') and sc.tilted(i) else None)
         self.L = self._length()
 
     # -- geometry -------------------------------------------------------------------------------------------
@@ -78,6 +80,10 @@ class Gizmo:
         tips = [c + a * self.L for a in AXES]
         s, ok = self.screen([c] + tips)
         out['centre'] = s[0] if ok[0] else None
+        if self.bolt:
+            q, okq = self.screen([np.asarray(self.g('end'), float)])
+            if okq[0]:
+                out['end'] = q[0]
         for k, name in enumerate(AXIS_NAMES):
             if ok[0] and ok[k + 1]:
                 out['move_' + name] = (s[0], s[k + 1])
@@ -101,11 +107,15 @@ class Gizmo:
         k = self.kind
         if k in ('emitter', 'collider') and not self.capsule:
             shape = self.item.get('shape')
+            if self.R is not None:   # tipped over: along its own sides
+                ax = [self.R[:, 0], self.R[:, 1], self.R[:, 2]]
+            else:
+                ax = [_rot_y(AXES[0], self.yaw), AXES[1], _rot_y(AXES[2], self.yaw)]
             if shape == 'sphere' and k == 'collider':
-                return [('x', _rot_y(AXES[0], self.yaw))]
+                return [('x', ax[0])]
             if shape in ('cylinder', 'cone', 'ring'):
-                return [('x', _rot_y(AXES[0], self.yaw)), ('y', AXES[1])]
-            return [('x', _rot_y(AXES[0], self.yaw)), ('y', AXES[1]), ('z', _rot_y(AXES[2], self.yaw))]
+                return [('x', ax[0]), ('y', ax[1])]
+            return [('x', ax[0]), ('y', ax[1]), ('z', ax[2])]
         if self.capsule:
             return [('x', _rot_y(AXES[0], 0.0))]
         if k == 'matter':
@@ -127,7 +137,7 @@ class Gizmo:
         hs = self.handles()
         best, bd = None, 9.0
         for key, v in hs.items():
-            if key.startswith('scale_') or key == 'rot':
+            if key.startswith('scale_') or key in ('rot', 'end'):
                 d = math.hypot((v - pos).x(), (v - pos).y())
                 if d < bd:
                     best, bd = key, d

@@ -15,6 +15,10 @@ Add a block from the *Sand, snow & mud* group in Create: a sand pile, a sand pou
 - *Pours*: instead of a body of it, a stream poured from a nozzle at *Position* (its *Size*'s first value is the nozzle's radius), *Thrown at* the speed it leaves at, *Flow* in litres a second, from *Pours from* until *Pours until*.
 - *Own colour*: a colour of its own in place of its material's.
 
+Right-click one in the viewer for *Made of*, *Let go at this frame*, *Pour it from here*, and *Start* or *Stop pouring at this frame*. Its dashed outline in the viewer is where it starts; a pour shows its nozzle and an arrow the way it pours.
+
+![A sand pour, then Made of › Mud](media/gif/ui-matter.gif "Create › Sand & mud › Sand pour builds a heap; right-click it, Made of › Mud, and it pours mud.")
+
 ## What it is made of
 
 | Made of | What it does |
