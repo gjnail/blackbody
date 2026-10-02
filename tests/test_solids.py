@@ -7,7 +7,7 @@ import pytest
 
 pytest.importorskip('mujoco')
 
-from blackbody.engine.solids import Solids, attached
+from blackbody.engine.solids import Solids, _rotation, attached
 from blackbody.scene import components
 from blackbody.scene.anim import Curve
 from blackbody.scene.model import Scene
@@ -170,6 +170,112 @@ def test_attached_things_ride_along():
     assert np.allclose(out[i]['velocity'], (0.0, -1.0, 0.0))
     ems = s.emitters_gpu(s.start, moved=out)
     assert any(np.allclose(e.pos, (0.7, 0.2, 0.0)) for e in ems)
+
+
+def test_every_block_that_falls_starts_clear_of_everything():
+    from blackbody.engine.solids import falls
+    for comp in components.COMPONENTS:
+        if comp.pick:
+            continue
+        s = components.new_scene('auto', 'person')
+        components.add(s, comp.key)
+        if any(falls(c) for c in s.colliders):
+            S = Solids()
+            S.configure(s, ((64, 64, 64), SIZE / 64, (-SIZE / 2, 0.0, -SIZE / 2)))
+            assert not [w for w in S.warnings if 'inside' in w or 'joined to' in w], (comp.key, S.warnings)
+
+# ---- tipped over (Tilt, Roll) ----------------------------------------------------------------------------------------
+
+def _rx(a):
+    c, s = math.cos(a), math.sin(a)
+    return np.array([[1.0, 0.0, 0.0], [0.0, c, -s], [0.0, s, c]])
+
+
+def _ry(a):
+    c, s = math.cos(a), math.sin(a)
+    return np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]])
+
+
+def _rz(a):
+    c, s = math.cos(a), math.sin(a)
+    return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]])
+
+
+def test_a_tilted_plank_is_a_ramp_that_things_slide_down_past_their_friction_angle():
+    from blackbody.scene.materials import material as mat
+    mu = mat('wood').friction
+    critical = math.degrees(math.atan(mu))
+    moved = {}
+    for tilt in (critical - 6.0, critical + 6.0):
+        a = math.radians(tilt)
+        up, n = np.array([math.cos(a), math.sin(a), 0.0]), np.array([-math.sin(a), math.cos(a), 0.0])   # (Roll leans it to -x)
+        plank = dict(name='Plank', shape='box', position=(0.0, 1.0, 0.0), size=(1.5, 0.05, 0.5), roll=tilt, material='wood')
+        box = dict(name='Box', shape='box', position=tuple(np.array([0.0, 1.0, 0.0]) + 0.5 * up + 0.152 * n), size=(0.1, 0.1, 0.1),
+                   roll=tilt, dynamic=True, material='wood')
+        S, poses = run(scene_of(plank, box), 1.0)
+        assert not S.warnings
+        moved[tilt] = track(poses, 1)[-1] - track(poses, 1)[0]
+        assert abs(float(moved[tilt] @ n)) < 0.01                      # (on the plank all the way)
+    hold, slide = moved[critical - 6.0], moved[critical + 6.0]
+    assert np.linalg.norm(hold) < 0.01, moved
+    # down the slope at g (sin a - mu cos a): 1/2 a t^2 in a second, give or take its few millimetres' drop onto the plank
+    a = math.radians(critical + 6.0)
+    ideal = 0.5 * G * (math.sin(a) - mu * math.cos(a))
+    assert float(slide @ np.array([-math.cos(a), -math.sin(a), 0.0])) == pytest.approx(ideal, rel=0.1)
+
+
+def test_a_tipped_over_object_is_turned_the_same_way_everywhere():
+    import mujoco
+    s = scene_of(dict(name='Slab', shape='box', position=(0.5, 1.0, -0.3), size=(0.4, 0.1, 0.2), yaw=30.0, pitch=20.0, roll=-35.0,
+                      material='stone'),
+                 dict(name='Post', shape='box', position=(0.0, 0.5, 2.0), size=(0.2, 0.5, 0.2), yaw=40.0),
+                 dict(name='Ball', shape='sphere', position=(-2.0, 0.1, 0.0), size=(0.1, 0.1, 0.1), dynamic=True))
+    slab, post, _ = s.colliders_gpu()
+    # its Rotation about the vertical, then its Tilt about its own x, then its Roll about its own z
+    R = _ry(math.radians(30.0)) @ _rx(math.radians(20.0)) @ _rz(math.radians(-35.0))
+    assert np.allclose(s.turn(0), R)
+    # the shaders (colliders.wgsl: world = position + quat (yaw (local)))
+    assert np.allclose(_rotation(slab.quat) @ _ry(slab.rot_y), R)
+    assert post.quat == (0.0, 0.0, 0.0, 1.0) and post.rot_y == pytest.approx(math.radians(40.0))   # (upright: just turned)
+    assert not slab.moving
+    # MuJoCo: the slab where the shaders put it
+    S = Solids()
+    S.configure(s, ((96, 96, 96), SIZE / 96, (-SIZE / 2, 0.0, -SIZE / 2)))
+    S.reset()
+    mujoco.mj_forward(S.model, S.data)
+    g = mujoco.mj_name2id(S.model, mujoco.mjtObj.mjOBJ_GEOM, 'fixed0_0')
+    assert np.allclose(S.data.geom_xmat[g].reshape(3, 3), R, atol=1e-9)
+    assert np.allclose(S.data.geom_xpos[g], (0.5, 1.0, -0.3))
+    # the box round it, for placing things
+    lo, hi = components._extent('collider', s.colliders[0])
+    corners = np.array([[x, y, z] for x in (-0.4, 0.4) for y in (-0.1, 0.1) for z in (-0.2, 0.2)]) @ R.T + (0.5, 1.0, -0.3)
+    assert np.allclose(lo, corners.min(0)) and np.allclose(hi, corners.max(0))
+
+
+def test_a_keyed_tilt_turns_it_at_the_speed_of_its_keys():
+    s = scene_of(dict(name='Flap', shape='box', position=(0.0, 1.0, 0.0), size=(0.5, 0.02, 0.3), yaw=30.0, material='wood'))
+    s.set_key(('collider', 0, 'pitch'), s.start, 0.0)
+    s.set_key(('collider', 0, 'pitch'), s.start + 50, 90.0)
+    f = s.start + 20
+    cg = s.colliders_gpu(f)[0]
+    assert cg.moving and s.colliders_animated()
+    # turning about its own sideways axis (turned by its yaw) at the keys' rate
+    axis = _ry(math.radians(30.0)) @ (1.0, 0.0, 0.0)
+    assert np.allclose(cg.omega[:3], math.radians(s.rate(('collider', 0, 'pitch'), f)) * axis, rtol=1e-3, atol=1e-9)
+
+
+def test_things_attached_to_a_tipped_over_object_keep_their_place_on_it():
+    s = scene_of(dict(name='Crate', shape='box', position=(0.0, 1.0, 0.0), size=(0.2, 0.2, 0.2), pitch=40.0, dynamic=True,
+                      material='wood'))
+    i = s.add_emitter(name='Fire', shape='sphere', position=(0.0, 1.3, 0.0), size=(0.1, 0.1, 0.1))
+    s.links = [{'child': ['emitter', 'Fire'], 'parent': ['collider', 'Crate'], 'offset': [0.0, 0.3, 0.0]}]
+    # where it starts, the offset is as it was set (the crate's start turn is undone first)
+    cg = s.colliders_gpu()[0]
+    out = attached(s, 'emitter', {0: dict(pos=cg.pos, vel=(0.0, 0.0, 0.0), rot_y=cg.rot_y, quat=cg.quat, omega=(0.0, 0.0, 0.0, 0.0))})
+    assert np.allclose(out[i]['position'], (0.0, 1.3, 0.0), atol=1e-9)
+    # tipped back upright, the offset turns back with it
+    out = attached(s, 'emitter', {0: dict(pos=cg.pos, vel=(0.0, 0.0, 0.0), quat=(0.0, 0.0, 0.0, 1.0), omega=(0.0, 0.0, 0.0, 0.0))})
+    assert np.allclose(out[i]['position'], np.array([0.0, 1.0, 0.0]) + _rx(math.radians(-40.0)) @ (0.0, 0.3, 0.0), atol=1e-9)
 
 
 # ---- blasts ---------------------------------------------------------------------------------------------------------

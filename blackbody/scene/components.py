@@ -13,7 +13,7 @@ import copy
 import math
 from dataclasses import dataclass, field
 
-from .model import Scene
+from .model import Scene, turn_matrix
 from .params import defaults
 
 REF_WIDTH = 2.0   # the box width the scaling blocks are sized for
@@ -221,6 +221,12 @@ COMPONENTS = [
     Component('wall', 'Wall', 'Objects', 'A wall behind the effect: smoke pools against it, water hits it.', 'cube', scales=True,
               room=(1.0, 1.4, 0.1),
               objects=[_C(name='Wall', shape='box', position=(0.0, 0.6, -0.7), size=(0.9, 0.6, 0.04))]),
+    Component('ramp', 'Ramp', 'Objects', 'A 2 m plank propped up at 20°: roll a ball down it, or drive a cart up '
+              'it. Tilt and Roll (Properties › Shape) tip any object over like this.', 'hill',
+              scales=True, room=(1.1, 0.8, 0.5),
+              # (its low end's top flush with the ground; its far end on a block)
+              objects=[_C(name='Ramp', shape='box', position=(0.0, 0.314, 0.0), size=(1.0, 0.03, 0.4), roll=20.0, material='wood'),
+                       _C(name='Ramp prop', shape='box', position=(0.8, 0.268, 0.0), size=(0.1, 0.268, 0.3), material='wood')]),
     Component('room', 'Room with a door', 'Objects', 'A closed room (hollow walls) with a door cut in one side: fire inside starves '
               'of air and flares when it gets out. Turn on tracked air in Combustion for that.', 'cube', scales=True,
               room=(1.1, 1.6, 1.0),
@@ -292,6 +298,14 @@ COMPONENTS = [
                           material='wood', density=150.0)
                        for k, pos in enumerate(((-0.52, 0.25, 0.0), (0.0, 0.25, 0.0), (0.52, 0.25, 0.0), (-0.26, 0.75, 0.0),
                                                 (0.26, 0.75, 0.0), (0.0, 1.25, 0.0)))]),
+    Component('ramp_ball', 'Ball down a ramp', 'Things that fall', 'A steel ball let go at the top of a 2 m ramp: it rolls down '
+              'and bowls over a row of dominoes.', 'ball', room=(2.4, 0.8, 0.5),
+              objects=[_C(name='Ramp', shape='box', position=(0.0, 0.314, 0.0), size=(1.0, 0.03, 0.4), roll=20.0, material='wood'),
+                       _C(name='Ramp prop', shape='box', position=(0.8, 0.268, 0.0), size=(0.1, 0.268, 0.3), material='wood'),
+                       _C(name='Ball', shape='sphere', position=(0.76, 0.71, 0.0), size=(0.08, 0.08, 0.08), dynamic=True,
+                          material='steel')]
+              + [_C(name=f'Domino {k + 1}', shape='box', position=(round(-1.3 - 0.16 * k, 2), 0.12, 0.0), size=(0.02, 0.12, 0.06),
+                    dynamic=True, material='wood') for k in range(6)]),
     # -- things that break (engine/fracture.py, solids.py) --------------------------------------------------------------------
     Component('brick_wall', 'Brick wall', 'Things that fall', 'A 1.6 m brick wall, half a brick thick, in running bond: it '
               'stands until something hits it hard enough, then it comes apart at the mortar, brick by brick, in a puff of '
@@ -364,6 +378,37 @@ COMPONENTS = [
                           material='rubber', own_colour=True, colour=(0.7, 0.12, 0.05)),
                        _C(name='Steel ball', shape='sphere', position=(1.0, 1.5, 0.0), size=(0.12, 0.12, 0.12), dynamic=True,
                           material='steel')]),
+    # -- machines: hinges driven by motors (Properties › Joint › Motor speed) ---------------------------------------------
+    Component('cart', 'Motor cart', 'Machines', 'A 1 m wooden cart on four rubber wheels, each turned by a motor at 30 rpm: it '
+              'drives off at half a metre a second. Change its wheels’ Motor speed, or put a ramp in its way.', 'car',
+              room=(0.6, 0.4, 0.5),
+              # (its axles along -z: Tilt -90 turns a wheel's own axis onto it, so turning forward drives it along +x)
+              objects=[_C(name='Cart', shape='box', position=(0.0, 0.25, 0.0), size=(0.5, 0.06, 0.3), material='wood', dynamic=True)]
+              + [_C(name=f'Cart wheel {k + 1}', shape='cylinder', position=(sx * 0.35, 0.15, sz * 0.36), size=(0.15, 0.04, 0.15),
+                    pitch=-90.0, material='rubber', own_colour=True, colour=(0.05, 0.05, 0.05), joint='hinge', joint_to='Cart',
+                    joint_axis=(0.0, 1.0, 0.0), motor_speed=30.0, motor_torque=20.0, joint_friction=0.0)
+                 for k, (sx, sz) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))]),
+    Component('turntable', 'Turntable', 'Machines', 'A wooden turntable a metre across that a motor spins up to 45 rpm, with three '
+              'blocks on it: they ride round, then slide off and fly.', 'ring', room=(1.6, 0.5, 1.6),
+              objects=[_C(name='Turntable', shape='cylinder', position=(0.0, 0.33, 0.0), size=(0.5, 0.03, 0.5), material='wood',
+                          joint='hinge', joint_axis=(0.0, 1.0, 0.0), motor_speed=45.0, motor_torque=6.0, joint_friction=0.0),
+                       # (a centimetre below it: rubbing on its stand would stall it)
+                       _C(name='Turntable stand', shape='cylinder', position=(0.0, 0.145, 0.0), size=(0.12, 0.145, 0.12),
+                          material='steel')]
+              + [_C(name=f'Block {k + 1}', shape='box', position=pos, size=(0.06, 0.06, 0.06), yaw=yaw, dynamic=True, material='wood')
+                 for k, (pos, yaw) in enumerate((((0.32, 0.42, 0.0), 0.0), ((-0.16, 0.42, 0.277), -120.0),
+                                                 ((-0.16, 0.42, -0.277), 120.0)))]),
+    Component('windmill', 'Windmill', 'Machines', 'A 4 m windmill whose sails a motor turns at 12 rpm: they stir the smoke and '
+              'knock what comes near.', 'spiral', room=(1.4, 4.2, 0.4),
+              # (two balanced bars of sails crossed on the hub, one just behind the other: four sails on hinges of their own
+              # would each be pulled out of step by their weight)
+              objects=[_C(name='Windmill tower', shape='box', position=(0.0, 1.45, 0.0), size=(0.15, 1.45, 0.15), material='wood'),
+                       _C(name='Windmill hub', shape='cylinder', position=(0.0, 2.8, 0.28), size=(0.1, 0.02, 0.1), pitch=90.0,
+                          material='wood')]
+              + [_C(name=f'Sails {k + 1}', shape='box', position=(0.0, 2.8, z), size=(1.25, 0.12, 0.01), roll=roll,
+                    material='painted', own_colour=True, colour=(0.85, 0.82, 0.72), joint='hinge', joint_axis=(0.0, 0.0, 1.0),
+                    motor_speed=12.0, motor_torque=400.0)
+                 for k, (z, roll) in enumerate(((0.2, 45.0), (0.235, 135.0)))]),
     # -- sand, snow, mud, jelly, clay (engine/matter.py: real size, in every kind of scene but the sky) -----------------------
     Component('sand_pile', 'Sand pile', 'Sand, snow & mud', 'A heap of dry sand 60 cm across, at its angle of repose: knock '
               'into it or drop something on it and it slides.', 'matter', room=(0.4, 0.3, 0.4),
@@ -488,7 +533,7 @@ def _values(v):
     from .anim import Curve
     return [k[1] for k in v.keys] if isinstance(v, Curve) else [v]
 GROUPS = ['Fire', 'Smoke, steam & sparks', 'Liquids', 'Fabric', 'Weather', 'Forces', 'Objects', 'Things that fall',
-          'Ropes and hinges', 'Sand, snow & mud', 'Lights']
+          'Ropes and hinges', 'Machines', 'Sand, snow & mud', 'Lights']
 
 # Making a scene from scratch: (label, box width in metres)
 SCALES = {'small': ('Tabletop', 0.6), 'person': ('Person-sized', 2.0), 'large': ('Car or room', 6.0), 'huge': ('Building', 20.0)}
@@ -629,6 +674,23 @@ def _extent(kind, d):
                     lo, hi = np.minimum(lo, a), np.maximum(hi, b)
         return lo, hi
     p = np.asarray(d.get('position', (0.0, 0.0, 0.0)), float)
+    if kind == 'collider' and any(isinstance(d.get(k), Curve) or d.get(k) for k in ('pitch', 'roll')):
+        # tipped over: the box round its turned corners (at every key of its turn)
+        s = np.abs(np.asarray(d.get('size', (0.1, 0.1, 0.1)), float))
+        box = mesh_box(d.get('mesh')) if d.get('shape') == 'mesh' else None
+        if box is not None:
+            c, r = (box[0] + box[1]) / 2 * s, (box[1] - box[0]) / 2 * s
+        else:
+            c = np.zeros(3)
+            r = np.array([s[0]] * 3) if d.get('shape') == 'sphere' else (np.array([s[0], s[1], s[0]]) if d.get('shape') == 'cylinder' else s)
+        lo, hi = np.full(3, np.inf), np.full(3, -np.inf)
+        for yaw in _values(d.get('yaw', 0.0)):
+            for pitch in _values(d.get('pitch', 0.0)):
+                for roll in _values(d.get('roll', 0.0)):
+                    R = turn_matrix(float(yaw), float(pitch), float(roll))
+                    cw, rw = R @ c, np.abs(R) @ r
+                    lo, hi = np.minimum(lo, p + cw - rw), np.maximum(hi, p + cw + rw)
+        return lo, hi
     if kind == 'emitter' or kind == 'collider':
         s = np.abs(np.asarray(d.get('size', (0.1, 0.1, 0.1)), float))
         box = mesh_box(d.get('mesh')) if d.get('shape') == 'mesh' else None
@@ -846,8 +908,8 @@ def add(scene: Scene, key, at=None, mesh=None):
 # what a source can be turned into (Turn into, in the viewer's menus): the building block it takes its settings from
 TURN_INTO = [('burner', 'Fire'), ('smoke', 'Smoke'), ('steam', 'Steam'), ('pour', 'Water'), ('lava', 'Lava'), ('fan', 'Fan'),
              ('updraft', 'Updraft'), ('suction', 'Suction'), ('vortex', 'Vortex')]
-GEOMETRY = {'name', 'enabled', 'shape', 'mesh', 'volume', 'volume_mode', 'volume_zup', 'position', 'size', 'end', 'yaw', 'thickness',
-            'mesh_offset'}
+GEOMETRY = {'name', 'enabled', 'shape', 'mesh', 'volume', 'volume_mode', 'volume_zup', 'position', 'size', 'end', 'yaw', 'pitch',
+            'roll', 'thickness', 'mesh_offset'}
 
 
 def turn_into(scene: Scene, i, key):
@@ -953,10 +1015,7 @@ def add_joint(scene: Scene, i, kind='rope', to=None, on=True):
         if other is not None:
             op = np.asarray(scene.get(('collider', to, 'position'), scene.start), float)
             osz = np.abs(np.asarray(scene.get(('collider', to, 'size'), scene.start), float))
-            yaw = np.radians(float(scene.get(('collider', to, 'yaw'), scene.start)))
-            cy, sy = np.cos(yaw), np.sin(yaw)
-            d = pos - op
-            u = np.array([cy * d[0] - sy * d[2], d[1], sy * d[0] + cy * d[2]])   # (into its own frame)
+            u = scene.turn(to, scene.start).T @ (pos - op)          # (into its own frame)
             n = float(np.linalg.norm(u))
             c['joint_to_at'] = tuple(float(x) for x in (surface_toward(other['shape'], osz, u / n) if n > 1e-9 else np.zeros(3)))
             notes.append(f'{c["name"]} hangs on a {kind} from {other["name"]}.')

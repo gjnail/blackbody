@@ -62,6 +62,9 @@ def _apply(scene: Scene, spec: dict):
         scene.lights = []
         for l in spec['lights']:
             scene.add_light(**l)
+    if 'links' in spec:
+        import copy
+        scene.links = copy.deepcopy(spec['links'])
 
 
 PRESETS = {
@@ -917,6 +920,47 @@ PRESETS = {
                  start_velocity=(0.7, 0.0, 0.0), release=0.3),
         ],
     },
+    'cart_jump': {
+        'name': 'Cart off a ramp', 'category': 'Things that fall', 'size': '1 m cart, 6 m run',
+        'blurb': 'A cart with a fire on its back, its four wheels turned by motors, races up a ramp, jumps off its end and '
+                 'bowls over a tower of blocks, trailing flame and smoke, and brakes into a barrier. Motors on hinges (Joint › '
+                 'Motor speed, keyed down to brake), a tilted plank (Shape › Roll) and a fire attached to the cart.',
+        'render': {'end': 120},
+        'domain': {'size_x': 7.6, 'size_y': 3.0, 'size_z': 2.4, 'resolution': 176, 'preroll': 0.0, 'substeps_max': 10},
+        'combustion': {'burn_rate': 6.0, 'heat': 0.6, 'soot': 0.35, 'cooling': 2.5, 'flame_life': 0.07},
+        'motion': {'buoyancy': 5.0, 'turbulence': 2.5, 'turb_freq': 4.0, 'vorticity': 1.4, 'disturbance': 1.6,
+                   'disturb_block': 0.02},
+        'shading': {'flame_k': 1650, 'max_k': 2250, 'smoke_density': 3.0, 'smoke_albedo': (0.5, 0.49, 0.48),
+                    'flame_absorption': 12.0},
+        'lighting': {'sun_on': True, 'sun_intensity': 1.2, 'sun_azimuth': -50.0, 'sun_elevation': 14.0,
+                     'ambient': (0.42, 0.46, 0.55), 'ambient_intensity': 0.7},
+        'composite': {'backdrop': 'stage', 'floor': 'concrete'},
+        'embers': {'rate': 50, 'launch': 1.0, 'lifetime': 1.5},
+        'camera': {'distance': 8.0, 'target_y': 0.8, 'pitch': 8, 'yaw': 0, 'anchor_x': 0.5, 'anchor_y': 0.62, 'focal_mm': 35},
+        'colliders': [
+            # (driving along +x: its wheels' axles along -z, so turning forward rolls it forward)
+            dict(name='Cart', shape='box', position=(-3.0, 0.25, 0.0), size=(0.5, 0.06, 0.3), material='wood', dynamic=True),
+            *[dict(name=f'Cart wheel {k + 1}', shape='cylinder', position=(-3.0 + sx * 0.35, 0.15, sz * 0.36),
+                   size=(0.15, 0.04, 0.15), pitch=-90.0, material='rubber', own_colour=True, colour=(0.05, 0.05, 0.05),
+                   joint='hinge', joint_to='Cart', joint_axis=(0.0, 1.0, 0.0), joint_friction=0.0, motor_torque=20.0,
+                   # (flat out, then it brakes once it has hit the tower)
+                   motor_speed=K((0.0, 150.0), (2.3, 150.0), (2.7, 0.0), interp='linear'))
+              for k, (sx, sz) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))],
+            # a 2 m plank at 15 degrees, its low end's top flush with the ground, propped at the top
+            dict(name='Ramp', shape='box', position=(-0.4, 0.23, 0.0), size=(1.0, 0.03, 0.45), roll=15.0, material='wood'),
+            dict(name='Ramp prop', shape='box', position=(0.4, 0.193, 0.0), size=(0.1, 0.193, 0.35), material='wood'),
+            *[dict(name=f'Block {k + 1}', shape='box', position=(2.2, 0.1 + 0.2 * k, 0.0), size=(0.1, 0.1, 0.1),
+                   yaw=(7.0 if k % 2 else -4.0), dynamic=True, material='wood') for k in range(6)],
+            # (what stops it, however the crash goes)
+            dict(name='Barrier', shape='box', position=(3.35, 0.4, 0.0), size=(0.15, 0.4, 1.0), material='concrete'),
+        ],
+        'emitters': [
+            # (fed hard while it races along, where the wind of its going stretches the flame thin; less once it stands)
+            dict(name='Cart fire', shape='sphere', position=(-3.0, 0.47, 0.0), size=(0.16, 0.16, 0.16), temperature=0.6,
+                 fuel=K((0.0, 22.0), (2.6, 22.0), (3.4, 10.0)), noise_freq=8.0, noise=0.6, noise_rise=0.8),
+        ],
+        'links': [{'child': ['emitter', 'Cart fire'], 'parent': ['collider', 'Cart'], 'offset': [0.0, 0.22, 0.0]}],
+    },
     'crates_in_fire': {
         'name': 'Crates into a fire', 'category': 'Things that fall', 'size': '1 m campfire',
         'blurb': 'Three wooden crates dropped onto a campfire one after another: they land on the burning logs, shove '
@@ -966,7 +1010,7 @@ ORDER = ['campfire', 'bonfire', 'torch', 'candle', 'gas_ring', 'pool_fire', 'fir
          'curtain_fire', 'fabric_curtain', 'wet_towels', 'armchair_fire', 'room_fire', 'backdraft', 'flash_fire', 'gas_cloud', 'coloured_flames', 'road_flare',
          'grinder_sparks', 'fireworks', 'car_through_smoke', 'flag_wind', 'kettle_steam', 'steam_vent',
          'crates_in_fire', 'tower_knockdown', 'wall_smash', 'wrecking_ball', 'window_smash', 'vase_drop',
-         'yard_blast', 'lightning_strike', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag']
+         'yard_blast', 'lightning_strike', 'cart_jump', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag']
 
 
 def make(name: str, fps=None, start=None) -> Scene:
@@ -1038,6 +1082,7 @@ def apply_to(scene: Scene, name: str, keep_camera=True, keep_render=True):
     scene.colliders = fresh.colliders
     scene.fabrics = fresh.fabrics
     scene.matter = fresh.matter
+    scene.links = fresh.links       # (what is attached to what among the effect's objects, which have all changed)
     # the shot's own lights stay (they are its set); a preset's lightning is part of its effect
     scene.lights = [l for l in scene.lights if l.get('kind') != 'lightning'] + [l for l in fresh.lights if l.get('kind') == 'lightning']
     scene.footage, scene.track = footage, track

@@ -52,6 +52,16 @@ Notable changes to Blackbody. The format follows
   flashes a few times (its return strokes, the branches in the first only), glows white-hot with a halo, lights the
   set and the smoke through the flash, and sets fire to what it strikes. A Lightning block (Lights) and a preset,
   Lightning strikes a post.
+- Tilted objects: Tilt and Roll (Properties › Shape) tip any object over after its Rotation: a ramp, a leaning wall, a
+  wheel on its side. Keyframe them to tip a tray or flip a flap. The fire, the liquid, sand and snow, cloth and things
+  that fall all meet it at its slope: a box slides down a plank steeper than its friction angle and stays put on a
+  gentler one. A Ramp block (Objects) and Ball down a ramp (Things that fall).
+- Motors: a hinge's Motor speed (turns a minute, keyframeable) and Motor strength (its most torque) drive it round,
+  pushing back on what it is joined to. Wheels drive a cart; a motor too weak for its load stalls; a speed keyed down
+  to 0 brakes it. Machines blocks in Create: a motor cart, a turntable that flings what is on it, a windmill. A
+  preset, Cart off a ramp: a burning cart jumps a ramp into a tower of blocks.
+- Presets can attach things to their objects (a fire riding on a cart), and loading a preset into a shot brings its
+  attachments instead of keeping the shot's old ones.
 - Sand, snow, mud, jelly and clay in the interface: the object list, Properties, outlines and handles in the viewer (a
   pour's nozzle and direction), Made of, Let go, Pour it from here and Start/Stop pouring from the right-click menu,
   timing lanes, a Sand & mud chip in Create; Effects gains Falling & breaking and Sand, snow & mud chips.

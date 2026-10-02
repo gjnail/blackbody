@@ -224,3 +224,79 @@ def test_a_thing_started_inside_something_fixed_is_warned_about():
     ball = dict(name='Ball', shape='sphere', position=(0.15, 1.0, 0.0), size=(0.1, 0.1, 0.1), material='steel', dynamic=True)
     S = built(scene_of(post, ball))
     assert any('Ball starts inside Post' in w for w in S.warnings)
+
+
+# ---- motors ----------------------------------------------------------------------------------------------------------
+
+def wheel(**kw):
+    """A 60 cm steel disc on its side (its axle along -x), on a fixed axle 1.5 m up, driven at 60 rpm with 50 N m."""
+    return dict(dict(name='Wheel', shape='cylinder', position=(0.0, 1.5, 0.0), size=(0.3, 0.05, 0.3), roll=90.0, material='steel',
+                     joint='hinge', joint_axis=(0.0, 1.0, 0.0), motor_speed=60.0, motor_torque=50.0, joint_friction=0.0), **kw)
+
+
+def test_a_motor_spins_a_wheel_up_with_its_strength_to_its_speed():
+    S, out = run(scene_of(wheel(), fps=50), 2.5)
+    I = 0.5 * (7850.0 * math.pi * 0.3 ** 2 * 0.1) * 0.3 ** 2            # (a 222 kg disc: 10 kg m^2 about its axle)
+    w = np.array([o[0]['omega'][:3] for o, _ in out])
+    spin = w @ (-1.0, 0.0, 0.0)
+    t = np.arange(1, len(spin) + 1) / 50.0
+    early = t <= 1.0
+    assert np.polyfit(t[early], spin[early], 1)[0] == pytest.approx(50.0 / I, rel=0.01)   # spun up at its torque over its inertia
+    assert abs(spin[-1] - 2.0 * math.pi) < 0.01                         # then held at 60 turns a minute
+    assert np.abs(w - np.outer(spin, (-1.0, 0.0, 0.0))).max() < 1e-6     # about its axle only
+    assert np.abs(np.array([o[0]['pos'] for o, _ in out]) - (0.0, 1.5, 0.0)).max() < 1e-3
+
+
+def test_a_motor_too_weak_for_its_load_stalls():
+    # a 79 kg steel arm hinged at one end, held out level: its weight turns it down with m g L / 2 = 385 N m
+    arm = dict(name='Arm', shape='box', position=(0.5, 1.5, 0.0), size=(0.5, 0.05, 0.05), material='steel', joint='hinge',
+               joint_at=(-0.5, 0.0, 0.0), joint_axis=(0.0, 0.0, 1.0), motor_speed=10.0, joint_friction=0.0)
+    tip = {}
+    for torque in (800.0, 200.0):
+        S, out = run(scene_of(dict(arm, motor_torque=torque), fps=50), 1.0)
+        tip[torque] = [float((np.asarray(o[0]['pos']) + _rotation(o[0]['quat']) @ (0.5, 0.0, 0.0))[1]) for o, _ in out]
+    assert tip[800.0][-1] > 1.5 + math.sin(math.radians(50.0))            # lifted at 10 rpm (60 degrees a second)
+    assert max(tip[200.0]) < 1.5 + 0.01 and min(tip[200.0]) < 1.0         # too weak: it swings down
+
+
+def test_a_motor_speed_keyed_down_to_nothing_brakes_it():
+    sc = scene_of(wheel(), fps=50)
+    sc.set_key(('collider', 0, 'motor_speed'), sc.start + 75, 60.0)
+    sc.set_key(('collider', 0, 'motor_speed'), sc.start + 100, 0.0)
+    S, out = run(sc, 3.0)
+    spin = np.array([o[0]['omega'][:3] for o, _ in out]) @ (-1.0, 0.0, 0.0)
+    assert abs(spin[70] - 2.0 * math.pi) < 0.05 and abs(spin[-1]) < 0.01
+
+
+def test_a_cart_on_motored_wheels_drives_at_their_speed():
+    chassis = dict(name='Chassis', shape='box', position=(0.0, 0.25, 0.0), size=(0.3, 0.06, 0.5), material='wood', dynamic=True)
+    wheels = [dict(name=f'Wheel {k}', shape='cylinder', position=(sx * 0.36, 0.15, sz * 0.35), size=(0.15, 0.04, 0.15), roll=90.0,
+                   material='rubber', joint='hinge', joint_to='Chassis', joint_axis=(0.0, 1.0, 0.0), motor_speed=60.0,
+                   motor_torque=20.0, joint_friction=0.0)
+              for k, (sx, sz) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))]
+    S, out = run(scene_of(chassis, *wheels, fps=50), 3.0)
+    assert not S.warnings
+    p = np.array([o[0]['pos'] for o, _ in out])
+    v = np.array([o[0]['vel'] for o, _ in out])
+    # rolling: the wheels' rim speed (60 rpm on a 15 cm radius), forward (-z: the axles point -x), straight and level
+    assert v[-1][2] == pytest.approx(-2.0 * math.pi * 0.15, rel=0.03)
+    assert np.abs(p[:, 0]).max() < 0.01 and np.abs(p[:, 1] - 0.25).max() < 0.02
+    assert _rotation(out[-1][0][0]['quat'])[1, 1] > 0.999
+
+
+def test_the_cart_preset_jumps_its_ramp_bowls_the_tower_over_and_brakes():
+    from blackbody.scene import presets
+    sc = presets.make('cart_jump')
+    S, out = run(sc, 5.0)
+    assert not S.warnings
+    names = [c['name'] for c in sc.colliders]
+    cart = np.array([o[0]['pos'] for o, _ in out])
+    assert cart[:, 1].max() > 0.6                                         # up the ramp and off its end
+    assert out[-1][0][names.index('Block 6')]['pos'][1] < 0.5              # the tower is down
+    assert np.linalg.norm(out[-1][0][0]['vel']) < 0.05 and 1.5 < cart[-1, 0] < 3.2   # stopped short of its barrier
+    # its fire rides on it (a link), and applying the preset to a shot brings its links instead of the shot's
+    assert sc.links == [{'child': ['emitter', 'Cart fire'], 'parent': ['collider', 'Cart'], 'offset': [0.0, 0.22, 0.0]}]
+    shot = presets.make('campfire')
+    shot.links = [{'child': ['emitter', 'Log A'], 'parent': ['collider', 'Cart'], 'offset': [0.0, 0.0, 0.0]}]
+    presets.apply_to(shot, 'cart_jump')
+    assert shot.links == sc.links

@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..scene.materials import resolved
-from .liquid_float import FloatBody, inertia, q_mul, q_rot, q_yaw
+from .liquid_float import FloatBody, inertia, q_rot
 
 log = logging.getLogger(__name__)
 
@@ -167,6 +167,8 @@ def blast_impulse(kg, r):
 
 SPRING_DAMPING = 0.05   # a spring's damping ratio (with the object on its end)
 HINGE_SPAN = 0.05       # m: a hinge's two pins are at least this far apart
+MOTOR_STEPS = 4         # a motor closes the gap to its speed over about this many steps (fewer would overshoot)
+RPM = 2.0 * math.pi / 60.0
 
 
 @dataclass
@@ -185,6 +187,9 @@ class Joint:
     strength: float = 0.0       # the force that breaks it (N); 0: it never breaks
     axis: np.ndarray = None     # a hinge's axis in its body's frame
     friction: float = 0.0       # how fast a hinge's or ball joint's turning dies away (1/s)
+    motor: float = 0.0          # a hinge's motor: the speed it turns it at (rad/s, about its axis), 0: none
+    torque: float = 0.0         # and the most torque it has (N m)
+    keyed: bool = False         # the motor's speed is keyframed
     radius: float = 0.0125      # the rope's (or the spring's wire's) radius, for drawing (m)
     look: int = 0               # ropes.ROPE, CABLE or SPRING
     broken: bool = False
@@ -230,6 +235,11 @@ def surface_toward(shape, size, u, hull=None):
         with np.errstate(divide='ignore'):
             t = float(np.min(np.where(np.abs(u) > 1e-9, s / np.maximum(np.abs(u), 1e-12), np.inf)))
     return u * (t if np.isfinite(t) else 0.0)
+
+
+def turn_wxyz(cg):
+    """A ColliderGPU's whole orientation as a MuJoCo quaternion (w, x, y, z): its yaw, then its quaternion."""
+    return _quat_mul_wxyz(wxyz(cg.quat), _yaw_wxyz(float(cg.rot_y)))
 
 
 def joint_ends(c, cg, other=None, hull=None):
@@ -531,7 +541,7 @@ class Solids:
                 n = int(np.argmin(np.linalg.norm(cents - near, axis=1)))
                 return ps.names[n], True, cents[n], R
             if j in mocap:
-                return f'mocap{j}', False, pos, q_rot(xyzw(_yaw_wxyz(float(cg.rot_y))))
+                return f'mocap{j}', False, pos, R
             return world
 
         def site(on, P, name):
@@ -565,6 +575,9 @@ class Solids:
             tag = f'joint{i}'
             jt = Joint(index=i, kind=kind, body=me[0], other=ot[0], other_free=ot[1],
                        strength=float(c.get('joint_break', 0.0) or 0.0), friction=float(c.get('joint_friction', 0.2)),
+                       motor=float(scene.get(('collider', i, 'motor_speed'), scene.start)) * RPM if kind == 'hinge' else 0.0,
+                       torque=float(c.get('motor_torque', 0.0) or 0.0),
+                       keyed=kind == 'hinge' and scene.curve(('collider', i, 'motor_speed')) is not None,
                        radius=0.5 * float(c.get('rope_thickness', 0.025)),
                        look=SPRING if kind == 'spring' else (CABLE if c.get('rope_look') == 'cable' else ROPE))
             if kind in ('rope', 'spring'):
@@ -922,7 +935,7 @@ class Solids:
         for i, c in enumerate(scene.colliders):
             if i in idx or not c['enabled']:
                 continue
-            if any(scene.curve(('collider', i, kk)) is not None for kk in ('position', 'yaw', 'size')):
+            if any(scene.curve(('collider', i, kk)) is not None for kk in ('position', 'yaw', 'pitch', 'roll', 'size')):
                 moving.add(i)
         mocap = []
         n_mesh = 0
@@ -932,7 +945,8 @@ class Solids:
             c, cg = scene.colliders[i], by_index[i]
             size = np.abs(np.asarray(cg.size, float))
             r = resolved(c)
-            yaw = float(cg.rot_y)
+            q = turn_wxyz(cg)
+            R = q_rot(xyzw(q))
             # its shapes in its own frame: (shape, size, centre, mesh asset)
             parts = []
             if cg.hollow > 0.0 and cg.shape == 'box':
@@ -943,7 +957,7 @@ class Solids:
             elif cg.shape == 'mesh':
                 src = scene.mesh_path(c['mesh'])
                 if src.split('#')[0].lower().endswith(('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.exr', '.bmp')) and i not in moving:
-                    self._add_hfield(spec, w, src, size, np.asarray(cg.pos, float), yaw, contact, r)
+                    self._add_hfield(spec, w, src, size, np.asarray(cg.pos, float), q, contact, r)
                     continue
                 # boxes filling its inside, so things rest in its hollows (between logs, on stairs)
                 boxes = self._mesh_boxes(scene, c)
@@ -967,7 +981,7 @@ class Solids:
                 parent.name = f'mocap{i}'
                 parent.mocap = True
                 parent.pos = list(map(float, cg.pos))
-                parent.quat = _yaw_wxyz(yaw)
+                parent.quat = list(q)
                 mocap.append(i)
             for n_part, (shape, hs, centre, mesh) in enumerate(parts):
                 g = fixed_geom(w if i not in moving else parent, shape, hs, mesh)
@@ -975,8 +989,8 @@ class Solids:
                 if i in moving:
                     g.pos = list(map(float, centre))
                 else:
-                    g.pos = list(map(float, self._yaw_vec(yaw, centre) + np.asarray(cg.pos, float)))
-                    g.quat = _quat_mul_wxyz(_yaw_wxyz(yaw), list(g.quat))
+                    g.pos = list(map(float, R @ np.asarray(centre, float) + np.asarray(cg.pos, float)))
+                    g.quat = _quat_mul_wxyz(q, list(g.quat))
                 contact(g, r['friction'], r['bounce'])
 
         # the free bodies
@@ -1107,11 +1121,6 @@ class Solids:
         return [math.cos(0.5 * a), *(ax * math.sin(0.5 * a))]
 
     @staticmethod
-    def _yaw_vec(yaw, v):
-        R = q_rot(q_yaw(yaw))
-        return R @ np.asarray(v, float)
-
-    @staticmethod
     def _hollow_slabs(size, t, opening, at):
         """The six walls of a hollow box (half sizes `size`, walls t thick) as boxes (centre, half size) in its
         own frame, the wall the opening is in split around the opening."""
@@ -1159,7 +1168,7 @@ class Solids:
                     out.append(((a + b) / 2, (b - a) / 2))
         return out
 
-    def _add_hfield(self, spec, w, src, size, pos, yaw, contact, r):
+    def _add_hfield(self, spec, w, src, size, pos, q, contact, r):
         """A heightfield image as MuJoCo terrain: the image spans x and z of the collider's Size, from its top
         edge (back, -z) to its bottom; black is 0.02 of its height above the base and white 1.02 (mesh.py)."""
         import mujoco
@@ -1180,7 +1189,7 @@ class Solids:
         hf.userdata = hts[::-1, :].astype(float).ravel().tolist()
         b = w.add_body()
         b.pos = list(map(float, pos))
-        b.quat = _quat_mul_wxyz(_yaw_wxyz(yaw), list(Z_TO_Y))
+        b.quat = _quat_mul_wxyz(list(q), list(Z_TO_Y))
         g = b.add_geom()
         g.type = mujoco.mjtGeom.mjGEOM_HFIELD
         g.hfieldname = hf.name
@@ -1256,7 +1265,7 @@ class Solids:
             if cg is None:
                 continue
             d.mocap_pos[mid] = cg.pos
-            d.mocap_quat[mid] = _yaw_wxyz(float(cg.rot_y))
+            d.mocap_quat[mid] = turn_wxyz(cg)
         for bd in held:
             cg = at.get(bd.index)
             if cg is None:
@@ -1369,6 +1378,7 @@ class Solids:
             d.xfrc_applied[bid, :3] = f
             d.xfrc_applied[bid, 3:] = t
         self._joint_friction()
+        self._motors()
 
     def matter_push(self, forces, fdt=None):
         """The matter's push on the objects over the frame just stepped ({collider index: (force, torque about its
@@ -1395,6 +1405,46 @@ class Solids:
             dist = float(np.linalg.norm(r))
             away = r / dist if dist > 1e-9 else np.array([0.0, 1.0, 0.0])
             d.qvel[vadr:vadr + 3] += away * (blast_impulse(kg, dist) * area / max(float(m.body_mass[bid]), 1e-6))
+
+    def _about(self, b, site, ax):
+        """Body b's moment of inertia about the line through `site` (a MuJoCo site id) along unit vector ax (world)."""
+        m, d = self.model, self.data
+        Ri = d.ximat[b].reshape(3, 3)
+        r = d.xipos[b] - d.site_xpos[site]
+        rp = r - ax * float(r @ ax)
+        return float(ax @ (Ri @ np.diag(m.body_inertia[b]) @ Ri.T) @ ax) + float(m.body_mass[b]) * float(rp @ rp)
+
+    def _drive(self, scene, frame):
+        """Motors whose speed is keyframed: their speed at this step."""
+        for jt in self.joints:
+            if jt.keyed:
+                jt.motor = float(scene.get(('collider', jt.index, 'motor_speed'), frame)) * RPM
+
+    def _motors(self):
+        """Hinges with a motor turn at its speed, one side against the other: a torque about the hinge's axis that
+        closes the gap to the speed over a few steps (the two sides' inertia about the axis taken together), at most the
+        motor's strength, pushing the other side back as much (a wheel drives its cart; a fan on a post just turns)."""
+        import mujoco
+        m, d = self.model, self.data
+        h = float(m.opt.timestep)
+        v6 = np.zeros(6)
+        for jt in self.joints:
+            if jt.broken or jt.kind != 'hinge' or jt.motor == 0.0 and not jt.keyed or jt.torque <= 0.0:
+                continue
+            b = jt.bid
+            ax = d.xmat[b].reshape(3, 3) @ jt.axis
+            mujoco.mj_objectVelocity(m, d, mujoco.mjtObj.mjOBJ_BODY, b, v6, 0)
+            w = float(v6[:3] @ ax)
+            inertia = self._about(b, jt.sids[0], ax)
+            if jt.other_free:
+                mujoco.mj_objectVelocity(m, d, mujoco.mjtObj.mjOBJ_BODY, jt.oid, v6, 0)
+                w -= float(v6[:3] @ ax)
+                other = self._about(jt.oid, jt.sids[1], ax)
+                inertia = inertia * other / (inertia + other)
+            tau = float(np.clip(inertia * (jt.motor - w) / (MOTOR_STEPS * h), -jt.torque, jt.torque)) * ax
+            d.xfrc_applied[b, 3:] += tau
+            if jt.other_free:
+                d.xfrc_applied[jt.oid, 3:] -= tau
 
     def _joint_friction(self):
         """Hinges and ball joints resist turning: a torque against the turning of one side against the other, that
@@ -1453,6 +1503,7 @@ class Solids:
                 self.substep_pieces.append(self.piece_poses() if self.sets else None)
                 mi += 1
             self._keyed(scene, frame - 1 + (t + 0.5 * h) / fdt)
+            self._drive(scene, frame - 1 + (t + 0.5 * h) / fdt)
             for fb, where, kg in blasts:
                 if frame - 1 + t / fdt <= fb < frame - 1 + (t + h) / fdt:
                     self._blast(np.asarray(where, float), kg)
@@ -1643,9 +1694,7 @@ def attached(scene, kind, poses):
         if pi is None or ci is None or pi not in poses:
             continue
         pose = poses[pi]
-        yaw0 = math.radians(float(scene.get(('collider', pi, 'yaw'), scene.start)))
-        c0, s0 = math.cos(yaw0), math.sin(yaw0)
-        r0t = np.array([[c0, 0.0, -s0], [0.0, 1.0, 0.0], [s0, 0.0, c0]])     # the parent's start yaw, undone
+        r0t = scene.turn(pi, scene.start).T                                    # the parent's start turn, undone
         turned = _rotation(pose.get('quat', (0.0, 0.0, 0.0, 1.0)))           # (ColliderGPU: its quaternion after its yaw)
         if pose.get('rot_y'):
             ry = float(pose['rot_y'])

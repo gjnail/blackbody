@@ -687,6 +687,10 @@ COLLIDER_PARAMS = [
     V('size', 'Size', (0.5, 0.5, 0.5), 0.01, 20.0, 'm', anim=True, decimals=3,
       tip='Box: half-sizes. Sphere: radius (x). Cylinder: radius, half-height. Mesh: scale on each axis (1 = as modelled).', group='Shape'),
     F('yaw', 'Rotation', 0.0, -180.0, 180.0, '°', 1, anim=True, group='Shape'),
+    F('pitch', 'Tilt', 0.0, -180.0, 180.0, '°', 1, anim=True, tip='Tips it over about its own sideways axis, after its '
+      'Rotation: its top leans toward its front. A ramp, a leaning wall, a wheel on its side.', group='Shape'),
+    F('roll', 'Roll', 0.0, -180.0, 180.0, '°', 1, anim=True, tip='Rolls it about its own front-to-back axis, after its '
+      'Tilt: its top leans to its left.', group='Shape'),
     F('mesh_offset', 'Mesh frame offset', 0.0, -10000.0, 10000.0, 'frames', 1, tip='A deforming mesh (sequence or animated USD) plays this many frames late (negative: early).', group='Shape', advanced=True),
     F('hollow', 'Hollow walls', 0.0, 0.0, 1.0, 'm', 3, anim=True, tip='Makes the collider hollow, with walls this thick: a room, a tank, a pipe. 0 is solid.', group='Walls and openings'),
     V('opening', 'Opening size', (0.0, 0.0, 0.0), 0.0, 10.0, 'm', anim=True, decimals=3, tip='Half size of a box cut out of the collider: a door, a window, a vent. Keyframe it to open a door. 0 is none.', group='Walls and openings'),
@@ -762,6 +766,11 @@ COLLIDER_PARAMS = [
       'swings for ever, 1 settles in a second or two.', group='Joint', advanced=True),
     F('joint_break', 'Breaks at', 0.0, 0.0, 1.0e7, 'N', 0, tip='The pull that snaps the rope or the spring, or tears the hinge '
       'out. 0: it never breaks.', group='Joint'),
+    F('motor_speed', 'Motor speed', 0.0, -600.0, 600.0, 'rpm', 0, anim=True, tip='A motor turns the hinge at this many '
+      'turns a minute, anticlockwise looking down its Hinge axis (negative: the other way): a wheel, a fan, a windmill, a '
+      'turntable. It pushes against what it is joined to. 0: no motor.', group='Joint'),
+    F('motor_torque', 'Motor strength', 50.0, 0.0, 1.0e5, 'N·m', 1, tip='The most turning force the motor has. Too little '
+      'and it stalls under its load (a wheel on a slope, a fan in water).', group='Joint', log=True),
     B('floating', 'Floats', False, tip='The liquid moves it: it floats or sinks by its density, bobs, drifts with the flow, tips and '
       'turns. Falls does the same, and also lets it fall through the air. Its keyframes set only where it starts.', group='Liquid'),
 ]

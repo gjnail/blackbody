@@ -101,6 +101,35 @@ def _from_json_value(p, v):
 BOLT_RADIANCE = 50.0   # lightning's channel at the peak of a flash (scene-linear: white is 1)
 
 
+def quat_mul(a, b):
+    """Quaternion product a b (x, y, z, w): b's turn, then a's."""
+    ax, ay, az, aw = a
+    bx, by, bz, bw = b
+    return (aw * bx + ax * bw + ay * bz - az * by, aw * by - ax * bz + ay * bw + az * bx,
+            aw * bz + ax * by - ay * bx + az * bw, aw * bw - ax * bx - ay * by - az * bz)
+
+
+def turn_quat(yaw, pitch=0.0, roll=0.0):
+    """An object's orientation (x, y, z, w) from its Rotation about the vertical, then its Tilt about its own sideways
+    axis (x) and its Roll about its own front-to-back axis (z), in radians: R = Ry(yaw) Rx(pitch) Rz(roll)."""
+    q = (0.0, math.sin(0.5 * yaw), 0.0, math.cos(0.5 * yaw))
+    q = quat_mul(q, (math.sin(0.5 * pitch), 0.0, 0.0, math.cos(0.5 * pitch)))
+    return quat_mul(q, (0.0, 0.0, math.sin(0.5 * roll), math.cos(0.5 * roll)))
+
+
+def quat_matrix(q):
+    """The 3x3 rotation of quaternion q (x, y, z, w)."""
+    x, y, z, w = (float(v) for v in q)
+    return np.array([[1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+                     [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+                     [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
+
+
+def turn_matrix(yaw, pitch=0.0, roll=0.0):
+    """turn_quat as a 3x3 rotation (own frame -> fire-local), angles in degrees."""
+    return quat_matrix(turn_quat(math.radians(yaw), math.radians(pitch), math.radians(roll)))
+
+
 class Scene:
     def __init__(self):
         self.name = 'Untitled'
@@ -712,21 +741,52 @@ class Scene:
             if not c['enabled']:
                 continue
             g = lambda k: self.get(('collider', i, k), f)
+            turn = dict(rot_y=math.radians(g('yaw')), spin=math.radians(self.rate(('collider', i, 'yaw'), f)))
+            if self.tilted(i):
+                # tipped over: its whole turn in its quaternion, and how fast it turns as its omega (world axes), so the
+                # solids, the shaders and the motion blur all turn it about the same axis
+                turn = dict(rot_y=0.0, spin=0.0, quat=turn_quat(*(math.radians(g(k)) for k in ('yaw', 'pitch', 'roll'))),
+                            omega=self.turn_rate(i, f))
             out.append(ColliderGPU(
-                shape=c['shape'], pos=tuple(g('position')), size=tuple(g('size')), rot_y=math.radians(g('yaw')),
-                vel=tuple(self.rate(('collider', i, 'position'), f)), spin=math.radians(self.rate(('collider', i, 'yaw'), f)),
+                shape=c['shape'], pos=tuple(g('position')), size=tuple(g('size')),
+                vel=tuple(self.rate(('collider', i, 'position'), f)),
                 burnable=bool(c['burnable']), mesh=self.mesh_path(c['mesh']) if c['shape'] == 'mesh' else '',
                 hollow=g('hollow'), opening=tuple(g('opening')), opening_at=tuple(g('opening_at')), holdout=bool(c['holdout']),
-                **self._mesh_time(c, f)))
+                **turn, **self._mesh_time(c, f)))
         if overrides:
             import dataclasses
             idx = [i for i, c in enumerate(self.colliders) if c['enabled']]
             out = [dataclasses.replace(cg, **overrides[i]) if i in overrides else cg for i, cg in zip(idx, out)]
         return out[:MAX_COLLIDERS]
 
+    def tilted(self, i):
+        """Whether collider i is tipped over (Tilt or Roll), at any frame."""
+        c = self.colliders[i]
+        return any(isinstance(c.get(k), Curve) or float(c.get(k) or 0.0) != 0.0 for k in ('pitch', 'roll'))
+
+    def turn(self, i, frame=None):
+        """Collider i's orientation at `frame` as a 3x3 rotation (its own frame -> fire-local)."""
+        f = self.start if frame is None else frame
+        return turn_matrix(*(float(self.get(('collider', i, k), f)) for k in ('yaw', 'pitch', 'roll')))
+
+    def turn_rate(self, i, frame):
+        """How fast collider i turns from the keys of its Rotation, Tilt and Roll: (x, y, z, 0) rad/s, world axes."""
+        if all(self.curve(('collider', i, k)) is None for k in ('yaw', 'pitch', 'roll')):
+            return (0.0, 0.0, 0.0, 0.0)
+        a, b = (turn_quat(*(math.radians(self.get(('collider', i, k), frame + s)) for k in ('yaw', 'pitch', 'roll')))
+                for s in (-0.5, 0.5))
+        x, y, z, w = quat_mul(b, (-a[0], -a[1], -a[2], a[3]))          # the turn from a to b, in world axes
+        if w < 0.0:
+            x, y, z, w = -x, -y, -z, -w
+        sn = math.sqrt(x * x + y * y + z * z)
+        if sn < 1e-12:
+            return (0.0, 0.0, 0.0, 0.0)
+        k = 2.0 * math.atan2(sn, w) / sn * self.fps / max(self.v('domain', 'time_scale', frame), 1e-3)
+        return (x * k, y * k, z * k, 0.0)
+
     def colliders_animated(self):
         return (any(self.curve(('collider', i, k)) is not None for i, c in enumerate(self.colliders) if c['enabled']
-                    for k in ('position', 'size', 'yaw', 'hollow', 'opening', 'opening_at'))
+                    for k in ('position', 'size', 'yaw', 'pitch', 'roll', 'hollow', 'opening', 'opening_at'))
                 or any(self._mesh_time(c, self.start) for c in self.colliders if c['enabled']))
 
     # -- liquid ----------------------------------------------------------------------------------
