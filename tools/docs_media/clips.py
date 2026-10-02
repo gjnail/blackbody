@@ -82,8 +82,10 @@ CLIPS = {
     'jelly_ball': clip('jelly_ball', 0.0, 72, dyaw=6.0, push=0.04),
     'mud_drag': clip('mud_drag', 0.0, 72, dyaw=6.0, push=0.04),
     'sand_castle': clip('sand_castle', 0.5, 180, dyaw=6.0, push=0.08),   # the wave at 1 s, slumped by about 6 s
+    'sand_sling': clip('sand_sling', 0.0, 120, dyaw=6.0, push=0.06),    # poured from 0 to 3 s, settled in the sheet after
     'iron_pour': clip('iron_pour', 0.0, 192, dyaw=6.0, push=0.06),      # poured from 0.2 s to 3.7 s, setting after
     'chocolate_fire': clip('chocolate_fire', 0.5, 216, dyaw=4.0, push=0.06),   # the nearest piece runs by about 4 s
+    'chocolate_pan': clip('chocolate_pan', 0.0, 240, dyaw=4.0, push=0.05),     # soft by 3 s, pools run together by 8 s
     # ---- water ----------------------------------------------------------------------------------------------
     'floating': clip('floating', 0.2, 96, plate='ground', plate_args=DAY_PEBBLES),
     'ink_tank': clip('ink_tank', 0.3, 120, plate='ground', plate_args=DAY_FINE, dyaw=8.0),

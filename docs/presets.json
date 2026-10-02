@@ -343,6 +343,13 @@
   "blurb": "A wall of water let go at a castle of damp sand: the wave breaks over it and the castle stands, then the water soaks into it, undermines it and slumps it into a mound that the sloshing water carries. Matter in Wet sand and a block of water in a closed box."
  },
  {
+  "key": "sand_sling",
+  "name": "Sand into a sling",
+  "category": "Sand, snow and mud",
+  "size": "90 cm sheet",
+  "blurb": "Sand poured onto a cotton sheet tied to four posts: it heaps in the dip it makes, the sheet sagging under its weight, and not a grain gets through. Matter in Sand, poured; Fabric held by its four corners."
+ },
+ {
   "key": "iron_pour",
   "name": "Pouring molten iron",
   "category": "Sand, snow and mud",
@@ -355,6 +362,13 @@
   "category": "Sand, snow and mud",
   "size": "20 cm flames",
   "blurb": "Three pieces of chocolate on a slab beside a small fire: its radiant heat softens the side of each that faces it, the nearest first, and they slump and run into glossy puddles. Matter in Chocolate, with Heat speed 30 (it melts some thirty times quicker than for real)."
+ },
+ {
+  "key": "chocolate_pan",
+  "name": "Chocolate in a hot pan",
+  "category": "Sand, snow and mud",
+  "size": "24 cm pan",
+  "blurb": "Squares of chocolate dropped into a steel pan at 180 °C: they melt from the bottom where they touch it, slump into glossy pools and run together. Matter in Chocolate; the pan’s Temperature 180 °C; Heat speed 60 (it melts some sixty times quicker than for real)."
  },
  {
   "key": "water_pour",

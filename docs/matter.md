@@ -49,6 +49,8 @@ Right-click one in the viewer for *Made of*, *Let go at this frame*, *Pour it fr
 - **Blasts.** An explosion (an emitter's *Blast*) throws it away from where it goes off, the surface hardest: a heap of sand near a charge is blown flat.
 - **Water.** In a liquid or fire-and-liquid box the water and the matter push each other. A wave shoves jelly, and jelly floats by the water it puts aside; grains in the water are lighter by it; and water running over sand drags its top along, so a pour digs a crater where it lands and a gully where it runs off.
 
+![Sand into a sling](media/gif/sand_sling.gif "Sand into a sling: sand poured onto a cotton sheet tied to four posts heaps in the dip it makes, the sheet sagging under its weight.")
+
 It is solid to the smoke and the water: smoke blown at a heap of sand goes round and over it, water poured on it runs off it and pools at its foot, and a pour pushes the air aside as it falls.
 
 Sand gets wet. Dry sand the water touches is damp after half a second: darker and glossier, its grains held together by the water between them, so it stands steeper and holds a cut edge. The water seeps on into damp sand, a couple of centimetres a second, and sand it soaks through lets go: its grains part. A sand castle the water reaches stands at first, then is undermined, slumps into a mound and is carried by the flow. Away from the water, soaked sand drains back to damp in a few seconds.
@@ -64,6 +66,8 @@ Wax, chocolate, aluminium and iron have a temperature (Matter › *Temperature*,
 Hot metal glows as a blackbody at its temperature: dull red from about 600 °C, orange by 1000 °C, yellow-white over 1300 °C. It glows as bright as a flame that hot (the Look's *Flame temperature*, *Intensity*, *Exposure* and *Dynamic range* set both), and it lights what is round it. Aluminium melts before it glows much, as the real metal does.
 
 Melting takes as long as it really would, times *Heat speed* (Domain): 4 unless set, so a chocolate bar by a campfire runs in seconds rather than a minute. *Pouring molten iron* pours a ladle of it into a mould, and *Chocolate by a fire* melts three pieces beside a small fire.
+
+![Chocolate in a hot pan](media/gif/chocolate_pan.gif "Chocolate in a hot pan: squares of chocolate in a steel pan at 180 °C melt from the bottom, slump into glossy pools and run together.")
 
 ## Things that burn
 

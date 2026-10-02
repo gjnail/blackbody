@@ -866,6 +866,46 @@ PRESETS = {
         'matter': [dict(name='Molten iron', material='molten_iron', pours=True, position=(-0.13, 0.46, 0.0),
                         size=(0.014, 0.014, 0.014), velocity=(0.45, 0.0, 0.0), rate=0.6, pour_start=0.2, pour_stop=3.7)],
     },
+    'sand_sling': {
+        'name': 'Sand into a sling', 'category': 'Sand, snow and mud', 'size': '90 cm sheet',
+        'blurb': 'Sand poured onto a cotton sheet tied to four posts: it heaps in the dip it makes, the sheet sagging '
+                 'under its weight, and not a grain gets through. Matter in Sand, poured; Fabric held by its four corners.',
+        'render': {'end': 120},
+        'domain': {'size_x': 1.4, 'size_y': 1.2, 'size_z': 1.4, 'resolution': 40, 'preroll': 0.0, 'matter_detail': 112},
+        'composite': {'backdrop': 'stage', 'floor': 'concrete'},
+        'lighting': {'sun_on': True, 'sun_intensity': 3.0, 'sun_elevation': 40.0, 'sun_azimuth': -130.0, 'ambient_intensity': 2.5},
+        'camera': {'distance': 2.1, 'target_y': 0.42, 'pitch': 22, 'yaw': 25, 'focal_mm': 35},
+        'emitters': [],
+        'colliders': [dict(name=f'Post {k + 1}', shape='cylinder', position=(sx * 0.47, 0.25, sz * 0.47),
+                           size=(0.02, 0.25, 0.02), material='wood') for k, (sx, sz) in
+                      enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))],
+        'fabrics': [dict(name='Sling', position=(0.0, 0.5, 0.0), width=0.9, height=0.9, orientation='lying', pins='corners',
+                         material='cotton', colour=(0.62, 0.15, 0.1))],
+        'matter': [dict(name='Sand', material='sand', pours=True, position=(0.0, 0.95, 0.0), size=(0.03, 0.03, 0.03),
+                        velocity=(0.0, -0.5, 0.0), rate=1.0, pour_start=0.0, pour_stop=3.0)],
+    },
+    'chocolate_pan': {
+        'name': 'Chocolate in a hot pan', 'category': 'Sand, snow and mud', 'size': '24 cm pan',
+        'blurb': 'Squares of chocolate dropped into a steel pan at 180 °C: they melt from the bottom where they touch it, '
+                 'slump into glossy pools and run together. Matter in Chocolate; the pan’s Temperature 180 °C; Heat speed '
+                 '60 (it melts some sixty times quicker than for real).',
+        'render': {'end': 240},
+        'domain': {'size_x': 0.6, 'size_y': 0.3, 'size_z': 0.5, 'resolution': 32, 'preroll': 0.0, 'matter_detail': 192,
+                   'matter_heat_speed': 60.0},
+        'composite': {'backdrop': 'stage', 'floor': 'boards'},
+        'lighting': {'sun_on': True, 'sun_intensity': 2.5, 'sun_elevation': 40.0, 'sun_azimuth': -120.0, 'ambient_intensity': 1.8},
+        'camera': {'distance': 0.55, 'target_y': 0.0, 'pitch': 45, 'yaw': 25, 'anchor_y': 0.6, 'focal_mm': 35},
+        'emitters': [],
+        'colliders': [
+            dict(name='Pan', shape='cylinder', position=(0.0, 0.02, 0.0), size=(0.12, 0.02, 0.12), hollow=0.004,
+                 opening=(0.13, 0.01, 0.13), opening_at=(0.0, 0.02, 0.0), material='steel', temperature=180.0),
+            dict(name='Handle', shape='box', position=(0.21, 0.03, 0.0), size=(0.09, 0.006, 0.013), material='steel'),
+        ],
+        'matter': [dict(name=f'Square {k + 1}', material='chocolate', shape='box', position=(x, y, z),
+                        size=(0.02, 0.004, 0.02), yaw=a) for k, (x, y, z, a) in enumerate((
+                            (-0.05, 0.010, 0.03, 10.0), (0.03, 0.010, 0.04, -20.0), (0.0, 0.010, -0.05, 35.0),
+                            (-0.01, 0.019, 0.0, 5.0), (0.06, 0.010, -0.02, 50.0)))],
+    },
     'chocolate_fire': {
         'name': 'Chocolate by a fire', 'category': 'Sand, snow and mud', 'size': '20 cm flames',
         'blurb': 'Three pieces of chocolate on a slab beside a small fire: its radiant heat softens the side of each that '
@@ -1131,7 +1171,7 @@ ORDER = ['campfire', 'bonfire', 'torch', 'candle', 'gas_ring', 'pool_fire', 'fir
          'curtain_fire', 'fabric_curtain', 'wet_towels', 'armchair_fire', 'room_fire', 'backdraft', 'flash_fire', 'gas_cloud', 'coloured_flames', 'road_flare',
          'grinder_sparks', 'fireworks', 'car_through_smoke', 'flag_wind', 'kettle_steam', 'steam_vent',
          'crates_in_fire', 'tower_knockdown', 'wall_smash', 'wrecking_ball', 'window_smash', 'vase_drop',
-         'yard_blast', 'lightning_strike', 'cart_jump', 'meadow_fire', 'shed_fire', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag', 'sand_castle', 'iron_pour', 'chocolate_fire']
+         'yard_blast', 'lightning_strike', 'cart_jump', 'meadow_fire', 'shed_fire', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag', 'sand_castle', 'sand_sling', 'iron_pour', 'chocolate_fire', 'chocolate_pan']
 
 
 def make(name: str, fps=None, start=None) -> Scene:

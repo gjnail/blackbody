@@ -254,6 +254,11 @@ COMPONENTS = [
               objects=[_C(name='Banks', shape='mesh', mesh='builtin:pond_basin.png', position=(0.0, 0.0, 0.0), size=(3.2, 0.4, 2.4))]),
     Component('logs', 'Firewood', 'Objects', 'A built-in pile of firewood logs (a solid mesh).', 'cube', room=(0.6, 0.6, 0.6),
               objects=[_C(name='Firewood', shape='mesh', mesh='builtin:firewood.obj', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0))]),
+    Component('hot_plate', 'Hot plate', 'Objects', 'A 30 cm steel plate at 200 °C: chocolate, wax and '
+              'metal on it melt, snow on it melts from below, and water on it boils (with Heat and phase changes on).',
+              'cube', room=(0.15, 0.02, 0.15),
+              objects=[_C(name='Hot plate', shape='box', position=(0.0, 0.01, 0.0), size=(0.15, 0.01, 0.15), material='steel',
+                          temperature=200.0)]),
     Component('text', 'Text', 'Objects', 'Solid letters in any font on this computer. Set them on fire (they catch all '
               'over, flare up and burn out), float them, pour water over them.', 'text', pick='text',
               objects=[_C(name='Text', shape='mesh', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0))]),
@@ -456,6 +461,25 @@ COMPONENTS = [
                        _M(name='Keep', material='wet_sand', shape='cylinder', position=(0.0, 0.24, 0.0), size=(0.065, 0.1, 0.065))]
               + [_M(name=f'Tower {k + 1}', material='wet_sand', shape='cylinder', position=(sx * 0.115, 0.215, sz * 0.115),
                     size=(0.04, 0.075, 0.04)) for k, (sx, sz) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))]),
+    Component('sand_sling', 'Sand into a sling', 'Sand, snow & mud', 'A cotton sheet tied to four posts 50 cm up, with sand '
+              'poured onto it from 95 cm for three seconds: it heaps in the dip it makes and weighs the sheet down.', 'fabric',
+              room=(0.5, 1.0, 0.5),
+              objects=[_C(name=f'Post {k + 1}', shape='cylinder', position=(sx * 0.47, 0.25, sz * 0.47), size=(0.02, 0.25, 0.02),
+                          material='wood') for k, (sx, sz) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))]
+              + [_F(name='Sling', position=(0.0, 0.5, 0.0), width=0.9, height=0.9, orientation='lying', pins='corners',
+                    material='cotton', colour=(0.62, 0.15, 0.1)),
+                 _M(name='Sand', material='sand', pours=True, position=(0.0, 0.95, 0.0), size=(0.03, 0.03, 0.03),
+                    velocity=(0.0, -0.5, 0.0), rate=1.0, pour_start=0.0, pour_stop=3.0)]),
+    Component('chocolate_pan', 'Chocolate in a hot pan', 'Sand, snow & mud', 'Squares of chocolate in a 24 cm steel pan at '
+              '180 °C: they melt where they touch it and run into glossy pools (Heat speed 60: some sixty times '
+              'quicker than for real).', 'matter', room=(0.3, 0.05, 0.13), scene={'domain': {'matter_heat_speed': 60.0}},
+              objects=[_C(name='Pan', shape='cylinder', position=(0.0, 0.02, 0.0), size=(0.12, 0.02, 0.12), hollow=0.004,
+                          opening=(0.13, 0.01, 0.13), opening_at=(0.0, 0.02, 0.0), material='steel', temperature=180.0),
+                       _C(name='Handle', shape='box', position=(0.21, 0.03, 0.0), size=(0.09, 0.006, 0.013), material='steel')]
+              + [_M(name=f'Square {k + 1}', material='chocolate', shape='box', position=(x, y, z), size=(0.02, 0.004, 0.02),
+                    yaw=a) for k, (x, y, z, a) in enumerate(((-0.05, 0.010, 0.03, 10.0), (0.03, 0.010, 0.04, -20.0),
+                                                            (0.0, 0.010, -0.05, 35.0), (-0.01, 0.019, 0.0, 5.0),
+                                                            (0.06, 0.010, -0.02, 50.0)))]),
     Component('matter_shape', 'Matter shape', 'Sand, snow & mud', 'A mesh of your own (OBJ, STL or a USD prim) filled with '
               'clay: choose what it is made of in Properties (chocolate, wax, jelly, sand, snow...).', 'matter', pick='mesh',
               objects=[_M(name='Shape', material='clay', shape='mesh', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0))]),

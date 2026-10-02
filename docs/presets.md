@@ -1,6 +1,6 @@
 # Presets
 
-Blackbody comes with 97 presets. Click one in the app's Effects panel to load it into your shot; every one is an ordinary scene you can change and save as your own. On the website the gallery plays a clip of each one that has one: <https://gjnail.github.io/blackbody/presets.html>.
+Blackbody comes with 99 presets. Click one in the app's Effects panel to load it into your shot; every one is an ordinary scene you can change and save as your own. On the website the gallery plays a clip of each one that has one: <https://gjnail.github.io/blackbody/presets.html>.
 
 ## Fire and smoke
 
@@ -65,8 +65,10 @@ Blackbody comes with 97 presets. Click one in the app's Effects panel to load it
 | <img src="../blackbody/assets/presets/jelly_ball.png" width="200" alt=""> | **Ball dropped on jelly**<br>34 cm block | A 7 kg steel ball dropped onto a block of jelly: the jelly squashes deep, throws the ball back up and wobbles. Matter in Jelly and an object that falls, pushing each other. |
 | <img src="../blackbody/assets/presets/mud_drag.png" width="200" alt=""> | **Crate through mud**<br>1.6 m of mud | A crate dragged through a bed of thick mud: it ploughs a trench, pushes up a bow wave that slumps back, and leaves ridges. Matter in Mud, and an object moved by its keys. |
 | <img src="../blackbody/assets/presets/sand_castle.png" width="200" alt=""> | **Sand castle and a wave**<br>32 cm castle | A wall of water let go at a castle of damp sand: the wave breaks over it and the castle stands, then the water soaks into it, undermines it and slumps it into a mound that the sloshing water carries. Matter in Wet sand and a block of water in a closed box. |
+| <img src="../blackbody/assets/presets/sand_sling.png" width="200" alt=""> | **Sand into a sling**<br>90 cm sheet | Sand poured onto a cotton sheet tied to four posts: it heaps in the dip it makes, the sheet sagging under its weight, and not a grain gets through. Matter in Sand, poured; Fabric held by its four corners. |
 | <img src="../blackbody/assets/presets/iron_pour.png" width="200" alt=""> | **Pouring molten iron**<br>3 litres of iron | Molten iron at 1320 °C poured from a ladle into a mould: it glows orange and lights the floor round it, fills the mould, and dims to red as its skin cools and sets. Matter in Molten iron, poured. |
 | <img src="../blackbody/assets/presets/chocolate_fire.png" width="200" alt=""> | **Chocolate by a fire**<br>20 cm flames | Three pieces of chocolate on a slab beside a small fire: its radiant heat softens the side of each that faces it, the nearest first, and they slump and run into glossy puddles. Matter in Chocolate, with Heat speed 30 (it melts some thirty times quicker than for real). |
+| <img src="../blackbody/assets/presets/chocolate_pan.png" width="200" alt=""> | **Chocolate in a hot pan**<br>24 cm pan | Squares of chocolate dropped into a steel pan at 180 °C: they melt from the bottom where they touch it, slump into glossy pools and run together. Matter in Chocolate; the pan’s Temperature 180 °C; Heat speed 60 (it melts some sixty times quicker than for real). |
 
 ## Water
 
