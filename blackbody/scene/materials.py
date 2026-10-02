@@ -4,10 +4,12 @@ The numbers are handbook values for the material against itself or a hard floor:
 - density in kg/m^3;
 - friction is the Coulomb coefficient;
 - bounce is the coefficient of restitution (how much of the speed comes back off a hard floor);
-- strength is the stress, in Pa, at which glued pieces of it come apart (breakable objects). It is an effective
-  strength, not the handbook one: a joint here feels the force of a whole impact spread over its face, where a real
-  brittle thing breaks at the tiny point it is hit. They are set so that a stone through a window, a vase dropped
-  from a table and a wrecking ball through a wall break as they do, and a touch does not.
+- strength is the stress, in Pa, at which glued pieces of it come apart under a load (breakable objects): pulled,
+  sheared or bent. It is an effective strength (pottery's and glass's near the handbook's, the rest lower), set so
+  that a wall stands under its own weight and a wrecking ball brings it down, and a vase tipped off a table holds
+  until it lands;
+- impact is the speed, in m/s, of a hit that breaks a piece of it away (solids.py: how fast what meets it closes on
+  it), so that a stone goes through a window and a dropped vase shatters where it lands, and a touch does not.
 
 Hollow everyday objects (a cardboard box, a plastic crate) use an effective density, their weight over the
 space they take up. The look is used when an object is drawn as a CG object:
@@ -43,27 +45,36 @@ class Material:
     dust: float = 0.0        # how much dust it throws up where it breaks (mortar, plaster, soil: about 1)
     effusivity: float = 1500.0  # W s^0.5/m^2/K, sqrt(conductivity x density x heat capacity): how readily it gives heat
                                 # to (or takes it from) what touches it (steel a pan's 14000, wood 400, foam 40)
-
+    impact: float = 0.0         # m/s: hit this fast (what meets it closing on it, or it stopped short), a piece of it
+                                # breaks away (a pane or a pot dropped on a hard floor from about 30 cm, a brick wall's
+                                # mortar from 20 cm). A hit sends a stress wave through it of about density x sound
+                                # speed x that speed; this is where that reaches what it holds. 0: never
+    brittle: float = 0.0        # how far a crack runs on from a hit (0..1): of a hit that breaks a piece away, the
+                                # share that carries to the pieces glued to it, a piece's size further on (glass and
+                                # pottery shatter right through, wood splits off where it is hit, metal dents)
+    yields: float = 0.0         # Pa: loaded past this (but short of its strength) a joint of it bends and stays bent
+                                # (metal, plastic); 0: it never bends, it breaks (stone, glass, wood)
+    ductility: float = 0.0      # radians: how far a joint of it bends in all before it tears
 
 MATERIALS = {m.key: m for m in (
-    Material('wood', 'Wood (pine)', 550.0, 0.45, 0.35, 2.0e+06, (0.45, 0.29, 0.15), 0.65, pattern='wood', inside=(0.62, 0.45, 0.27), dust=0.15, effusivity=400.0),
-    Material('stone', 'Stone (granite)', 2650.0, 0.6, 0.25, 2.0e+06, (0.32, 0.31, 0.3), 0.8, pattern='stone', inside=(0.42, 0.41, 0.39), dust=0.6, effusivity=2400.0),
-    Material('concrete', 'Concrete', 2400.0, 0.65, 0.2, 1.0e+06, (0.42, 0.41, 0.38), 0.9, pattern='concrete', inside=(0.5, 0.48, 0.44), dust=1.0, effusivity=1900.0),
-    Material('brick', 'Brick', 1900.0, 0.6, 0.15, 1.5e+06, (0.38, 0.13, 0.07), 0.85, pattern='brick', inside=(0.5, 0.2, 0.11), dust=1.0, effusivity=1100.0),
-    Material('steel', 'Steel', 7850.0, 0.45, 0.45, 2.0e+08, (0.56, 0.57, 0.58), 0.35, metal=1.0, pattern='metal', effusivity=14000.0),
-    Material('aluminium', 'Aluminium', 2700.0, 0.45, 0.45, 5.0e+07, (0.91, 0.92, 0.92), 0.3, metal=1.0, pattern='metal', effusivity=24000.0),
-    Material('glass', 'Glass', 2500.0, 0.5, 0.5, 2.0e+06, (0.9, 0.95, 0.94), 0.03, clear=0.92, pattern='glass', inside=(0.75, 0.85, 0.82), dust=0.03, effusivity=1400.0),
-    Material('ice', 'Ice', 917.0, 0.05, 0.25, 3.0e+05, (0.8, 0.9, 0.95), 0.08, clear=0.7, pattern='glass', ior=1.31, dust=0.1, effusivity=2100.0),
-    Material('plastic', 'Plastic', 950.0, 0.35, 0.5, 3.0e+06, (0.75, 0.1, 0.06), 0.4, effusivity=600.0),
-    Material('rubber', 'Rubber', 1100.0, 0.9, 0.8, 5.0e+06, (0.04, 0.04, 0.04), 0.7, effusivity=600.0),
-    Material('ceramic', 'Ceramic (pottery)', 2300.0, 0.5, 0.35, 3.0e+05, (0.8, 0.77, 0.72), 0.25, inside=(0.66, 0.5, 0.38), dust=0.4, effusivity=1400.0),
-    Material('cardboard', 'Cardboard box', 120.0, 0.5, 0.15, 1.0e+05, (0.48, 0.33, 0.17), 0.9, inside=(0.58, 0.45, 0.28), dust=0.3, effusivity=150.0),
-    Material('foam', 'Foam', 40.0, 0.7, 0.3, 5.0e+04, (0.85, 0.85, 0.8), 0.95, dust=0.2, effusivity=40.0),
+    Material('wood', 'Wood (pine)', 550.0, 0.45, 0.35, 2.0e+06, (0.45, 0.29, 0.15), 0.65, pattern='wood', inside=(0.62, 0.45, 0.27), dust=0.15, effusivity=400.0, impact=7.0, brittle=0.25),
+    Material('stone', 'Stone (granite)', 2650.0, 0.6, 0.25, 2.0e+06, (0.32, 0.31, 0.3), 0.8, pattern='stone', inside=(0.42, 0.41, 0.39), dust=0.6, effusivity=2400.0, impact=6.0, brittle=0.55),
+    Material('concrete', 'Concrete', 2400.0, 0.65, 0.2, 1.0e+06, (0.42, 0.41, 0.38), 0.9, pattern='concrete', inside=(0.5, 0.48, 0.44), dust=1.0, effusivity=1900.0, impact=4.0, brittle=0.5),
+    Material('brick', 'Brick', 1900.0, 0.6, 0.15, 1.5e+06, (0.38, 0.13, 0.07), 0.85, pattern='brick', inside=(0.5, 0.2, 0.11), dust=1.0, effusivity=1100.0, impact=2.0, brittle=0.35),
+    Material('steel', 'Steel', 7850.0, 0.45, 0.45, 4.0e+08, (0.56, 0.57, 0.58), 0.35, metal=1.0, pattern='metal', effusivity=14000.0, impact=60.0, brittle=0.0, yields=2.5e+08, ductility=1.2),
+    Material('aluminium', 'Aluminium', 2700.0, 0.45, 0.45, 2.5e+08, (0.91, 0.92, 0.92), 0.3, metal=1.0, pattern='metal', effusivity=24000.0, impact=40.0, brittle=0.0, yields=1.5e+08, ductility=0.8),
+    Material('glass', 'Glass', 2500.0, 0.5, 0.5, 2.0e+07, (0.9, 0.95, 0.94), 0.03, clear=0.92, pattern='glass', inside=(0.75, 0.85, 0.82), dust=0.03, effusivity=1400.0, impact=2.5, brittle=0.7),
+    Material('ice', 'Ice', 917.0, 0.05, 0.25, 3.0e+05, (0.8, 0.9, 0.95), 0.08, clear=0.7, pattern='glass', ior=1.31, dust=0.1, effusivity=2100.0, impact=3.0, brittle=0.75),
+    Material('plastic', 'Plastic', 950.0, 0.35, 0.5, 3.0e+06, (0.75, 0.1, 0.06), 0.4, effusivity=600.0, impact=15.0, brittle=0.3, yields=2.0e+06, ductility=1.5),
+    Material('rubber', 'Rubber', 1100.0, 0.9, 0.8, 5.0e+06, (0.04, 0.04, 0.04), 0.7, effusivity=600.0, impact=0.0, brittle=0.0),
+    Material('ceramic', 'Ceramic (pottery)', 2300.0, 0.5, 0.35, 3.0e+06, (0.8, 0.77, 0.72), 0.25, inside=(0.66, 0.5, 0.38), dust=0.4, effusivity=1400.0, impact=2.5, brittle=0.8),
+    Material('cardboard', 'Cardboard box', 120.0, 0.5, 0.15, 1.0e+05, (0.48, 0.33, 0.17), 0.9, inside=(0.58, 0.45, 0.28), dust=0.3, effusivity=150.0, impact=6.0, brittle=0.1),
+    Material('foam', 'Foam', 40.0, 0.7, 0.3, 5.0e+04, (0.85, 0.85, 0.8), 0.95, dust=0.2, effusivity=40.0, impact=0.0, brittle=0.0),
     # (a car body or a boat hull is a shell: its weight over the space it takes up)
-    Material('painted', 'Painted metal', 300.0, 0.5, 0.4, 2.0e+08, (0.32, 0.03, 0.025), 0.25, inside=(0.56, 0.57, 0.58), effusivity=14000.0),
-    Material('plaster', 'Plaster wall', 900.0, 0.6, 0.2, 3.0e+05, (0.7, 0.68, 0.64), 0.9, inside=(0.8, 0.79, 0.76), dust=1.5, effusivity=600.0),
-    Material('fabric', 'Fabric (upholstery)', 250.0, 0.8, 0.2, 5.0e+05, (0.36, 0.08, 0.06), 0.95, effusivity=150.0),
-    Material('earth', 'Earth (soil)', 1600.0, 0.65, 0.1, 5.0e+04, (0.16, 0.12, 0.085), 0.95, pattern='concrete', dust=2.0, effusivity=800.0),
+    Material('painted', 'Painted metal', 300.0, 0.5, 0.4, 1.6e+07, (0.32, 0.03, 0.025), 0.25, inside=(0.56, 0.57, 0.58), effusivity=14000.0, impact=60.0, brittle=0.0, yields=1.0e+07, ductility=1.0),
+    Material('plaster', 'Plaster wall', 900.0, 0.6, 0.2, 3.0e+05, (0.7, 0.68, 0.64), 0.9, inside=(0.8, 0.79, 0.76), dust=1.5, effusivity=600.0, impact=2.0, brittle=0.6),
+    Material('fabric', 'Fabric (upholstery)', 250.0, 0.8, 0.2, 5.0e+05, (0.36, 0.08, 0.06), 0.95, effusivity=150.0, impact=0.0, brittle=0.0),
+    Material('earth', 'Earth (soil)', 1600.0, 0.65, 0.1, 5.0e+04, (0.16, 0.12, 0.085), 0.95, pattern='concrete', dust=2.0, effusivity=800.0, impact=1.5, brittle=0.3),
 )}
 
 OPTIONS = tuple((k, m.label) for k, m in MATERIALS.items())
@@ -108,4 +119,5 @@ def resolved(collider: dict) -> dict:
     fr = float(collider.get('friction', -1.0))
     bo = float(collider.get('bounce', -1.0))
     return dict(density=dens if dens > 0.0 else m.density, friction=fr if fr >= 0.0 else m.friction,
-                bounce=bo if bo >= 0.0 else m.bounce, strength=m.strength)
+                bounce=bo if bo >= 0.0 else m.bounce, strength=m.strength, impact=m.impact,
+                brittle=m.brittle, yields=m.yields, ductility=m.ductility)

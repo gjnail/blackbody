@@ -51,6 +51,12 @@ const MAT_ROWS: u32 = 19u;
 const LIGHTNING_ROW: i32 = 18;   // lightning: segments that glow (their r.xyz), casting no shadow
 const MATTER: i32 = 200;   // a hit on the matter (sand, snow, mud, jelly, clay: matter.py)
 
+// What the set has (stage.py: Lume's kernel is compiled for what each set has, the classic one with everything): broken
+// pieces, ropes or lightning (trace_pieces); anything marched (a mesh, a hollow thing, one with an opening, the matter).
+// Without them their code is left out of the kernel, and every path runs faster (each copy of code slows every path).
+const F_PIECES: bool = ${F_PIECES};
+const F_MARCH: bool = ${F_MARCH};
+
 struct Mat {
   c: vec4<f32>,   // albedo (linear rgb), roughness
   d: vec4<f32>,   // metal (0..1), clear (share of light through it), pattern, drawn (0 not in the shot, 1 in the footage, 2 CG)
@@ -100,7 +106,7 @@ struct Params {
   lume: vec4<f32>,      // Lume (lume.wgsl): on (1/0), this pass (0, 1, ...), bounces, the cap on a bounce's light (0: none)
   lume2: vec4<f32>,     // the HDRI's brightness map to pick directions from (ENV): width, height (0: none); anything clear in the set (1/0); the HDRI's light on an upward surface (picking a light: lu_wt)
   lume3: vec4<f32>,     // caustics (lume.wgsl caustics): light paths this pass, curved clear things, 1 / (paths x a pixel's area at 1 m), which things they are (a bit per object row, 16 the matter; 17: the HDRI's light traced too)
-  ceye: vec4<f32>,      // the camera (fire-local), _
+  ceye: vec4<f32>,      // the camera (fire-local), the caustic cache's cell size (m; 0: none: lume.wgsl lu_cell)
   cvp: mat4x4<f32>,     // world -> clip
   cl2w: mat4x4<f32>,    // fire-local -> world
   ctg: array<vec4<f32>, 8>,   // the curved clear things and mirrors the light is aimed at: a sphere round each (fire-local centre, radius)
@@ -151,6 +157,7 @@ var<private> g_plane: i32;        // the plane a piece was hit on (trace)
 var<private> g_opaque: bool;      // only what stops light counts (shadows, the sky's occlusion)
 var<private> g_skip_plain: bool;  // the march leaves the plain shapes out (trace() finds them exactly)
 var<private> g_jit: f32;          // this sample's random number in [0, 1) (soft shadows start their march a little apart)
+var<private> g_exact_n: bool;     // surface_at gives a plain shape its exact normal (Lume), not its distance field's slope
 var<private> t_piece: f32;        // how far along the camera's ray the first piece is (see), -1: none
 var<private> t_footage: f32;      // and the footage's own surface (see), 1e9: none
 
@@ -477,10 +484,12 @@ fn trace(ro: vec3<f32>, rd: vec3<f32>, t0: f32, tmax: f32, want: f32, floor_on: 
     let tf = max((U.stage.y - ro.y) / rd.y, t0 + 1e-6);
     if (tf < tmax) { h = Hit(tf, FLOOR); }
   }
-  let pc = trace_pieces(ro, rd, t0, min(tmax, h.t));
-  if (pc.y >= 0.0) {
-    h = Hit(pc.x, PIECE + i32(pc.y));
-    g_plane = i32(pc.z);
+  if (F_PIECES) {
+    let pc = trace_pieces(ro, rd, t0, min(tmax, h.t));
+    if (pc.y >= 0.0) {
+      h = Hit(pc.x, PIECE + i32(pc.y));
+      g_plane = i32(pc.z);
+    }
   }
   if (!objects_on()) { return h; }
   // the plain shapes, exactly; only the rest (meshes, hollow things, things with openings, the matter) are marched
@@ -495,7 +504,7 @@ fn trace(ro: vec3<f32>, rd: vec3<f32>, t0: f32, tmax: f32, want: f32, floor_on: 
     let tp = plain_hit(obj(i), ro, rd, t0);
     if (tp > 0.0 && tp < min(tmax, h.t)) { h = Hit(tp, i); }
   }
-  if (!rest) { return h; }
+  if (!rest || !F_MARCH) { return h; }
   let span = bound_span(ro, rd);
   var t = max(t0, span.x);
   let lim = min(min(tmax, h.t), span.y);
@@ -1140,7 +1149,7 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
     s.f0 = vec3<f32>(0.04);
     return s;
   }
-  if (h.id == MATTER) {
+  if (F_MARCH && h.id == MATTER) {
     s.n = matter_normal(s.p);
     // (its field is not an exact distance: the trace can stop a little inside it. Out onto the surface, and shadow and
     // sky rays start a third of a node off it, so it does not shade itself)
@@ -1169,7 +1178,7 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
     s.glint = ph.z * select(0.0, 1.0, hash31(gq + vec3<f32>(73.0)) > 0.8) * (1.0 - smoothstep(0.004, 0.02, fw));
     return s;
   }
-  if (h.id >= PIECE) {
+  if (F_PIECES && h.id >= PIECE) {
     let kp = u32(h.id - PIECE);
     let P = PC[kp];
     let pose = piece_pose(kp);
@@ -1194,7 +1203,11 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
   }
   let k = obj(h.id);
   let m = U.mat[h.id];
-  s.n = obj_normal(h.id, s.p, max(0.5 * fw, 2.0e-4));
+  if (g_exact_n && plain(h.id)) {
+    s.n = plain_normal(h.id, s.p);
+  } else {
+    s.n = obj_normal(h.id, s.p, max(0.5 * fw, 2.0e-4));
+  }
   if (dot(s.n, rd) > 0.0 && m.d.y <= 0.0) { s.n = -s.n; }
   let q = col_to_local(k, s.p);
   let qn = normalize(col_to_local(k, s.p + s.n) - q);

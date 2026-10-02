@@ -29,13 +29,15 @@ Notable changes to Blackbody. The format follows
   through the smoke), an HDRI's own sun is found and shadowed (importance sampling with MIS), glass, ice and jelly
   refract and bounce light inside, and highlights are GGX. Lamps are sphere lights, seen in reflections. The viewer
   sharpens while you look, and a denoiser clears the grain. It is measured against ground truth (tools/lume_bench: the
-  same scenes rendered by Mitsuba 3 with Lume's own material) and agrees with it to within 0.15% in mean brightness on
-  every one of its nine test scenes. Caustics are traced from the lights, through glass and off mirror-like metal: the
-  bright spot a glass ball focuses into its shadow, the sky's glow through it and the light it throws on round it.
-  Its samples are spread evenly (Owen-scrambled Sobol), so after the same time it has 0.22 to 0.96 times the error of
-  Mitsuba's best sampler for each scene on eight of the nine (the ninth, a furnace test that renders in a few
-  milliseconds, is 1.6 times, as setting up the frame counts there). Lume compiles its own camera kernel on first use
-  (about 3 s).
+  same scenes rendered by Mitsuba 3 with Lume's own material) and agrees with it to within 0.1% in mean brightness on
+  every one of its ten test scenes. Caustics are traced from the lights, from each lamp's surface, through glass and
+  off mirror-like metal: the bright spot a glass ball focuses into its shadow, the sky's glow through it and the light
+  it throws on round it. The light paths also leave their light in a cache of where they land, so a caustic seen
+  through its own glass or in a mirror is focused too. Its samples are spread evenly (Owen-scrambled Sobol), and after
+  the same time it has 0.023 to 0.95 times the error of Mitsuba's best sampler for each scene on all ten. Lume compiles
+  its own camera kernel for what the set has, on first use (a few seconds). A lamp's light off glossy metal, plastic
+  and painted coats is traced from the lamp (no sparkles), and the denoiser carries its estimate of the noise through
+  its levels (half the error it left before, thin highlights kept).
 - Plain balls, boxes and cylinders on the stage are hit exactly by each ray instead of marched toward: Lume is up to 26
   times faster on such sets, and the classic stage is faster too.
 - Things that break (Properties › Breaking): objects cut beforehand into chunks, bricks in running bond, glass
@@ -44,6 +46,15 @@ Notable changes to Blackbody. The format follows
   Hundreds of pieces, drawn on the stage and in footage, hiding the fire and the liquid behind them; the gas and the
   water flow round them and are pushed by them; dust where they break. Blocks: brick wall, glass pane, concrete
   pillar, wooden crate, vase. Presets: Ball through a brick wall, Stone through a window, Vase off a table.
+- Breaking that looks real: a piece breaks away when something meets it faster than its material takes (glass and
+  pottery about 2.5 m/s, brick 2, wood 7, steel 60), less so when what hits it is much lighter. Where each thing is
+  first hit is found by running the shot once with nothing breaking, and its cracks crowd round that spot: small chips
+  there, larger pieces further off. A crack runs on as far as the material lets it: glass and pottery shatter right
+  through (the glass round a stone's hole cracks to the frame and stays in it), wood splits off where it is hit, metal
+  not at all. Metal and plastic bend before they break and stay bent (Pattern › Bends (metal)): a post hit by a
+  wrecking ball folds over. Meshes can break, a vase breaks into curved shards of mixed sizes, and things are drawn
+  whole until their first crack opens. Joints are ten times stiffer (a wall no longer sways like jelly), and mortar
+  holds 0.6 MPa.
 - Ropes, springs, hinges and ball joints (Properties › Joint): an object hangs on a rope (it swings, goes slack and
   is caught with a jolt), bounces on a spring, turns on a hinge or swings about a ball joint, from a fixed point or
   from another object (a beam, a crane's jib, a moving arm, another falling thing). Ropes and steel cables are drawn
@@ -200,6 +211,7 @@ Notable changes to Blackbody. The format follows
 
 ### Fixed
 
+- Broken joints were marked whole again every step, so things breaking threw up twice the dust.
 - An object's outline in the fire render is its own silhouette: rays that only passed within a third of a fire-grid
   cell of a ball, box or cylinder counted as hitting it, so the cloth behind it was hidden in a band round it (a
   crate on a sheet showed a halo of floor) and the fire stopped short of its edges. They now go on to its surface,

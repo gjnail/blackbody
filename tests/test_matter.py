@@ -480,7 +480,7 @@ def test_a_breakable_dropped_on_sand_rests_on_it_and_dents_it(engine):
     m = engine.matter
     P0 = m.read_particles()[:, :3].copy()
     engine.simulate_to(sc, sc.start + 30, cache=False)
-    ys = np.concatenate([np.asarray(p['pos'])[:, 1] for p in engine.solids.piece_poses().values()])
+    ys = np.concatenate([np.asarray(p['pos'])[:, 1] for p in engine.solids.piece_poses(whole=True).values()])
     assert ys.min() > 0.09                                   # on the sand (10 cm deep), not through it to the ground
     # dented: the top of the sand under it thrown out into a rim, the rest of the bed's top (away from its edges, which
     # slump) as it was

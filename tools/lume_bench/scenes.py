@@ -60,3 +60,11 @@ for _n, _b in (('glossy_direct', 1), ('glossy_2', 2)):
     SCENES[_n] = dict(SCENES['glossy'], bounces=_b)
 # The glass ball under the sky alone: the sky's light through it (its caustic) without the lamp's.
 SCENES['glass_sky'] = dict(SCENES['glass'], sky=1.0, lamps=[])
+# A glass ball seen from above, under a lamp straight over it: through the ball, the floor below it, where it focuses the
+# lamp (a caustic seen through its glass). A centimetre off the floor: where a ball touches the ground the reference loses
+# its rays (a dark spot that is not there).
+SCENES['glass_above'] = dict(size=(320, 240), camera=dict(eye=(0.0, 2.2, 0.6), target=(0.0, 0.0, 0.0), hfov=40.0), sky=0.0,
+                             floor=dict(alb=(0.6, 0.6, 0.6), rough=0.8), bounces=8,
+                             objects=[dict(shape='sphere', pos=(0.0, 0.26, 0.0), size=(0.25,) * 3, alb=(1.0, 1.0, 1.0),
+                                           rough=0.03, clear=1.0, ior=1.5)],
+                             lamps=[dict(pos=(0.0, 2.5, 0.0), radius=0.15, power=(4.0, 4.0, 4.0))])

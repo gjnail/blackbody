@@ -29,7 +29,7 @@ def piece_records(scene, pieces, rows=None, owners=None):
     for ci, pose in (pieces or {}).items():
         if ci >= len(scene.colliders) or (rows is not None and ci not in rows):
             continue
-        frac = fractured(scene.colliders[ci], pose['size'], float(pose.get('hollow', 0.0)))
+        frac = fractured(scene.colliders[ci], pose['size'], float(pose.get('hollow', 0.0)), pose.get('impact'), scene)
         for k in range(min(len(frac.pieces), len(pose['pos']))):
             if owners is not None:
                 owners.append((ci, k))

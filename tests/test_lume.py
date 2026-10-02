@@ -270,3 +270,26 @@ def test_a_mirror_ball_throws_the_lamp_onto_the_floor(engine, monkeypatch):
         b = img[band]
         return float(np.abs(b[1:-1, 1:-1] - (b[:-2, 1:-1] + b[2:, 1:-1] + b[1:-1, :-2] + b[1:-1, 2:]) / 4).mean())
     assert noise(on) < noise(off)
+
+
+def test_a_caustic_seen_through_its_glass_is_focused(engine, monkeypatch):
+    # a glass ball just off a floor under a lamp straight above it, seen from above: through the ball the camera sees the
+    # floor below it, where the ball focuses the lamp; that light comes from the caustic cache (lume.wgsl lu_cache_get),
+    # so the ball shows the focused light, far brighter than the open floor. Without the cache, the light comes straight
+    # through the glass, unfocused, about as bright as the open floor
+    from blackbody.engine import lume as LU
+    spec = dict(size=(160, 120), camera=dict(eye=(0.0, 2.2, 0.6), target=(0.0, 0.0, 0.0), hfov=40.0), sky=0.0,
+                floor=dict(alb=(0.6, 0.6, 0.6), rough=0.8), bounces=8,
+                objects=[dict(shape='sphere', pos=(0.0, 0.26, 0.0), size=(0.25,) * 3, alb=(1.0, 1.0, 1.0), rough=0.03,
+                              clear=1.0, ior=1.5)],
+                lamps=[dict(pos=(0.0, 2.5, 0.0), radius=0.15, power=(4.0, 4.0, 4.0))])
+    sc = _bench_scene(spec, monkeypatch)
+    on = _stage(engine, sc, spec, samples=256, bounces=8).mean(-1)
+    monkeypatch.setattr(LU, 'cache_cell', lambda targets: 0.0)
+    off = _stage(engine, sc, spec, samples=256, bounces=8).mean(-1)
+    ball = (slice(60, 85), slice(60, 100))   # (the lower half of the ball, as the camera sees it)
+    open_floor = float(on[100:115, 5:30].mean())
+    bright_on = float(np.percentile(on[ball], 75))
+    bright_off = float(np.percentile(off[ball], 75))
+    assert bright_on > 3.0 * open_floor
+    assert bright_on > 2.0 * bright_off

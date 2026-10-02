@@ -151,6 +151,16 @@ def matter_glow_scale(look):
     return float(look.intensity) * 2.0 ** float(look.exposure) * 10.0 ** (-_LUM[fk] * dr), dr
 
 
+ALL_FEATURES = {'F_PIECES': 'true', 'F_MARCH': 'true'}   # (stage.wgsl: the classic kernel has everything)
+
+
+def plain_shape(c):
+    """Whether collider c is a plain shape, found exactly by each ray (stage.wgsl plain): a sphere, box or cylinder, not
+    hollow, nothing cut out of it."""
+    return (c.shape in ('sphere', 'box', 'cylinder') and float(c.hollow) <= 0.0
+            and not all(float(x) > 0.0 for x in c.opening))
+
+
 class Stage:
     def __init__(self, gpu):
         self.gpu = gpu
@@ -158,10 +168,10 @@ class Stage:
                                            'rbuf', 'tex2d', 'tex2d', 'tex2d', 'tex3d', 'st2d:rgba16float:w',
                                            'rbuf', 'rbuf', 'rbuf', 'rbuf', 'st2d:rgba16float:w', 'tex3d', 'tex3d', 'tex2d',
                                            'utex3d', 'utex3d', 'rbuf', 'tex3d', 'rbuf', 'buf', 'buf', 'rbuf', 'buf'],
-                            workgroup=(8, 8, 1))
+                            defines=ALL_FEATURES, workgroup=(8, 8, 1))
         # Lume's caustics: light traced from the lights through curved glass (lume.wgsl caustics), same bindings
-        self.k_caustics = gpu.kernel('stage.wgsl', self.k.bindings, 'caustics', workgroup=(64, 1, 1))
-        self.k_lume = None   # Lume's camera kernel (lume.wgsl lume_main): compiled the first time Lume draws
+        self.k_caustics = gpu.kernel('stage.wgsl', self.k.bindings, 'caustics', defines=ALL_FEATURES, workgroup=(64, 1, 1))
+        self.k_lume = None   # (a kernel set in its place: tools/lume_bench and tests, else lume_kernel's for the set)
         mg = ['utex3d', 'utex3d', 'buf', 'buf']
         self.k_mglow = gpu.kernel('matter_glow.wgsl', mg, 'lights', workgroup=(4, 4, 4))
         self.k_mglow_finish = gpu.kernel('matter_glow.wgsl', mg, 'finish', workgroup=(1, 1, 1))
@@ -223,7 +233,7 @@ class Stage:
         for ci, pose in (pieces or {}).items():
             if ci not in row_of or ci >= len(scene.colliders):
                 continue
-            frac = fractured(scene.colliders[ci], pose['size'], num(pose.get('hollow', 0.0)))
+            frac = fractured(scene.colliders[ci], pose['size'], num(pose.get('hollow', 0.0)), pose.get('impact'), scene)
             n = min(len(frac.pieces), len(pose['pos']))
             burn = pose.get('burn')
             for k in range(n):
@@ -347,12 +357,15 @@ class Stage:
         centre = 0.5 * (lo + hi)
         return tuple(centre), float(np.linalg.norm(hi - lo) * 0.5)
 
-    def lume_kernel(self):
-        """Lume's camera kernel (lume.wgsl lume_main), compiled the first time it is wanted: the classic stage's main
-        without the classic shading in it, and the classic one without Lume's (each one's code slows the other)."""
-        if self.k_lume is None:
-            self.k_lume = self.gpu.kernel('stage.wgsl', self.k.bindings, 'lume_main', workgroup=(8, 8, 1))
-        return self.k_lume
+    def lume_kernel(self, pieces=True, march=True):
+        """Lume's camera kernel (lume.wgsl lume_main), compiled the first time a set wants it: the classic stage's main
+        without the classic shading in it (and the classic one without Lume's), and without the code for what the set
+        does not have (broken pieces, ropes and lightning; anything marched: stage.wgsl F_PIECES, F_MARCH). Every copy
+        of code slows every path: a set of plain shapes runs a fifth faster without the rest."""
+        if self.k_lume is not None:
+            return self.k_lume
+        defines = {'F_PIECES': 'true' if pieces else 'false', 'F_MARCH': 'true' if march else 'false'}
+        return self.gpu.kernel('stage.wgsl', self.k.bindings, 'lume_main', defines=defines, workgroup=(8, 8, 1))
 
     def draw(self, b, r, scene, camstate, fire, colliders, meshes, light: StageLight, comp, size, plate_fit=(1.0, 1.0),
              samples=1, shutter=0.0, footage=False, vol=None, ground_y=0.0, frame=0, objects=True, floor=True,
@@ -551,6 +564,9 @@ class Stage:
             return self.tex
         # Lume: its passes, each a new path per pixel added to the ones before (lume.wgsl), then the denoiser
         base = list(u.data)
+        # (its kernel for what the set has: anything marched, broken pieces, ropes, lightning)
+        k_lume = self.lume_kernel(pieces=bool(pieces or ropes or bolts),
+                                  march=surf is not None or any(not plain_shape(c) for c in cols))
         # (anything clear in the set: glass, ice, jelly; shadow rays then pass through them by their Fresnel and tint)
         clear_on = 1.0 if (any(row[4] > 0.0 and row[0] != NOT_DRAWN for row in rows) or surf is not None) else 0.0
         # (Clamp bright paths: a bounce's light capped at that many times the sky's brightness; 0: none)
@@ -565,11 +581,13 @@ class Stage:
         # (traced from: the lamps, the key light, and the HDRI when its light is gathered in a sun)
         env_traced = env is not None and L.env_traced and L.env_dims[0] > 0
         traced = bool(light.lamps) or max(light.sun) > 0.0 or env_traced
-        n_paths = (pw * ph * max(ns, 4)) // LU.CAUSTIC_SHARE if (targets and traced) else 0
+        # (light off a mirror is a bounce: with one bounce, only the glass's caustics count)
+        useful = any(LU.focusing(r, c) == 'glass' for c, r in zip(cols, rows)) or surf is not None or int(lume.bounces) >= 2
+        n_paths = (pw * ph * max(ns, 4)) // LU.CAUSTIC_SHARE if (targets and traced and useful) else 0
         tmask |= (1 << 17) if env_traced else 0
         eye_l = w2l @ np.append(np.asarray(camstate.eye, float), 1.0)
         caust.v4(n_paths, len(targets), 1.0 / max(n_paths * pix * pix, 1e-30) if n_paths else 0.0, float(tmask) if targets else 0.0)
-        caust.v3(eye_l[:3], 0.0).m4(camstate.view_proj).m4(l2w)
+        caust.v3(eye_l[:3], LU.cache_cell(targets) if n_paths else 0.0).m4(camstate.view_proj).m4(l2w)
         for k in range(LU.TARGETS):
             caust.v4(*(targets[k] if k < len(targets) else (0.0, 0.0, 0.0, 0.0)))
         for i in range(count):
@@ -578,7 +596,7 @@ class Stage:
             if n_paths:
                 b.clear_buffer(L.cau)
                 b.run(self.k_caustics, res, up, groups=(-(-n_paths // 64), 1, 1))
-            b.run(self.lume_kernel(), res, up, (pw, ph, 1))
+            b.run(k_lume, res, up, (pw, ph, 1))
             if final and (i + 1) % max(1, LU.FINAL_SUBMIT // ns) == 0 and i + 1 < count:
                 b.submit(restart=True)
         if count > 0 or final:

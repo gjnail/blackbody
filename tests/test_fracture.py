@@ -102,10 +102,10 @@ def run(scene, seconds):
     S = Solids()
     S.configure(scene, ((96, 96, 96), 12.0 / 96, (-6.0, 0.0, -6.0)))
     S.reset()
-    start = {k: v['pos'].copy() for k, v in S.piece_poses().items()}
+    start = {k: v['pos'].copy() for k, v in S.piece_poses(whole=True).items()}
     for f in range(scene.start + 1, scene.start + 1 + int(round(seconds * scene.fps))):
         S.advance(scene, f, 1.0 / scene.fps, 1)
-    moved = {k: np.linalg.norm(v['pos'] - start[k], axis=1) for k, v in S.piece_poses().items()}
+    moved = {k: np.linalg.norm(v['pos'] - start[k], axis=1) for k, v in S.piece_poses(whole=True).items()}
     return S, moved
 
 
@@ -149,6 +149,59 @@ def test_a_vase_set_down_holds_and_one_dropped_shatters():
     S2, _ = run(scene_of(dict(vase, position=(0.0, 1.3, 0.0), start_spin=(90.0, 0.0, 40.0))), 1.5)
     assert len(S1.breaks) == 0
     assert len(S2.breaks) > 20
+
+
+def test_metal_bends_and_stays_bent_and_holds_its_own_weight():
+    post = dict(name='Post', shape='box', position=(0.0, 1.0, 0.0), size=(0.04, 1.0, 0.04), breakable=True, fracture='bends',
+                material='steel', pieces=12, held='base')
+    S0, _ = run(scene_of(post), 1.0)
+    assert not S0.sets[0].bent and S0.whole(0)                       # a steel post stands as it is
+    ball = dict(name='Ball', shape='sphere', position=(-0.61, 1.2, 0.0), size=(0.21, 0.21, 0.21), dynamic=True, material='steel',
+                start_velocity=(6.0, 0.0, 0.0))
+    S, _ = run(scene_of(post, ball), 2.0)
+    top = S.piece_poses()[0]['pos'][-1]
+    assert S.sets[0].bent and not S.whole(0)                         # a 300 kg ball at 6 m/s bends it
+    assert 0.2 < top[0] < 1.0                                        # over, and it stays over (not sprung back)
+    assert (S._w['over'] >= 0).all()                                 # without tearing
+    # a cached frame carries the bend: loaded back, it is as bent
+    st = S.state()
+    S.reset()
+    assert not S.sets[0].bent
+    assert S.load_state(st) and S.sets[0].bent
+    assert np.allclose(S.model.eq_data[S._w['eq'], 3:10], st['bend'][0])
+
+
+def test_a_mesh_breaks_into_pieces_that_glue_and_do_not_overlap():
+    import os
+    from blackbody.engine.fracture import mesh_pieces
+    from blackbody.engine.mesh import load_mesh
+    from blackbody.engine.solids import mesh_occupancy
+    path = os.path.join(os.path.dirname(__file__), '..', 'blackbody', 'assets', 'meshes', 'armchair.obj')
+    v, t = load_mesh(path)
+    v = np.asarray(v, float) * 0.5
+    f = mesh_pieces(v, t, 24, np.random.default_rng(1))
+    P = f.pieces
+    lo, hi = v.min(0), v.max(0)
+    cell = float((hi - lo).max()) / 48
+    vol = mesh_occupancy(v, t, lo, hi, cell).sum() * cell ** 3
+    assert 15 <= len(P) <= 80
+    assert 0.9 < sum(p.volume for p in P) / vol < 1.6                # convex pieces fill a little of its hollows in
+    for i in range(len(P)):                                          # no two overlap (they would be thrown apart)
+        for j in range(len(P)):
+            if i != j:
+                assert ((P[i].verts @ P[j].planes[:, :3].T - P[j].planes[:, 3]).max(1) > -2e-3).all()
+    par = list(range(len(P)))
+    def find(a):
+        while par[a] != a:
+            a = par[a]
+        return a
+    for bd in f.bonds:
+        par[find(bd.i)] = find(bd.j)
+    assert len({find(i) for i in range(len(P))}) == 1               # glued into one chair
+    chair = dict(name='Chair', shape='mesh', mesh=os.path.abspath(path), position=(0.0, 2.5, 0.0), size=(0.5, 0.5, 0.5),
+                 dynamic=True, breakable=True, material='stone', pieces=24, start_spin=(40.0, 0.0, 30.0))
+    S, _ = run(scene_of(chair), 2.0)
+    assert len(S.breaks) > 20 and not S.whole(0)                     # dropped 2.5 m, a stone chair shatters
 
 
 def test_breaking_is_deterministic():

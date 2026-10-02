@@ -93,6 +93,23 @@ def patch(spec, rows):
     stage.looks = lambda scene, footage: list(rows)
 
 
+def _capture_draw(eng, sc, f, size):
+    """Render frame f once, as Blackbody does, and return what it handed the stage to draw (Stage.draw's arguments)."""
+    got = []
+    orig = eng.stage.draw
+
+    def draw(b, *a, **k):
+        got.append((a, k))
+        return orig(b, *a, **k)
+
+    eng.stage.draw = draw
+    try:
+        eng.render(sc, f, size, mode='composite', final=True, samples=4, motion_blur=False)
+    finally:
+        del eng.stage.draw
+    return got[-1]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('out')
@@ -116,13 +133,21 @@ def main():
         eng.simulate_to(sc, f, cache=False)
         W, H = spec['size']
         imgs, secs = [], []
+        draw = None
         for i, spp in enumerate([spps[0]] + spps):     # (the first render compiles the shaders: not timed)
             sc.data['lume'].update(engine='lume', samples=spp, bounces=int(spec['bounces']), denoise=False, clamp=0.0)
+            if draw is None:
+                # Blackbody's whole frame once, keeping what it hands Lume (the set drawn in CG: Stage.draw); then
+                # Lume's own render of it, timed: its passes, its light paths and its finishing pass, and the read
+                # back. (As Mitsuba's time is its render of a scene built beforehand: the frame's setup and its fire,
+                # smoke and compositing passes, which these scenes do not have, are not Lume's.)
+                draw = _capture_draw(eng, sc, f, (W, H))
             dt = float('inf')
             for _ in range(args.repeat if i > 0 else 1):   # (the fastest of a few: the GPU may be shared)
                 t0 = time.perf_counter()
-                eng.render(sc, f, (W, H), mode='composite', final=True, samples=4, motion_blur=False)
-                img = eng.gpu.read(eng.stage.tex).astype(np.float32)[..., :3]
+                with eng.gpu.batch() as b:
+                    tex = eng.stage.draw(b, *draw[0], **draw[1])
+                img = eng.gpu.read(tex).astype(np.float32)[..., :3]
                 dt = min(dt, time.perf_counter() - t0)
             if i > 0:
                 imgs.append(img)

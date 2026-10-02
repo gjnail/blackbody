@@ -45,17 +45,23 @@ Things attached to a falling object (*Attach to* in the viewer's menus) go with 
 
 ## Breaking
 
-*Breaks* (Properties › *Breaking*) cuts an object beforehand into pieces glued together, which come apart where it is hit or loaded harder than it holds. A wall is knocked through, a pane shattered, a vase smashed, a crate splintered. A joint gives way when it is pulled apart harder than its strength over its area, sheared harder than that plus the friction of what presses it together, or bent past what its section holds. So a wall stands under its own weight, a soft knock cracks it, and a hard one brings it down, the bricks above the hole caving in.
+*Breaks* (Properties › *Breaking*) cuts an object beforehand into pieces glued together, which come apart where it is hit or loaded harder than it holds. A wall is knocked through, a pane shattered, a vase smashed, a crate splintered. A piece breaks away when something meets it faster than its material takes (glass and pottery about 2.5 m/s, brick 2, wood 7, steel 60), less so when what hits it is much lighter than it: the stone goes through the pane, a grain of sand does not. A joint also gives way when it is pulled apart harder than its strength over its area, sheared harder than that plus the friction of what presses it together, or bent past what its section holds. So a wall stands under its own weight, a soft knock cracks it, and a hard one brings it down, the bricks above the hole caving in; a vase tips off a table whole and shatters where it lands.
+
+Where each thing is first hit is found by running the shot once with nothing breaking, and its cracks crowd round that spot: small chips where it is hit, larger pieces further off, as real breaks go. A crack runs on from where it is hit as far as the material lets it: glass and pottery shatter right through (the glass round a stone's hole cracks to the frame and stays in it), stone and brick less, wood splits off where it is hit, metal not at all. Until its first crack opens it is drawn whole, without seams (a brick wall shows its joints, and a burning thing its pieces).
+
+Metal and plastic bend before they break: loaded past their yield, their joints take the bend they are forced into and keep it, so a post hit by a wrecking ball folds over and stays folded, a sheet-metal box crumples, and a joint tears only once it has bent too far.
 
 - *Breaks into*:
   - *Chunks*: stone, concrete, pottery.
   - *Bricks*: a box laid as bricks in running bond, held by mortar.
   - *Shards*: glass, slivers radiating from where it is hit.
   - *Splinters*: wood, pieces long along the grain.
+  - *Bends (metal)*: where metal or plastic creases: a bar or a post along its length, a sheet across it.
 - *Pieces*: how many (more take longer to simulate).
 - *Strength* scales how strongly the pieces hold.
 - *Held by*: what holds one that does not fall: glued to the ground along its base (a wall), held round its edges (a pane in its frame), or nothing.
-- A hollow object (*Hollow* above 0) breaks as a shell: a vase into strips of its wall, a crate wall by wall.
+- A mesh breaks too: its pieces are cut from its inside, crowded where it is hit.
+- A hollow object (*Hollow* above 0) breaks as a shell: a vase into curved shards of its wall (taller than wide, as cracks run up a pot) and pieces of its base, a crate wall by wall. A hollow cylinder is closed at the top unless an opening takes its top off (a pot: *Opening size* wider than it, across its top).
 - With *Falls* on too, it falls whole until it hits something hard enough: a dropped vase shatters, a thrown crate splinters.
 
 Broken faces show the material's inside: raw brick, pale wood, the green edge of glass. Where it breaks it throws up dust, as much as the material holds (mortar, plaster and soil most, glass hardly any), in the smoke's colour (Shading › *Smoke colour*: a pale brown for dust). Hundreds of pieces are drawn, shadowed, hide the fire and the liquid behind them, and the gas and the water flow round them and are pushed by them.
@@ -142,11 +148,11 @@ CG objects go over the footage lit by the shot's light, and their shadows darken
 ## Limits
 
 - A scene holds up to 16 objects in all, falling or not (a broken one's pieces do not count: there can be hundreds).
-- A mesh cannot break yet.
+- A broken mesh's pieces are convex, so a hollow or a dent in one is filled in (whole, it is drawn as itself).
 - A rope or a spring passes through things in its way: only its ends are held (it does not wrap round a post), and it
   weighs nothing. Each object has one joint; hang a chain as links, each joined to the one above.
-- The strengths are effective ones, set so that things break as they look like they should: a joint feels the whole
-  impact spread over its face, where a real brittle thing breaks at the tiny point it is hit.
+- The strengths are effective ones, set so that things hold and give way under steady loads as they look like they
+  should (pottery's and glass's near a handbook's, the rest lower); hits break things by their speed (above).
 - A falling mesh collides as its convex hull: its hollows and dents are filled in.
 - Contacts are slightly soft, so bounces are within about 0.05 of a material's bounce, and the least a thing bounces is about 0.2. Things that start inside each other are thrown apart when they are let go (the log says which).
 - In a liquid scene with grey stand-ins (Water › *Colliders*), things that fall or float are drawn as stand-ins in their material's colour.

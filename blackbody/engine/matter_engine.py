@@ -59,8 +59,11 @@ class MatterEngine:
         self._coupled = True
 
         def fn(h, poses, f):
+            # (a breakable still whole meets the matter as its glued pieces, as a broken one does: they take its push)
+            if self.solids.sets:
+                poses = {**poses, **{ps.index: self.solids.gone() for ps in self.solids.sets}}
             cols = scene.colliders_gpu(frame - 1 + f, poses)
-            pieces = (scene, self.solids.piece_poses()) if self.solids.sets else None
+            pieces = (scene, self.solids.piece_poses(whole=True)) if self.solids.sets else None
             pushed = m.step(h, cols, atlas, lambda u, c, p=False: pack_colliders(u, c, meshes, pieces=p), pieces,
                             substeps=max(1, int(math.ceil(h / dt - 1e-9))))
             return {(enabled[k] if isinstance(k, int) else k): v for k, v in pushed.items()
@@ -76,7 +79,7 @@ class MatterEngine:
         if bounds is None:
             return False
         lo, hi = bounds
-        for pose in self.solids.piece_poses().values():
+        for pose in self.solids.piece_poses(whole=True).values():
             pos = np.asarray(pose['pos'], float).reshape(-1, 3)
             if not len(pos):
                 continue

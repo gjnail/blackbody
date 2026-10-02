@@ -748,9 +748,11 @@ COLLIDER_PARAMS = [
       'than its material holds: a wall knocked through, a pane shattered, a crate smashed. Without Falls it stands where it '
       'is, held by what Held by says, until it breaks.', group='Breaking'),
     E('fracture', 'Breaks into', 'voronoi', (('voronoi', 'Chunks'), ('bricks', 'Bricks'), ('shards', 'Shards (glass)'),
-                                              ('splinters', 'Splinters (wood)')),
+                                              ('splinters', 'Splinters (wood)'), ('bends', 'Bends (metal)')),
       tip='How it comes apart: irregular chunks (stone, concrete, pottery), the bricks of a wall (a box), slivers radiating '
-      'from the middle of a pane (glass), or pieces long along the grain (wood).', group='Breaking'),
+      'from the middle of a pane (glass), pieces long along the grain (wood), or, for metal and plastic, where it creases: '
+      'a bar or a post along its length, a sheet across it, so it bends and stays bent and tears once bent too far.',
+      group='Breaking'),
     I('pieces', 'Pieces', 24, 2, 300, tip='How many pieces it breaks into (Bricks: as many as fit). More pieces take longer to '
       'simulate.', group='Breaking'),
     F('strength', 'Strength', 1.0, 0.01, 100.0, '×', 2, tip='How strongly the pieces hold together, times the material\N{RIGHT SINGLE QUOTATION MARK}s '

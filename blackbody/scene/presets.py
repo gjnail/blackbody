@@ -1044,6 +1044,7 @@ PRESETS = {
         'colliders': [
             dict(name='Table', shape='box', position=(-0.45, 0.375, 0.0), size=(0.4, 0.375, 0.35), material='wood'),
             dict(name='Vase', shape='cylinder', position=(-0.12, 0.92, 0.0), size=(0.09, 0.17, 0.09), hollow=0.007,
+                 opening=(0.12, 0.01, 0.12), opening_at=(0.0, 0.17, 0.0),   # (open at the top)
                  material='ceramic', own_colour=True, colour=(0.12, 0.25, 0.55), dynamic=True, breakable=True, pieces=40,
                  start_velocity=(0.7, 0.0, 0.0), release=0.3),
         ],

@@ -70,9 +70,12 @@ var<private> lu_nq: u32;                  // how many
 
 // The camera's dimensions (+0 the place in the pixel, 2-d; +1 the soft shadows' jitter; +2 the time in the shutter), then
 // each surface's: +0 clear or not; through glass +1.. its Fresnel choices; off a surface +1 which light and its sample
-// (2-d), +2 and +3 the rest of the light's sample, +4 the lobe and the bounce's direction (2-d), +5 Russian roulette.
+// (2-d), +2 the lobe and the bounce's direction (2-d), +3 and +4 the rest of the light's sample, +5 Russian roulette.
+// Only those that count most are low-discrepancy (the camera's place in the pixel, and its time in the shutter with
+// motion blur; a surface's first LU_FILL_PER): the rest are PCG (each low-discrepancy number costs, on every path).
 const LU_DIMS_CAM: u32 = 3u;
 const LU_DIMS_PER: u32 = 6u;
+const LU_FILL_PER: u32 = 3u;
 const LU_QMC_DIMS: u32 = 27u;  // (the camera's and 4 surfaces' worth)
 
 // The numbers for the count dimensions from base on, all at once: one copy of the sequences' code in the kernel, not one
@@ -88,11 +91,11 @@ fn lu_fill(base: u32, count: u32) {
 fn lu_sample(px: vec2<i32>, n: u32) {
   lu_pix = lu_hash(u32(px.x) * 0x8da6b343u ^ u32(px.y) * 0xd8163841u ^ u32(U.depth.z + 0.5) * 0xcb1ab31fu);
   lu_n = n;
-  lu_fill(0u, LU_DIMS_CAM);
+  lu_fill(0u, select(1u, LU_DIMS_CAM, U.res.w > 0.0));
 }
 
 // The next numbers are the path's surface j's (counting glass and every bounce), its k-th dimension.
-fn lu_surface(j: i32) { lu_fill(LU_DIMS_CAM + LU_DIMS_PER * u32(j), LU_DIMS_PER); }
+fn lu_surface(j: i32) { lu_fill(LU_DIMS_CAM + LU_DIMS_PER * u32(j), LU_FILL_PER); }
 fn lu_at(k: u32) { lu_dim = lu_base + k; }
 
 fn lu_hash(x0: u32) -> u32 {   // (lowbias32, Wellons)
@@ -233,26 +236,37 @@ fn lu_mat(s: Surf, nv: f32) -> LuMat {
   return m;
 }
 
-// Light from l reflected toward v (both local, z the normal), times the cosine: (BSDF value, its pdf as sampled).
-fn lu_eval(m: LuMat, vl: vec3<f32>, ll: vec3<f32>) -> vec4<f32> {
+// Light from l reflected toward v (both local, z the normal), times the cosine, in its two parts: the diffuse (fd) and
+// the highlight (fs), and each part's own pdf (pd by the cosine, ph by the visible normals), not yet weighed by the
+// chance a bounce takes it (m.ps).
+struct LuEv { fd: vec3<f32>, fs: vec3<f32>, pd: f32, ph: f32 };
+
+fn lu_eval2(m: LuMat, vl: vec3<f32>, ll: vec3<f32>) -> LuEv {
+  var e = LuEv(vec3<f32>(0.0), vec3<f32>(0.0), 0.0, 0.0);
   let nv = max(vl.z, 1e-4);
   let nl = ll.z;
   // snow and grains let light wrap round a little past where they face away
   let nlw = (nl + m.wrap) / (1.0 + m.wrap);
-  if (nlw <= 0.0) { return vec4<f32>(0.0); }
+  if (nlw <= 0.0) { return e; }
   let fv = fresnel_rough(m.f0, nv, sqrt(m.a));
-  var f = m.alb * (LU_INV_PI * nlw) * (vec3<f32>(1.0) - fv);
-  var pdf = (1.0 - m.ps) * max(nl, 0.0) * LU_INV_PI;
+  e.fd = m.alb * (LU_INV_PI * nlw) * (vec3<f32>(1.0) - fv);
+  e.pd = max(nl, 0.0) * LU_INV_PI;
   if (nl > 0.0) {
     let h = normalize(vl + ll);
     let vh = max(dot(vl, h), 1e-4);
     let a2 = m.a * m.a;
     let D = lu_d(h.z, a2);
     let F = fresnel(m.f0, vh);
-    f += F * (D * lu_g2(nl, nv, a2) / (4.0 * nv));
-    pdf += m.ps * D * lu_g1(nv, a2) / (4.0 * nv);
+    e.fs = F * (D * lu_g2(nl, nv, a2) / (4.0 * nv));
+    e.ph = D * lu_g1(nv, a2) / (4.0 * nv);
   }
-  return vec4<f32>(f, pdf);
+  return e;
+}
+
+// The same, whole: (BSDF value, its pdf as sampled).
+fn lu_eval(m: LuMat, vl: vec3<f32>, ll: vec3<f32>) -> vec4<f32> {
+  let e = lu_eval2(m, vl, ll);
+  return vec4<f32>(e.fd + e.fs, (1.0 - m.ps) * e.pd + m.ps * e.ph);
 }
 
 // ---- lights -----------------------------------------------------------------------------------------------------------
@@ -287,6 +301,9 @@ fn lu_target(h: Hit) -> bool {
 fn lu_xglass(h: Hit) -> bool { return lu_curved(h) && lu_target(h); }
 
 const LU_MIRROR_ROUGH: f32 = 0.35;   // metal this smooth focuses light as caustics (lume.py MIRROR_ROUGH)
+const LU_SHARP: f32 = 0.15;   // a mirror at least this rough (glossy) also takes the light paths that come to it off other
+                              // mirrors or through glass, where the camera sees it straight: a sharp highlight seen in its
+                              // blurred reflection, found by bouncing, is a sparkle
 
 // Whether surface s, where h hit, is a mirror whose light comes as caustics: bare metal (nothing diffuse), smooth, one
 // of the targets. (Its highlight seen from a diffuse surface is a lamp shrunk to a point: a path from the camera all but
@@ -295,6 +312,22 @@ fn lu_mirror(h: Hit, s: Surf) -> bool {
   if (h.id < 0 || h.id >= FLOOR || !lu_target(h) || U.mat[h.id].d.y > 0.0) { return false; }
   return luma(s.alb) <= 1e-6 && s.rough < LU_MIRROR_ROUGH;
 }
+
+// Whether surface s, where h hit, is a clear coat over colour whose highlight focuses light as caustics: a sharp highlight
+// on something not bare metal (plastic, paint, lacquer), one of the targets. Its highlight is taken as a mirror's, its
+// colour as a matte surface's (lu_path, caustics: split by lobe).
+fn lu_coat(h: Hit, s: Surf) -> bool {
+  if (h.id < 0 || h.id >= FLOOR || !lu_target(h) || U.mat[h.id].d.y > 0.0) { return false; }
+  return luma(s.alb) > 1e-6 && s.rough < LU_MIRROR_ROUGH;
+}
+
+const LU_ROUGH_D: f32 = 0.35;   // rough enough that light landing on it from any way spreads evenly (lu_rough)
+
+// Whether surface s is rough: a light path that lands on it may go on, bounced off it, and land again, and be sent to
+// the camera from there. A glossy one (smoother) only ends a light path's landings: sent to the camera from it, light
+// that landed there from a random way is a sparkle (its peaked highlight), so the camera's paths that reach a surface
+// by way of it take that light from the caustic cache instead.
+fn lu_rough(s: Surf) -> bool { return s.rough >= LU_ROUGH_D; }
 
 // Whether what h hit bends light into a caustic: a ball, a cylinder, a mesh, the matter (jelly). Not the floor, a box or a
 // piece of something broken, whose flat faces only shift the light (their straight-through shadow is exact).
@@ -359,8 +392,8 @@ fn lu_shadow(p: vec3<f32>, d: vec3<f32>, tmax: f32, eps: f32, want: f32, caustic
 
 // The outward normal of what h hit at p.
 fn lu_hit_normal(h: Hit, p: vec3<f32>, eps: f32) -> vec3<f32> {
-  if (h.id == MATTER) { return matter_normal(p); }
-  if (h.id >= PIECE) {
+  if (F_MARCH && h.id == MATTER) { return matter_normal(p); }
+  if (F_PIECES && h.id >= PIECE) {
     let kp = u32(h.id - PIECE);
     let pose = piece_pose(kp);
     return quat_rotate(pose[1], normalize(PL[u32(PC[kp].v.w) + u32(max(g_plane, 0))].xyz));
@@ -471,25 +504,26 @@ fn lu_power(pdf_a: f32, pdf_b: f32) -> f32 {
 }
 
 // One light's sample at a surface (lu_direct): the direction to it (l), how far its shadow ray goes (tmax; 0: none),
-// its light times the BSDF before the shadow (c), and what it is (kind: 0 the key light, 1 the fire, 2 hot matter,
+// its light over the chance of this sample, before the material and the shadow (c), the pdf (per steradian) to weigh it
+// against a bounce finding it by (pdf; 0: none can), and what it is (kind: 0 the key light, 1 the fire, 2 hot matter,
 // 3 a lamp, 4 the HDRI; k: which lamp; r: a glowing patch's radius).
-struct LuLs { l: vec3<f32>, tmax: f32, c: vec3<f32>, kind: i32, k: i32, r: f32 };
+struct LuLs { l: vec3<f32>, tmax: f32, c: vec3<f32>, kind: i32, k: i32, r: f32, pdf: f32 };
 
 // The key light: a direction within the sun's disc.
-fn lu_ls_sun(m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>, sel: f32, u: vec2<f32>) -> LuLs {
+fn lu_ls_sun(sel: f32, u: vec2<f32>) -> LuLs {
   var ls: LuLs;
   if (max(U.sun.r, max(U.sun.g, U.sun.b)) <= 0.0) { return ls; }
   let cmax = cos(atan(1.0 / max(U.sun.w, 1.0)));
   let sf = lu_frame(U.sund.xyz);
   let lc = lu_cone(u, cmax);
   ls.l = sf[0] * lc.x + sf[1] * lc.y + sf[2] * lc.z;
-  ls.c = U.sun.rgb * lu_eval(m, vl, lu_to_local(fr, ls.l)).xyz / sel;
+  ls.c = U.sun.rgb / sel;
   ls.tmax = 1.0e4;
   return ls;
 }
 
 // The fire: one of its point lights, picked by how much light it brings here, toward a point within it.
-fn lu_ls_fire(s: Surf, po: vec3<f32>, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>, sel: f32, u: vec2<f32>) -> LuLs {
+fn lu_ls_fire(s: Surf, po: vec3<f32>, sel: f32, u: vec2<f32>) -> LuLs {
   var ls: LuLs;
   ls.kind = 1;
   let nf = light_count[0];
@@ -519,13 +553,13 @@ fn lu_ls_fire(s: Surf, po: vec3<f32>, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>, 
   if (dist <= 1e-4 || wk <= 0.0) { return ls; }
   ls.l = dv / dist;
   let rad = lights[2u * k + 1u].rgb / (dot(d0, d0) + a.w * a.w);
-  ls.c = U.fire.rgb * rad * lu_eval(m, vl, lu_to_local(fr, ls.l)).xyz * (tot / (wk * sel));
+  ls.c = U.fire.rgb * rad * (tot / (wk * sel));
   ls.tmax = select(0.0, max(dist - a.w, 0.0), U.fire.w > 0.0);   // (Fire shadows off: none)
   return ls;
 }
 
 // Hot matter: one of its glowing patches (it does not light itself).
-fn lu_ls_glow(s: Surf, po: vec3<f32>, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>, sel: f32, u: vec2<f32>) -> LuLs {
+fn lu_ls_glow(s: Surf, po: vec3<f32>, sel: f32, u: vec2<f32>) -> LuLs {
   var ls: LuLs;
   ls.kind = 2;
   let nm = u32(ML[0].x);
@@ -554,7 +588,7 @@ fn lu_ls_glow(s: Surf, po: vec3<f32>, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>, 
   let dist = length(dv);
   if (dist <= 1e-4 || wk <= 0.0) { return ls; }
   ls.l = dv / dist;
-  ls.c = ML[2u + 2u * k].rgb / (dot(d0, d0) + a.w * a.w) * lu_eval(m, vl, lu_to_local(fr, ls.l)).xyz * (tot / (wk * sel));
+  ls.c = ML[2u + 2u * k].rgb / (dot(d0, d0) + a.w * a.w) * (tot / (wk * sel));
   ls.tmax = dist;
   ls.r = a.w;
   return ls;
@@ -562,7 +596,7 @@ fn lu_ls_glow(s: Surf, po: vec3<f32>, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>, 
 
 // Lamp k: a sphere, a direction picked within the solid angle it covers (its soft shadow exactly), weighed against a
 // bounce finding it (lu_path).
-fn lu_ls_lamp(k: i32, s: Surf, po: vec3<f32>, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>, sel: f32, u: vec2<f32>) -> LuLs {
+fn lu_ls_lamp(k: i32, s: Surf, po: vec3<f32>, sel: f32, u: vec2<f32>) -> LuLs {
   var ls: LuLs;
   ls.kind = 3;
   ls.k = k;
@@ -573,30 +607,28 @@ fn lu_ls_lamp(k: i32, s: Surf, po: vec3<f32>, m: LuMat, fr: mat3x3<f32>, vl: vec
     // inside the lamp: its light all round, as if from its middle
     let dc = lm.p.xyz - s.p;
     ls.l = normalize(dc + vec3<f32>(0.0, 1e-6, 0.0));
-    ls.c = lu_lamp_radiance(lm, ls.l) * (PI * r * r / (dot(dc, dc) + r * r)) * lu_eval(m, vl, lu_to_local(fr, ls.l)).xyz / sel;
+    ls.c = lu_lamp_radiance(lm, ls.l) * (PI * r * r / (dot(dc, dc) + r * r)) / sel;
     return ls;
   }
   let lf = lu_frame(normalize(lm.p.xyz - s.p));
   let lc = lu_cone(u, cone.x);
   ls.l = lf[0] * lc.x + lf[1] * lc.y + lf[2] * lc.z;
-  let e = lu_eval(m, vl, lu_to_local(fr, ls.l));
-  let pdf = sel / max(cone.y, 1e-12);
-  ls.c = lu_lamp_radiance(lm, ls.l) * e.xyz * (lu_power(pdf, e.w) / pdf);
+  ls.pdf = sel / max(cone.y, 1e-12);
+  ls.c = lu_lamp_radiance(lm, ls.l) / ls.pdf;
   ls.tmax = max(lu_sphere_t(po, ls.l, lm.p.xyz, r), 0.0);
   return ls;
 }
 
 // The HDRI: a direction picked by its brightness, weighed against finding it by bouncing.
-fn lu_ls_env(m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>, sel: f32, u: vec2<f32>) -> LuLs {
+fn lu_ls_env(sel: f32, u: vec2<f32>) -> LuLs {
   var ls: LuLs;
   ls.kind = 4;
   if (!lu_env_on()) { return ls; }
   let pk = lu_env_pick(u);
   if (pk.w <= 0.0) { return ls; }
   ls.l = pk.xyz;
-  let e = lu_eval(m, vl, lu_to_local(fr, ls.l));
-  let pdf = sel * pk.w;
-  ls.c = sky_dir(ls.l) * e.xyz * (lu_power(pdf, e.w) / pdf);
+  ls.pdf = sel * pk.w;
+  ls.c = sky_dir(ls.l) / ls.pdf;
   ls.tmax = 1.0e4;
   return ls;
 }
@@ -653,7 +685,9 @@ var<private> lu_w: array<f32, 12>;   // (3 + the stage's 8 lamps + 1)
 var<private> lu_wtot: f32;
 var<private> lu_wcnt: f32;
 var<private> lu_cov: bool;   // this surface's light from the lamps, the key light and the HDRI comes as caustics (lu_path)
-var<private> lu_cau_sh: bool;   // its shadow rays stop at curved glass (its light through that comes as caustics): else straight through
+var<private> lu_cau_sh: bool;
+var<private> lu_coat_on: bool;   // the surface is a coat over colour (lu_coat): its parts weighed apart (lu_direct)
+var<private> lu_coat_ex: bool;   // ... and its highlight's light from the traced lights comes as caustics   // its shadow rays stop at curved glass (its light through that comes as caustics): else straight through
 
 // The chance lu_direct picked slot j at this surface: by lu_wt, with a share evenly (so a light it rates low, that this
 // surface's highlight would show bright, is still picked often enough).
@@ -667,7 +701,7 @@ fn lu_sel(j: i32) -> f32 {
 // the fire, hot matter, a lamp, the HDRI) picked by how much light each brings here (lu_sel), a sample of it, and one
 // shadow ray (one copy of it in the kernel, see lu_shadow) for how much of it gets here. (One light a bounce, as Mitsuba
 // does: a shadow ray for every light each bounce took Lume twice as long a path for little less noise.)
-fn lu_direct(s: Surf, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>) -> vec3<f32> {
+fn lu_direct(s: Surf, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>, cached: bool, depth: i32) -> vec3<f32> {
   let po = s.p + s.n * s.eps;
   let pl = light_cell(s.p);
   let nl = i32(U.ln.w);
@@ -701,46 +735,83 @@ fn lu_direct(s: Surf, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>) -> vec3<f32> {
   }
   let u2 = vec2<f32>(clamp((us.x - start) / max(sel, 1e-12), 0.0, 0.99999994), us.y);
   var ls: LuLs;
-  lu_at(2u);
+  lu_at(3u);
   if (j == 0) {
-    ls = lu_ls_sun(m, fr, vl, sel, u2);
+    ls = lu_ls_sun(sel, u2);
   } else if (j == 1) {
-    ls = lu_ls_fire(s, po, m, fr, vl, sel, u2);
+    ls = lu_ls_fire(s, po, sel, u2);
   } else if (j == 2) {
-    ls = lu_ls_glow(s, po, m, fr, vl, sel, u2);
+    ls = lu_ls_glow(s, po, sel, u2);
   } else if (j < 3 + nl) {
-    ls = lu_ls_lamp(j - 3, s, po, m, fr, vl, sel, u2);
+    ls = lu_ls_lamp(j - 3, s, po, sel, u2);
   } else {
-    ls = lu_ls_env(m, fr, vl, sel, u2);
+    ls = lu_ls_env(sel, u2);
   }
-  if (max(ls.c.r, max(ls.c.g, ls.c.b)) <= 0.0) { return vec3<f32>(0.0); }
   let traced = ls.kind == 0 || ls.kind == 3 || (ls.kind == 4 && lu_env_cau());   // (the caustics' lights)
-  if (lu_cov && traced) { return vec3<f32>(0.0); }
-  var vis = 1.0;
-  if (ls.tmax > 0.0) {
-    // (the fire's and hot matter's lights keep their straight-through shadow through curved glass: no caustics from them)
-    // (through curved glass: the caustics' lights stop there where the caustics have their light, else go straight
-    // through; the HDRI not traced stops there always, and a bounce finds it through the glass; the fire's and hot
-    // matter's go straight through, no caustics from them)
-    vis = lu_shadow(po, ls.l, ls.tmax, s.eps, s.want, (traced && lu_cau_sh) || (ls.kind == 4 && !lu_env_cau()),
-                    select(0.0, ls.r, ls.kind == 2));
-  }
-  // the smoke on the way
-  if (ls.kind == 1) {
-    if (U.fire.w > 0.0) { vis = mix(1.0, vis * smoke_tr(po, ls.l, ls.tmax), U.fire.w); }
-  } else if (vis > 0.0) {
-    if (ls.kind == 0) {
-      let ps = pl + s.n * 1.5 + ls.l * 0.75;
-      if (in_light(ps)) { vis *= samp_c(L0, lin, ps, U.ln.xyz).a; }
-    } else if (ls.kind == 3) {
-      let pq = pl + s.n * 1.5 + ls.l * 0.75;
-      if (lamps[ls.k].e.y > 0.5 && in_light(pq)) { vis *= lamp_tr(pq, ls.k); }
-    } else if (ls.kind == 4) {
-      let pk2 = pl + s.n * 1.5;
-      if (in_light(pk2)) { vis *= samp_c(L1, lin, pk2, U.ln.xyz).x; }
+  if (lu_cov && traced) { ls.c = vec3<f32>(0.0); }
+  // the light's sample, then the caustic cache's light here (cached: lu_path), each through the material: one
+  // evaluation of it in the kernel for both (each copy of it slows every path)
+  var out = vec3<f32>(0.0);
+  var ce = vec3<f32>(0.0);
+  for (var it = 0; it < 2; it++) {
+    var l = ls.l;
+    if (it == 1) {
+      if (!cached) { break; }
+      let cg = lu_cache_get(s, depth);
+      ce = cg.e;
+      if (max(ce.r, max(ce.g, ce.b)) <= 0.0) { break; }
+      l = cg.l;
+    } else if (max(ls.c.r, max(ls.c.g, ls.c.b)) <= 0.0) {
+      continue;
     }
+    var ll = lu_to_local(fr, l);
+    if (it == 1 && ll.z <= 0.02) { ll = vec3<f32>(0.0, 0.0, 1.0); }   // (its light from no clear way: as from above)
+    let e = lu_eval2(m, vl, ll);
+    if (it == 1) {
+      // (a coat's colour only: its highlight's caustic light, as a mirror's, is the camera's own)
+      out += select(e.fd + e.fs, e.fd, lu_coat_on) / max(ll.z, 1e-4) * ce;
+      continue;
+    }
+    var c: vec3<f32>;
+    if (lu_coat_on) {
+      var wd = 1.0;
+      var wh = 1.0;
+      if (ls.pdf > 0.0) {
+        wd = lu_power(ls.pdf, (1.0 - m.ps) * e.pd);
+        wh = lu_power(ls.pdf, m.ps * e.ph);
+      }
+      c = ls.c * (e.fd * wd + select(e.fs * wh, vec3<f32>(0.0), lu_coat_ex && traced));
+    } else {
+      c = ls.c * (e.fd + e.fs);
+      if (ls.pdf > 0.0) { c *= lu_power(ls.pdf, (1.0 - m.ps) * e.pd + m.ps * e.ph); }
+    }
+    if (max(c.r, max(c.g, c.b)) <= 0.0) { continue; }
+    var vis = 1.0;
+    if (ls.tmax > 0.0) {
+      // (through curved glass: the caustics' lights stop there where the caustics have their light, else go straight
+      // through; the HDRI not traced stops there always, and a bounce finds it through the glass; the fire's and hot
+      // matter's go straight through, no caustics from them)
+      vis = lu_shadow(po, ls.l, ls.tmax, s.eps, s.want, (traced && lu_cau_sh) || (ls.kind == 4 && !lu_env_cau()),
+                      select(0.0, ls.r, ls.kind == 2));
+    }
+    // the smoke on the way
+    if (ls.kind == 1) {
+      if (U.fire.w > 0.0) { vis = mix(1.0, vis * smoke_tr(po, ls.l, ls.tmax), U.fire.w); }
+    } else if (vis > 0.0) {
+      if (ls.kind == 0) {
+        let ps = pl + s.n * 1.5 + ls.l * 0.75;
+        if (in_light(ps)) { vis *= samp_c(L0, lin, ps, U.ln.xyz).a; }
+      } else if (ls.kind == 3) {
+        let pq = pl + s.n * 1.5 + ls.l * 0.75;
+        if (lamps[ls.k].e.y > 0.5 && in_light(pq)) { vis *= lamp_tr(pq, ls.k); }
+      } else if (ls.kind == 4) {
+        let pk2 = pl + s.n * 1.5;
+        if (in_light(pk2)) { vis *= samp_c(L1, lin, pk2, U.ln.xyz).x; }
+      }
+    }
+    out += c * vis;
   }
-  return ls.c * vis;
+  return out;
 }
 
 // The sky a path sees when it leaves the set at p going d, after a bounce whose pdf was pdf (0: the camera's own ray)
@@ -764,7 +835,7 @@ fn lu_clear(h: Hit, p: vec3<f32>) -> LuClear {
   var c = LuClear(0.0, 1.0, vec3<f32>(1.0));
   var row = h.id;
   if (h.id >= PIECE) { row = i32(PC[u32(h.id - PIECE)].o.w + 0.5); }
-  if (h.id == MATTER) {
+  if (F_MARCH && h.id == MATTER) {
     let uvw = matter_uvw(p);
     c.clear = clamp(textureSampleLevel(m_phi, lin, uvw, 0.0).y, 0.0, 1.0);
     c.tint = textureSampleLevel(m_look, lin, uvw, 0.0).rgb;
@@ -791,16 +862,16 @@ fn lu_fresnel(ci: f32, eta: f32) -> f32 {
 fn lu_exit(h: Hit, pin: vec3<f32>, rin: vec3<f32>, eps: f32) -> vec4<f32> {
   var tx = 0.0;
   var nout = vec3<f32>(0.0, 1.0, 0.0);
-  if (h.id == MATTER) {
+  if (F_MARCH && h.id == MATTER) {
     tx = matter_exit_t(pin, rin, eps);
     nout = matter_normal(pin + rin * tx);
-  } else if (h.id >= PIECE) {
+  } else if (F_PIECES && h.id >= PIECE) {
     let kp = u32(h.id - PIECE);
     let ph = piece_hit(kp, pin, rin);
     tx = max(ph.t1, eps);
     let pose = piece_pose(kp);
     nout = quat_rotate(pose[1], normalize(PL[u32(PC[kp].v.w) + u32(max(ph.k1, 0))].xyz));
-  } else if (plain(h.id)) {
+  } else if (plain(h.id) || !F_MARCH) {
     tx = max(plain_span(obj(h.id), pin, rin).y, eps);   // (a plain shape's far side, exactly: not marched to)
     nout = plain_normal(h.id, pin + rin * tx);
   } else {
@@ -817,15 +888,9 @@ fn lu_exit(h: Hit, pin: vec3<f32>, rin: vec3<f32>, eps: f32) -> vec4<f32> {
 // plain shape, a piece) a hair's offset, not the stage's pixel or two (which would put their start that much nearer the
 // lights).
 fn lu_surf(h: Hit, ro: vec3<f32>, rd: vec3<f32>) -> Surf {
+  g_exact_n = true;   // (a plain shape's exact normal: plain_normal)
   var s = surface_at(h, ro, rd, 1.0);
-  if (h.id >= 0 && h.id < FLOOR && plain(h.id)) {
-    var n = plain_normal(h.id, s.p);
-    if (dot(n, rd) > 0.0 && U.mat[h.id].d.y <= 0.0) { n = -n; }
-    s.n = n;
-    s.eps = min(s.eps, 1.0e-4);
-  } else if (h.id == FLOOR || h.id >= PIECE) {
-    s.eps = min(s.eps, 1.0e-4);
-  }
+  if (h.id == FLOOR || h.id >= PIECE || (h.id >= 0 && h.id < FLOOR && plain(h.id))) { s.eps = min(s.eps, 1.0e-4); }
   return s;
 }
 
@@ -849,14 +914,16 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
   var depth = 0;
   var inner = 0;           // reflections inside glass so far
   // Which light this path leaves to others. The caustics' light paths (caustics, below) carry light from the lamps, the
-  // key light and the HDRI that meets mirrors or curved glass (the targets) and lands on a surface the camera sees
-  // straight, and on up to LU_CAU_BOUNCES more bounces off such surfaces: so where this path, so far all diffuse or
-  // glossy surfaces seen straight from the camera, finds those lights by way of mirrors and curved glass, it leaves them.
-  // Elsewhere (a surface seen through glass or in a mirror) its shadow rays take curved glass as straight through, as
-  // they take flat glass: the caustic seen through its own glass is then the light its glass lets through, unfocused
-  // (a caustic seen that way is a path from the camera through glass to a light: found by bouncing, a firefly).
+  // key light and an HDRI with a sun that meets mirrors or curved glass (the targets) and lands on a surface: sent to the
+  // camera in a straight line where it can see that surface (and on up to LU_CAU_BOUNCES more bounces off such surfaces),
+  // and left in the caustic cache where the light first lands. So at every diffuse or glossy surface, this path leaves
+  // to them the lights it would find by way of mirrors and curved glass: where it has met only such surfaces seen
+  // straight from the camera, the light paths' splats have that light; anywhere else (a surface seen through glass or in
+  // a mirror, or past the light paths' bounces) it takes it from the cache (a caustic seen through its glass or in a
+  // mirror: a path from the camera to a lamp that way, found by bouncing, is a firefly).
   var clean = true;        // every surface so far, from the camera, a diffuse or glossy one: no glass, no mirror
   var nd = 0;              // how many
+  var prough = true;       // ... and all rough (lu_rough): the light paths go on from a landing only off rough surfaces
   var cov_d = false;       // the last diffuse or glossy surface is one the caustics' light paths land on
   var xs = 0;              // mirrors and curved glass (targets) since that surface
   var glass_s = false;     // through glass since the last bounce off a surface: the lights found then, the shadow rays
@@ -925,17 +992,46 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
       let vl = lu_to_local(fr, v);
       if (vl.z <= 0.0) { break; }
       let m = lu_mat(sv, vl.z);
+      var cached = false;   // its caustic light from the cache (lu_direct)
+      // a coat over colour (lu_coat) is its colour (a diffuse or glossy surface) or its highlight (a mirror), as its
+      // bounce takes one or the other: its colour's state is kept aside until then (coat_*)
+      let coat = lu_coat(h, sv);
+      let prev_cov = cov_d;
+      var coat_nd = nd;
+      var coat_rough = prough;
+      var coat_cov = cov_d;
       if (lu_mirror(h, sv)) {
+        if (clean && nd == 0 && sv.rough >= LU_SHARP && lu_caustics_on() && lu_cache_on()) {
+          // a glossy mirror, the first thing seen: the light that comes to it off mirrors or through glass is from the
+          // caustic cache (caustics, LU_SHARP); what it reflects of other surfaces is as off any mirror
+          cov_d = true;
+          xs = 0;
+          cached = true;
+        } else {
+          xs += 1;
+        }
         clean = false;
-        xs += 1;
       } else {
-        if (clean) { nd += 1; }
-        cov_d = clean && nd <= LU_CAU_BOUNCES + 1 && lu_caustics_on();
-        xs = 0;
+        if (clean) {
+          coat_nd = nd + 1;
+          coat_rough = prough && lu_rough(sv);
+        }
+        // (sent straight to the camera by the light paths: the first surface it sees, or one past rough ones only)
+        let splat = clean && coat_nd <= LU_CAU_BOUNCES + 1 && (coat_nd == 1 || coat_rough);
+        coat_cov = lu_caustics_on() && (splat || lu_cache_on());
+        cached = coat_cov && !splat;
+        if (!coat) {
+          nd = coat_nd;
+          prough = coat_rough;
+          cov_d = coat_cov;
+          xs = 0;
+        }
       }
       lu_cov = cov_d && xs > 0;
-      lu_cau_sh = cov_d;
-      var dl = lu_direct(sv, m, fr, vl);
+      lu_coat_on = coat;
+      lu_coat_ex = coat && prev_cov;
+      lu_cau_sh = select(cov_d, coat_cov, coat);
+      var dl = lu_direct(sv, m, fr, vl, cached, depth);
       if (s.glint > 0.0 && max(U.sun.r, max(U.sun.g, U.sun.b)) > 0.0) {
         // a grain turned just so flashes the sun at the camera
         let gl = s.glint * pow(max(dot(s.gn, normalize(U.sund.xyz + v)), 0.0), 600.0) * 40.0;
@@ -952,7 +1048,7 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
       // picked from the HDRI above leaves to it (multiple importance sampling)
       let last = depth + 1 >= bounces;
       var ll: vec3<f32>;
-      lu_at(4u);
+      lu_at(2u);
       let ub = lu_rand2();   // (the lobe by its x, then rescaled, the direction: as lu_direct picks its light)
       if (ub.x < m.ps) {
         let hl = lu_vndf(vl, m.a, vec2<f32>(min(ub.x / m.ps, 0.99999994), ub.y));
@@ -961,10 +1057,28 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
         ll = lu_cosine(vec2<f32>(min((ub.x - m.ps) / max(1.0 - m.ps, 1e-6), 0.99999994), ub.y));
       }
       if (ll.z <= 0.0) { break; }
-      let e = lu_eval(m, vl, ll);
-      if (e.w <= 0.0) { break; }
-      thr *= e.xyz / e.w;
-      pdf_last = e.w;
+      let e2 = lu_eval2(m, vl, ll);
+      var ef = e2.fd + e2.fs;
+      var epdf = (1.0 - m.ps) * e2.pd + m.ps * e2.ph;
+      if (coat) {
+        // a coat: by the lobe taken alone (its highlight a mirror's, its colour a matte surface's: the caustics split so)
+        if (ub.x < m.ps) {
+          ef = e2.fs;
+          epdf = m.ps * e2.ph;
+          clean = false;
+          xs += 1;
+        } else {
+          ef = e2.fd;
+          epdf = (1.0 - m.ps) * e2.pd;
+          nd = coat_nd;
+          prough = coat_rough;
+          cov_d = coat_cov;
+          xs = 0;
+        }
+      }
+      if (epdf <= 0.0) { break; }
+      thr *= ef / epdf;
+      pdf_last = epdf;
       glass_s = false;
       glass_x = false;
       scattered = true;
@@ -1128,9 +1242,118 @@ fn lu_through(h: Hit, p: vec3<f32>, rd: vec3<f32>, cl: LuClear, eps: f32) -> LuT
 
 const LU_CAU_BOUNCES: i32 = 2;   // a caustic's light is followed this many bounces on from where it lands
 
-// Light that came along rd to surface s, carrying beta, as the camera sees it: sent along a straight line to the camera
+// ---- the caustic cache: the light the caustics' paths land with, where they land ------------------------------------
+//
+// A light path that has come through curved glass or off a mirror and lands on a surface also leaves its light there,
+// in a cell of the cache (CAU, after the pixels' splats): the irradiance it brings, in two parts (by way of glass only,
+// or off a mirror too: its bounces count), and the way it came. The camera's paths that reach a surface the light paths
+// cannot send to the camera in a straight line (seen through glass or in a mirror, or after more bounces than the light
+// paths follow) take that surface's caustic light from its cell: the caustic a glass ball makes, seen through the ball,
+// focused (a path from the camera through the glass to a lamp, found by bouncing, is a firefly).
+//
+// Cells are U.ceye.w wide across a surface and four times that through it, one set for each of the six ways a surface
+// faces, hashed into LU_CACHE_SLOTS slots (a slot's first word holds its cell's key; a cell taken goes on to the next
+// slots), shifted by a random offset each pass so that over the passes a cell's edges blur away. Each pass starts it
+// afresh with the splats.
+const LU_CACHE_SLOTS: u32 = 262144u;   // (lume.py CACHE_SLOTS)
+const LU_CACHE_WORDS: u32 = 10u;       // key; irradiance by way of glass (rgb); off a mirror too (rgb); the way it came (xyz)
+const LU_CACHE_SCALE: f32 = 16384.0;   // (fixed point: irradiance times this)
+
+fn lu_cache_on() -> bool { return U.ceye.w > 0.0; }
+
+const LU_CACHE_SHRINK: f32 = 0.1666667;   // the cells shrink as the passes add up, as passes^-this (their blur goes)
+
+// This pass's cell size: U.ceye.w at the first, shrinking (progressive photon mapping: the cache's blur goes to nothing
+// as passes add up, while each pass's cells still hold enough light paths, their noise averaged away by the passes).
+fn lu_cache_h() -> f32 { return U.ceye.w * pow(U.lume.y + 1.0, -LU_CACHE_SHRINK); }
+
+// The cache's cell for a surface at p facing n: (its slot, its key).
+fn lu_cell(p: vec3<f32>, n: vec3<f32>) -> vec2<u32> {
+  let ps = u32(U.lume.y + 0.5) * 3u;
+  let jit = vec3<f32>(f32(lu_hash(ps + 101u) >> 8u), f32(lu_hash(ps + 102u) >> 8u), f32(lu_hash(ps + 103u) >> 8u)) / 16777216.0;
+  let q = p / lu_cache_h() + jit;
+  let a = abs(n);
+  var face = 0u;
+  var c = vec3<f32>(q.y, q.z, q.x * 0.25);
+  if (a.x >= a.y && a.x >= a.z) {
+    face = select(0u, 1u, n.x > 0.0);
+  } else if (a.y >= a.z) {
+    face = select(2u, 3u, n.y > 0.0);
+    c = vec3<f32>(q.x, q.z, q.y * 0.25);
+  } else {
+    face = select(4u, 5u, n.z > 0.0);
+    c = vec3<f32>(q.x, q.y, q.z * 0.25);
+  }
+  let ci = vec3<i32>(floor(c));
+  var k = lu_hash(bitcast<u32>(ci.x) ^ (face * 0x9e3779b9u));
+  k = lu_hash(k ^ (bitcast<u32>(ci.y) * 0x85ebca6bu));
+  k = lu_hash(k ^ (bitcast<u32>(ci.z) * 0xc2b2ae35u));
+  let key = k | 1u;
+  return vec2<u32>(lu_hash(key ^ 0x27d4eb2du) & (LU_CACHE_SLOTS - 1u), key);
+}
+
+// The cache's first word in CAU.
+fn lu_cache_base() -> u32 { return 3u * u32(U.res.x) * u32(U.res.y); }
+
+// A light path's light landing at surface s, travelling rd, carrying beta (one path among U.lume3.x): into its cell.
+fn lu_cache_add(s: Surf, rd: vec3<f32>, beta: vec3<f32>, mirrored: bool) {
+  let c = lu_cell(s.p, s.n);
+  let a = abs(s.n);
+  // (its power, over the surface a cell holds: h^2 across, over the surface's slope to the cell's face)
+  let h = lu_cache_h();
+  let e = beta * (max(a.x, max(a.y, a.z)) / (max(U.lume3.x, 1.0) * h * h));
+  let q = min(e * LU_CACHE_SCALE, vec3<f32>(3.0e7));
+  let dq = -rd * min(luma(e) * LU_CACHE_SCALE, 3.0e7);
+  let base = lu_cache_base();
+  for (var j = 0u; j < 8u; j++) {
+    let w0 = base + ((c.x + j) & (LU_CACHE_SLOTS - 1u)) * LU_CACHE_WORDS;
+    var r = atomicCompareExchangeWeak(&CAU[w0], 0u, c.y);
+    if (!r.exchanged && r.old_value == 0u) { r = atomicCompareExchangeWeak(&CAU[w0], 0u, c.y); }   // (a weak one may fail)
+    if (r.exchanged || r.old_value == c.y) {
+      let o = w0 + select(1u, 4u, mirrored);
+      // (rounded at random, up or down by how near: so many small parts add up to their sum)
+      atomicAdd(&CAU[o], u32(q.r + lu_pcg()));
+      atomicAdd(&CAU[o + 1u], u32(q.g + lu_pcg()));
+      atomicAdd(&CAU[o + 2u], u32(q.b + lu_pcg()));
+      atomicAdd(&CAU[w0 + 7u], bitcast<u32>(i32(round(dq.x))));
+      atomicAdd(&CAU[w0 + 8u], bitcast<u32>(i32(round(dq.y))));
+      atomicAdd(&CAU[w0 + 9u], bitcast<u32>(i32(round(dq.z))));
+      return;
+    }
+  }
+}
+
+// The caustic light arriving at surface s, from its cell: its irradiance, and the way it came (s.n where it has none).
+// depth: the bounces off surfaces before this one (the light off a mirror is one more, when the set allows it).
+struct LuCached { e: vec3<f32>, l: vec3<f32> };
+
+fn lu_cache_get(s: Surf, depth: i32) -> LuCached {
+  var out = LuCached(vec3<f32>(0.0), s.n);
+  let c = lu_cell(s.p, s.n);
+  let base = lu_cache_base();
+  for (var j = 0u; j < 8u; j++) {
+    let w0 = base + ((c.x + j) & (LU_CACHE_SLOTS - 1u)) * LU_CACHE_WORDS;
+    let k = atomicLoad(&CAU[w0]);
+    if (k == 0u) { break; }
+    if (k == c.y) {
+      var e = vec3<f32>(f32(atomicLoad(&CAU[w0 + 1u])), f32(atomicLoad(&CAU[w0 + 2u])), f32(atomicLoad(&CAU[w0 + 3u])));
+      if (depth + 2 <= max(i32(U.lume.z + 0.5), 1)) {
+        e += vec3<f32>(f32(atomicLoad(&CAU[w0 + 4u])), f32(atomicLoad(&CAU[w0 + 5u])), f32(atomicLoad(&CAU[w0 + 6u])));
+      }
+      out.e = e / LU_CACHE_SCALE;
+      let d = vec3<f32>(f32(bitcast<i32>(atomicLoad(&CAU[w0 + 7u]))), f32(bitcast<i32>(atomicLoad(&CAU[w0 + 8u]))),
+                        f32(bitcast<i32>(atomicLoad(&CAU[w0 + 9u]))));
+      if (dot(d, d) > 1e-6) { out.l = normalize(d); }
+      break;
+    }
+  }
+  return out;
+}
+
+// Light that came along rd to surface s, carrying beta, as the camera sees it (colour_only: a coat's colour, not its
+// highlight): sent along a straight line to the camera
 // (nothing in the way, glass too), into the pixel it is seen in (light tracing; U.lume3.z: 1 / (paths x a pixel's area)).
-fn lu_splat(s: Surf, rd: vec3<f32>, beta: vec3<f32>) {
+fn lu_splat(s: Surf, rd: vec3<f32>, beta: vec3<f32>, colour_only: bool) {
   let wc = U.ceye.xyz - s.p;
   let dist = length(wc);
   let wn = wc / max(dist, 1e-6);
@@ -1147,7 +1370,8 @@ fn lu_splat(s: Surf, rd: vec3<f32>, beta: vec3<f32>) {
   let vl = lu_to_local(fr, wn);
   let ll = lu_to_local(fr, -rd);
   let m = lu_mat(s, vl.z);
-  let f = lu_eval(m, vl, ll).xyz / max(ll.z, 1e-4);
+  let e = lu_eval2(m, vl, ll);
+  let f = select(e.fd + e.fs, e.fd, colour_only) / max(ll.z, 1e-4);   // (a coat: its colour only, lu_coat)
   // the camera's axis (fire-local) and how far off it the surface is seen
   let fwd = normalize((U.w2l * vec4<f32>(U.fwd.xyz, 0.0)).xyz);
   let cc = max(dot(-wn, fwd), 1e-4);
@@ -1175,25 +1399,38 @@ fn lu_emit() -> LuEmit {
   let tg = U.ctg[min(i32(lu_rand() * f32(nt)), nt - 1)];
   let sel = f32(kinds * nt);   // (1 / the chance of this light and this target)
   if (pick < nl) {
-    // a lamp: from its middle, a direction within the cone the target fills seen from it
+    // a lamp: from a point on its surface (the part from which some of the target is in front of it: a cap round its side
+    // facing the target, wider by the angle the target fills), a direction within the cone the target fills seen from
+    // there; its light by its radiance and the cosine there. (From its middle, as a point, a big lamp's caustic was too
+    // sharp and too small: the measured caustic seen through its glass, wrong at its edges.)
     let lm = lamps[pick];
+    let r = max(lm.p.w, 1e-3);
     let c = lm.p.xyz;
-    let cone = lu_cone_of(c, tg.xyz, tg.w);
+    let toward = tg.xyz - c;
+    let dist = length(toward);
+    let sa = clamp(tg.w / max(dist, 1e-6), 0.0, 1.0);                   // (sin of the angle the target fills)
+    let cmin = -sa;                                                     // (the cap: out to 90 degrees and that angle more)
+    let lf = lu_frame(toward / max(dist, 1e-6));
+    let nc = lu_cone(lu_rand2(), cmin);                                // (a point on the cap, uniformly by area)
+    let nx = lf[0] * nc.x + lf[1] * nc.y + lf[2] * nc.z;
+    let x = c + nx * r;
+    let cap = 2.0 * PI * r * r * (1.0 - cmin);
+    let cone = lu_cone_of(x, tg.xyz, tg.w);
     var l = vec3<f32>(0.0, -1.0, 0.0);
-    var pdf = 1.0 / (4.0 * PI);
+    var omega = 4.0 * PI;
     if (cone.x < -1.5) {
       l = lu_cone(lu_rand2(), -1.0);
     } else {
-      let fr = lu_frame(normalize(tg.xyz - c));
+      let fr = lu_frame(normalize(tg.xyz - x));
       let lc = lu_cone(lu_rand2(), cone.x);
       l = fr[0] * lc.x + fr[1] * lc.y + fr[2] * lc.z;
-      pdf = 1.0 / max(cone.y, 1e-12);
+      omega = cone.y;
     }
-    let r = max(lm.p.w, 1e-3);
-    let intensity = lu_lamp_radiance(lm, -l) * (PI * r * r);
-    e.ro = c;
+    let cosx = dot(nx, l);
+    if (cosx <= 0.0) { return e; }
+    e.ro = x + nx * 1.0e-4;
     e.rd = l;
-    e.beta = intensity * (sel / pdf);
+    e.beta = lu_lamp_radiance(lm, -l) * (cosx * cap * omega * sel);
     return e;
   }
   // the key light or the HDRI: parallel light over a disc as wide as the target, from far off
@@ -1275,6 +1512,10 @@ fn caustics(@builtin(global_invocation_id) id: vec3<u32>) {
       // its highlight is all of it, and symmetric)
       if (landed > 0) { return; }
       opq += 1;
+      if (opq > bounces) { return; }
+      // (a glossy mirror: the light that came off mirrors or through glass, left in the cache for the camera's paths
+      // that see it straight: lu_path)
+      if (curved > 0 && s.rough >= LU_SHARP && lu_cache_on()) { lu_cache_add(s, rd, beta, opq > 1); }
       if (opq >= bounces) { return; }   // (it still has to land)
       let fr = lu_frame(s.n);
       let li = lu_to_local(fr, -rd);
@@ -1290,14 +1531,41 @@ fn caustics(@builtin(global_invocation_id) id: vec3<u32>) {
       curved += 1;
       continue;
     }
+    var land = beta;
+    let coat = lu_coat(h, s);
+    if (coat) {
+      // a coat over colour: off its highlight, as off a mirror, with the chance a bounce takes it; else into its colour
+      if (landed > 0) { return; }
+      let fr = lu_frame(s.n);
+      let li = lu_to_local(fr, -rd);
+      if (li.z <= 0.0) { return; }
+      let m = lu_mat(s, li.z);
+      if (lu_rand() < m.ps) {
+        opq += 1;
+        if (opq >= bounces) { return; }
+        let lo = reflect(-li, lu_vndf(li, m.a, lu_rand2()));
+        if (lo.z <= 0.0) { return; }
+        let ev = lu_eval2(m, li, lo);
+        if (ev.ph <= 0.0) { return; }
+        beta *= ev.fs / (m.ps * ev.ph);
+        ro = s.p + s.n * max(s.eps, 1.0e-4);
+        rd = fr[0] * lo.x + fr[1] * lo.y + fr[2] * lo.z;
+        curved += 1;
+        continue;
+      }
+      land = beta / max(1.0 - m.ps, 1e-4);
+    }
     if (curved == 0) { return; }   // (straight from the light: the camera's own paths have that light)
+    if (landed > 0 && !lu_rough(s)) { return; }   // (landing again: only on rough surfaces, as lu_path counts them)
     // it has landed: the light this surface sends the camera (light tracing), then on, bounced off it (the light the
     // caustic throws round it, onto the floor beside it and the glass's underside: lu_path leaves these to it)
     opq += 1;
     if (opq > bounces) { return; }
-    lu_splat(s, rd, beta);
+    if (landed == 0 && lu_cache_on()) { lu_cache_add(s, rd, land, opq > 1); }
+    lu_splat(s, rd, land, coat);
     landed += 1;
-    if (landed > LU_CAU_BOUNCES) { return; }
+    beta = land;
+    if (landed > LU_CAU_BOUNCES || !lu_rough(s)) { return; }   // (on only off rough surfaces)
     let fr = lu_frame(s.n);
     let li = lu_to_local(fr, -rd);
     if (li.z <= 0.0) { return; }

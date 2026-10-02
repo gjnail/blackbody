@@ -22,7 +22,9 @@ FINAL_PER_PASS = 4        # paths per pixel each pass of a final render traces, 
 FINAL_PASS_MAX = 16       # ... at most (final_per_pass)
 TARGETS = 8               # caustics: at most this many curved clear things the lights are traced through
 CAUSTIC_SHARE = 16        # caustics: one light path per this many paths from the camera (per 4 pixels in the viewer)
-MIRROR_ROUGH = 0.35       # caustics: bare metal smoother than this focuses light (lume.wgsl LU_MIRROR_ROUGH)
+MIRROR_ROUGH = 0.35       # caustics: bare metal or a coat smoother than this focuses light (lume.wgsl LU_MIRROR_ROUGH)
+CACHE_SLOTS = 1 << 18     # caustics: the caustic cache's cells (lume.wgsl LU_CACHE_SLOTS), each ...
+CACHE_WORDS = 10          # ... this many 32-bit words (LU_CACHE_WORDS)
 TAIL_FLOATS = 8 + 8 + 32 + 4 * TARGETS   # the stage's parameters after its materials: Lume's (lume, lume2, caustics)
 ATROUS_STEPS = (1, 2, 4, 8, 16)
 
@@ -103,6 +105,28 @@ def env_peaked(table, w, h):
     return float(power[top].sum() / max(power.sum(), 1e-30)) >= ENV_TRACE_SHARE
 
 
+def cache_cell(targets):
+    """The caustic cache's cell size (m, lume.wgsl lu_cell) for these targets (x, y, z, radius): a 32nd of the smallest,
+    so a glass ball's caustic is a few dozen cells across, but no less than a 256th of the largest (the cache holds
+    CACHE_SLOTS cells)."""
+    if not targets:
+        return 0.0
+    r = [float(t[3]) for t in targets]
+    return max(min(r) / 32.0, max(r) / 256.0, 1e-3)
+
+
+def focusing(row, c):
+    """What object c (its stage.looks row) focuses light as for caustics: 'glass' (curved and clear), 'mirror' (bare smooth
+    metal, any shape), 'coat' (a sharp highlight on colour: plastic, paint, lacquer; lume.wgsl lu_coat), or None."""
+    if row[0] == 0:   # (not drawn)
+        return None
+    if row[4] > 0.0 and c.shape in ('sphere', 'cylinder', 'mesh'):
+        return 'glass'
+    if row[4] <= 0.0 and row[2] < MIRROR_ROUGH and c.shape in ('sphere', 'box', 'cylinder', 'mesh'):
+        return 'mirror' if row[3] >= 1.0 - 1e-6 else 'coat'
+    return None
+
+
 def caustic_targets(scene, cols, rows, meshes, matter=None):
     """What the lights are traced at for caustics (lume.wgsl caustics): the curved clear things in the set (glass, ice or
     jelly balls, cylinders, meshes, clear matter) and the mirrors (bare smooth metal, any shape), as spheres round them,
@@ -114,9 +138,7 @@ def caustic_targets(scene, cols, rows, meshes, matter=None):
     for i, (c, row) in enumerate(zip(cols, rows)):
         if len(out) >= TARGETS:
             break
-        glass = row[4] > 0.0 and c.shape in ('sphere', 'cylinder', 'mesh')
-        mirror = row[4] <= 0.0 and row[3] >= 1.0 - 1e-6 and row[2] < MIRROR_ROUGH and c.shape in ('sphere', 'box', 'cylinder', 'mesh')
-        if row[0] == 0 or not (glass or mirror):   # (0: not drawn)
+        if focusing(row, c) is None:
             continue
         s = np.abs(np.asarray(c.size, float))
         if c.shape == 'sphere':
@@ -161,7 +183,8 @@ class Lume:
         self.env_traced = False   # the HDRI's light is traced for caustics (env_peaked)
         self._none = gpu.buffer(16, 'lume-no-env')
         self._tmp = [None, None]
-        dn = ['rbuf', 'rbuf', 'tex2d', 'st2d:rgba16float:w']
+        self._var = [None, None]   # the denoiser's variance, ping-ponged between its levels
+        dn = ['rbuf', 'rbuf', 'tex2d', 'st2d:rgba16float:w', 'rbuf', 'buf']
         self.k_demod = gpu.kernel('lume_denoise.wgsl', dn, 'demod', workgroup=(8, 8, 1))
         self.k_atrous = gpu.kernel('lume_denoise.wgsl', dn, 'atrous', workgroup=(8, 8, 1))
         self.k_remod = gpu.kernel('lume_denoise.wgsl', dn, 'remod', workgroup=(8, 8, 1))
@@ -170,14 +193,15 @@ class Lume:
         """The accumulation buffers for a w x h picture (afresh when the size changes)."""
         if self.size == (w, h):
             return
-        for b in (self.acc, self.aov, self.cau, *self._tmp):
+        for b in (self.acc, self.aov, self.cau, *self._tmp, *self._var):
             if b is not None:
                 b.destroy()
         n = w * h
         self.acc = self.gpu.buffer(n * 16, 'lume-acc')
         self.aov = self.gpu.buffer(n * 32, 'lume-aov')
-        self.cau = self.gpu.buffer(n * 12, 'lume-caustics')
+        self.cau = self.gpu.buffer(n * 12 + CACHE_SLOTS * CACHE_WORDS * 4, 'lume-caustics')   # (splats, then the cache)
         self._tmp = [self.gpu.texture2d(w, h, 'rgba16float', f'lume-dn{i}') for i in range(2)]
+        self._var = [self.gpu.buffer(n * 4, f'lume-dnvar{i}') for i in range(2)]
         self.size = (w, h)
         self.key = None
         self.passes = 0
@@ -232,9 +256,11 @@ class Lume:
             return
         w, h = self.size
         a, c = self._tmp
-        b.run(self.k_demod, [self.acc, self.aov, out_tex, a], Uniforms().v4(w, h, passes, 1), (w, h, 1))
+        va, vb = self._var
+        b.run(self.k_demod, [self.acc, self.aov, out_tex, a, vb, va], Uniforms().v4(w, h, passes, 1), (w, h, 1))
         src, dst = a, c
         for step in ATROUS_STEPS:
-            b.run(self.k_atrous, [self.acc, self.aov, src, dst], Uniforms().v4(w, h, passes, step), (w, h, 1))
+            b.run(self.k_atrous, [self.acc, self.aov, src, dst, va, vb], Uniforms().v4(w, h, passes, step), (w, h, 1))
             src, dst = dst, src
-        b.run(self.k_remod, [self.acc, self.aov, src, out_tex], Uniforms().v4(w, h, passes, 1), (w, h, 1))
+            va, vb = vb, va
+        b.run(self.k_remod, [self.acc, self.aov, src, out_tex, va, vb], Uniforms().v4(w, h, passes, 1), (w, h, 1))

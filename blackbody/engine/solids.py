@@ -132,10 +132,17 @@ CLOTH_HOLD = 100.0      # N: the most a vertex of cloth pushes back (fabric's st
                         # between vertices: a sheet cannot stop a wrecking ball, whatever the contact's stiffness)
 CLOTH_MARGIN = 0.006    # m: how close to a thing's surface a vertex of cloth holds it off (resting, it stays further off
                         # than the cloth's own thickness, or the cloth, pushed out of it each step, would let it sink)
-MORTAR = 0.3e6          # Pa: mortar in tension, the glue between the bricks of a wall
+MORTAR = 0.6e6          # Pa: mortar in tension, the glue between the bricks of a wall (real: 0.2-0.8 MPa)
 JOINT_FRICTION = 0.6    # shear a joint holds beyond its cohesion, per newton of compression across it
 GAP = 0.001             # m: cut faces are moved in by this for the physics, so glued neighbours do not touch
 BREAK_STEPS = 1         # steps in a row a weld must be overloaded to break (an impact lasts only a few)
+WELD_SOLIMP = (0.99, 0.999, 0.001)   # how hard a weld holds its pose (MuJoCo's impedance): MuJoCo's own 0.9-0.95 gives
+                        # as the inertia of a small piece, so a post of steel segments whipped a metre either way like a
+                        # fishing rod and a wall swayed; 0.999-0.9999 goes unstable
+IMPACT_FLOOR = 0.5      # m/s: a piece stopped by less than this never breaks by impact (contacts at rest chatter)
+IMPACT_KEEP = 0.5       # of a piece's stop so far, what carries to the next step (a hit lasts a few steps)
+REHEARSE_S = 20.0       # s: the longest a rehearsal (where things are hit, _rehearse) runs the shot for
+REHEARSE_WALL = 15.0    # s: and the longest it may take
 
 
 @dataclass
@@ -157,6 +164,7 @@ class PieceSet:
     throw: np.ndarray = field(default_factory=lambda: np.zeros(3))   # Thrown at (m/s) and Spinning at (rad/s, world)
     spin: np.ndarray = field(default_factory=lambda: np.zeros(3))
     burnable: bool = False      # its pieces burn (burnable, with Spreading fire on)
+    joints_show: bool = False   # its pieces' joints show even whole (a brick wall's mortar)
     fire: np.ndarray = None     # (n, 4) each piece as a burnable spot is (burn_common.wgsl): fuel left, catching (1:
                                 # alight), 1 (2 once burnt out), smoulder left
     gone: np.ndarray = None     # (n,) crumbled to ash: no longer there
@@ -165,6 +173,12 @@ class PieceSet:
     half: np.ndarray = None     # (n, 3) its half extents in its frame (m)
     pairs: np.ndarray = None    # (b, 2) the pieces glued to each other
     crumble: np.ndarray = None  # (n,) how far its smoulder dies down before it falls to ash (0..1)
+    v_break: float = 0.0        # m/s: a piece of it stopped this fast by a hit breaks away (materials impact x Strength)
+    impact: np.ndarray = None   # where it is hit (its own frame, _rehearse), what its cracks crowd round; None: nowhere
+    brittle: float = 0.0        # how far a crack runs on from a hit (materials)
+    yields: float = 0.0         # Pa: its joints bend and stay bent past this (materials x Strength); 0: they never bend
+    ductility: float = 0.0      # radians: how far a joint bends in all before it tears
+    bent: bool = False          # a joint of it has bent (it is drawn as its pieces from then on)
 
 
 ROPE_BOUNCE = 0.3       # the share of its speed a falling thing keeps when its rope snaps taut
@@ -220,11 +234,12 @@ class Joint:
 
 
 _FRACTURES = {}
+_HITS = {}          # rehearsals (_rehearse) kept: scene -> {collider index: where it is hit}
 
 
 def breaks(c):
-    """Whether collider c is breakable (a mesh cannot be cut yet)."""
-    return bool(c.get('breakable')) and c.get('shape') != 'mesh'
+    """Whether collider c is breakable."""
+    return bool(c.get('breakable'))
 
 
 def joined(c):
@@ -337,17 +352,77 @@ def extent_along(shape, size, axis, hull=None):
     return float(a @ s)
 
 
-def fractured(c, size, hollow=0.0):
-    """The pieces a breakable collider is cut into (kept: cutting takes a fraction of a second)."""
+def fractured(c, size, hollow=0.0, impact=None, scene=None):
+    """The pieces a breakable collider is cut into (kept: cutting takes a fraction of a second). impact: where it is
+    hit (its own frame: PieceSet.impact), the cracks crowd round it. scene: for a mesh, where its file is."""
     from .fracture import fracture
+    mesh = mesh_key = None
+    if c['shape'] == 'mesh':
+        mesh, mesh_key = mesh_of(scene, c, size)
+        if mesh is None:
+            from .fracture import Fracture
+            return Fracture()
+    if impact is not None and uses_impact(c):
+        impact = tuple(round(float(x), 4) for x in impact)
+    else:
+        impact = None
+    rim = open_top(c, size)
     key = (c['shape'], tuple(round(float(x), 6) for x in np.abs(np.asarray(size, float))), int(c.get('pieces', 24)),
-           c.get('fracture', 'voronoi'), int(c.get('fracture_seed', 0)), round(float(hollow or 0.0), 6))
+           c.get('fracture', 'voronoi'), int(c.get('fracture_seed', 0)), round(float(hollow or 0.0), 6), impact,
+           None if rim is None else round(rim, 6), mesh_key)
     f = _FRACTURES.get(key)
     if f is None:
         if len(_FRACTURES) > 32:
             _FRACTURES.clear()
-        f = _FRACTURES[key] = fracture(key[0], key[1], key[2], key[3], key[4], hollow=key[5])
+        f = _FRACTURES[key] = fracture(key[0], key[1], key[2], key[3], key[4], hollow=key[5],
+                                       impact=None if impact is None else np.asarray(impact, float), rim=rim, mesh=mesh)
     return f
+
+
+_MESHES = {}
+
+
+def mesh_of(scene, c, size):
+    """A mesh collider's vertices (scaled by its size) and triangles in its own frame, and a key for them (its file
+    and when it changed); (None, None) if it cannot be read."""
+    import os
+    from .mesh import MeshError, load_mesh
+    if scene is None or not c.get('mesh'):
+        return None, None
+    path = scene.mesh_path(c['mesh'])
+    try:
+        stamp = os.path.getmtime(path.split('#')[0])
+    except OSError:
+        stamp = 0.0
+    key = (path, stamp, tuple(round(float(x), 6) for x in np.abs(np.asarray(size, float))))
+    got = _MESHES.get(key)
+    if got is None:
+        try:
+            v, t = load_mesh(path)
+        except (MeshError, OSError, ValueError):
+            return None, None
+        if len(_MESHES) > 8:
+            _MESHES.clear()
+        got = _MESHES[key] = (np.asarray(v, float) * np.abs(np.asarray(size, float)), np.asarray(t, np.int64))
+    return got, key
+
+
+def open_top(c, size):
+    """How high a hollow cylinder's wall goes when its opening cuts its whole top off (a pot: the opening a box
+    wider than it, across its top), else None (closed)."""
+    if c.get('shape') != 'cylinder' or float(c.get('hollow', 0.0) or 0.0) <= 0.0:
+        return None
+    s = np.abs(np.asarray(size, float))
+    o = np.abs(np.asarray(c.get('opening', (0.0, 0.0, 0.0)), float))
+    at = np.asarray(c.get('opening_at', (0.0, 0.0, 0.0)), float)
+    if not (o > 0.0).all() or o[0] - abs(at[0]) < s[0] or o[2] - abs(at[2]) < s[0] or at[1] + o[1] < s[1]:
+        return None
+    return float(at[1] - o[1])
+
+
+def uses_impact(c):
+    """Whether where a breakable is hit shapes its cracks (not a brick wall's: its joints are where they are)."""
+    return c.get('fracture', 'voronoi') != 'bricks'
 
 
 def _box_of(piece):
@@ -379,6 +454,15 @@ class Solids:
         self.substep_pieces = []   # their pieces at each substep of the last frame (advance)
         self.breaks = []           # (time, world point, area) of every bond that broke, for dust and debris
         self._w = None             # the welds' data, flattened (_index_welds)
+        self._imp = None           # the impact check's (_index_impact)
+        self._set_bonds = []       # each breakable's welds between its pieces (rows of _w)
+        self._mocap_vel = {}       # mocap id -> its keys' velocity now (how fast a keyed thing hits)
+        self._btab = None          # per body, for how fast contacts close (_bodies_table)
+        self.rehearsal = False     # a rehearsal (_rehearse): nothing breaks; where each breakable is hit is noted (hits)
+        self.hits = {}             # collider index -> [its own frame point, how fast it closed, (unused)]
+        self._reh_geom = {}        # a rehearsal's geoms of breakables -> collider index
+        self._reh_frame = {}       # collider index -> (position, rotation) of a standing one's frame; (None, None) falling
+        self._hit_at = {}          # collider index -> where the rehearsal found it hit (the pieces cut round it)
         self.joints: list[Joint] = []   # ropes, springs, hinges and ball joints
         self.snaps = []            # (time, collider index) of every joint that broke
         self._tendon0 = None       # the tendons' limits, stiffness and damping as built (a broken one has them taken away)
@@ -422,7 +506,7 @@ class Solids:
         changed = self.model is not None
         self.model = self.data = None
         self.bodies, self.mocap, self.key = [], [], None
-        self.sets, self.breaks, self._w = [], [], None
+        self.sets, self.breaks, self._w, self._imp = [], [], None, None
         self.joints, self.snaps, self._tendon0 = [], [], None
         self.started = False
         self._last = {}
@@ -463,7 +547,7 @@ class Solids:
             cg = by_index.get(i)
             if cg is None or not breaks(c):
                 continue
-            frac = fractured(c, cg.size, cg.hollow)
+            frac = fractured(c, cg.size, cg.hollow, self._hit_at.get(i), scene)
             if not frac.pieces:
                 continue
             r = resolved(c)
@@ -472,6 +556,10 @@ class Solids:
             R0 = q_rot(xyzw(q0))
             dynamic = falls(c)
             ps = PieceSet(index=i, frac=frac, names=[], size=tuple(float(x) for x in cg.size), hollow=float(cg.hollow),
+                          v_break=float(r.get('impact', 0.0)) * float(c.get('strength', 1.0)),
+                          impact=self._hit_at.get(i) if uses_impact(c) else None, brittle=float(r.get('brittle', 0.0)),
+                          yields=float(r.get('yields', 0.0)) * float(c.get('strength', 1.0)),
+                          ductility=float(r.get('ductility', 0.0)),
                           throw=np.asarray(c.get('start_velocity', (0.0, 0.0, 0.0)), float) if dynamic else np.zeros(3),
                           spin=np.radians(np.asarray(c.get('start_spin', (0.0, 0.0, 0.0)), float)) if dynamic else np.zeros(3),
                           dynamic=dynamic,
@@ -504,6 +592,7 @@ class Solids:
             ps.area = 2.0 * (ext[:, 0] * ext[:, 1] + ext[:, 1] * ext[:, 2] + ext[:, 2] * ext[:, 0])
             ps.pairs = np.array([(bd.i, bd.j) for bd in frac.bonds], np.int64).reshape(-1, 2)
             ps.burnable = bool(c.get('burnable')) and bool(scene.data['spread']['enabled'])
+            ps.joints_show = c.get('fracture') == 'bricks'
             rng = np.random.default_rng(31 * i + 7)
             # (most burnt-out pieces fall to ash as their embers die; some stay, black charcoal)
             ps.crumble = np.where(rng.random(len(frac.pieces)) < 0.6, rng.random(len(frac.pieces)) * 0.8, -1.0)
@@ -517,6 +606,7 @@ class Solids:
                 e.name = f'bond{i}_{n}'
                 e.name1, e.name2 = ps.names[bond.i], ps.names[bond.j]
                 e.solref = stiff
+                e.solimp = list(WELD_SOLIMP) + list(e.solimp)[3:]
                 # anchored on the shared face (in the second piece's frame), so the weld's torque is the moment there
                 data = np.array(e.data, float)
                 data[0:3] = np.asarray(bond.centre, float) - frac.pieces[bond.j].centroid
@@ -547,6 +637,7 @@ class Solids:
                     e.name = f'anchor{i}_{n}'
                     e.name1 = ps.names[n]
                     e.solref = stiff
+                    e.solimp = list(WELD_SOLIMP) + list(e.solimp)[3:]
                     data = np.array(e.data, float)
                     data[0:3] = np.asarray(cg.pos, float) + R0 @ fc     # (the world's frame: where its glued face is)
                     e.data = data
@@ -567,6 +658,7 @@ class Solids:
                              ps.index, si, first, other))
         if not rows:
             self._w = None
+            self._imp = None
             return
         eq = np.array([r[0] for r in rows], np.int64)
         lookup = np.full(max(int(m.neq), 1), -1, np.int64)
@@ -577,6 +669,297 @@ class Solids:
                        set=np.array([r[6] for r in rows], np.int64), first=np.array([r[7] for r in rows], np.int64),
                        other=np.array([r[8] for r in rows], np.int64))
         self._w['strength0'] = self._w['strength'].copy()
+        sets = self.sets
+        self._w['yield'] = np.array([sets[si].yields for si in self._w['set']], float)
+        self._w['duct'] = np.array([sets[si].ductility for si in self._w['set']], float)
+        self._w['plastic'] = np.zeros(len(rows))          # how far each has bent in all (radians, and stretch / its size)
+        self._w['rel0'] = m.eq_data[eq, 3:10].copy()      # their rest poses as built (a bent one takes a new one)
+        self._index_impact()
+
+    def _index_impact(self):
+        """What the impact check (_impact) needs: each body's piece (or -1), each piece's free-joint velocity address,
+        the speed that breaks it, and the welds that hold it."""
+        W = self._w
+        m = self.model
+        # (the welds between each one's pieces, for whether it is still whole)
+        self._set_bonds = [np.nonzero((W['set'] == si) & (W['other'] >= 0))[0] if W is not None else np.zeros(0, np.int64)
+                           for si in range(len(self.sets))]
+        if W is None or not self.sets:
+            self._imp = None
+            return
+        body_piece = np.full(int(m.nbody), -1, np.int64)
+        lin, vb, start = [], [], []
+        g = 0
+        for si, ps in enumerate(self.sets):
+            start.append(g)
+            for n, b in enumerate(ps.bodies):
+                body_piece[int(b)] = g + n
+                lin.extend(range(int(ps.vadr[n]), int(ps.vadr[n]) + 3))
+                vb.append(ps.v_break)
+            g += len(ps.bodies)
+        start = np.asarray(start, np.int64)
+        # each weld's pieces, as global piece numbers (an anchor holds only its first)
+        a = start[W['set']] + W['first']
+        b = np.where(W['other'] >= 0, start[W['set']] + W['other'], -1)
+        holds = [[] for _ in range(g)]
+        nb = [[] for _ in range(g)]
+        for r in range(len(a)):
+            holds[a[r]].append(r)
+            if b[r] >= 0:
+                holds[b[r]].append(r)
+                nb[a[r]].append((int(b[r]), r))
+                nb[b[r]].append((int(a[r]), r))
+        # (for cracks running on: each piece's centre in its object's frame, how brittle it is, and how far apart its
+        # set's glued pieces typically are)
+        cen = np.concatenate([np.array([p.centroid for p in ps.frac.pieces[:len(ps.bodies)]], float).reshape(-1, 3)
+                              for ps in self.sets])
+        brittle = np.concatenate([np.full(len(ps.bodies), ps.brittle) for ps in self.sets])
+        ell = np.zeros(g)
+        for si, ps in enumerate(self.sets):
+            sel = (W['set'] == si) & (W['other'] >= 0)
+            gap = np.linalg.norm(cen[a[sel]] - cen[b[sel]], axis=1)
+            ell[start[si]:start[si] + len(ps.bodies)] = float(np.median(gap)) if len(gap) else 1.0
+        self._imp = dict(piece=body_piece, lin=np.asarray(lin, np.int64), v_break=np.asarray(vb, float),
+                         acc=np.zeros(g), holds=[np.asarray(h, np.int64) for h in holds], on=np.ones(g, bool),
+                         nb=nb, cen=cen, brittle=brittle, ell=np.maximum(ell, 1e-4), ends=(a, b))
+
+    def _note_hits(self, before):
+        """A rehearsal's note of where each breakable is hit hardest: of the contacts on it this step, the one that
+        closed fastest (the two things' speeds toward each other there, just before), in its own frame."""
+        d, m = self.data, self.model
+        nc = int(d.ncon)
+        if nc == 0 or not self._reh_geom:
+            return
+        ks = [k for k in range(nc) if int(d.contact.geom1[k]) in self._reh_geom or int(d.contact.geom2[k]) in self._reh_geom]
+        if not ks:
+            return
+        ks = np.asarray(ks, np.int64)
+        speeds = self._closing(before, np.asarray(m.geom_bodyid[d.contact.geom1[ks]], np.int64),
+                               np.asarray(m.geom_bodyid[d.contact.geom2[ks]], np.int64), np.asarray(d.contact.pos[ks], float),
+                               np.asarray(d.contact.frame[ks, :3], float))
+        for k, closing in zip(ks, speeds):
+            g1, g2 = int(d.contact.geom1[k]), int(d.contact.geom2[k])
+            i = self._reh_geom.get(g1, self._reh_geom.get(g2))
+            p = np.asarray(d.contact.pos[k], float)
+            closing = float(closing)
+            got = self.hits.get(i)
+            if closing <= 0.5 * IMPACT_FLOOR or (got is not None and closing <= got[1]):
+                continue
+            pos, R = self._reh_frame[i]
+            if pos is None:            # (it falls: its body's frame is its own)
+                bid = int(m.geom_bodyid[g1] if g1 in self._reh_geom else m.geom_bodyid[g2])
+                pos, R = d.xpos[bid], d.xmat[bid].reshape(3, 3)
+            self.hits[i] = [np.round(R.T @ (p - pos), 4), closing, False]
+
+    def _rehearsal_parts(self, spec, i, c, cg):
+        """A breakable's pieces as one thing's shapes (a rehearsal): (shape, half size, centre, mesh) in its own frame."""
+        from .fracture import inset
+        out = []
+        for n, p in enumerate(fractured(c, cg.size, cg.hollow, None, self._scene).pieces):
+            v = inset(p, GAP)
+            box = _box_of(p)
+            if box is not None:
+                lo, hi = v.min(0), v.max(0)
+                out.append(('box', 0.5 * (hi - lo), 0.5 * (lo + hi), None))
+            else:
+                ma = spec.add_mesh()
+                ma.name = f'rehearse{i}_{n}'
+                ma.uservert = (v - p.centroid).ravel().tolist()
+                out.append(('mesh', None, p.centroid, ma.name))
+        return out
+
+    def _rehearse(self, scene, idx, layout):
+        """Where each breakable thing is hit hardest, found by running the shot once with nothing breaking (each
+        breakable one rigid body of all its pieces, or fixed where it stands): its own frame, {collider index: point}.
+        Its cracks then crowd round where it is really hit: a pot dropped on its rim shatters at the rim, a pane where
+        the ball strikes it. Kept, for the same scene. (Only the bodies: what a liquid, sand or a fire does to them is
+        not rehearsed.)"""
+        want = [i for i in idx if breaks(scene.colliders[i]) and uses_impact(scene.colliders[i])]
+        if not want:
+            return {}
+        import time as _time
+        dd = scene.data['domain']
+        key = (self._key(scene, idx, layout), scene.start, scene.end, float(scene.fps), float(dd['preroll']),
+               str(dd.get('time_scale')))
+        got = _HITS.get(key)
+        if got is not None:
+            return dict(got)
+        r = Solids()
+        r.rehearsal = True
+        out = {}
+        try:
+            r._build(scene, idx, layout)
+            fps = scene.fps
+            first = scene.start - int(round(float(dd['preroll']) * fps))
+            t_wall, t_sim = _time.perf_counter(), 0.0
+            for frame in range(first, scene.end + 1):
+                fdt = float(scene.v('domain', 'time_scale', frame)) / fps
+                r.advance(scene, frame, fdt, 1)
+                t_sim += fdt
+                if t_sim > REHEARSE_S or _time.perf_counter() - t_wall > REHEARSE_WALL:
+                    break
+            out = {i: np.asarray(v[0], float) for i, v in r.hits.items()}
+        except Exception as ex:     # (a rehearsal that fails only loses where things are hit)
+            self.warnings.append(f'where things are hit: {ex}')
+        if len(_HITS) > 16:
+            _HITS.clear()
+        _HITS[key] = out
+        return dict(out)
+
+    def _crack_on(self, hit):
+        """The crack runs on from the pieces a hit breaks away: to each piece still glued to one, the hit carries
+        brittle^(distance / the set's piece spacing) of its strength (materials brittle: glass and pottery shatter right
+        through, wood splits off where it is hit), and breaks it away too while that is past what holds it. The
+        pieces that go."""
+        I, W = self._imp, self._w
+        out = set(int(p) for p in hit)
+        todo = list(out)
+        while todo:
+            p = todo.pop()
+            k = float(I['brittle'][p])
+            if k <= 0.0:
+                continue
+            for q, r in I['nb'][p]:
+                if q in out or not I['on'][q] or W['over'][r] < 0 or I['v_break'][q] <= 0.0:
+                    continue
+                carried = I['acc'][p] * k ** (float(np.linalg.norm(I['cen'][p] - I['cen'][q])) / I['ell'][p])
+                if carried > I['acc'][q]:
+                    I['acc'][q] = carried
+                if I['acc'][q] > max(I['v_break'][q], IMPACT_FLOOR):
+                    out.add(q)
+                    todo.append(q)
+        return sorted(out)
+
+    def _impact_sync(self):
+        """The impact check's state after a reset or a load: no hit under way; a piece still held if any weld holds it."""
+        I, W = self._imp, self._w
+        if I is None or W is None:
+            return
+        I['acc'][:] = 0.0
+        I['on'][:] = [bool((W['over'][r] >= 0).any()) if len(r) else False for r in I['holds']]
+
+    def _piece_v(self):
+        """The velocities now (the impact check's before): every degree of freedom's."""
+        return None if self._imp is None and not self.rehearsal else self.data.qvel.copy()
+
+    def _bodies_table(self):
+        """Per body, for how fast contacts close (_closing): its free joint's first dof (-1: none), its mocap id (-1:
+        none), whether it moves on other joints, and its mass as what it hits feels it (the world, fixed and keyed
+        things endless)."""
+        if self._btab is None:
+            import mujoco
+            m = self.model
+            nb = int(m.nbody)
+            free = np.full(nb, -1, np.int64)
+            other = np.zeros(nb, bool)
+            heavy = np.full(nb, np.inf)
+            for b in range(1, nb):
+                if m.body_mocapid[b] >= 0 or m.body_jntnum[b] == 0:
+                    continue
+                heavy[b] = float(m.body_mass[b])
+                j = int(m.body_jntadr[b])
+                if m.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE:
+                    free[b] = int(m.jnt_dofadr[j])
+                else:
+                    other[b] = True
+            self._btab = (free, np.asarray(m.body_mocapid, np.int64).copy(), other, heavy)
+        return self._btab
+
+    def _closing(self, q0, b1, b2, pos, nrm):
+        """How fast each contact closed just before this step (q0: qvel then): bodies b1, b2 (arrays) at points pos,
+        normal nrm from the first toward the second. A free body from q0; a keyed one at its keys' speed; one on a
+        hinge or a ball joint as it moves now; the world and fixed things not at all."""
+        import mujoco
+        m, d = self.model, self.data
+        free, mocap, other, _heavy = self._bodies_table()
+        u = []
+        for b in (b1, b2):
+            v = np.zeros((len(b), 3))
+            f = free[b]
+            k = f >= 0
+            if k.any():
+                a = f[k][:, None]
+                lin = q0[a + np.arange(3)]
+                w = np.einsum('bij,bj->bi', d.xmat[b[k]].reshape(-1, 3, 3), q0[a + 3 + np.arange(3)])
+                v[k] = lin + np.cross(w, pos[k] - d.xpos[b[k]])
+            for n in np.nonzero(mocap[b] >= 0)[0]:
+                v[n] = self._mocap_vel.get(int(mocap[b[n]]), (0.0, 0.0, 0.0))
+            for n in np.nonzero(other[b])[0]:
+                v6 = np.zeros(6)
+                mujoco.mj_objectVelocity(m, d, mujoco.mjtObj.mjOBJ_BODY, int(b[n]), v6, 0)
+                v[n] = v6[3:] + np.cross(v6[:3], pos[n] - d.xpos[b[n]])
+            u.append(v)
+        return np.einsum('ij,ij->i', u[0] - u[1], nrm)
+
+    def _impact(self, v0, h):
+        """Break away a piece hit hard: how fast a contact on it closed (the speed it and what it met came together
+        at, along the contact's normal, just before; scaled down by how much lighter the other is than it, so a grain
+        of sand does not crack a pane), or the change in its own velocity over this step along the normal (what the
+        contact did to it: gravity's part taken out; resting, carrying a load or pushed steadily it hardly changes),
+        added up over the few steps a hit lasts, past its material's impact speed (materials: a hit's stress wave,
+        density x sound speed x that speed, reaching what holds it). All its welds go: a dropped pot's rim, the glass
+        a stone goes through, a wall's bricks where it lands. (The welds' forces alone miss a thing stopped all at
+        once, a slab landing flat, every piece stopped together, and a pane's glass the stone strikes, held fast by
+        the rest of the pane.)"""
+        I = self._imp
+        if I is None or v0 is None:
+            return
+        import mujoco
+        m, d = self.model, self.data
+        I['acc'] *= IMPACT_KEEP
+        nc = int(d.ncon)
+        if nc == 0:
+            return
+        g1 = np.asarray(d.contact.geom1[:nc], np.int64)
+        g2 = np.asarray(d.contact.geom2[:nc], np.int64)
+        nrm = np.asarray(d.contact.frame[:nc, :3], float)       # from geom1 toward geom2
+        p1 = I['piece'][m.geom_bodyid[g1]]
+        p2 = I['piece'][m.geom_bodyid[g2]]
+        if not ((p1 >= 0).any() or (p2 >= 0).any()):
+            return
+        dv = (d.qvel[I['lin']] - v0[I['lin']]).reshape(-1, 3) - np.asarray(m.opt.gravity, float) * h
+        step = np.zeros(len(I['acc']))
+        for pp, sign in ((p1, -1.0), (p2, 1.0)):      # (pushed back from what it met: geom1 along -n, geom2 along +n)
+            sel = pp >= 0
+            if sel.any():
+                dvn = sign * np.einsum('ij,ij->i', dv[pp[sel]], nrm[sel])
+                np.maximum.at(step, pp[sel], dvn)
+        # how fast each contact on a piece closed, against how much lighter what it met is
+        on = np.nonzero((p1 >= 0) | (p2 >= 0))[0]
+        if len(on):
+            b1 = np.asarray(m.geom_bodyid[g1[on]], np.int64)
+            b2 = np.asarray(m.geom_bodyid[g2[on]], np.int64)
+            closing = self._closing(v0, b1, b2, np.asarray(d.contact.pos[on], float), nrm[on])
+            heavy = self._bodies_table()[3]
+            with np.errstate(invalid='ignore', divide='ignore'):
+                for pp, me, other in ((p1[on], b1, b2), (p2[on], b2, b1)):
+                    sel = (pp >= 0) & (closing > IMPACT_FLOOR)
+                    if sel.any():
+                        light = np.nan_to_num(np.minimum(1.0, heavy[other[sel]] / np.maximum(heavy[me[sel]], 1e-9)), nan=1.0)
+                        np.maximum.at(step, pp[sel], closing[sel] * light)
+        I['acc'] += step
+        hit = np.nonzero(I['on'] & (I['v_break'] > 0.0) & (I['acc'] > np.maximum(I['v_break'], IMPACT_FLOOR)))[0]
+        if not len(hit):
+            return
+        W = self._w
+        struck = set(int(p) for p in hit)
+        hit = self._crack_on(hit)
+        cracked = set(hit)
+        for p in hit:
+            I['on'][p] = False
+            rows = I['holds'][p]
+            rows = rows[W['over'][rows] >= 0]          # (not broken already)
+            if p not in struck:
+                # one the crack ran to comes away from the others it ran through, and stays glued to what it did not
+                # reach and held where it is held (a pane's frame): the shattered zone's edge holds
+                a, b = I['ends']
+                rows = np.asarray([r for r in rows if b[r] >= 0 and int(a[r] + b[r] - p) in cracked], np.int64)
+            if not len(rows):
+                continue
+            d.eq_active[W['eq'][rows]] = 0
+            W['over'][rows] = -(1 << 40)
+            for r in rows:
+                self.breaks.append((self.time, d.xpos[W['body'][r]].copy(), float(W['area'][r]), int(W['collider'][r])))
 
     def _build_joints(self, scene, spec, by_index, bodies, sets, mocap, k, dt):
         """The objects' ropes, springs, hinges and ball joints (Properties › Joint): sites on the two bodies, and a
@@ -781,7 +1164,7 @@ class Solids:
         d = self.data
         n = d.nefc
         if n == 0:
-            W['over'][:] = 0
+            W['over'][W['over'] > 0] = 0        # (a broken one stays broken)
             return
         eqm = d.efc_type[:n] == mujoco.mjtConstraint.mjCNSTR_EQUALITY
         if not eqm.any():
@@ -800,17 +1183,65 @@ class Solids:
         mt = np.linalg.norm(F[:, 3:], axis=1)
         A = W['area'][rows]
         sig = W['strength'][rows]
+        sy = W['yield'][rows]
+        if (sy > 0.0).any():
+            # metal and plastic: loaded past its yield (and short of its strength) a joint bends and stays bent
+            give = (sy > 0.0) & ((np.abs(fn) > sy * A) | (fs > sy * A) | (mt > sy * A * np.sqrt(A) / 6.0))
+            if give.any():
+                self._yield(rows[give])
         over = (fn > sig * A) | (fs > sig * A + JOINT_FRICTION * np.maximum(-fn, 0.0)) | (mt > sig * A * np.sqrt(A) / 6.0)
         hit = np.zeros(len(W['over']), bool)
         hit[rows[over]] = True
         W['over'][hit] += 1
-        W['over'][~hit] = 0
+        W['over'][~hit & (W['over'] > 0)] = 0   # (a broken one stays broken)
         broke = np.nonzero(W['over'] >= BREAK_STEPS)[0]
         if len(broke):
             d.eq_active[W['eq'][broke]] = 0
             W['over'][broke] = -(1 << 40)       # never again
             for b in broke:
                 self.breaks.append((self.time, d.xpos[W['body'][b]].copy(), float(W['area'][b]), int(W['collider'][b])))
+
+    def _yield(self, rows):
+        """Welds forced past their yield: each takes the pose its two pieces are in now as its own (it bends, as metal
+        does, and stays bent), and tears once it has bent past its ductility in all (with how far it has stretched over
+        its size)."""
+        import mujoco
+        W, m, d = self._w, self.model, self.data
+        torn = []
+        for r in rows:
+            e = int(W['eq'][r])
+            b1, b2 = int(m.eq_obj1id[e]), int(m.eq_obj2id[e])
+            R1, R2 = d.xmat[b1].reshape(3, 3), d.xmat[b2].reshape(3, 3)
+            rel = R1.T @ (d.xpos[b2] + R2 @ m.eq_data[e, 0:3] - d.xpos[b1])
+            q1 = np.zeros(4)
+            mujoco.mju_negQuat(q1, d.xquat[b1])
+            q = np.zeros(4)
+            mujoco.mju_mulQuat(q, q1, d.xquat[b2])
+            old = m.eq_data[e, 3:10].copy()
+            turn = 2.0 * math.acos(min(1.0, abs(float(np.dot(q, old[3:7])))))
+            stretch = float(np.linalg.norm(rel - old[0:3])) / max(math.sqrt(float(W['area'][r])), 1e-4)
+            m.eq_data[e, 3:6] = rel
+            m.eq_data[e, 6:10] = q
+            W['plastic'][r] += turn + stretch
+            self.sets[int(W['set'][r])].bent = True
+            if W['plastic'][r] > W['duct'][r]:
+                torn.append(r)
+        if torn:
+            torn = np.asarray(torn, np.int64)
+            d.eq_active[W['eq'][torn]] = 0
+            W['over'][torn] = -(1 << 40)
+            for r in torn:
+                self.breaks.append((self.time, d.xpos[W['body'][r]].copy(), float(W['area'][r]), int(W['collider'][r])))
+
+    def _unbend(self):
+        """Every weld back to its rest pose as built, nothing bent."""
+        W = self._w
+        if W is None or 'rel0' not in W:
+            return
+        self.model.eq_data[W['eq'], 3:10] = W['rel0']
+        W['plastic'][:] = 0.0
+        for ps in self.sets:
+            ps.bent = False
 
     def dust(self, scene, fdt, substeps, last=0.2, most=6):
         """Puffs of dust where things broke in the frame just stepped (fdt seconds, in `substeps` substeps): for each
@@ -850,12 +1281,38 @@ class Solids:
             out.append(ems)
         return out if any(out) else None
 
-    def piece_poses(self):
-        """Every breakable's pieces as they are now: {collider index: dict(pos (n, 3), quat (n, 4) x y z w,
-        vel (n, 3), omega (n, 3) world, size: the size it was cut at)}."""
+    def whole(self, si):
+        """Whether breakable si is still in one piece: none of the welds between its pieces broken. It is then drawn,
+        and met by the fluids, as itself (no seams), not as its pieces; not a brick wall, whose joints show, nor one
+        that burns (its pieces each char on their own)."""
+        ps = self.sets[si]
+        if ps.burnable or ps.joints_show or ps.bent:
+            return False
+        if self._w is None or si >= len(self._set_bonds):
+            return True
+        return bool(self.data.eq_active[self._w['eq'][self._set_bonds[si]]].all())
+
+    def _whole_pose(self, ps):
+        """A whole breakable's override (as a body's, _poses): where its pieces put it."""
+        d = self.data
+        b = int(ps.bodies[0])
+        R = d.xmat[b].reshape(3, 3)
+        pos = d.xpos[b] - R @ ps.frac.pieces[0].centroid
+        a = int(ps.vadr[0])
+        w = R @ d.qvel[a + 3:a + 6]
+        vel = d.qvel[a:a + 3] + np.cross(w, pos - d.xpos[b])
+        return dict(pos=tuple(float(x) for x in pos), rot_y=0.0, spin=0.0, vel=tuple(float(x) for x in vel),
+                    quat=tuple(float(x) for x in xyzw(d.xquat[b])), omega=(*(float(x) for x in w), 0.0))
+
+    def piece_poses(self, whole=False):
+        """Every broken breakable's pieces as they are now: {collider index: dict(pos (n, 3), quat (n, 4) x y z w,
+        vel (n, 3), omega (n, 3) world, size: the size it was cut at, impact: where it was hit (if anywhere))}. (One
+        still whole is not here, unless whole: it is itself, _poses.)"""
         d = self.data
         out = {}
-        for ps in self.sets:
+        for si, ps in enumerate(self.sets):
+            if not whole and self.whole(si):
+                continue
             q = d.xquat[ps.bodies]
             rot = d.xmat[ps.bodies].reshape(-1, 3, 3)
             w_local = np.stack([d.qvel[a + 3:a + 6] for a in ps.vadr]) if len(ps.vadr) else np.zeros((0, 3))
@@ -863,6 +1320,8 @@ class Solids:
                                  vel=np.stack([d.qvel[a:a + 3] for a in ps.vadr]) if len(ps.vadr) else np.zeros((0, 3)),
                                  omega=np.einsum('bij,bj->bi', rot, w_local), size=np.asarray(ps.size, float),
                                  hollow=np.float32(ps.hollow))
+            if ps.impact is not None:
+                out[ps.index]['impact'] = np.asarray(ps.impact, float)
             if ps.burnable:
                 e = out[ps.index]
                 e['burn'] = ps.fire.astype(np.float32).copy()
@@ -1096,6 +1555,10 @@ class Solids:
         cols = scene.colliders_gpu(start)
         enabled = [i for i, c in enumerate(scene.colliders) if c['enabled']]
         by_index = {i: cg for i, cg in zip(enabled, cols)}
+        self._scene = scene
+        self._hit_at = {} if self.rehearsal else self._rehearse(scene, idx, layout)
+        self._mocap_vel = {}
+        self._btab = None
 
         # the bodies, and the time step their size allows
         bodies = []
@@ -1103,7 +1566,7 @@ class Solids:
         for i in idx:
             c = scene.colliders[i]
             cg = by_index.get(i)
-            if cg is None or breaks(c):
+            if cg is None or (breaks(c) and not (self.rehearsal and falls(c))):
                 continue
             r = resolved(c)
             if c.get('floating') and not c.get('dynamic') and float(c.get('density', 0.0) or 0.0) > 0.0:
@@ -1131,7 +1594,7 @@ class Solids:
         for i in idx:
             c = scene.colliders[i]
             if breaks(c) and i in by_index:
-                fr = fractured(c, by_index[i].size, by_index[i].hollow)
+                fr = fractured(c, by_index[i].size, by_index[i].hollow, self._hit_at.get(i), scene)
                 for pc in fr.pieces:
                     # (a thin piece, a shard of a pane, can take a longer step than a small solid of that size)
                     ext = pc.verts.max(0) - pc.verts.min(0)
@@ -1195,7 +1658,7 @@ class Solids:
         mocap = []
         n_mesh = 0
         for i in enabled:
-            if i in idx:
+            if i in idx and not (self.rehearsal and breaks(scene.colliders[i]) and not falls(scene.colliders[i])):
                 continue
             c, cg = scene.colliders[i], by_index[i]
             size = np.abs(np.asarray(cg.size, float))
@@ -1204,7 +1667,10 @@ class Solids:
             R = q_rot(xyzw(q))
             # its shapes in its own frame: (shape, size, centre, mesh asset)
             parts = []
-            if cg.hollow > 0.0 and cg.shape == 'box':
+            if i in idx:         # (a rehearsal's standing breakable: its pieces, fixed)
+                parts = self._rehearsal_parts(spec, i, c, cg)
+                self._reh_frame[i] = (np.asarray(cg.pos, float), R)
+            elif cg.hollow > 0.0 and cg.shape == 'box':
                 parts = [('box', hs, p, None) for p, hs in self._hollow_slabs(size, float(cg.hollow), np.asarray(cg.opening, float),
                                                                             np.asarray(cg.opening_at, float))]
             elif cg.hollow > 0.0:
@@ -1241,6 +1707,8 @@ class Solids:
             for n_part, (shape, hs, centre, mesh) in enumerate(parts):
                 g = fixed_geom(w if i not in moving else parent, shape, hs, mesh)
                 g.name = f'fixed{i}_{n_part}'
+                if i in idx:
+                    self._reh_geom[g.name] = i
                 if i in moving:
                     g.pos = list(map(float, centre))
                 else:
@@ -1256,6 +1724,18 @@ class Solids:
             b.pos = list(map(float, cg.pos))
             b.quat = _quat_mul_wxyz(wxyz(cg.quat), _yaw_wxyz(float(cg.rot_y)))
             b.add_freejoint()
+            if breaks(scene.colliders[bd.index]):      # (a rehearsal's falling breakable: all its pieces, one body)
+                parts = self._rehearsal_parts(spec, bd.index, scene.colliders[bd.index], cg)
+                for n_part, (shape, hs, centre, mesh) in enumerate(parts):
+                    g = fixed_geom(b, shape, hs, mesh)
+                    g.name = f'body{n}_{n_part}'
+                    g.pos = list(map(float, centre))
+                    g.density = float(bd.density)
+                    g.priority = 1
+                    contact(g, bd.friction, bd.bounce)
+                    self._reh_geom[g.name] = bd.index
+                self._reh_frame[bd.index] = (None, None)
+                continue
             mesh = None
             if bd.shape == 'mesh':
                 mesh = f'body{n}'
@@ -1267,11 +1747,13 @@ class Solids:
             g.priority = 1
             contact(g, bd.friction, bd.bounce, roll=bd.shape in ('sphere', 'cylinder'))
             bd.fb = self._float_body(bd, cg)
-        sets = self._build_pieces(scene, spec, w, idx, by_index, contact, fixed_geom, k)
+        sets = [] if self.rehearsal else self._build_pieces(scene, spec, w, idx, by_index, contact, fixed_geom, k)
         joints = self._build_joints(scene, spec, by_index, bodies, sets, mocap, k, dt)
         self.model = spec.compile()
         self.data = mujoco.MjData(self.model)
         m = self.model
+        if self._reh_geom:     # (geom names -> ids)
+            self._reh_geom = {mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, nm): i for nm, i in self._reh_geom.items()}
         for jt in joints:
             jt.bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, jt.body)
             jt.oid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, jt.other) if jt.other else 0
@@ -1486,6 +1968,8 @@ class Solids:
         self._unash()
         if self._w is not None:
             self._w['over'][:] = 0
+        self._unbend()
+        self._impact_sync()
         for ps in self.sets:
             ps.held = False
         mujoco.mj_forward(self.model, self.data)
@@ -1523,6 +2007,7 @@ class Solids:
                 continue
             d.mocap_pos[mid] = cg.pos
             d.mocap_quat[mid] = turn_wxyz(cg)
+            self._mocap_vel[mid] = cg.vel
         for bd in held:
             cg = at.get(bd.index)
             if cg is None:
@@ -1861,8 +2346,12 @@ class Solids:
                 if frame - 1 + t / fdt <= fb < frame - 1 + (t + h) / fdt:
                     self._blast(np.asarray(where, float), kg)
             self._forces()
+            v0 = self._piece_v()
             mujoco.mj_step(m, d)
             self._keep_in_box()
+            if self.rehearsal:
+                self._note_hits(v0)
+            self._impact(v0, h)
             self._break()
             self._break_joints()
             t += h
@@ -1891,8 +2380,8 @@ class Solids:
             out[bd.index] = dict(pos=tuple(float(x) for x in d.xpos[bid]), rot_y=0.0, spin=0.0,
                                  vel=tuple(float(x) for x in vel6[3:]), quat=tuple(float(x) for x in xyzw(d.xquat[bid])),
                                  omega=(*(float(x) for x in vel6[:3]), 0.0))
-        for ps in self.sets:
-            out[ps.index] = self.gone()
+        for si, ps in enumerate(self.sets):
+            out[ps.index] = self._whole_pose(ps) if self.whole(si) and len(ps.bodies) else self.gone()
         return out
 
     def overrides(self):
@@ -1973,6 +2462,8 @@ class Solids:
                                                                 for x in bd.hydro) for bd in self.bodies],
                     held={str(bd.index): bool(bd.held) for bd in self.bodies},
                     eq_active=d.eq_active.copy(), over=None if self._w is None else self._w['over'].copy(),
+                    bend=None if self._w is None else (self.model.eq_data[self._w['eq'], 3:10].copy(), self._w['plastic'].copy(),
+                                                       [bool(ps.bent) for ps in self.sets]),
                     pieces={int(k): {kk: np.asarray(vv, np.float32) for kk, vv in v.items()} for k, v in self.piece_poses().items()},
                     joints=[bool(jt.broken) for jt in self.joints],
                     ropes={int(k): {kk: np.asarray(vv, np.float32) for kk, vv in v.items()} for k, v in self.rope_poses().items()},
@@ -2011,6 +2502,14 @@ class Solids:
                     self._crumble(si, ps, int(k))
         if self._w is not None and st.get('over') is not None and np.shape(st['over']) == self._w['over'].shape:
             self._w['over'][:] = st['over']
+        self._unbend()
+        bend = st.get('bend')
+        if self._w is not None and bend is not None and np.shape(bend[0]) == self._w['rel0'].shape:
+            self.model.eq_data[self._w['eq'], 3:10] = bend[0]
+            self._w['plastic'][:] = bend[1]
+            for ps, b in zip(self.sets, bend[2]):
+                ps.bent = bool(b)
+        self._impact_sync()
         self._weaken()
         self.snaps = []
         self.started = True

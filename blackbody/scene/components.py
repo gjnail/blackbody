@@ -337,6 +337,7 @@ COMPONENTS = [
     Component('vase', 'Vase', 'Things that fall', 'A pottery vase knocked off a table (1.1 m): it lands on its rim and shatters.',
               'pillar', room=(0.3, 1.5, 0.3),
               objects=[_C(name='Vase', shape='cylinder', position=(0.0, 1.3, 0.0), size=(0.1, 0.17, 0.1), hollow=0.008,
+                          opening=(0.13, 0.01, 0.13), opening_at=(0.0, 0.17, 0.0),   # (open at the top)
                           material='ceramic', own_colour=True, colour=(0.12, 0.25, 0.55), dynamic=True, breakable=True,
                           pieces=40, start_spin=(90.0, 0.0, 40.0))]),
     # -- ropes, springs and hinges (engine/solids.py Joint) -------------------------------------------------------------
@@ -1130,7 +1131,8 @@ def make_breakable(scene: Scene, i, on=True, pieces=None, fracture=None):
     c = scene.colliders[i]
     notes = []
     if on and c['shape'] == 'mesh':
-        return [f'{c["name"]} is a mesh: meshes cannot break yet. Boxes, balls and cylinders (solid or hollow) can.']
+        notes.append(f'{c["name"]} is a mesh: its pieces are cut from its inside, each a convex chunk (a hollow or a dent in '
+                     'one is filled in). Whole, it is drawn as itself.')
     c['breakable'] = bool(on)
     if not on:
         return notes
@@ -1142,6 +1144,8 @@ def make_breakable(scene: Scene, i, on=True, pieces=None, fracture=None):
             fracture = 'shards'
         elif m == 'wood':
             fracture = 'splinters'
+        elif material(m).yields > 0.0:
+            fracture = 'bends'
         else:
             fracture = 'voronoi'
     c['fracture'] = fracture
