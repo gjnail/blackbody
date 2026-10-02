@@ -339,6 +339,7 @@ class Matter:
         self._init = None            # the particles as they start (numpy)
         self.surface_ready = False
         self._push_on = False        # the liquid pushing it through its next steps (liquid_push)
+        self._cloth = None           # the fabric it meets through this frame (cloth_field)
 
     # -- set up --------------------------------------------------------------------------------
 
@@ -578,13 +579,16 @@ class Matter:
     def _compile(self):
         g = self.gpu
         P = (64, 1, 1)
-        self._k['p2g'] = g.kernel('mpm_p2g.wgsl', ['rbuf', 'buf'], workgroup=P)
+        self._k['p2g'] = g.kernel('mpm_p2g.wgsl', ['rbuf', 'buf', 'rbuf', 'buf'], workgroup=P)
         self._k['grid'] = g.kernel('mpm_grid.wgsl', ['utex3d', 'rbuf', 'st3d:rgba32float:w', 'buf', 'utex3d', 'utex3d',
-                                                     'utex3d', 'utex3d'])
+                                                     'utex3d', 'utex3d', 'rbuf', 'buf'])
+        cm = ['rbuf', 'rbuf', 'rbuf', 'rbuf', 'buf', 'buf', 'buf', 'rbuf']
+        self._k['cm_splat'] = g.kernel('cloth_matter.wgsl', cm, 'splat', workgroup=P)
+        self._k['cm_gather'] = g.kernel('cloth_matter.wgsl', cm, 'gather', workgroup=P)
         self._k['pieces_clear'] = g.kernel('mpm_pieces.wgsl', ['st3d:r32float:w'], 'clear')
         self._k['push'] = g.kernel('mpm_liquid.wgsl', ['utex3d', 'utex3d', 'utex3d', 'st3d:rgba32float:w',
                                                        'st3d:rgba32float:w'])
-        self._k['g2p'] = g.kernel('mpm_g2p.wgsl', ['buf', 'utex3d', 'buf'], workgroup=P)
+        self._k['g2p'] = g.kernel('mpm_g2p.wgsl', ['buf', 'utex3d', 'buf', 'rbuf', 'buf'], workgroup=P)
         self._k['react'] = g.kernel('mpm_react.wgsl', ['buf', 'buf'], workgroup=P)
         self._k['compact'] = g.kernel('mpm_compact.wgsl', ['rbuf', 'buf', 'buf'], workgroup=P)
         self._k['blast'] = g.kernel('mpm_blast.wgsl', ['buf', 'utex3d'], workgroup=P)
@@ -679,7 +683,11 @@ class Matter:
         self.count += len(P)
 
     def _particle_u(self, dt, t_end):
-        return Uniforms().v4(*self.dims, self.count).v4(dt, self.dx, 0.0, t_end).raw(self._mat_bytes)
+        return Uniforms().v4(*self.dims, self.count).v4(dt, self.dx, self._fabric(), t_end).raw(self._mat_bytes)
+
+    def _fabric(self):
+        """The kernels' "fabric": 0 for none, else 1 + how long since its sheet was laid (s; mpm_common.wgsl SHEET_N)."""
+        return 1.0 + max(self.time - self._cloth_t0, 0.0) if self._cloth is not None else 0.0
 
     def advance(self, frame_dt, colliders_at=None, meshes_atlas=None, pack=None):
         """Simulate frame_dt seconds in one batch. colliders_at(f): the colliders (ColliderGPU list, the solver's order)
@@ -970,6 +978,9 @@ class Matter:
         self.surface_ready = False
         self._view = None
         self._push_on = False        # (the liquid's push is set again for each frame: liquid_push)
+        if self._cloth is not None:
+            self._cloth_push()           # (what it gave the fabric through the frame, for the fabric's next)
+            self._cloth = None
 
     def _react_forces(self, react, seconds):
         """The momentum the objects took (in particles of water times m/s, (16, 6)) as forces over `seconds` (N, N m)."""
@@ -979,7 +990,7 @@ class Matter:
 
     def _grid_u(self, dt, cols, pack, pieces=False):
         ground_y = self.box[0][1] if self.ground else -1.0e9
-        u = Uniforms().v4(*self.dims, 0).v4(dt, self.dx, self.gravity, self._wall_friction()) \
+        u = Uniforms().v4(*self.dims, 1.0 if self._cloth is not None else 0.0).v4(dt, self.dx, self.gravity, self._wall_friction()) \
             .v4(*self.origin, ground_y).v4(1.0 if self.closed else 0.0, MARGIN, 1.0 if self._push_on else 0.0,
                                            min(m.density for m in self._mats))
         if pack is not None:
@@ -993,16 +1004,19 @@ class Matter:
         groups = groups_1d(max(self.count, 1))
         atlas = meshes_atlas if meshes_atlas is not None else self._empty_atlas()
         t_end = self.time + dt
+        cf, ct = (self._buf['CF'], self._buf['CTK']) if self._cloth is not None else self._no_cloth()
         b.clear_buffer(self._buf['G'])
-        b.run(k['p2g'], [self._buf['P'], self._buf['G']], self._particle_u(dt, self.time), groups=groups)
+        b.run(k['p2g'], [self._buf['P'], self._buf['G'], cf, ct], self._particle_u(dt, self.time), groups=groups)
         push, flow = (self._tex['push'], self._tex['flow']) if self._push_on else (self._no_push(),) * 2
         psdf, psvel = (self._tex['psdf'], self._tex['psvel']) if pieces_on else (self._no_push(),) * 2
-        b.run(k['grid'], [atlas, self._buf['G'], self._tex['vel'], self._buf['react_i'], push, flow, psdf, psvel], gu,
-              self.dims)
+        gu.data[3] = self._fabric()          # (n.w: the sheet moves on through the frame)
+        b.run(k['grid'], [atlas, self._buf['G'], self._tex['vel'], self._buf['react_i'], push, flow, psdf, psvel, cf, ct],
+              gu, self.dims)
         if fold:
             b.run(k['react'], [self._buf['react_i'], self._buf['react']], Uniforms().v4(96, 1.0 / FX_R), groups=(2, 1, 1))
         # (held or let go as at the start of the step in both passes: p2g's momentum is what g2p picks up)
-        b.run(k['g2p'], [self._buf['P'], self._tex['vel'], self._buf['stats']], self._particle_u(dt, self.time), groups=groups)
+        b.run(k['g2p'], [self._buf['P'], self._tex['vel'], self._buf['stats'], cf, ct], self._particle_u(dt, self.time),
+              groups=groups)
         self.time = t_end
 
     def _compact(self, b):
@@ -1018,6 +1032,61 @@ class Matter:
 
     def _wall_friction(self):
         return max([m.friction for m in self._mats] + [0.0])
+
+    CLOTH_REACH = 1.5      # node spacings: how far round a vertex of fabric its sheet reaches on the matter's grid
+
+    def cloth_link(self):
+        """What the fabric needs to drape over the matter (cloth.py matter_link): (its surface's distance texture, its
+        grid's velocity texture, node 0, node spacing, nodes). Build the surface first (surface())."""
+        return (self._tex['surf'], self._tex['vel'], tuple(float(x) for x in self.origin), float(self.dx),
+                tuple(int(x) for x in self.dims))
+
+    def cloth_field(self, b, cloth):
+        """The fabric `cloth` (cloth.Cloth) as a thin sheet on the grid through this frame's steps, which the matter
+        cannot pass through (cloth_matter.wgsl splat; in batch b). Its push on the fabric is gathered as the frame
+        ends (end())."""
+        self._cloth = None
+        if not self.active or not self.count or cloth is None or not cloth.active or not cloth.placed:
+            return
+        nodes = int(np.prod(self.dims))
+        if 'CF' not in self._buf:
+            self._buf['CF'] = self.gpu.buffer(nodes * 9 * 4, 'matter-cloth-field')
+            self._buf['CTK'] = self.gpu.buffer(nodes * 3 * 4, 'matter-cloth-taken')
+        b.clear_buffer(self._buf['CF'])
+        b.clear_buffer(self._buf['CTK'])
+        k = cloth.bufs
+        n = cloth.built.n
+        u = Uniforms().v4(*self.origin, self.dx).v4(*self.dims, n).v4(self._cloth_reach(cloth), 0.0)
+        b.run(self._k['cm_splat'], [k['X'], k['V'], k['N'], k['S'], self._buf['CF'], self._buf['CTK'], k['MP'], k['R']], u,
+              (n, 1, 1))
+        self._cloth = cloth
+        self._cloth_t0 = self.time
+
+    def _cloth_push(self):
+        """Each vertex of the fabric's share of what the grid's sheet took from the matter through the frame, as a
+        force through the fabric's next (cloth_matter.wgsl gather)."""
+        cloth = self._cloth
+        if not cloth.active or not cloth.placed or 'CF' not in self._buf:
+            return
+        k = cloth.bufs
+        n = cloth.built.n
+        unit = 1000.0 * (self.dx / PER_AXIS) ** 3 / max(getattr(self, '_frame_dt', 1.0 / 24.0), 1e-6)
+        u = Uniforms().v4(*self.origin, self.dx).v4(*self.dims, n).v4(self._cloth_reach(cloth), unit, self.gravity)
+        with self.gpu.batch() as b:
+            b.run(self._k['cm_gather'], [k['X'], k['V'], k['N'], k['S'], self._buf['CF'], self._buf['CTK'], k['MP'],
+                                         k['R']], u,
+                  (n, 1, 1))
+
+    def _cloth_reach(self, cloth):
+        """How far round a vertex its sheet reaches (m): CLOTH_REACH nodes, or past the fabric's own spacing, so a coarse
+        cloth leaves no holes between its vertices."""
+        return max(self.CLOTH_REACH * self.dx, 1.25 * float(cloth.built.mean_edge))
+
+    def _no_cloth(self):
+        if 'no_cloth' not in self._buf:
+            self._buf['no_cloth'] = self.gpu.buffer(64, 'matter-no-cloth')
+            self._buf['no_cloth_t'] = self.gpu.buffer(64, 'matter-no-cloth-taken')
+        return self._buf['no_cloth'], self._buf['no_cloth_t']
 
     def _no_push(self):
         t = self._tex.get('no_push')

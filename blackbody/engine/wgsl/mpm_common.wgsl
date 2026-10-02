@@ -42,6 +42,85 @@ fn nidx(c: vec3<i32>, n: vec3<i32>) -> u32 {
   return u32(c.x + n.x * (c.y + n.y * c.z));
 }
 
+// Stop v moving into a surface (normal n) that moves at vc, with friction mu (Coulomb): it may leave freely.
+fn boundary(v: vec3<f32>, vc: vec3<f32>, n: vec3<f32>, mu: f32) -> vec3<f32> {
+  let rel = v - vc;
+  let vn = dot(rel, n);
+  if (vn >= 0.0) { return v; }
+  let vt = rel - vn * n;
+  let lt = length(vt);
+  let slow = lt + mu * vn;
+  return vc + select(vec3<f32>(0.0), vt * (slow / max(lt, 1e-12)), slow > 0.0);
+}
+
+// Fabric (cloth_matter.wgsl): a thin sheet on the grid, laid at the start of each frame where the cloth is, 9 integers
+// a node: its weight there, then weighted its velocity (3), its normal (3), how far in front of it the node is (nodes)
+// and its weight per area (kg/m^2; pinned: SHEET_PINNED). Through the frame it moves on at its velocity (up to
+// SHEET_MOVE nodes, inside the nodes it was laid on): away from the matter freely, into it by the share of the push its
+// weight carries against a node's layer of matter (a cloth falling onto a heap stops on it, cloth_collide.wgsl, and
+// does not plough it; a pinned one pushes it along). A node is by the sheet where the weight passes SHEET_W, on the
+// side the sign of its distance says. The matter on the
+// two sides of a sheet never mixes (compatible particle-in-cell, Hu et al. 2018): a particle by it keeps the side it
+// came from (f2.w: 1 in front, -1 behind, 0 none near), gives its momentum only to the nodes on its own side
+// (mpm_p2g.wgsl), takes the sheet's motion for the nodes on the other (mpm_g2p.wgsl), and never comes nearer the sheet
+// than SHEET_GAP. The kernels get "fabric": 0 for none, else 1 + the time since the sheet was laid (s).
+const SHEET_N: u32 = 9u;
+const SHEET_FX: f32 = 4096.0;      // its fixed point
+const SHEET_W: f32 = 0.25;
+const SHEET_GAP: f32 = 0.5;        // nodes
+const SHEET_MOVE: f32 = 0.75;      // nodes
+const SHEET_FX_T: f32 = 16384.0;   // the momentum the sheet takes (CT), fixed point (cloth_matter.wgsl FX_T)
+const SHEET_RHO: f32 = 1500.0;     // kg/m^3: the matter a sheet pushes against, a node's layer of it
+
+struct Sheet {
+  side: f32,      // the side of it the node is on (1, -1), 0: no sheet by it
+  w: f32,         // its weight there
+  off: f32,       // how far in front of it the node is (nodes), now
+  off0: f32,      // and as it was laid
+  vn: f32,        // its speed along its normal (m/s)
+  mv: f32,        // the share of that it moves on by (1 away from the matter, its push's share into it)
+  push: f32,      // its push's share: its weight per area against a node's layer of matter (pinned: 1)
+  v: vec3<f32>,   // its velocity (m/s)
+  n: vec3<f32>,   // its normal (0 if it has none there)
+};
+
+// How far in front of the sheet a node is (nodes) tdx = t / dx (s/m) after it was laid.
+fn sheet_off(s: Sheet, tdx: f32) -> f32 {
+  return s.off0 - s.mv * clamp(s.vn * tdx, -SHEET_MOVE, SHEET_MOVE);
+}
+
+// The sheet by a node from its 9 integers (a: weight, weighted velocity; b: weighted normal, weighted distance in
+// front; c: weighted weight per area), tdx = t / dx after it was laid, dx the node spacing (m).
+fn sheet_at(a: vec4<i32>, b: vec4<i32>, c: i32, tdx: f32, dx: f32) -> Sheet {
+  var s: Sheet;
+  s.w = f32(a.x) / SHEET_FX;
+  if (s.w <= SHEET_W) { return s; }
+  s.v = vec3<f32>(a.yzw) / (SHEET_FX * s.w);
+  let nw = vec3<f32>(b.xyz);
+  let nl = length(nw);
+  s.n = select(vec3<f32>(0.0), nw / nl, nl > 1.0e-6);
+  s.vn = dot(s.v, s.n);
+  s.off0 = f32(b.w) / (SHEET_FX * s.w);
+  let sigma = f32(c) / (SHEET_FX * s.w);
+  let push = sigma / (sigma + SHEET_RHO * dx);
+  s.push = push;
+  // into the matter on the side it was laid by (its normal's way for the nodes in front), only by its push's share
+  s.mv = select(1.0, push, s.vn * select(-1.0, 1.0, s.off0 >= 0.0) > 0.0);
+  s.off = sheet_off(s, tdx);
+  s.side = select(-1.0, 1.0, s.off >= 0.0);
+  // and the matter it meets on its side now moves with it only by that share where it comes at it
+  if (s.vn * s.side > 0.0) { s.v -= s.n * (s.vn * (1.0 - push)); }
+  return s;
+}
+
+// How much of the push of the matter on side `side` into the sheet it holds back: all of it where the matter lies on it
+// (a sling, a hammock: the cloth's tension holds the weight), none where it lies on the matter (a cloth draped over a
+// heap: what pushes it lifts it, and its weight is nothing to the heap), between on a slope, and all where it is
+// pinned. (Crossing it is never allowed: mpm_g2p.wgsl.)
+fn sheet_hold(s: Sheet, side: f32) -> f32 {
+  return max(clamp(0.5 + s.n.y * side, 0.0, 1.0), s.push);
+}
+
 // A matrix from its rows (WGSL builds matrices from columns).
 fn from_rows(a: vec4<f32>, b: vec4<f32>, c: vec4<f32>) -> mat3x3<f32> {
   return transpose(mat3x3<f32>(a.xyz, b.xyz, c.xyz));

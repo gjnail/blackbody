@@ -26,6 +26,10 @@ It is shaded as cloth, in the same light as the smoke: the soft sheen of its fib
 
 It casts shadows, and is shadowed: it shades the smoke behind it, other cloth and the ground and footage under it from the key light, the sky, the fire and the lights in the set (thin cloth lets some light through), and the smoke, other cloth and the objects around it shade the fire's light on it.
 
+## Sand, snow and mud
+
+Sand, snow, mud, jelly and clay cannot pass through cloth, from either side. A sheet held at its corners catches sand poured onto it and sags under its weight; a sheet dropped onto a heap drapes over it. See [what moves matter](matter.md#what-moves-it).
+
 ## In water
 
 In water (liquid and fire-and-liquid scenes) it is carried by the water's flow and drag, and soaks. Dry cloth floats on the air in its weave; cotton and linen soak through in a second or so, wool and synthetics shed water for a few seconds first; soaked, it sinks slowly by what its fibres weigh more than water. It is seen in front of the water, floating on it, and through it under the surface. *Wet at start* hangs it wet in any scene (1 is dripping wet, a towel just out of the water).

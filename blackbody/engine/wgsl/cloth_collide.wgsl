@@ -3,6 +3,7 @@
 // friction against the surface's own motion, so cloth lies on a table, drapes over a chair and is
 // carried along by a moving object. Wet cloth clings: the water between it and the surface holds it
 // (more friction, and a film that draws it down onto a surface it is within a couple of millimetres of).
+// Sand, snow, mud, jelly and clay are a surface too (their distance field, matter.py surface()), moving as they do.
 //!include common.wgsl
 //!include meshsdf.wgsl
 //!include colliders.wgsl
@@ -12,6 +13,8 @@ struct Params {
   sim: vec4<f32>,    // dt, vertex count, ground (1/0), self-collision on (1/0)
   ccnt: vec4<f32>,
   col: array<Collider, MAX_COLLIDERS>,
+  mo: vec4<f32>,     // the matter's grid: node 0 (fire-local m), node spacing (m)
+  mn: vec4<f32>,     // its nodes (x, y, z), matter on (1/0)
 };
 
 @group(0) @binding(0) var<storage, read_write> X: array<vec4<f32>>;
@@ -20,6 +23,9 @@ struct Params {
 @group(0) @binding(3) var<storage, read> V: array<vec4<f32>>;
 @group(0) @binding(4) var<storage, read> M: array<Mat>;
 @group(0) @binding(5) var atlas: texture_3d<f32>;
+@group(0) @binding(6) var msurf: texture_3d<f32>;   // the matter's distance to its surface (m; x)
+@group(0) @binding(7) var mvel: texture_3d<f32>;    // its grid's velocity (m/s; xyz)
+@group(0) @binding(8) var lin: sampler;
 @group(1) @binding(0) var<uniform> U: Params;
 
 fn col_normal(k: Collider, p: vec3<f32>, e: f32) -> vec3<f32> {
@@ -28,6 +34,12 @@ fn col_normal(k: Collider, p: vec3<f32>, e: f32) -> vec3<f32> {
                     col_sdf(k, p + vec3<f32>(0.0, 0.0, e)) - col_sdf(k, p - vec3<f32>(0.0, 0.0, e)));
   let l = length(g);
   return select(vec3<f32>(0.0, 1.0, 0.0), g / l, l > 1e-9);
+}
+
+fn matter_d(p: vec3<f32>) -> f32 {
+  let q = ((p - U.mo.xyz) / U.mo.w + vec3<f32>(0.5)) / U.mn.xyz;
+  if (any(q < vec3<f32>(0.0)) || any(q > vec3<f32>(1.0))) { return 1.0e9; }
+  return textureSampleLevel(msurf, lin, q, 0.0).x;
 }
 
 @compute @workgroup_size(64, 1, 1)
@@ -73,6 +85,29 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let rt = rel - dot(rel, n) * n;
     let tl = length(rt);
     if (tl > 1e-9) { x -= rt * min(1.0, mu * (-d) / tl); }
+  }
+  // the matter: out of it onto its surface, held with friction against its own motion
+  if (U.mn.w > 0.5) {
+    let d = matter_d(x) - thick;
+    if (d < 0.0) {
+      let e = 0.5 * U.mo.w;
+      let g = vec3<f32>(matter_d(x + vec3<f32>(e, 0.0, 0.0)) - matter_d(x - vec3<f32>(e, 0.0, 0.0)),
+                        matter_d(x + vec3<f32>(0.0, e, 0.0)) - matter_d(x - vec3<f32>(0.0, e, 0.0)),
+                        matter_d(x + vec3<f32>(0.0, 0.0, e)) - matter_d(x - vec3<f32>(0.0, 0.0, e)));
+      let gl = length(g);
+      // (only up or sideways: matter lying on the cloth weighs it down through its push, cloth_matter.wgsl; pushed
+      // down out of it here, the cloth would be shoved out from under it)
+      if (gl > 1.0e-9 && gl < 1.0e8 && g.y / gl > -0.3) {
+        let n = g / gl;
+        x -= n * d;
+        let c = vec3<i32>(floor((x - U.mo.xyz) / U.mo.w + vec3<f32>(0.5)));
+        let vm = textureLoad(mvel, clamp(c, vec3<i32>(0), vec3<i32>(U.mn.xyz) - vec3<i32>(1)), 0).xyz;
+        let rel = (x - p0) - vm * dt;
+        let rt = rel - dot(rel, n) * n;
+        let tl = length(rt);
+        if (tl > 1e-9) { x -= rt * min(1.0, mu * (-d) / tl); }
+      }
+    }
   }
   X[i] = vec4<f32>(x, x4.w);
 }

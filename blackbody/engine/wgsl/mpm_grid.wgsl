@@ -7,7 +7,7 @@
 //!include colliders.wgsl
 
 struct Params {
-  n: vec4<f32>,      // grid nodes (x, y, z), _
+  n: vec4<f32>,      // grid nodes (x, y, z), fabric (cloth_matter.wgsl's sheet in CF: mpm_common.wgsl SHEET_N)
   s: vec4<f32>,      // step (s), node spacing (m), gravity (m/s^2), friction of the ground and the walls
   o: vec4<f32>,      // the grid's corner (node 0, fire-local m), the ground's height (fire-local m; very low: none)
   w: vec4<f32>,      // closed sides (1/0), the box's edge (nodes in from the grid's), the liquid's push on (1/0), the
@@ -26,21 +26,18 @@ struct Params {
 @group(0) @binding(5) var flow: texture_3d<f32>;   // the liquid's velocity there (m/s); w: its drag (kg/m^4)
 @group(0) @binding(6) var psdf: texture_3d<f32>;   // broken objects' pieces (bodies_sdf.wgsl): the distance to them (nodes)
 @group(0) @binding(7) var psvel: texture_3d<f32>;  // their velocity at the nodes in or by them; w: 1 + which piece
+@group(0) @binding(8) var<storage, read> CF: array<i32>;   // the fabric round each node (cloth_matter.wgsl): weight,
+                                                           // w velocity (3), w normal (3), w how far in front of it
+@group(0) @binding(9) var<storage, read_write> CT: array<atomic<i32>>;   // per node: momentum the fabric took (3)
 @group(1) @binding(0) var<uniform> U: Params;
 
 const FX_R: f32 = 64.0;   // react's fixed point (momentum in particles of water times m/s)
-const RHO: f32 = 125.0;   // a node's density (kg/m^3) per unit of its mass (particles of water, eight to a node)
 
-// Stop v moving into a surface (normal n) that moves at vc, with friction mu (Coulomb): it may leave freely.
-fn boundary(v: vec3<f32>, vc: vec3<f32>, n: vec3<f32>, mu: f32) -> vec3<f32> {
-  let rel = v - vc;
-  let vn = dot(rel, n);
-  if (vn >= 0.0) { return v; }
-  let vt = rel - vn * n;
-  let lt = length(vt);
-  let slow = lt + mu * vn;
-  return vc + select(vec3<f32>(0.0), vt * (slow / max(lt, 1e-12)), slow > 0.0);
+fn sheet(k: u32, tdx: f32) -> Sheet {
+  return sheet_at(vec4<i32>(CF[k], CF[k + 1u], CF[k + 2u], CF[k + 3u]), vec4<i32>(CF[k + 4u], CF[k + 5u], CF[k + 6u],
+                  CF[k + 7u]), CF[k + 8u], tdx, U.s.y);
 }
+const RHO: f32 = 125.0;   // a node's density (kg/m^3) per unit of its mass (particles of water, eight to a node)
 
 fn col_normal(k: Collider, p: vec3<f32>, e: f32) -> vec3<f32> {
   let a = vec3<f32>(1.0, -1.0, -1.0);
@@ -132,6 +129,24 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           atomicAdd(&react[r + 4u], i32(round(t.y)));
           atomicAdd(&react[r + 5u], i32(round(t.z)));
         }
+      }
+    }
+  }
+  // fabric: a thin sheet moving as the cloth moves (mpm_common.wgsl SHEET_N). A node by it holds the matter of its
+  // own side only, and the nearest ones cannot move into it, as far as it holds (sheet_hold); what they take, the
+  // cloth feels (cloth_matter.wgsl gather)
+  if (U.n.w > 0.5) {
+    let sh = sheet(nidx(c, n) * SHEET_N, (U.n.w - 1.0) / dx);
+    if (sh.side != 0.0 && abs(sh.off) < 0.5 && dot(sh.n, sh.n) > 0.5) {
+      let before = v;
+      v = mix(v, boundary(v, sh.v, sh.n * sh.side, mu), sheet_hold(sh, sh.side));
+      let dp = mass * (before - v);
+      if (dot(dp, dp) > 0.0) {
+        let q = clamp(dp * SHEET_FX_T, vec3<f32>(-2.0e9), vec3<f32>(2.0e9));
+        let kt = 3u * nidx(c, n);
+        atomicAdd(&CT[kt], i32(round(q.x)));
+        atomicAdd(&CT[kt + 1u], i32(round(q.y)));
+        atomicAdd(&CT[kt + 2u], i32(round(q.z)));
       }
     }
   }

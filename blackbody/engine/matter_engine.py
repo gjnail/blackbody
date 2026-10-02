@@ -85,6 +85,23 @@ class MatterEngine:
                 return True
         return False
 
+    def _cloth_meets_matter(self):
+        """Fabric and matter through this frame: the fabric drapes over the matter's surface as it is now, and the matter
+        meets the fabric as a sheet it cannot pass through (its push on the fabric goes into the fabric's next frame).
+        Before the frame's batch (the surface is built in a batch of its own)."""
+        m, c = self._matter, getattr(self, 'cloth', None)
+        if c is None:
+            return
+        if m is None or not m.active or not m.count or not c.active or not c.placed:
+            if c.matter_link is not None:
+                c.forget_matter()          # (no push left over from matter that has gone)
+            c.matter_link = None
+            return
+        m.surface()
+        c.matter_link = m.cloth_link()
+        with self.gpu.batch() as b:
+            m.cloth_field(b, c)
+
     def _push_matter(self, liquid):
         """The liquid pushing the matter through this frame, as it was at the end of the last (the matter moves in
         lockstep with the rigid bodies, before the liquid)."""

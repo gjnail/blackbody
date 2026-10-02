@@ -249,6 +249,7 @@ class LiquidEngine:
         # was measured over the frame before; the liquid then sees them where they are at each substep
         solids = self.solids if self.solids.active else None
         self._push_matter(L)
+        self._cloth_meets_matter()      # (fabric and sand, snow, mud: each the other's surface this frame)
         poses = (solids.advance(scene, frame, fdt, n, couple=self._matter_couple(scene, frame, fdt, self.solver.meshes))
                  if solids else None)
         moving = scene.colliders_animated() or bool(solids)

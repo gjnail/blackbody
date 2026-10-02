@@ -101,6 +101,8 @@ Notable changes to Blackbody. The format follows
 - Things that burn: dry leaves, sawdust and coal (Matter › Made of) catch where the fire's heat takes them past their
   ignition point, give the fire their fuel as they burn (so it runs through a pile by itself: leaves in a flare of
   flame, sawdust smouldering, coal glowing) and burn down to a little ash.
+- Cloth and sand, snow, mud, jelly and clay meet: matter cannot pass through fabric, from either side. Sand poured onto
+  a sling heaps in it and weighs it down, and a sheet dropped onto a heap drapes over it and leaves it standing.
 - Broken objects' pieces and sand, snow, mud, jelly and clay push each other: bricks from a wall knocked onto a heap
   land on it, dent it and are held up by it (and breakable things dropped onto sand rest on it).
 - Matter fills meshes: Shape › Mesh fills an OBJ, STL or USD prim of your own (a chocolate bunny, a sand sculpture, a

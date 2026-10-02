@@ -39,7 +39,11 @@ struct Params {
                                                                           // w: steam boiled off (kg, cloth_drip.wgsl)
 @group(0) @binding(11) var LVEL: texture_3d<f32>;    // the liquid's velocity (MAC faces, m/s: liquid.py vel_tex)
 @group(0) @binding(12) var LTYPE: texture_3d<f32>;   // its cells: 0 air, 1 liquid, 2 solid
+@group(0) @binding(13) var<storage, read> MP: array<vec4<f32>>;   // the matter's push on each vertex (N: cloth_matter.wgsl),
+                                                                   // the mass riding on it (kg)
 @group(1) @binding(0) var<uniform> U: Params;
+
+const MATTER_DAMP: f32 = 20.0;   // 1/s, fully laden
 
 // The air at fire-local point p: its velocity and density (kg/m^3; hot gas is thinner).
 fn air_at(p: vec3<f32>) -> vec4<f32> {
@@ -128,7 +132,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let carry = 1.0 + held;
   var down = carry;
   if (sub > 0.0 && !gone) { down -= sub * (U.lw.x / max(mat.f.x, 100.0) + mat.f.y); }
-  v.y -= U.sim.z * dt * down / carry;
+  // sand, snow, mud and the like lying on it or landing on it: their push through the last frame, and their weight's
+  // worth of mass, which rides on it (a sling of sand moves as the sand does: pushed alone, the light cloth would fly)
+  let own = carry / max(abs(r.w), 1e-9);       // (kg: its fibre and the water in it)
+  let load = select(0.0, MP[i].w, !gone);
+  v.y -= U.sim.z * dt * down / carry * (own / (own + load));
+  if (!gone) { v += MP[i].xyz * (dt / (own + load)); }
   let nn = N[i];
   let area = nn.w;
   if (area > 0.0 && !gone) {
@@ -136,7 +145,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // in it, the liquid, each applied exactly over the step (it can only bring the cloth up to the
     // fluid's speed, never past it)
     let a = air_at(x.xyz);
-    let mass = carry / max(abs(r.w), 1e-9);
+    let mass = own + load;
     let flow = mix(a.xyz, lq.xyz, sub);
     let rho = mix(a.w, U.lw.x, sub);
     let rel = flow - v;
@@ -151,11 +160,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     IMP[i] = vec4<f32>(IMP[i].xyz - dv * mass * (1.0 - sub), IMP[i].w);
   }
   v *= exp(-mat.a.y * dt);
+  // and where it carries matter, the grains' friction takes the swing out of it (a sling of sand does not bounce)
+  v *= exp(-MATTER_DAMP * dt * load / (own + load));
   // a vertex that has burnt away is a flake of ash: light, and carried by the air (or the water)
   if (gone) {
     let a = air_at(x.xyz);
     v = mix(v, mix(a.xyz, lq.xyz, sub), 1.0 - exp(-8.0 * dt));
   }
-  X[i] = vec4<f32>(x.xyz + v * dt, abs(r.w));
+  X[i] = vec4<f32>(x.xyz + v * dt, 1.0 / (1.0 / max(abs(r.w), 1e-9) + load));
   V[i] = vec4<f32>(v, V[i].w);
 }

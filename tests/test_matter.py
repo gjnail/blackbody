@@ -454,3 +454,71 @@ def test_a_pile_of_dry_leaves_catches_burns_and_burns_down(engine):
     # and its flames: hot gas over the pile long after the lighter is out
     T = engine.gpu.read(engine.solver.scal[0])[..., 0]
     assert float(T.max()) > 0.5
+
+
+# ---- fabric (cloth_matter.wgsl) -------------------------------------------------------------------------------------
+
+def _cloth_over(x, X, xz_reach=0.03):
+    """Each point's height over the cloth just under or over it (the nearest vertex across the ground), or nan where
+    no vertex is within xz_reach."""
+    d2 = ((x[:, None, [0, 2]] - X[None, :, [0, 2]]) ** 2).sum(-1)
+    near = d2.argmin(1)
+    h = x[:, 1] - X[near, 1]
+    return np.where(d2[np.arange(len(x)), near] < xz_reach ** 2, h, np.nan)
+
+
+def test_sand_poured_onto_a_sling_stays_in_it_and_weighs_it_down(engine):
+    from blackbody.scene import components
+    sc = components.new_scene('fire', 'person')
+    sc.emitters = []
+    sc.add_fabric(name='Sling', width=0.9, height=0.9, position=(0.0, 0.5, 0.0), orientation='lying', pins='corners',
+                  material='cotton')
+    sc.add_matter(name='Sand', material='sand', pours=True, position=(0.0, 0.95, 0.0), size=(0.03, 0.03, 0.03),
+                  velocity=(0.0, -0.5, 0.0), rate=1.0, pour_start=0.0, pour_stop=1.5)
+    sc.data['domain'].update(size_x=1.4, size_y=1.2, size_z=1.4, resolution=40, preroll=0.0, matter_detail=112)
+    engine.prepare(sc, final=False)
+    m, c = engine.matter, engine.cloth
+    engine.simulate_to(sc, sc.start + 60, cache=False)
+    X = c.positions()[0]
+    _, x = live(m)
+    assert len(x) > 4000
+    assert x[:, 1].min() > 0.3                                  # none through it to the ground
+    h = _cloth_over(x, X)
+    assert np.nanmin(h) > -0.01                                 # all of it on the cloth
+    mid = np.hypot(X[:, 0], X[:, 2]) < 0.05
+    assert X[mid, 1].mean() < 0.45                              # which sags under it (pinned at 0.5)
+    # and carries its weight: what the cloth is pushed down with, against the sand lying on it
+    MP = np.frombuffer(engine.gpu.read_buffer(c.bufs['MP']), np.float32).reshape(-1, 4)[:c.built.n]
+    on = x[:, 1] < 0.6
+    weight = on.sum() * m._mats[0].density * (m.dx / 2.0) ** 3 * 9.81
+    assert 0.6 * weight < -MP[:, 1].sum() < 1.4 * weight
+
+
+def test_a_cloth_dropped_on_a_heap_of_sand_drapes_over_it_and_leaves_it_standing(engine):
+    from blackbody.scene import components
+
+    def heap(cloth):
+        sc = components.new_scene('fire', 'person')
+        sc.emitters = []
+        sc.add_matter(name='Heap', material='sand', shape='pile', position=(0.0, 0.15, 0.0), size=(0.35, 0.15, 0.35))
+        if cloth:
+            sc.add_fabric(name='Sheet', width=1.0, height=1.0, position=(0.0, 0.7, 0.0), orientation='lying',
+                          pins='none', material='cotton')
+        sc.data['domain'].update(size_x=1.4, size_y=1.2, size_z=1.4, resolution=40, preroll=0.0, matter_detail=112)
+        engine.invalidate()
+        engine.prepare(sc, final=False)
+        engine.simulate_to(sc, sc.start + 48, cache=False)
+        return live(engine.matter)[1], (engine.cloth.positions()[0] if cloth else None)
+
+    def profile(x):             # (the heap's surface: how high its grains reach at the middle and two rings out)
+        r = np.hypot(x[:, 0], x[:, 2])
+        return np.array([np.percentile(x[(r >= a) & (r < a + 0.05), 1], 95) for a in (0.0, 0.1, 0.2)])
+
+    bare, _ = heap(False)
+    x, X = heap(True)
+    assert np.abs(profile(x) - profile(bare)).max() < 0.01      # the heap stands as it does bare (a cloth weighs
+                                                                # nothing to it)
+    mid = np.hypot(X[:, 0], X[:, 2]) < 0.05
+    assert abs(X[mid, 1].mean() - profile(x)[0]) < 0.03         # the cloth lies on its top
+    body = np.hypot(x[:, 0], x[:, 2]) < 0.25                    # (at its foot the hem lies on the floor round it)
+    assert np.nanmax(_cloth_over(x[body], X)) < 0.01            # and no sand has come up through it

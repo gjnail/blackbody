@@ -519,7 +519,7 @@ class Cloth:
         g = gpu
         vf = g.vel_format
         self.k_predict = g.kernel('cloth_predict.wgsl', ['buf', 'buf', 'buf', 'rbuf', 'rbuf', 'rbuf', 'rbuf', 'tex3d', 'tex3d', 'smp',
-                                                         'buf', 'utex3d', 'utex3d'], workgroup=(64, 1, 1))
+                                                         'buf', 'utex3d', 'utex3d', 'rbuf'], workgroup=(64, 1, 1))
         self.k_stretch = g.kernel('cloth_stretch.wgsl', ['buf', 'rbuf', 'rbuf', 'rbuf', 'rbuf', 'buf', 'rbuf'], workgroup=(64, 1, 1))
         self.k_bend = g.kernel('cloth_bend.wgsl', ['buf', 'rbuf', 'rbuf', 'buf', 'rbuf', 'rbuf', 'rbuf'], workgroup=(64, 1, 1))
         # water in the cloth: wicking and draining (cloth_wick), dripping and steam (cloth_drip), the drops
@@ -539,7 +539,9 @@ class Cloth:
         self.k_hclear = g.kernel('cloth_hash.wgsl', ['rbuf', 'rbuf', 'buf'], entry='clear', workgroup=(64, 1, 1))
         self.k_hinsert = g.kernel('cloth_hash.wgsl', ['rbuf', 'rbuf', 'buf'], entry='insert', workgroup=(64, 1, 1))
         self.k_self = g.kernel('cloth_self.wgsl', ['rbuf'] * 5 + ['buf', 'rbuf', 'rbuf'], workgroup=(64, 1, 1))
-        self.k_collide = g.kernel('cloth_collide.wgsl', ['buf', 'rbuf', 'rbuf', 'rbuf', 'rbuf', 'utex3d'], workgroup=(64, 1, 1))
+        self.k_collide = g.kernel('cloth_collide.wgsl', ['buf', 'rbuf', 'rbuf', 'rbuf', 'rbuf', 'utex3d', 'tex3d', 'utex3d', 'smp'],
+                                  workgroup=(64, 1, 1))
+        self.matter_link = None       # the matter this frame (matter.py cloth_link): it drapes over it and is pushed by it
         self.k_finish = g.kernel('cloth_finish.wgsl', ['rbuf', 'buf', 'buf', 'rbuf', 'rbuf', 'buf', 'rbuf', 'rbuf', 'tex3d', 'smp'],
                                  workgroup=(64, 1, 1))
         self.k_normals = g.kernel('cloth_normals.wgsl', ['rbuf', 'rbuf', 'rbuf', 'rbuf', 'buf'], workgroup=(64, 1, 1))
@@ -595,7 +597,7 @@ class Cloth:
         g = self.gpu
         n = B.n
         mk = lambda name, arr: self._upload(name, np.ascontiguousarray(arr))
-        for name in ('X', 'P', 'V', 'S', 'S2', 'N', 'D', 'IMP'):
+        for name in ('X', 'P', 'V', 'S', 'S2', 'N', 'D', 'IMP', 'MP'):
             self.bufs[name] = g.buffer(max(16, n * 16), f'cloth-{name}')
         mk('R', np.concatenate([B.rest, B.inv_mass[:, None]], 1).astype(np.float32))
         mk('UV', B.uv)
@@ -717,6 +719,7 @@ class Cloth:
         g.write_buffer(self.bufs['N'], nrm)
         g.write_buffer(self.bufs['D'], np.zeros((B.n, 4), np.float32))
         g.write_buffer(self.bufs['IMP'], np.zeros((B.n, 4), np.float32))
+        g.write_buffer(self.bufs['MP'], np.zeros((B.n, 4), np.float32))
         g.write_buffer(self.bufs['HOLED'], np.zeros(MAX_FABRICS, np.uint32))
         with g.batch() as b:
             self._normals(b)
@@ -784,7 +787,7 @@ class Cloth:
             self._fab_uniforms(u, places)
             u.raw(lq.data)
             b.run(self.k_predict, [k['X'], k['P'], k['V'], k['R'], k['S'], k['N'], k['M'], vel, scal, lin, k['IMP'],
-                                   lvel, ltype], u, (n, 1, 1))
+                                   lvel, ltype, k['MP']], u, (n, 1, 1))
             mg_on = self.mg is not None
             if mg_on:
                 # the panels' bending, solved (cloth_mg.py; its buffer swaps come back round within a cycle)
@@ -821,7 +824,14 @@ class Cloth:
             cu = Uniforms().v4(h, n, 1.0 if (prm is None or prm.ground) else 0.0, 1.0 if do_self else 0.0)
             pack_colliders(cu, colliders, meshes)
             atlas = meshes.atlas if meshes is not None else self._dummy()
-            b.run(self.k_collide, [k['X'], k['P'], k['D'], k['V'], k['M'], atlas], cu, (n, 1, 1))
+            ml = self.matter_link
+            if ml is not None:
+                cu.v4(*ml[2], ml[3]).v4(*ml[4], 1.0)
+                msurf, mvel = ml[0], ml[1]
+            else:
+                cu.v4().v4(1.0, 1.0, 1.0, 0.0)
+                msurf, mvel = self._dummy(), self._dummy_u()
+            b.run(self.k_collide, [k['X'], k['P'], k['D'], k['V'], k['M'], atlas, msurf, mvel, lin], cu, (n, 1, 1))
             fu = Uniforms().v4(h, n, 1.0 if gas else 0.0)
             fu.raw(grid.data)
             fu.v4(amb, flame, maxk)
@@ -1075,7 +1085,7 @@ class Cloth:
         rd = lambda name: np.frombuffer(self.gpu.read_buffer(self.bufs[name]), np.float32).reshape(-1, 4)[:self.built.n].copy()
         w = np.frombuffer(self.gpu.read_buffer(self.bufs['W']), np.float32).reshape(-1, 4)[:2 * self.built.n].copy()
         return {'key': repr(self._key), 'X': rd('X'), 'P': rd('P'), 'V': rd('V'), 'S': rd('S'), 'N': rd('N'), 'W': w,
-                'steps': self.steps}
+                'MP': rd('MP'), 'steps': self.steps}
 
     def load_state(self, st):
         if not st or not self.active or st.get('key') != repr(self._key):
@@ -1088,8 +1098,16 @@ class Cloth:
         self._reset_water(np.asarray(st['P'], np.float32)[:, 3])
         if st.get('W') is not None and len(st['W']) == 2 * self.built.n:
             self.gpu.write_buffer(self.bufs['W'], np.ascontiguousarray(st['W'], np.float32))
+        mp = st.get('MP')
+        self.gpu.write_buffer(self.bufs['MP'], np.ascontiguousarray(mp if mp is not None else np.zeros((self.built.n, 4)),
+                                                                    np.float32))
         self.placed = True
         return True
+
+    def forget_matter(self):
+        """No more push from sand, snow or mud (cloth_matter.wgsl gather): the matter it lay under has gone."""
+        if self.active and self.placed and 'MP' in self.bufs:
+            self.gpu.write_buffer(self.bufs['MP'], np.zeros((self.built.n, 4), np.float32))
 
     def positions(self):
         """(n, 3) positions and (n,) burnt-away flags of every vertex now (fire-local m)."""
