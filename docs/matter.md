@@ -36,6 +36,10 @@ Right-click one in the viewer for *Made of*, *Let go at this frame*, *Pour it fr
 | Aluminium | Bright metal. It melts at 660 °C into runny, mirror-like molten aluminium, barely glowing. |
 | Iron | Dark metal. It melts at 1150 °C into molten iron, glowing yellow-orange. |
 | Molten wax, Melted chocolate, Molten aluminium, Molten iron | Their melts, to pour: they start hotter than their melting point and set as they cool. |
+| Dry leaves | A light, springy heap that catches at 260 °C and flares up in flames, burning down to a little ash. |
+| Sawdust | Catches at 290 °C and smoulders with a low flame and thick smoke. |
+| Coal | Catches at 450 °C, with a fire that lasts (or start it hot), and glows orange for a minute or more. |
+| Ash | What is left: light and grey. |
 
 ## What moves it
 
@@ -59,6 +63,10 @@ Wax, chocolate, aluminium and iron have a temperature (Matter › *Temperature*,
 Hot metal glows as a blackbody at its temperature: dull red from about 600 °C, orange by 1000 °C, yellow-white over 1300 °C. It glows as bright as a flame that hot (the Look's *Flame temperature*, *Intensity*, *Exposure* and *Dynamic range* set both), and it lights what is round it. Aluminium melts before it glows much, as the real metal does.
 
 Melting takes as long as it really would, times *Heat speed* (Domain): 4 unless set, so a chocolate bar by a campfire runs in seconds rather than a minute. *Pouring molten iron* pours a ladle of it into a mould, and *Chocolate by a fire* melts three pieces beside a small fire.
+
+## Things that burn
+
+Dry leaves, sawdust and coal catch where the fire's heat takes them past their ignition point: a lighter's flame lights a pile of dry leaves, while coal needs a fire that lasts (or start it hot with *Temperature*). Lit, each burns where the air reaches it, at its own burning temperature: leaves flare up and burn away in a second or two, sawdust smoulders, coal glows. Inside a heap they smoulder slowly. Their flames are the fire's own: what of them burns away each second goes into the gas as fuel, with *Smoke* from Spreading fire, as burning grass's does, so the flames heat the leaves next to them and the fire runs through the pile by itself. Most of what burns is gone, and what is left is a little grey ash: a heap burns down.
 
 ![Pouring molten iron](media/gif/iron_pour.gif "Pouring molten iron: molten iron poured from a ladle into a mould glows orange, lights the floor round it, and dims to red as its skin cools.")
 
@@ -89,6 +97,7 @@ Presets: *Sand from a hopper*, *Snowballs at a wall*, *Ball dropped on jelly*, *
 - Snow and mud do not stick to walls: a snowball splats and falls rather than leaving a mark.
 - Objects take no heat and give none: a hot pan does not melt the chocolate in it, and molten iron does not heat its
   mould. Hot matter's glow lights the stage (the floor, the objects, the footage) but not the smoke or the water.
+- A glowing heap glows evenly: coal's lumps and the brighter gaps between them are not drawn.
 - An object's opening that stops flush with the inside of its wall can leave a film there that matter catches on: make
   it a little deeper than the wall.
 

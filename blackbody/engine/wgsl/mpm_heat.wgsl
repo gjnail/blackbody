@@ -8,7 +8,9 @@
 //  - splat: each particle's heat to the eight nodes round it (fixed point), for the heat to even out through the matter
 //  - main: each particle takes on its neighbourhood's temperature (the nodes'); where it meets the air, the air's (the
 //    gas's next to it in a fire box; the ambient air's otherwise), the fire's radiant heat from the side it faces out
-//    to, and the heat it radiates itself; where it meets the liquid, the water's; and melts or sets.
+//    to, and the heat it radiates itself; where it meets the liquid, the water's; and melts or sets. What burns (dry
+//    leaves, sawdust, coal) catches past its ignition point and burns down to ash, held at its burning temperature
+//    where the air reaches it and smouldering slowly inside a heap; mpm_fire.wgsl gives the gas its flames.
 // A particle's temperature (K) is its f0.w.
 //!include common.wgsl
 //!include mpm_common.wgsl
@@ -26,6 +28,9 @@ struct Params {
                                 // -1: none), how fast its surface takes on the air's temperature (1/s)
   cond: array<vec4<f32>, 16>,   // per material slot: how fast its heat evens out (1/s), how much faster the water cools
                                 // it than the air, how much a W/m^2 of radiant heat warms its surface (K/s), _
+  burn: array<vec4<f32>, 16>,   // per material slot: catches at (K; 0: it does not burn), the share of it that burns away a
+                                // second, how hot it burns (K), what it burns down to (slot, -1: nothing)
+  ash: array<vec4<f32>, 4>,     // per material slot (16): the share of it left as that once burnt (the rest is gone)
 };
 
 @group(0) @binding(0) var<storage, read_write> P: array<MParticle>;
@@ -48,7 +53,7 @@ fn kelvin_of(t: f32) -> f32 { return U.k.y + (U.k.z - U.k.y) * clamp(t, 0.0, 1.0
 fn thermal(slot: u32) -> bool {
   let h = U.heat[slot];
   let c = U.cond[slot];
-  return h.x > 0.0 || h.w > 0.0 || c.x > 0.0 || c.z > 0.0;
+  return h.x > 0.0 || h.w > 0.0 || c.x > 0.0 || c.z > 0.0 || U.burn[slot].x > 0.0;
 }
 
 @compute @workgroup_size(4, 4, 4)
@@ -238,6 +243,29 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
     if (h.y >= 0.0 && T > h.x + 1.0) { next = h.y; }
     if (h.z >= 0.0 && T < h.x - 1.0) { next = h.z; }
   }
+  // burning: once lit it burns on while it is hot enough, at its burning temperature where the air reaches it and
+  // smouldering slowly inside (a seventh as fast), until it has burnt away (c2.w: how much has)
+  let bn = U.burn[slot];
+  var burnt = p.c2.w;
+  var lit = 0.0;
+  if (bn.x > 0.0 && (T > bn.x || (burnt > 0.0 && T > 0.8 * bn.x))) {
+    let open = select(0.15, 1.0, air.on > 0.5);
+    T += (bn.z - T) * (1.0 - exp(-4.0 * open * dt));
+    burnt += bn.y * open * dt;
+    lit = open;
+    if (burnt >= 1.0) {
+      burnt = 0.0;
+      next = bn.w;
+      lit = 0.0;
+      // (most of it is gone: a heap burns down to a little ash; which, by the particle's own random number)
+      if (bn.w < 0.0 || p.c0.w >= U.ash[slot / 4u][slot % 4u]) { next = -2.0; }
+    }
+  }
   P[i].f0 = vec4<f32>(p.f0.xyz, T);
+  if (bn.x > 0.0) {
+    P[i].c2 = vec4<f32>(p.c2.xyz, burnt);
+    P[i].f1 = vec4<f32>(p.f1.xyz, lit);    // (burning where the air reaches it: its flames, mpm_fire.wgsl)
+  }
   if (next >= 0.0) { P[i].x = vec4<f32>(p.x.xyz, next); }
+  if (next < -1.5) { P[i].x = vec4<f32>(p.x.xyz, -1.0); }
 }

@@ -80,3 +80,11 @@ def test_a_mesh_is_filled_with_eight_particles_to_a_cell():
     # scaled: twice as tall
     tall = fill_points('mesh', (1.0, 2.0, 1.0), 0.005, rng, sdf)
     assert abs(len(tall) / len(pts) - 2.0) < 0.1 and np.ptp(tall[:, 1]) > 1.9 * np.ptp(pts[:, 1])
+
+
+def test_what_burns_burns_hotter_than_it_catches_and_leaves_ash():
+    burning = [m for m in MATTERS.values() if m.burns_at > 0.0]
+    assert {m.key for m in burning} == {'leaves', 'sawdust', 'coal'}
+    for m in burning:
+        assert m.burn_temp > m.burns_at + 200.0 and 0.0 < m.burn_rate < 1.0 and 0.0 < m.ash_share < 1.0
+        assert material(m.burns_to).key == m.burns_to and material(m.burns_to).burns_at == 0.0

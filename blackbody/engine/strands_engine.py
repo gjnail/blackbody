@@ -47,6 +47,8 @@ class StrandsEngine:
             hooks.append(self._strands.hook)
         if self.solids.active and self.solids.burning:   # (things that break and burn: engine._burn_pieces)
             hooks.append(self.piece_fire.hook)
+        if getattr(self, '_matter_burns', None) is not None and self._matter_burns():   # (matter_engine)
+            hooks.append(self.matter_fire.hook)
         if not hooks:
             return None
         if len(hooks) == 1:

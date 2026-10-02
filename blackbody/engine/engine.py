@@ -321,6 +321,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine)
         with self.gpu.batch() as b:
             if burning:
                 self.piece_fire.splat(b, self.solver)
+            self._splat_matter_fire(b, scene, self.solver)   # (dry leaves, sawdust, coal: their flames)
             msolid = self._matter_solid(b, self.solver)   # (sand, snow and mud: solid to the gas)
             for i in range(n):
                 # emitters and colliders move within the frame, so fast ones leave a continuous trail

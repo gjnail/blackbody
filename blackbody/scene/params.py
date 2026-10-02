@@ -923,7 +923,8 @@ MATTER_MATERIALS = (('sand', 'Sand'), ('wet_sand', 'Wet sand'), ('snow', 'Snow')
                     ('jelly', 'Jelly'), ('clay', 'Clay'), ('wax', 'Wax'), ('chocolate', 'Chocolate'),
                     ('aluminium', 'Aluminium'), ('iron', 'Iron'), ('molten_wax', 'Molten wax'),
                     ('molten_chocolate', 'Melted chocolate'), ('molten_aluminium', 'Molten aluminium'),
-                    ('molten_iron', 'Molten iron'))
+                    ('molten_iron', 'Molten iron'), ('leaves', 'Dry leaves'), ('sawdust', 'Sawdust'), ('coal', 'Coal'),
+                    ('ash', 'Ash'))
 MATTER_PARAMS = [
     Param('name', 'Name', 'str', 'Sand'),
     B('enabled', 'Enabled', True),
@@ -932,7 +933,8 @@ MATTER_PARAMS = [
       'snowballs; mud slumps and flows until it is thin enough to stop; jelly wobbles and springs back; clay squashes and '
       'stays squashed. Wax, chocolate, aluminium and iron are solid until the fire heats them past their melting point '
       '(60, 34, 660 and 1150 °C), then run, and set again where they cool; molten ones are poured hot and set as they '
-      'cool.', group='Matter'),
+      'cool. Dry leaves, sawdust and coal catch where the fire’s heat reaches them and burn down to ash: leaves in a '
+      'flash of flame, sawdust smouldering, coal glowing for a long time.', group='Matter'),
     E('shape', 'Shape', 'box', (('box', 'Box'), ('sphere', 'Ball'), ('cylinder', 'Cylinder'), ('pile', 'Pile (a cone)'),
                                ('mesh', 'Mesh')),
       tip='The shape of the body of it at the start (a pour: the nozzle is a disc of its Size’s first value across). A '

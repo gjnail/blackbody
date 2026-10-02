@@ -146,6 +146,25 @@ class MatterEngine:
         with self.gpu.batch() as b:
             m.melt(b, fdt, gas, liquid, look.ambient_k, look.flame_k)
 
+    _mfire = None
+
+    @property
+    def matter_fire(self):
+        if self._mfire is None:
+            from .matter_fire import MatterFire
+            self._mfire = MatterFire(self.gpu)
+        return self._mfire
+
+    def _matter_burns(self):
+        m = self._matter
+        return m is not None and m.burns()
+
+    def _splat_matter_fire(self, b, scene, solver):
+        """The burning matter's flames onto the coupling grid for this frame's substeps (inside the frame's batch)."""
+        if self._matter_burns():
+            look = scene.look(scene.start)
+            self.matter_fire.splat(b, solver, self._matter, scene.data['spread'], look.ambient_k, look.flame_k)
+
     def _heat_matter(self, scene, frame, fdt, gas=None, liquid=None):
         """Wax, chocolate and metal through frame `frame` (fdt seconds): warming in the gas's heat, cooling in the air and
         the water, melting and setting."""

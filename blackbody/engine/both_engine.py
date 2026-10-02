@@ -333,6 +333,7 @@ class BothEngine:
             self._footage_solid(b, scene, frame)
             if burning:
                 self.piece_fire.splat(b, self.solver)
+            self._splat_matter_fire(b, scene, self.solver)       # (dry leaves, sawdust, coal: their flames)
             msolid = self._matter_solid(b, self.solver)          # (sand, snow and mud: solid to the gas
             lmsolid = self._matter_solid(b, L, 'liquid')        # and to the water)
             regions = solids.regions(scene) if solids else []

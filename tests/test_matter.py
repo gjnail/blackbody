@@ -428,3 +428,29 @@ def test_a_breakable_dropped_on_sand_rests_on_it_and_dents_it(engine):
     under = top & (r < 0.05)
     far = top & (r > 0.15) & (np.abs(x0[:, 0]) < 0.3) & (np.abs(x0[:, 2]) < 0.2)
     assert moved[under].mean() > 0.02 and moved[far].mean() < 0.005
+
+
+# ---- burning (mpm_heat.wgsl, mpm_fire.wgsl) ---------------------------------------------------------------------------
+
+def test_a_pile_of_dry_leaves_catches_burns_and_burns_down(engine):
+    from blackbody.scene import components
+    sc = components.new_scene('fire', 'person')
+    sc.emitters = []
+    sc.add_emitter(name='Lighter', shape='sphere', position=(-0.25, 0.04, 0.0), size=(0.04, 0.04, 0.04), fuel=10,
+                   temperature=0.8, start=0.0, stop=1.5)
+    sc.add_matter(name='Pile', material='leaves', shape='pile', position=(0.0, 0.12, 0.0), size=(0.3, 0.12, 0.3))
+    sc.data['domain'].update(size_x=1.4, size_y=1.6, size_z=1.2, resolution=64, preroll=0.0, matter_detail=96)
+    engine.prepare(sc, final=False)
+    m = engine.matter
+    assert [k.key for k in m._mats] == ['leaves', 'ash'] and m.burns()
+    engine.simulate_to(sc, sc.start, cache=False)
+    n0 = int((m.read_particles()[:, 3] >= 0).sum())
+    engine.simulate_to(sc, sc.start + 120, cache=False)
+    P = m.read_particles()
+    live = P[:, 3] >= 0
+    assert (P[live, 27] > 0).sum() > 100                      # burning,
+    assert live.sum() < 0.98 * n0                             # burning down,
+    assert (np.round(P[live, 3]) == 1).sum() > 0              # to ash,
+    # and its flames: hot gas over the pile long after the lighter is out
+    T = engine.gpu.read(engine.solver.scal[0])[..., 0]
+    assert float(T.max()) > 0.5

@@ -96,6 +96,12 @@ class MatterMaterial:
     absorbs: float = 0.0        # the share of radiant heat it takes in (shiny aluminium little, chocolate most)
     diffusivity: float = 0.0    # m^2/s: how fast heat spreads through it
     water_cools: float = 20.0   # times faster the water cools its surface than the air does
+    burns_at: float = 0.0       # K: past it, it catches and burns (0: it does not)
+    burn_rate: float = 0.0      # the share of it that burns away a second while it is lit (where the air reaches it)
+    burn_temp: float = 0.0      # K: how hot it burns
+    burns_to: str = ''          # what is left (nothing: it is gone)
+    flames: float = 0.0         # how much fuel it gives the fire as it burns (1: as grass does)
+    ash_share: float = 0.0      # the share of it left as ash once it has burnt (the rest is gone: a heap burns down)
 
     @property
     def mu(self):
@@ -137,6 +143,20 @@ MATTERS = {m.key: m for m in (
     # into the other at the melting point. A melt's small yield stress stands in for its surface tension, which keeps
     # a puddle as deep as it is for real (its yield stress / (density g): molten iron's some 7 mm) instead of spreading
     # thinner than the particles
+    # things that burn: catching where the fire's heat takes them past their ignition point, flaming (dry leaves),
+    # smouldering (sawdust) or glowing (coal), and burning down to ash
+    MatterMaterial('leaves', 'Dry leaves', 'sand', 2.0e4, 0.3, 80.0, friction=0.8, angle=45.0, cohesion=0.002,
+                   colour=(0.42, 0.24, 0.08), roughness=0.85, variation=0.45, heat_capacity=1500.0, absorbs=0.8,
+                   diffusivity=1.0e-7, burns_at=530.0, burn_rate=0.6, burn_temp=1050.0, burns_to='ash', flames=0.6,
+                   ash_share=0.1),
+    MatterMaterial('sawdust', 'Sawdust', 'sand', 1.0e5, 0.3, 250.0, friction=0.6, angle=40.0, colour=(0.72, 0.56, 0.34),
+                   roughness=0.9, variation=0.15, heat_capacity=1700.0, absorbs=0.8, diffusivity=1.0e-7, burns_at=560.0,
+                   burn_rate=0.15, burn_temp=950.0, burns_to='ash', flames=0.5, ash_share=0.2),
+    MatterMaterial('coal', 'Coal', 'sand', 3.0e5, 0.3, 800.0, friction=0.6, angle=38.0, colour=(0.035, 0.033, 0.035),
+                   roughness=0.55, sparkle=0.35, variation=0.15, heat_capacity=1300.0, absorbs=0.95, diffusivity=2.0e-7,
+                   burns_at=720.0, burn_rate=0.02, burn_temp=1300.0, burns_to='ash', flames=0.15, ash_share=0.3),
+    MatterMaterial('ash', 'Ash', 'sand', 2.0e4, 0.3, 120.0, friction=0.6, angle=42.0, colour=(0.42, 0.41, 0.39),
+                   roughness=0.95, variation=0.2, heat_capacity=800.0, absorbs=0.9, diffusivity=1.0e-7),
     MatterMaterial('wax', 'Wax', 'clay', 4.0e5, 0.35, 900.0, friction=0.5, yield_stress=1.5e4, tension=True,
                    colour=(0.78, 0.74, 0.63), roughness=0.45, wrap=0.4, variation=0.02, melts_at=333.0,
                    melt='molten_wax', heat_capacity=2900.0, absorbs=0.85, diffusivity=1.4e-7),
@@ -399,7 +419,7 @@ class Matter:
         # heat evens out, how much faster the water cools it), mpm_heat.wgsl
         for k in list(slots):
             m = material(k[0])
-            for other in (m.melt, m.freeze):
+            for other in (m.melt, m.freeze, m.burns_to):
                 if other and (other, k[1], k[2]) not in slots and len(slots) < MAX_MATS - 1:
                     slots[(other, k[1], k[2])] = len(slots)
                     self._mats.append(material(other))
@@ -408,6 +428,9 @@ class Matter:
         # heat_speed times as fast as for real)
         self._heat = [[0.0, -1.0, -1.0, 0.0] for _ in range(MAX_MATS)]
         self._cond = [[0.0, 1.0, 0.0, 0.0] for _ in range(MAX_MATS)]
+        self._burn = [[0.0, 0.0, 0.0, -1.0] for _ in range(MAX_MATS)]
+        self._ash = [0.0] * MAX_MATS
+        self._flames = [0.0] * MAX_MATS
         skin = self.dx / PER_AXIS
         for k, slot in slots.items():
             m = material(k[0])
@@ -417,6 +440,10 @@ class Matter:
             per_k = heat_speed / (m.density * m.heat_capacity * skin)        # K/s for a W/m^2 into its surface
             self._heat[slot] = [m.melts_at, float(melt), float(freeze), HEAT_CONVECTION * per_k]
             self._cond[slot] = [heat_speed * m.diffusivity / skin ** 2, m.water_cools, m.absorbs * per_k, 0.0]
+            if m.burns_at > 0.0:
+                self._burn[slot] = [m.burns_at, m.burn_rate, m.burn_temp, float(slots.get((m.burns_to, k[1], k[2]), -1))]
+                self._flames[slot] = m.flames
+                self._ash[slot] = m.ash_share
         self.thermal = any(m.heat_capacity > 0.0 for m in self._mats)
         self._mat_bytes = self._pack_materials()
         # the particles each source makes: its body at the start, or its stream over the shot
@@ -725,6 +752,25 @@ class Matter:
         self._compact(b)            # (drawn as it is now, melted snow gone)
         self.surface_ready = False
 
+    def burns(self):
+        """Whether any of the matter burns (dry leaves, sawdust, coal)."""
+        return self.active and bool(self.count) and any(r[0] > 0.0 for r in getattr(self, '_burn', []))
+
+    def fire_table(self, fuel_per_kg, smoke, ambient_k, flame_k):
+        """Per material slot, what a particle of it burning in the air gives the fire (mpm_fire.wgsl): (fuel, F m^3/s:
+        the fuel of what of it burns away a second, times its flames; its heat, field temperature; its smoke, /s; _)."""
+        vol = (self.dx / PER_AXIS) ** 3
+        out = []
+        for k in range(MAX_MATS):
+            if k < len(self._mats) and self._burn[k][0] > 0.0:
+                m = self._mats[k]
+                fuel = m.density * vol * m.burn_rate * fuel_per_kg * self._flames[k]
+                heat = (m.burn_temp - ambient_k) / max(flame_k - ambient_k, 1.0)
+                out += [fuel, min(max(heat, 0.0), 1.5), fuel * smoke, 0.0]
+            else:
+                out += [0.0, 0.0, 0.0, 0.0]
+        return out
+
     def heats(self):
         """Whether any of the matter takes on heat, gives it off or melts (wax, chocolate, metal)."""
         return self.active and bool(self.count) and getattr(self, 'thermal', False)
@@ -744,7 +790,8 @@ class Matter:
         u.v4(*(liquid.dims if live else (1, 1, 1)), 1.0 if live else 0.0)
         u.v4(dt, ambient_k, flame_k, 1.0 if gas_on else 0.0)
         u.v4(HEAT_BLOCK, 0.2, FLAME_ABSORPTION, HEAT_LIGHTS)
-        u.raw([x for h in self._heat for x in h]).raw([x for c in self._cond for x in c])
+        u.raw([x for h in self._heat for x in h]).raw([x for c in self._cond for x in c]).raw([x for r in self._burn for x in r])
+        u.raw(self._ash)
         if getattr(self, '_heat_dummy', None) is None:
             t = g.texture3d((1, 1, 1), 'rgba16float', 'matter-heat-no-gas')
             g.upload(t, np.zeros((1, 1, 1, 4), np.float16))
