@@ -40,7 +40,7 @@ Right-click one in the viewer for *Made of*, *Let go at this frame*, *Pour it fr
 ## What moves it
 
 - **Gravity, the ground and the box.** It rests on the ground and against the box's closed sides. Through an open side, the top, or the bottom of a box without ground, it leaves the simulation.
-- **Objects.** It piles against objects that stay put, and keyframed ones plough through it (a crate dragged through mud pushes up a bow wave). Things that fall land on it and it holds them up as its strength and their weight say: a wooden crate rests on top of sand where a steel ball of the same size sinks into it, and jelly throws a dropped ball back up. Matter and the falling objects push each other every step.
+- **Objects.** It piles against objects that stay put, and keyframed ones plough through it (a crate dragged through mud pushes up a bow wave). Things that fall land on it and it holds them up as its strength and their weight say: a wooden crate rests on top of sand where a steel ball of the same size sinks into it, and jelly throws a dropped ball back up. Broken objects' pieces are the same: bricks from a wall knocked onto a heap of sand land on it brick by brick, dent it and are held up by it. Matter and the falling objects push each other every few of its steps (a fraction of a millisecond apart), which makes a scene with both slower than either alone: a heap of sand with a crate on it, some half a second a frame.
 - **Blasts.** An explosion (an emitter's *Blast*) throws it away from where it goes off, the surface hardest: a heap of sand near a charge is blown flat.
 - **Water.** In a liquid or fire-and-liquid box the water and the matter push each other. A wave shoves jelly, and jelly floats by the water it puts aside; grains in the water are lighter by it; and water running over sand drags its top along, so a pour digs a crater where it lands and a gully where it runs off.
 
@@ -82,7 +82,7 @@ Presets: *Sand from a hopper*, *Snowballs at a wall*, *Ball dropped on jelly*, *
 
 - The smoke goes round it but does not move it. The water does not flow through it: it seeps into sand only to soak it,
   so a sand dam holds the water back until the water soaks through it or goes over it. Cloth does not meet it yet.
-- Broken objects' pieces do not push it, and it does not burn.
+- It does not burn.
 - A mesh it fills should be closed (through a hole the fill runs out into the space round it), and it is filled once,
   as it starts: a deforming mesh does not move it.
 - Up to 15 materials (or colours of them) in a scene at once.

@@ -41,6 +41,7 @@ FX_R = 64.0               # mpm_grid.wgsl react's fixed point
 SURF_R = 2.0              # the surface's kernel radius (cells)
 SURF_PARTICLE = 0.55      # a particle's radius in it (cells)
 MARGIN = 3                # nodes of grid past the box all round
+MAX_PIECES = 4096         # broken objects' pieces the matter can tell apart (what each takes from it)
 HEAT_SPEED = 4.0          # matter takes on and gives off heat this many times faster than for real, unless the scene
                           # says (Domain > Heat speed): melting in seconds
 HEAT_CONVECTION = 50.0    # W/m^2/K: the air (or the fire's gas) flowing past its surface
@@ -523,7 +524,7 @@ class Matter:
         self._buf['HLC'] = g.buffer(16, 'matter-heat-source-count')
         self._buf['G'] = g.buffer(nodes * 4 * 4, 'matter-grid')
         self._buf['S'] = g.buffer(nodes * 13 * 4, 'matter-surface-sums')
-        self._buf['react_i'] = g.buffer(16 * 6 * 4, 'matter-react-step')
+        self._buf['react_i'] = g.buffer((16 + MAX_PIECES) * 6 * 4, 'matter-react-step')   # (objects', then pieces')
         self._buf['react'] = g.buffer(16 * 6 * 4, 'matter-react')
         self._buf['stats'] = g.buffer(8 * 4, 'matter-stats')
         self._tex['vel'] = g.texture3d(self.dims, 'rgba32float', 'matter-vel')
@@ -551,7 +552,9 @@ class Matter:
         g = self.gpu
         P = (64, 1, 1)
         self._k['p2g'] = g.kernel('mpm_p2g.wgsl', ['rbuf', 'buf'], workgroup=P)
-        self._k['grid'] = g.kernel('mpm_grid.wgsl', ['utex3d', 'rbuf', 'st3d:rgba32float:w', 'buf', 'utex3d', 'utex3d'])
+        self._k['grid'] = g.kernel('mpm_grid.wgsl', ['utex3d', 'rbuf', 'st3d:rgba32float:w', 'buf', 'utex3d', 'utex3d',
+                                                     'utex3d', 'utex3d'])
+        self._k['pieces_clear'] = g.kernel('mpm_pieces.wgsl', ['st3d:r32float:w'], 'clear')
         self._k['push'] = g.kernel('mpm_liquid.wgsl', ['utex3d', 'utex3d', 'utex3d', 'st3d:rgba32float:w',
                                                        'st3d:rgba32float:w'])
         self._k['g2p'] = g.kernel('mpm_g2p.wgsl', ['buf', 'utex3d', 'buf'], workgroup=P)
@@ -834,17 +837,79 @@ class Matter:
         near = 0.0 if bounds is None else float(np.linalg.norm(np.asarray(where) - np.clip(where, bounds[0], bounds[1])))
         self.max_speed = max(self.max_speed, blast_impulse(kg, near) / (min(m.density for m in self._mats) * depth))
 
-    def step(self, dt, colliders, meshes_atlas=None, pack=None):
-        """One step of dt seconds on its own, the objects where `colliders` has them; returns the push on each object
-        over it ({index in the solver's collider list: (force, torque about its position)}, N and N m). For moving in
-        lockstep with the rigid bodies (solids.py), which take the push into their next step."""
+    def step(self, dt, colliders, meshes_atlas=None, pack=None, pieces=None, substeps=1):
+        """One step of dt seconds on its own, the objects where `colliders` has them, and broken objects' pieces where
+        `pieces` has them ((scene, {collider index: Solids.piece_poses entry}), or None); returns the push on each
+        object over it ({index in the solver's collider list: (force, torque about its position)}, and for the pieces
+        {('piece', collider index, piece index): (force, torque about the piece's position)}, N and N m). For moving in
+        lockstep with the rigid bodies (solids.py), which take the push into their next step. substeps: the step taken
+        as that many, the push over all of them."""
+        owners, rebake = self._pieces(pieces)
         with self.gpu.batch() as b:
-            self._substep(b, dt, self._grid_u(dt, colliders, pack), meshes_atlas, fold=False)
-        react = np.frombuffer(self.gpu.read_buffer(self._buf['react_i']), np.int32).reshape(16, 6)
-        if not react.any():
-            return {}
-        self.gpu.write_buffer(self._buf['react_i'], np.zeros(96, np.int32))
-        return self._react_forces(react.astype(np.float64) / FX_R, dt)
+            if rebake:
+                b.run(self._k['pieces_clear'], [self._tex['psdf']], Uniforms().v4(*self.dims), self.dims)
+                self._bf.bake(b, self._pgrid, 0)
+            n_sub = max(1, int(substeps))
+            gu = self._grid_u(dt / n_sub, colliders, pack, bool(owners))
+            for _ in range(n_sub):
+                self._substep(b, dt / n_sub, gu, meshes_atlas, fold=False, pieces_on=bool(owners))
+        out = {}
+        n = min(len(owners), MAX_PIECES)
+        raw = np.frombuffer(self.gpu.read_buffer(self._buf['react_i'], size=(16 + n) * 24), np.int32).reshape(16 + n, 6)
+        react, pr = raw[:16], raw[16:]
+        if raw.any():
+            self.gpu.write_buffer(self._buf['react_i'], np.zeros((16 + n) * 6, np.int32))
+        if react.any():
+            out = self._react_forces(react.astype(np.float64) / FX_R, dt)
+        if owners:
+            if pr.any():
+                unit = 1000.0 * (self.dx / PER_AXIS) ** 3 / dt
+                poses = pieces[1]
+                for j in np.nonzero(pr.any(axis=1))[0]:
+                    ci, k = owners[j]
+                    f = pr[j, :3].astype(np.float64) / FX_R * unit
+                    t_origin = pr[j, 3:].astype(np.float64) / FX_R * unit
+                    c = np.asarray(poses[ci]['pos'][k], float)
+                    out[('piece', ci, k)] = (f, t_origin - np.cross(c, f))
+        return out
+
+    def _pieces(self, pieces):
+        """Broken objects' pieces onto the matter's grid for the next step (bodyfield.py: only the ones near the matter):
+        (each piece's (collider index, piece index), in the order the grid knows them by, or [] when none are near;
+        whether to bake them again: only once they have moved a fifth of a node or turned)."""
+        if not pieces or not pieces[1] or self.bounds is None:
+            self._baked = None
+            return [], False
+        lo, hi = self.world_bounds()
+        pos = np.concatenate([np.asarray(p['pos'], float).reshape(-1, 3) for p in pieces[1].values()])
+        quat = np.concatenate([np.asarray(p['quat'], float).reshape(-1, 4) for p in pieces[1].values()])
+        if not len(pos) or not np.any(np.all((pos >= lo - 0.5) & (pos <= hi + 0.5), axis=1)):
+            self._baked = None
+            return [], False
+        last = getattr(self, '_baked', None)
+        if (last is not None and last[0].shape == pos.shape and np.abs(pos - last[0]).max() < 0.2 * self.dx
+                and np.abs(quat - last[1]).max() < 0.01):
+            return last[2], False
+        owners = self._bake_pieces(pieces, lo, hi)
+        self._baked = (pos, quat, owners) if owners else None
+        return owners, bool(owners)
+
+    def _bake_pieces(self, pieces, lo, hi):
+        from .bodyfield import BodyField
+        if getattr(self, '_bf', None) is None:
+            self._bf = BodyField(self.gpu)
+        if 'psdf' not in self._tex:
+            self._tex['psdf'] = self.gpu.texture3d(self.dims, 'r32float', 'matter-pieces-distance')
+            self._tex['psvel'] = self.gpu.texture3d(self.dims, 'rgba16float', 'matter-pieces-velocity')
+            self._pgrid = _PieceGrid(self)
+        margin = 3.0 * self.dx
+        if not self._bf.prepare(pieces[0], [pieces[1]], self.dims, self.dx, self.origin - 0.5 * self.dx,
+                                region=(lo - margin, hi + margin)):
+            return []
+        st = self._bf.steps[0]
+        if st is None or not any(self._bf.TC_counts):
+            return []
+        return self._bf.owners[0]
 
     def end(self):
         """Finish a frame: the particles' 8-byte form for drawing, and what the frame's measures say."""
@@ -865,18 +930,18 @@ class Matter:
         return {i: (np.asarray(react[i, :3], float) * unit, np.asarray(react[i, 3:], float) * unit)
                 for i in range(16) if np.any(react[i] != 0.0)}
 
-    def _grid_u(self, dt, cols, pack):
+    def _grid_u(self, dt, cols, pack, pieces=False):
         ground_y = self.box[0][1] if self.ground else -1.0e9
         u = Uniforms().v4(*self.dims, 0).v4(dt, self.dx, self.gravity, self._wall_friction()) \
             .v4(*self.origin, ground_y).v4(1.0 if self.closed else 0.0, MARGIN, 1.0 if self._push_on else 0.0,
                                            min(m.density for m in self._mats))
         if pack is not None:
-            pack(u, cols)
+            pack(u, cols, pieces) if pieces else pack(u, cols)
         else:
             _pack_none(u)
         return u
 
-    def _substep(self, b, dt, gu, meshes_atlas, fold):
+    def _substep(self, b, dt, gu, meshes_atlas, fold, pieces_on=False):
         k = self._k
         groups = groups_1d(max(self.count, 1))
         atlas = meshes_atlas if meshes_atlas is not None else self._empty_atlas()
@@ -884,7 +949,9 @@ class Matter:
         b.clear_buffer(self._buf['G'])
         b.run(k['p2g'], [self._buf['P'], self._buf['G']], self._particle_u(dt, self.time), groups=groups)
         push, flow = (self._tex['push'], self._tex['flow']) if self._push_on else (self._no_push(),) * 2
-        b.run(k['grid'], [atlas, self._buf['G'], self._tex['vel'], self._buf['react_i'], push, flow], gu, self.dims)
+        psdf, psvel = (self._tex['psdf'], self._tex['psvel']) if pieces_on else (self._no_push(),) * 2
+        b.run(k['grid'], [atlas, self._buf['G'], self._tex['vel'], self._buf['react_i'], push, flow, psdf, psvel], gu,
+              self.dims)
         if fold:
             b.run(k['react'], [self._buf['react_i'], self._buf['react']], Uniforms().v4(96, 1.0 / FX_R), groups=(2, 1, 1))
         # (held or let go as at the start of the step in both passes: p2g's momentum is what g2p picks up)
@@ -1040,6 +1107,23 @@ class Matter:
         self.min_jp = float(st.get('min_jp', 1.0))
         self.surface_ready = False
         return True
+
+
+class _PieceGrid:
+    """The matter's grid as bodyfield.py bakes broken objects' pieces into a solver's: cells centred on its nodes."""
+
+    def __init__(self, m):
+        self.dims = tuple(int(x) for x in m.dims)
+        self.h = float(m.dx)
+        self.origin = np.asarray(m.origin, float) - 0.5 * m.dx
+        self.sdf = m._tex['psdf']
+        self._svel = m._tex['psvel']
+
+    def _grid(self, dt):
+        return Uniforms().v4(*self.dims, self.h).v4(*self.origin, 0.0).v4(0.0, 0.0, 0.0, dt)
+
+    def solid_vel(self):
+        return self._svel
 
 
 def _pack_none(u):

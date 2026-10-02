@@ -1585,6 +1585,19 @@ class Solids:
                 t = t + pt - np.cross(d.xipos[bid] - d.xpos[bid], pf)
             d.xfrc_applied[bid, :3] = f
             d.xfrc_applied[bid, 3:] = t
+        # broken objects' pieces the matter pushed (matter.py: ('piece', collider index, piece index) keys)
+        sets = None
+        for key, (pf, pt) in self._pushed.items():
+            if not isinstance(key, tuple):
+                continue
+            if sets is None:
+                sets = {ps.index: ps for ps in self.sets}
+            ps = sets.get(key[1])
+            if ps is None or key[2] >= len(ps.bodies):
+                continue
+            bid = ps.bodies[key[2]]
+            d.xfrc_applied[bid, :3] += pf
+            d.xfrc_applied[bid, 3:] += pt - np.cross(d.xipos[bid] - d.xpos[bid], pf)
         self._joint_friction()
         self._motors()
 

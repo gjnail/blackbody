@@ -20,9 +20,12 @@ struct Params {
 @group(0) @binding(0) var atlas: texture_3d<f32>;
 @group(0) @binding(1) var<storage, read> G: array<i32>;
 @group(0) @binding(2) var vel: texture_storage_3d<rgba32float, write>;
-@group(0) @binding(3) var<storage, read_write> react: array<atomic<i32>>;   // per object: momentum taken (xyz), its moment (xyz)
+@group(0) @binding(3) var<storage, read_write> react: array<atomic<i32>>;   // per object: momentum taken (xyz), its moment
+                                                                            // (xyz); then per broken objects' piece
 @group(0) @binding(4) var push: texture_3d<f32>;   // the liquid's force on it (N/m^3); w: 1 where the liquid is
 @group(0) @binding(5) var flow: texture_3d<f32>;   // the liquid's velocity there (m/s); w: its drag (kg/m^4)
+@group(0) @binding(6) var psdf: texture_3d<f32>;   // broken objects' pieces (bodies_sdf.wgsl): the distance to them (nodes)
+@group(0) @binding(7) var psvel: texture_3d<f32>;  // their velocity at the nodes in or by them; w: 1 + which piece
 @group(1) @binding(0) var<uniform> U: Params;
 
 const FX_R: f32 = 64.0;   // react's fixed point (momentum in particles of water times m/s)
@@ -100,6 +103,36 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       atomicAdd(&react[r + 3u], i32(round(t.x)));
       atomicAdd(&react[r + 4u], i32(round(t.y)));
       atomicAdd(&react[r + 5u], i32(round(t.z)));
+    }
+  }
+  // broken objects' pieces (in the colliders' count's z: pieces on): as the objects, each feeling what it took
+  if (U.ccnt.z > 0.5) {
+    let ps = textureLoad(psdf, c, 0).x;
+    if (ps < 0.25) {
+      let pv = textureLoad(psvel, c, 0);
+      let lo = max(c - vec3<i32>(1), vec3<i32>(0));
+      let hi = min(c + vec3<i32>(1), n - vec3<i32>(1));
+      let g = vec3<f32>(textureLoad(psdf, vec3<i32>(hi.x, c.y, c.z), 0).x - textureLoad(psdf, vec3<i32>(lo.x, c.y, c.z), 0).x,
+                        textureLoad(psdf, vec3<i32>(c.x, hi.y, c.z), 0).x - textureLoad(psdf, vec3<i32>(c.x, lo.y, c.z), 0).x,
+                        textureLoad(psdf, vec3<i32>(c.x, c.y, hi.z), 0).x - textureLoad(psdf, vec3<i32>(c.x, c.y, lo.z), 0).x);
+      let gl = length(g);
+      let nrm = select(vec3<f32>(0.0, 1.0, 0.0), g / gl, gl > 1.0e-6);
+      let before = v;
+      v = boundary(v, pv.xyz, nrm, mu);
+      let dp = mass * (before - v);
+      if (pv.w > 0.5 && dot(dp, dp) > 0.0) {
+        let r = 96u + 6u * u32(pv.w - 0.5);     // (after the 16 objects')
+        let q = clamp(dp * FX_R, vec3<f32>(-2.0e9), vec3<f32>(2.0e9));
+        let t = clamp(cross(p, dp) * FX_R, vec3<f32>(-2.0e9), vec3<f32>(2.0e9));   // (about the origin)
+        if (r + 5u < arrayLength(&react)) {
+          atomicAdd(&react[r], i32(round(q.x)));
+          atomicAdd(&react[r + 1u], i32(round(q.y)));
+          atomicAdd(&react[r + 2u], i32(round(q.z)));
+          atomicAdd(&react[r + 3u], i32(round(t.x)));
+          atomicAdd(&react[r + 4u], i32(round(t.y)));
+          atomicAdd(&react[r + 5u], i32(round(t.z)));
+        }
+      }
     }
   }
   // the box's closed sides (through open ones, the top, or a box without ground, it leaves: mpm_g2p.wgsl)

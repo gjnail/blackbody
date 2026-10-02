@@ -89,6 +89,8 @@ Notable changes to Blackbody. The format follows
   temperature, as bright as a flame that hot, and lights the floor and objects round it. Their melts can be poured.
   Matter › Temperature; Domain › Heat speed (how much quicker than for real). Presets: Pouring molten iron, Chocolate
   by a fire.
+- Broken objects' pieces and sand, snow, mud, jelly and clay push each other: bricks from a wall knocked onto a heap
+  land on it, dent it and are held up by it (and breakable things dropped onto sand rest on it).
 - Matter fills meshes: Shape › Mesh fills an OBJ, STL or USD prim of your own (a chocolate bunny, a sand sculpture, a
   jelly from a mould), scaled by Size; the viewer outlines its mesh, and it sits on the ground and frames by the mesh's
   own size. Blocks: Matter shape, Chocolate letters (any text, in any font).

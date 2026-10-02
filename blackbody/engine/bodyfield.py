@@ -15,10 +15,10 @@ from .gpu import Uniforms
 TILE = 8   # cells per side of a tile of the grid, each listing the pieces near it
 
 
-def piece_records(scene, pieces, rows=None):
+def piece_records(scene, pieces, rows=None, owners=None):
     """The pieces as the shaders take them: (P (n, 5, 4) float32, PL (planes, 4) float32, centres (n, 3),
     radii (n,)). pieces: {collider index: Solids.piece_poses entry}; rows: collider index -> material row (the
-    stage's; 0 when None).
+    stage's; 0 when None); owners: a list that gets (collider index, piece index) for each, in order.
 
     P per piece: centre (fire-local m), planes (count); orientation (x y z w); velocity (m/s), first plane; spin
     (rad/s, world), material row; its centre in the object's frame before it broke, bounding radius. PL: each plane's
@@ -31,6 +31,8 @@ def piece_records(scene, pieces, rows=None):
             continue
         frac = fractured(scene.colliders[ci], pose['size'], float(pose.get('hollow', 0.0)))
         for k in range(min(len(frac.pieces), len(pose['pos']))):
+            if owners is not None:
+                owners.append((ci, k))
             pc = frac.pieces[k]
             pl = pc.planes.copy()
             pl[:, 3] -= pl[:, :3] @ pc.centroid
@@ -55,6 +57,7 @@ class BodyField:
         self.k = gpu.kernel('bodies_sdf.wgsl', ['rbuf', 'rbuf', 'rbuf', 'rbuf', 'st3d:r32float:rw', 'st3d:rgba16float:w'])
         self._bufs = {}
         self.steps = []          # per substep: (first piece, first tile, pieces)
+        self.owners = []         # per substep: (collider index, piece index) of each of its pieces
         self.tiles = (1, 1, 1)
 
     def _buffer(self, name, data):
@@ -69,10 +72,12 @@ class BodyField:
             self.gpu.write_buffer(b, data)
         return b
 
-    def prepare(self, scene, substeps, dims, h, origin):
+    def prepare(self, scene, substeps, dims, h, origin, region=None):
         """Upload a frame's substeps (a list of {collider: Solids.piece_poses entry}, one per substep) for a grid
-        (dims, cell h, corner origin). False if there are no pieces."""
+        (dims, cell h, corner origin); region: (lo, hi) fire-local m, only the pieces that reach into it. False if
+        there are no pieces."""
         self.steps = []
+        self.owners = []
         dims = np.asarray(dims, int)
         nt = np.maximum((dims + TILE - 1) // TILE, 1)
         self.tiles = tuple(int(x) for x in nt)
@@ -81,7 +86,9 @@ class BodyField:
         n_p = n_t = n_l = 0
         o = np.asarray(origin, float)
         for poses in substeps:
-            rec = piece_records(scene, poses)
+            owners = []
+            rec = piece_records(scene, poses, owners=owners)
+            self.owners.append(owners)
             if rec is None:
                 self.steps.append(None)
                 continue
@@ -92,6 +99,8 @@ class BodyField:
             a = np.clip(np.floor((c - reach[:, None] - o) / (h * TILE)).astype(int), 0, nt - 1)
             b = np.clip(np.floor((c + reach[:, None] - o) / (h * TILE)).astype(int), 0, nt - 1)
             inside = np.all((c + reach[:, None] >= o) & (c - reach[:, None] <= o + dims * h), axis=1)
+            if region is not None:
+                inside &= np.all((c + reach[:, None] >= region[0]) & (c - reach[:, None] <= region[1]), axis=1)
             for k in np.nonzero(inside)[0]:
                 for z in range(a[k, 2], b[k, 2] + 1):
                     for y in range(a[k, 1], b[k, 1] + 1):
@@ -109,6 +118,7 @@ class BodyField:
             n_l += len(flat)
         if not P_all:
             return False
+        self.TC_counts = [int(len(x)) for x in TL_all]
         self.P = self._buffer('pieces', np.concatenate(P_all))
         self.PL = self._buffer('planes', PL)
         self.TC = self._buffer('tiles', np.concatenate(TC_all))

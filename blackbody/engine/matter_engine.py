@@ -3,11 +3,15 @@ rigid bodies (it meets the objects where they are at each of the frame's substep
 cached as its particles' 8-byte form, and drawn on the stage (stage.py)."""
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 from .matter import Matter
 from .matter_field import Fields, MatterField
 from .solver import pack_colliders
+
+COUPLE_STEPS = 4   # the matter's steps to a rigid-body step when they move together (_matter_couple)
 
 
 class MatterEngine:
@@ -44,7 +48,9 @@ class MatterEngine:
         """When there are things that fall: (longest step, fn) for the rigid bodies to step in lockstep with the matter
         through frame `frame` (Solids.advance), so the sand holds them up and they dent it. None otherwise."""
         m = self._matter
-        if m is None or not m.active or not self.solids.active or not self.solids.bodies:
+        if m is None or not m.active or not self.solids.active or not (self.solids.bodies or self.solids.sets):
+            return None
+        if not self.solids.bodies and not self._pieces_near(fdt):
             return None
         self._blast_matter(scene, frame)
         dt, _n = m.begin(fdt)
@@ -54,9 +60,30 @@ class MatterEngine:
 
         def fn(h, poses, f):
             cols = scene.colliders_gpu(frame - 1 + f, poses)
-            pushed = m.step(h, cols, atlas, lambda u, c: pack_colliders(u, c, meshes))
-            return {enabled[k]: v for k, v in pushed.items() if k < len(enabled)}
-        return dt, fn
+            pieces = (scene, self.solids.piece_poses()) if self.solids.sets else None
+            pushed = m.step(h, cols, atlas, lambda u, c, p=False: pack_colliders(u, c, meshes, pieces=p), pieces,
+                            substeps=max(1, int(math.ceil(h / dt - 1e-9))))
+            return {(enabled[k] if isinstance(k, int) else k): v for k, v in pushed.items()
+                    if not isinstance(k, int) or k < len(enabled)}
+        # (the bodies step a few of the matter's steps at a time: its push a fraction of a millisecond late, and the GPU
+        # waited on that many times less)
+        return dt * COUPLE_STEPS, fn
+
+    def _pieces_near(self, fdt):
+        """Whether any broken object's piece could reach the matter this frame (fdt seconds), at the speed it moves."""
+        m = self._matter
+        bounds = m.world_bounds() if m.count else None
+        if bounds is None:
+            return False
+        lo, hi = bounds
+        for pose in self.solids.piece_poses().values():
+            pos = np.asarray(pose['pos'], float).reshape(-1, 3)
+            if not len(pos):
+                continue
+            reach = 0.5 + np.linalg.norm(np.asarray(pose['vel'], float).reshape(-1, 3), axis=1) * fdt
+            if np.any(np.all((pos + reach[:, None] >= lo) & (pos - reach[:, None] <= hi), axis=1)):
+                return True
+        return False
 
     def _push_matter(self, liquid):
         """The liquid pushing the matter through this frame, as it was at the end of the last (the matter moves in

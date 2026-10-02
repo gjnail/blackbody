@@ -1,6 +1,7 @@
 // The pieces of broken objects (engine/fracture.py) in a simulation grid, one substep: the signed distance to the
 // nearest one is folded into the colliders' (sdf, cells, read and written in place), and the cells inside one (or
-// within half a cell of it) get its velocity there (svel; w = 1), which the boundary passes give the faces round it.
+// within half a cell of it) get its velocity there (svel; w = 1 + which piece it is in this substep's list: the
+// matter tells it what it pushed), which the boundary passes give the faces round it.
 // Pieces are convex: the distance is the largest of the distances to their planes (exact inside, a little short
 // outside near an edge). Each tile of the grid lists the pieces near it (bodyfield.py).
 //!include common.wgsl
@@ -39,6 +40,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let r = TC[u32(U.s.y) + ti];
   var best = 1.0e9;
   var vel = vec3<f32>(0.0);
+  var owner = 0u;
   for (var j = r.x; j < r.x + r.y; j++) {
     let k = u32(U.s.x) + TL[j];
     let P = PC[k];
@@ -54,10 +56,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (dist < best) {
       best = dist;
       vel = P.v.xyz + cross(P.o.xyz, w - P.a.xyz);
+      owner = TL[j];
     }
   }
   let base = textureLoad(sdf, c).x;
   let s = best / h;
   textureStore(sdf, c, vec4<f32>(min(base, s), 0.0, 0.0, 0.0));
-  textureStore(svel, c, select(vec4<f32>(0.0), vec4<f32>(vel, 1.0), s < 0.5));
+  textureStore(svel, c, select(vec4<f32>(0.0), vec4<f32>(vel, 1.0 + f32(owner)), s < 0.5));
 }

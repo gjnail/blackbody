@@ -399,3 +399,32 @@ def test_matter_fills_a_mesh(engine, tmp_path):
     x = m.read_particles()[:, :3] * m.dx + np.asarray(m.origin)
     assert abs(len(x) / (0.2 ** 3 / (m.dx / 2) ** 3) - 1.0) < 0.1          # eight particles to a cell of it
     assert np.allclose(x.min(0), (-0.1, 0.1, -0.1), atol=0.02) and np.allclose(x.max(0), (0.1, 0.3, 0.1), atol=0.02)
+
+
+# ---- broken objects' pieces (bodyfield.py on the matter's grid) ---------------------------------------------------------
+
+def test_a_breakable_dropped_on_sand_rests_on_it_and_dents_it(engine):
+    # (a breakable is its pieces, glued, from the start: they meet the sand as the falling objects do)
+    from blackbody.scene import components
+    sc = components.new_scene('fire', 'person')
+    sc.emitters = []
+    sc.add_matter(name='Sand bed', material='sand', shape='box', position=(0.0, 0.05, 0.0), size=(0.4, 0.05, 0.3))
+    sc.add_collider(name='Block', shape='box', position=(0.0, 0.45, 0.0), size=(0.08, 0.08, 0.08), dynamic=True,
+                    breakable=True, material='wood')
+    sc.data['domain'].update(size_x=1.0, size_y=0.8, size_z=0.8, resolution=32, preroll=0.0)
+    engine.prepare(sc, final=False)
+    engine.simulate_to(sc, sc.start, cache=False)
+    m = engine.matter
+    P0 = m.read_particles()[:, :3].copy()
+    engine.simulate_to(sc, sc.start + 30, cache=False)
+    ys = np.concatenate([np.asarray(p['pos'])[:, 1] for p in engine.solids.piece_poses().values()])
+    assert ys.min() > 0.09                                   # on the sand (10 cm deep), not through it to the ground
+    # dented: the top of the sand under it thrown out into a rim, the rest of the bed's top (away from its edges, which
+    # slump) as it was
+    x0 = P0 * m.dx + np.asarray(m.origin)
+    moved = np.linalg.norm(m.read_particles()[:len(P0), :3] - P0, axis=1) * m.dx
+    r = np.hypot(x0[:, 0], x0[:, 2])
+    top = x0[:, 1] > 0.08
+    under = top & (r < 0.05)
+    far = top & (r > 0.15) & (np.abs(x0[:, 0]) < 0.3) & (np.abs(x0[:, 2]) < 0.2)
+    assert moved[under].mean() > 0.02 and moved[far].mean() < 0.005
