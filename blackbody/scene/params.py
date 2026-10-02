@@ -856,7 +856,8 @@ FABRIC_PARAMS = [
     V('scale', 'Scale', (1.0, 1.0, 1.0), 0.01, 100.0, '', tip='Mesh: scale on each axis (1 = as modelled).', group='Shape', decimals=3),
     E('pins', 'Held by', 'top', (('top', 'Its top edge (a curtain)'), ('side', 'One side (a flag on a pole)'),
                                   ('top_corners', 'Its top corners (a banner)'), ('corners', 'Four corners (a canopy)'),
-                                  ('none', 'Nothing (it falls)')), group='Shape'),
+                                  ('edges', 'All its edges (a trampoline, a sheet laced into a frame)'), ('none', 'Nothing (it falls)')),
+      group='Shape'),
     F('release', 'Let go at', -1.0, -1.0, 1000.0, 's', 2, tip='Seconds from the first frame when the pins let go and the fabric falls '
       '(a curtain rod giving way). -1 never.', group='Shape'),
     I('detail', 'Detail', 48, 8, 200, tip='Cells across the panel\'s longer side. More gives finer folds and costs more.', group='Shape'),

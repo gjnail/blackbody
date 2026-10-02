@@ -67,8 +67,10 @@ fn mark(@builtin(global_invocation_id) id: vec3<u32>) {
   let t = thread(ci);
   if (t.w < 0.5 || t.y <= 0.0 || t.x <= t.y) { return; }
   let c = C[ci];
-  let a = atomicLoad(&TR[4u * c.x]);
-  let b = atomicLoad(&TR[4u * c.y]);
+  // (per constraint it still has: the vertex at a rip's tip has lost its threads to the torn one, and the pull of
+  // the rest makes it the one to go next, so the rip runs on as a slit, not a line of pinholes a vertex apart)
+  let a = f32(atomicLoad(&TR[4u * c.x])) / f32(max(atomicLoad(&TR[4u * c.x + 2u]), 1u));
+  let b = f32(atomicLoad(&TR[4u * c.y])) / f32(max(atomicLoad(&TR[4u * c.y + 2u]), 1u));
   atomicMax(&TR[4u * select(c.y, c.x, a >= b) + 1u], 1u);
 }
 

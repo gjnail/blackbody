@@ -287,6 +287,13 @@
   "blurb": "At dusk, lightning strikes a wooden post: three flashes down a branching channel light up the yard, and the post catches and burns. A light of the Lightning kind, and Spreading fire."
  },
  {
+  "key": "sheet_rip",
+  "name": "Ball through a sheet",
+  "category": "Things that fall",
+  "size": "2 m sheet",
+  "blurb": "A crate dropped onto a cotton sheet laced into a frame lands in it and rests, the sheet sagging under it. Then a steel ball dropped beside it rips a ragged hole: the crate tips in after it, both fall through, and the torn flaps hang down. Fabric held by all its edges, with Tears on; objects with Falls on."
+ },
+ {
   "key": "cart_jump",
   "name": "Cart off a ramp",
   "category": "Things that fall",
@@ -319,7 +326,7 @@
   "name": "Snowballs at a wall",
   "category": "Sand, snow and mud",
   "size": "18 cm snowballs",
-  "blurb": "Three snowballs of packing snow thrown one after another at a brick wall: each splats flat, packs where it hits, and breaks into lumps that fall to the ground. Matter in Packing snow, thrown."
+  "blurb": "Three snowballs of packing snow thrown one after another at a brick wall: each squashes where it hits and sticks to the bricks. Matter in Packing snow, thrown."
  },
  {
   "key": "jelly_ball",

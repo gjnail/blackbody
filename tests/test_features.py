@@ -460,6 +460,26 @@ def test_holdout_hides_the_fire_behind_it(engine):
     assert alphas[True][behind].max() < 0.05, 'the holdout hides the fire behind it'
 
 
+def test_an_objects_outline_is_its_own_whatever_the_fire_grid(engine):
+    # what hides the cloth and the fire behind an object (the surface mask) is its own silhouette, not a band round
+    # it as wide as a share of the fire grid's cell (a crate on a sheet with a halo of floor showing round it)
+    cover = {}
+    for res in (24, 96):
+        sc = presets.make('campfire')
+        sc.emitters = []
+        sc.data['embers']['enabled'] = False
+        sc.data['domain']['resolution'] = res
+        sc.colliders = [presets._col(sc, 0, shape='box', position=(0.0, 0.4, 0.0), size=(0.3, 0.3, 0.3), yaw=30.0),
+                        presets._col(sc, 1, shape='sphere', position=(0.6, 0.3, 0.2), size=(0.2, 0.2, 0.2))]
+        engine.invalidate()
+        engine.prepare(sc)
+        engine.simulate_to(sc, sc.start + 1, cache=False)
+        engine.render(sc, sc.start + 1, (256, 256), mode='fire')
+        cover[res] = float((engine.aovs()['mask'][..., 2].astype(np.float32) > 0.5).sum())
+    assert cover[96] > 500
+    assert abs(cover[24] - cover[96]) < 0.03 * cover[96], cover
+
+
 def test_fire_lights_the_ground_and_scorches_it(engine):
     sc = presets.make('grass_fire')
     sc.data['domain']['resolution'] = 64

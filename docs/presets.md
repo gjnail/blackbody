@@ -1,6 +1,6 @@
 # Presets
 
-Blackbody comes with 99 presets. Click one in the app's Effects panel to load it into your shot; every one is an ordinary scene you can change and save as your own. On the website the gallery plays a clip of each one that has one: <https://gjnail.github.io/blackbody/presets.html>.
+Blackbody comes with 100 presets. Click one in the app's Effects panel to load it into your shot; every one is an ordinary scene you can change and save as your own. On the website the gallery plays a clip of each one that has one: <https://gjnail.github.io/blackbody/presets.html>.
 
 ## Fire and smoke
 
@@ -53,6 +53,7 @@ Blackbody comes with 99 presets. Click one in the app's Effects panel to load it
 | <img src="../blackbody/assets/presets/window_smash.png" width="200" alt=""> | **Stone through a window**<br>1 m pane | A stone thrown through a pane of window glass held in its frame: it punches a hole, shards break away round it and fall, the rest stays in the frame. A breakable thin box of glass in Shards. |
 | <img src="../blackbody/assets/presets/vase_drop.png" width="200" alt=""> | **Vase off a table**<br>35 cm vase | A pottery vase knocked off the edge of a table: it tips, falls a metre, lands on its rim and shatters across the tiles. A breakable hollow cylinder of Ceramic. |
 | <img src="../blackbody/assets/presets/yard_blast.png" width="200" alt=""> | **Blast in a yard**<br>2 kg charge | Two kilograms of explosive go off among crates, barrels, a brick wall and a heap of sand: a fireball, the crates and barrels thrown clear, the wall blown down brick by brick, the sand flattened, then a column of smoke. An emitter with Blast set. |
+| <img src="../blackbody/assets/presets/sheet_rip.png" width="200" alt=""> | **Ball through a sheet**<br>2 m sheet | A crate dropped onto a cotton sheet laced into a frame lands in it and rests, the sheet sagging under it. Then a steel ball dropped beside it rips a ragged hole: the crate tips in after it, both fall through, and the torn flaps hang down. Fabric held by all its edges, with Tears on; objects with Falls on. |
 | <img src="../blackbody/assets/presets/cart_jump.png" width="200" alt=""> | **Cart off a ramp**<br>1 m cart, 6 m run | A cart with a fire on its back, its four wheels turned by motors, races up a ramp, jumps off its end and bowls over a tower of blocks, trailing flame and smoke, and brakes into a barrier. Motors on hinges (Joint › Motor speed, keyed down to brake), a tilted plank (Shape › Roll) and a fire attached to the cart. |
 | <img src="../blackbody/assets/presets/shed_fire.png" width="200" alt=""> | **Shed on fire**<br>2 m wooden shed | A fire inside a wooden shed: its walls and posts catch, char and weaken until the posts burn through, the roof falls in and the walls break up, the burnt pieces smouldering and crumbling to ash. Objects that are both Breakable and Burnable burn piece by piece. |
 
@@ -61,7 +62,7 @@ Blackbody comes with 99 presets. Click one in the app's Effects panel to load it
 | | Preset | Notes |
 |---|---|---|
 | <img src="../blackbody/assets/presets/sand_hopper.png" width="200" alt=""> | **Sand from a hopper**<br>40 cm hopper | Forty litres of dry sand run out through a hole in the bottom of a hopper on legs and build a heap at its angle of repose round the legs. Matter in Sand, filling a hollow box with an opening in its floor. |
-| <img src="../blackbody/assets/presets/snowballs.png" width="200" alt=""> | **Snowballs at a wall**<br>18 cm snowballs | Three snowballs of packing snow thrown one after another at a brick wall: each splats flat, packs where it hits, and breaks into lumps that fall to the ground. Matter in Packing snow, thrown. |
+| <img src="../blackbody/assets/presets/snowballs.png" width="200" alt=""> | **Snowballs at a wall**<br>18 cm snowballs | Three snowballs of packing snow thrown one after another at a brick wall: each squashes where it hits and sticks to the bricks. Matter in Packing snow, thrown. |
 | <img src="../blackbody/assets/presets/jelly_ball.png" width="200" alt=""> | **Ball dropped on jelly**<br>34 cm block | A 7 kg steel ball dropped onto a block of jelly: the jelly squashes deep, throws the ball back up and wobbles. Matter in Jelly and an object that falls, pushing each other. |
 | <img src="../blackbody/assets/presets/mud_drag.png" width="200" alt=""> | **Crate through mud**<br>1.6 m of mud | A crate dragged through a bed of thick mud: it ploughs a trench, pushes up a bow wave that slumps back, and leaves ridges. Matter in Mud, and an object moved by its keys. |
 | <img src="../blackbody/assets/presets/sand_castle.png" width="200" alt=""> | **Sand castle and a wave**<br>32 cm castle | A wall of water let go at a castle of damp sand: the wave breaks over it and the castle stands, then the water soaks into it, undermines it and slumps it into a mound that the sloshing water carries. Matter in Wet sand and a block of water in a closed box. |

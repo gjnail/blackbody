@@ -866,6 +866,32 @@ PRESETS = {
         'matter': [dict(name='Molten iron', material='molten_iron', pours=True, position=(-0.13, 0.46, 0.0),
                         size=(0.014, 0.014, 0.014), velocity=(0.45, 0.0, 0.0), rate=0.6, pour_start=0.2, pour_stop=3.7)],
     },
+    'sheet_rip': {
+        'name': 'Ball through a sheet', 'category': 'Things that fall', 'size': '2 m sheet',
+        'blurb': 'A crate dropped onto a cotton sheet laced into a frame lands in it and rests, the sheet sagging under it. '
+                 'Then a steel ball dropped beside it rips a ragged hole: the crate tips in after it, both fall through, '
+                 'and the torn flaps hang down. Fabric held by all its edges, with Tears on; objects with Falls on.',
+        'render': {'end': 120},
+        'domain': {'size_x': 4.0, 'size_y': 4.4, 'size_z': 4.0, 'resolution': 48, 'preroll': 0.0},
+        'composite': {'backdrop': 'stage', 'floor': 'concrete'},
+        'lighting': {'sun_on': True, 'sun_intensity': 3.0, 'sun_elevation': 45.0, 'sun_azimuth': -130.0, 'ambient_intensity': 2.5},
+        'camera': {'distance': 4.5, 'target_y': 1.15, 'pitch': 27, 'yaw': 30, 'focal_mm': 35},
+        'emitters': [],
+        'colliders': [
+            *[dict(name=f'Post {k + 1}', shape='box', position=(sx * 1.08, 0.62, sz * 1.08), size=(0.05, 0.62, 0.05),
+                   material='wood') for k, (sx, sz) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))],
+            *[dict(name=f'Rail {k + 1}', shape='box', position=(sx * 1.06, 1.2, 0.0), size=(0.04, 0.04, 1.04), material='wood')
+              for k, sx in enumerate((-1, 1))],
+            *[dict(name=f'Rail {k + 3}', shape='box', position=(0.0, 1.2, sz * 1.06), size=(1.04, 0.04, 0.04), material='wood')
+              for k, sz in enumerate((-1, 1))],
+            dict(name='Crate', shape='box', position=(-0.38, 1.7, 0.22), size=(0.18, 0.18, 0.18), yaw=25.0, dynamic=True,
+                 material='wood', density=300.0, friction=0.8, bounce=0.05, release=0.2),
+            dict(name='Steel ball', shape='sphere', position=(0.12, 2.7, -0.08), size=(0.24, 0.24, 0.24), dynamic=True,
+                 material='steel', release=1.6),
+        ],
+        'fabrics': [dict(name='Sheet', position=(0.0, 1.2, 0.0), width=2.0, height=2.0, orientation='lying', pins='edges',
+                         material='cotton', colour=(0.82, 0.8, 0.74), detail=96, tears=True, tear_strength=1.2)],
+    },
     'sand_sling': {
         'name': 'Sand into a sling', 'category': 'Sand, snow and mud', 'size': '90 cm sheet',
         'blurb': 'Sand poured onto a cotton sheet tied to four posts: it heaps in the dip it makes, the sheet sagging '
@@ -1171,7 +1197,7 @@ ORDER = ['campfire', 'bonfire', 'torch', 'candle', 'gas_ring', 'pool_fire', 'fir
          'curtain_fire', 'fabric_curtain', 'wet_towels', 'armchair_fire', 'room_fire', 'backdraft', 'flash_fire', 'gas_cloud', 'coloured_flames', 'road_flare',
          'grinder_sparks', 'fireworks', 'car_through_smoke', 'flag_wind', 'kettle_steam', 'steam_vent',
          'crates_in_fire', 'tower_knockdown', 'wall_smash', 'wrecking_ball', 'window_smash', 'vase_drop',
-         'yard_blast', 'lightning_strike', 'cart_jump', 'meadow_fire', 'shed_fire', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag', 'sand_castle', 'sand_sling', 'iron_pour', 'chocolate_fire', 'chocolate_pan']
+         'yard_blast', 'lightning_strike', 'sheet_rip', 'cart_jump', 'meadow_fire', 'shed_fire', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag', 'sand_castle', 'sand_sling', 'iron_pour', 'chocolate_fire', 'chocolate_pan']
 
 
 def make(name: str, fps=None, start=None) -> Scene:

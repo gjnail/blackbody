@@ -109,7 +109,7 @@ def fabric_lines(sc, i, frame):
         top = c[2:4]
     out = [p + _rot_y(c, yaw)]
     pins = {'top': [top], 'side': [np.array([c[0], c[3]])], 'top_corners': [top[:1], top[1:]],
-            'corners': [c[k:k + 1] for k in range(4)]}.get(f['pins'], [])
+            'corners': [c[k:k + 1] for k in range(4)], 'edges': [c[k:k + 2] for k in range(4)]}.get(f['pins'], [])
     for seg in pins:
         for q in seg:
             out.append(p + _rot_y(np.array([q + [0, 0.04, 0], q - [0, 0.04, 0]]), yaw))

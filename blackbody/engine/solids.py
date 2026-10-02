@@ -128,6 +128,8 @@ class Body:
 CLOTH_HZ = 12.0         # a thing lying on cloth springs on it at about this rate (contact stiffness from its mass):
                         # it sinks g / (2 pi f)^2 = 1.7 mm into its margin
 CLOTH_DAMPING = 0.7     # and damped this much of critically, for a thing that does not bounce (by its own bounce, less)
+CLOTH_HOLD = 100.0      # N: the most a vertex of cloth pushes back (fabric's strength, at a couple of centimetres
+                        # between vertices: a sheet cannot stop a wrecking ball, whatever the contact's stiffness)
 CLOTH_MARGIN = 0.006    # m: how close to a thing's surface a vertex of cloth holds it off (resting, it stays further off
                         # than the cloth's own thickness, or the cloth, pushed out of it each step, would let it sink)
 MORTAR = 0.3e6          # Pa: mortar in tension, the glue between the bricks of a wall
@@ -1722,7 +1724,7 @@ class Solids:
         # ball bounces on a sheet, a crate settles
         e = math.log(min(max(float(bd.bounce), 0.01), 0.99))
         zeta = min(CLOTH_DAMPING, -e / math.sqrt(math.pi * math.pi + e * e))
-        push = np.maximum(mass * w * w * pen[on] + 2.0 * zeta * mass * w * vn, 0.0) / n
+        push = np.minimum(np.maximum(mass * w * w * pen[on] + 2.0 * zeta * mass * w * vn, 0.0) / n, CLOTH_HOLD)
         F = -nw * push[:, None]
         vt = rel - vn[:, None] * nw
         lt = np.linalg.norm(vt, axis=1)

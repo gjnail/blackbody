@@ -461,9 +461,30 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       let pl = U.org.xyz + (ro + rd * t) * h;
       let dh = holdout_sdf(pl);
       if (dh.x < 0.3 * h) {
-        t_obj = t;
-        hit = i32(dh.y);
-        break;
+        let k = U.col[i32(dh.y)];
+        if (k.a.w > 2.5 || k.x.w > 0.0 || all(k.y.xyz > vec3<f32>(0.0))) {
+          t_obj = t;
+          hit = i32(dh.y);
+          break;
+        }
+        // a plain sphere, box or cylinder: on onto its surface itself, so that what is behind its edge (cloth, the
+        // footage) is hidden to its silhouette and not in a band 0.3 cells round it; a ray only passing near goes on
+        var tt = t;
+        var dd = dh.x;
+        var on = true;
+        for (var j = 0; j < 24; j++) {
+          if (dd < 1.0e-3) { break; }
+          let q = col_sdf(k, U.org.xyz + (ro + rd * (tt + dd / h)) * h);
+          if (q >= dd) { on = false; break; }
+          tt += dd / h;
+          dd = q;
+        }
+        if (on) {
+          t_obj = tt;
+          hit = i32(dh.y);
+          break;
+        }
+        t = tt;
       }
       t += max(dh.x / h, 0.25);
       if (t > far) { break; }

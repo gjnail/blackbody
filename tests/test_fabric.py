@@ -496,3 +496,19 @@ def test_a_crate_dropped_onto_a_sheet_tied_at_its_corners_rests_in_it(engine):
     X = engine.cloth.positions()[0]
     assert 0.35 < bottom < 0.5                          # in the sheet, not through it to the ground
     assert X[:, 1].min() < 0.47                         # which sags under it
+
+
+def test_a_sheet_laced_into_a_frame_holds_a_crate_and_a_steel_ball_rips_through_it(engine):
+    m = C.panel_mesh(C.FabricSpec(width=1.0, height=1.0, detail=10, orientation='lying', pins='edges'))
+    assert m.pinned.sum() == 40                          # every vertex round its edges, and none inside
+    sc = presets.make('sheet_rip')                       # (a crate dropped at 0.2 s, a steel ball at 1.6 s)
+    engine.invalidate()
+    engine.prepare(sc, final=False)
+    engine.simulate_to(sc, sc.start + 36, cache=False)
+    torn = lambda: int((engine.cloth.state()[:, 2] < -0.5).sum())
+    crate = engine.solids.overrides()[8]['pos'][1] - 0.18
+    assert torn() == 0                                   # the crate landed in it and it held, whole
+    assert 0.9 < crate < 1.18                            # sagging under it (laced in at 1.2 m)
+    engine.simulate_to(sc, sc.start + 84, cache=False)
+    assert torn() > 30                                   # the ball ripped a hole
+    assert engine.solids.overrides()[9]['pos'][1] < 0.6  # and went through it to the ground

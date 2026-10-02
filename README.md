@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Fire, water, cloth, destruction, sand and weather, simulated on your GPU and put into your footage.</b><br>
-  Build an effect from nothing or start from one of 99 presets, line it up with your shot, and render a finished composite or the passes your compositor wants.
+  Build an effect from nothing or start from one of 100 presets, line it up with your shot, and render a finished composite or the passes your compositor wants.
 </p>
 
 <p align="center">
@@ -63,11 +63,15 @@ Each fire is measured against real ones: its flame height, its gas speed, and th
 
 <img src="docs/media/gif/coloured_flames.gif" width="49%" alt="Copper green, strontium red and sodium orange flames"> <img src="docs/media/gif/grinder_sparks.gif" width="49%" alt="Angle-grinder sparks bouncing off the floor">
 
-### Burning fabric
+### Fabric
 
 <img src="docs/media/gif/fabric_curtain.gif" width="49%" alt="A cotton curtain catching at the hem and burning through"> <img src="docs/media/gif/wet_towels.gif" width="49%" alt="A dry towel burning while a soaked one steams">
 
-Curtains, flags and towels are made from real fabrics with their measured weight, stretch and stiffness. They blow in the fire's own air and catch at their ignition temperature. They then burn the way cloth does: toasting, a glowing line, char, and holes that spread. Wet cloth holds at 100 °C and steams until it dries. Cloth can tear, ripping where something swings through it or loads it too hard, and things that fall land on it and rest in it: a crate dropped onto a sheet tied at its corners sags it and stays there. [The fabric guide](docs/fabric.md)
+Curtains, flags and towels are made from real fabrics with their measured weight, stretch and stiffness. They blow in the fire's own air and catch at their ignition temperature. They then burn the way cloth does: toasting, a glowing line, char, and holes that spread. Wet cloth holds at 100 °C and steams until it dries. [The fabric guide](docs/fabric.md)
+
+<img src="docs/media/gif/sheet_rip.gif" width="49%" alt="A crate resting in a sheet laced into a frame; a steel ball dropped beside it rips a ragged hole and both fall through"> <img src="docs/media/gif/sand_sling.gif" width="49%" alt="Sand poured onto a cotton sheet tied to four posts, heaping in the dip it makes">
+
+Cloth holds what lands on it, and tears when it cannot. Things that fall come to rest in it: a crate dropped onto a sheet laced into a frame sinks in and stays there, the sheet sagging under it. Sand poured onto a sheet tied to four posts heaps in the dip it makes, and not a grain gets through. With *Tears* on, cloth rips where its threads are pulled past their breaking stretch, as each fabric really does (canvas and nylon ripstop hold out longest, chiffon and linen give soonest). A steel ball dropped beside the crate stretches the sheet into a cone and tears a ragged hole; the crate goes in after it and the torn flaps hang down. The rip runs on from where it starts as a slit, a thread at a time, the way a snag in a sheet does. Fabric can hang from its top edge, one side or its corners, or be held all round its edges, like a trampoline. [Tearing](docs/fabric.md#tearing) · [Things that fall on it](docs/fabric.md#things-that-fall)
 
 ### Things that fall, break and swing
 
@@ -78,6 +82,10 @@ Any object can fall: it tumbles, slides, bounces, stacks and knocks things over,
 <img src="docs/media/gif/wrecking_ball.gif" width="49%" alt="A wrecking ball on a crane's cable swinging through a brick wall"> <img src="docs/media/gif/window_smash.gif" width="49%" alt="A stone thrown through a window, shards breaking away and falling">
 
 Objects hang on ropes, steel cables, springs, hinges and ball joints, from a fixed point or from another object: a wrecking ball on a crane, a door on its hinges, a lamp swaying on its flex, a seesaw. Ropes go slack and are caught with a jolt, and they snap past their strength. Without footage, everything is drawn in CG on a stage, a floor out to the horizon lit by the fire. In your footage it goes in with its shadows on the real ground.
+
+<img src="docs/media/img/lume-classic.jpg" width="49%" alt="A wooden shed with a fire inside, lit by the classic engine: its inner walls flat brown"> <img src="docs/media/img/lume-path.jpg" width="49%" alt="The same shed path traced with Lume: the fire's light on its inner walls and floor, bounced round inside it">
+
+The stage can be path traced with **Lume** (left: the classic engine, right: Lume). Light bounces from surface to surface, so a fire inside a shed lights its walls and the light they throw back fills it. Each fire light, glowing patch of hot metal and lamp casts its own shadow, as soft as the light is big, through the objects and the smoke. An HDRI's sun casts sharp shadows, and glass, ice and jelly bend and tint what is seen through them. Measured against a research path tracer on test scenes, its mean brightness is within about 1%. [Lume lighting](docs/lume.md)
 
 <img src="docs/media/gif/cart_jump.gif" width="49%" alt="A burning motor cart racing up a ramp, jumping and crashing through a tower of blocks">
 
@@ -93,7 +101,11 @@ A source's **Blast** is an explosive charge, in kilograms of TNT. When it goes o
 
 <img src="docs/media/gif/sand_hopper.gif" width="49%" alt="Sand running out of a hopper on legs and heaping up round them"> <img src="docs/media/gif/jelly_ball.gif" width="49%" alt="A steel ball dropped onto a block of red jelly, thrown back up">
 
-Sand pours and piles at its angle of repose, wet sand holds a cut edge, snow packs into snowballs that stick where they are thrown, mud slumps and flows until it is thin enough to stop, jelly wobbles and springs back, and clay squashes and stays squashed. Each is hundreds of thousands of particles that remember how they have been squeezed (the material point method, on the GPU). Things that fall land on it or sink into it, objects plough through it, and cloth catches it (a sheet held at its corners sags under the sand poured onto it) or drapes over it. Water gets into sand and carries it off (a pour digs a gully down a heap, and a sand castle the water reaches soaks through and slumps), and snow melts where flames touch it or where it lies on anything warmer than freezing. Wax, chocolate and metal melt in the fire or on a hot pan and set again as they cool, and molten iron glows and lights the floor round it. Dry leaves, sawdust and coal catch fire, feed it, and burn down to ash. [The guide](docs/matter.md)
+Sand pours and piles at its angle of repose, wet sand holds a cut edge, mud slumps and flows until it is thin enough to stop, jelly wobbles and springs back, and clay squashes and stays squashed. Each is hundreds of thousands of particles that remember how they have been squeezed (the material point method, on the GPU). Things that fall land on it or sink into it, objects plough through it, and cloth catches it (a sheet held at its corners sags under the sand poured onto it) or drapes over it. Water gets into sand and carries it off: a pour digs a gully down a heap, and a sand castle the water reaches soaks through and slumps. [The guide](docs/matter.md)
+
+<img src="docs/media/gif/snowballs.gif" width="49%" alt="Snowballs of packing snow thrown at a brick wall, squashing where they hit and sticking to it"> <img src="docs/media/gif/chocolate_pan.gif" width="49%" alt="Squares of chocolate in a hot steel pan melting into glossy pools that run together">
+
+Snow, mud, clay and wet sand stick to what they touch, each as hard as it really does: a snowball of packing snow thrown at a brick wall squashes where it hits and stays there, powder snow slides off, mud clings to a crate dragged through it, and dry sand does not stick at all. Heat passes where things touch, as fast as the two materials pass it on: squares of chocolate in a 180 °C steel pan melt from the bottom, slump into glossy pools and run together, more slowly on a wooden board as hot, and snow melts from below where it lies on anything warmer than freezing, as well as wherever flames touch it. Wax, chocolate and metal melt in the fire too and set again as they cool, and molten iron glows and lights the floor round it. Dry leaves, sawdust and coal catch fire, feed it, and burn down to ash. [Things that melt](docs/matter.md#things-that-melt)
 
 ### Grass and plants
 
@@ -157,7 +169,7 @@ Blackbody opens in **Build**: an empty stage with a camera of your own. Put in o
 
 - **Animate it.** Click the ◆ next to a setting to keyframe it. The animation editor lists every animated setting with its keys, and the timeline shows each source's start and stop, each cloth's let-go time and each pour as bars you drag.
 - **Layers and roto.** Layers put several effects in one shot, such as a campfire in front and a waterfall behind, each its own simulation, composited back to front. Roto shapes drawn round what is in front of the effect, and keyed over the shot, put the effect behind them.
-- **Start from an effect.** The Effects tab has 99 presets, from a candle to a thunderstorm, sorted into fire, liquids, fabric, the sea, smoke, blasts, ice, weather, falling and breaking, and sand, snow and mud. Click one and it simulates live.
+- **Start from an effect.** The Effects tab has 100 presets, from a candle to a thunderstorm, sorted into fire, liquids, fabric, the sea, smoke, blasts, ice, weather, falling and breaking, and sand, snow and mud. Click one and it simulates live.
 
 <img src="docs/media/gif/ui-effects.gif" width="100%" alt="The Effects tab: the Falling and breaking chip and the wrecking ball, the Sand chip and the hopper, the Fire chip and the campfire">
 

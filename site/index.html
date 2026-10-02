@@ -161,19 +161,22 @@
       <div class="feature-media">{{video|fabric_curtain||Burning curtain}}</div>
       <div>
         <p class="kicker">Fabric</p>
-        <h3 style="font-size:38px">Cloth that hangs, blows, soaks and burns</h3>
-        <p>Curtains, flags, towels and any mesh, made from ten real fabrics with their measured weight, stretch and stiffness. Cloth blows in the fire's own air. It catches at its ignition temperature and burns the way real cloth does: a halo of toasting, a glowing line, then char and holes that spread until it falls apart.</p>
+        <h3 style="font-size:38px">Cloth that hangs, blows, holds, tears and burns</h3>
+        <p>Curtains, flags, towels and any mesh, made from ten real fabrics with their measured weight, stretch and stiffness. Cloth blows in the fire's own air. It catches at its ignition temperature and burns the way real cloth does: a halo of toasting, a glowing line, then char and holes that spread until it falls apart. It holds what lands on it, and tears when it cannot: a crate dropped onto a sheet laced into a frame rests in it, and a steel ball dropped beside it rips a ragged hole that the crate falls through after it.</p>
         <ul>
           <li>Soaks and drips in water. Wet cloth holds at 100 °C and steams in the heat</li>
-          <li>Tears where it is pulled too far: a box swung through a sheet rips a ragged hole</li>
-          <li>Holds what falls on it: a crate dropped onto a sheet tied at its corners rests in it</li>
+          <li>Tears where its threads are pulled past their breaking stretch, as each fabric does: the rip runs on as a ragged slit</li>
+          <li>Holds what falls on it: crates rest in a sheet, and sand poured onto one heaps in the dip it makes</li>
+          <li>Hangs from its top edge, a side or its corners, or is held all round its edges like a trampoline</li>
           <li>Casts shadows on the smoke, the ground and your footage</li>
           <li>Exports as meshes (OBJ or USD) with the burnt holes cut out</li>
         </ul>
         <a class="more" href="fabric.html">The fabric guide →</a>
       </div>
     </div>
-    <div class="clips two">
+    <div class="clips four">
+      <div class="clip">{{video|sheet_rip||Ball through a sheet}}</div>
+      <div class="clip">{{video|sand_sling||Sand into a sling}}</div>
       <div class="clip">{{video|wet_towels||Wet and dry towels}}</div>
       <div class="clip">{{video|flag_wind||Flag in smoky wind}}</div>
     </div>
@@ -234,6 +237,21 @@
       <div class="clip">{{video|crates_in_fire||Crates into a fire}}</div>
       <div class="clip">{{video|vase_drop||Vase off a table}}</div>
     </div>
+    <div class="feature" style="margin-top:44px">
+      <div class="compare" aria-label="Classic and Lume lighting: drag to compare">
+        <img src="media/img/lume-classic.jpg" alt="A wooden shed with a fire inside, lit by the classic engine: its inner walls flat brown" width="1280" height="720" loading="lazy">
+        <div class="after"><img src="media/img/lume-path.jpg" alt="The same shed path traced with Lume: the fire's light on its inner walls and floor" width="1280" height="720" loading="lazy"></div>
+        <div class="handle" aria-hidden="true"></div>
+        <span class="tag l">Classic</span><span class="tag r">Lume</span>
+        <input type="range" min="0" max="100" value="50" aria-label="Drag to compare classic and Lume lighting">
+      </div>
+      <div>
+        <p class="kicker">Lume lighting</p>
+        <h3>A path-traced stage</h3>
+        <p>Turn on Lume and the set drawn in CG is path traced: light bounces from surface to surface, so a fire inside a shed lights its walls and the light they throw back fills it. Every fire light, glowing patch of hot metal and lamp casts its own shadow, as soft as the light is big, through the objects and the smoke. An HDRI's sun casts sharp shadows, and glass, ice and jelly bend and tint what is seen through them. Measured against a research path tracer on test scenes, its mean brightness is within about 1%, and the viewer sharpens over a few seconds once you stop.</p>
+        <a class="more" href="lume.html">Lume lighting →</a>
+      </div>
+    </div>
   </section>
 
   <!-- sand, snow and mud -->
@@ -249,8 +267,9 @@
           <li>Bodies of it, or streams poured from a nozzle</li>
           <li>Two-way with falling objects: a crate rests on sand where a steel ball sinks in</li>
           <li>Two-way with water: sand gets damp, soaks through and is carried off</li>
-          <li>Heat: wax, chocolate and metal melt in the fire or on a hot pan and set again; hot metal glows</li>
-          <li>Sticky: snow, mud and clay hold on to the walls and objects they hit</li>
+          <li>Heat by touch: chocolate melts in a hot steel pan in moments and on a wooden board more slowly; snow melts on anything warmer than freezing</li>
+          <li>Heat from the fire: wax, chocolate and metal melt and set again as they cool; hot metal glows and lights the floor</li>
+          <li>Sticky: packing snow thrown at a wall stays on it, mud clings to a crate, dry sand runs off</li>
           <li>Fire: dry leaves, sawdust and coal catch, feed the flames and burn down to ash</li>
           <li>Cloth: a sheet catches sand poured onto it and sags, or drapes over a heap</li>
           <li>Drawn in CG: glinting grains, snow that lets the light in, clear jelly</li>
@@ -258,7 +277,9 @@
         <a class="more" href="matter.html">The guide →</a>
       </div>
     </div>
-    <div class="clips four">
+    <div class="clips">
+      <div class="clip">{{video|snowballs||Snowballs that stick}}</div>
+      <div class="clip">{{video|chocolate_pan||Chocolate in a hot pan}}</div>
       <div class="clip">{{video|sand_castle||Sand castle and a wave}}</div>
       <div class="clip">{{video|jelly_ball||Ball dropped on jelly}}</div>
       <div class="clip">{{video|iron_pour||Pouring molten iron}}</div>

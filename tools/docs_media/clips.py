@@ -69,6 +69,7 @@ CLIPS = {
     'crates_in_fire': clip('crates_in_fire', 0.0, 144, dyaw=6.0, set={'composite': LIT}),
     'wall_smash': clip('wall_smash', 0.0, 72, dyaw=8.0, push=0.06),
     'wrecking_ball': clip('wrecking_ball', 0.0, 96, dyaw=6.0, push=0.05),
+    'sheet_rip': clip('sheet_rip', 0.0, 108, dyaw=6.0, push=0.05),     # the crate rests by 1 s, the ball rips through at 2.2 s
     'yard_blast': clip('yard_blast', 0.0, 96, dyaw=6.0, push=0.05),
     'cart_jump': clip('cart_jump', 0.4, 100, dyaw=4.0, push=0.04),   # the action runs 0.5-4.5 s
     'meadow_fire': clip('meadow_fire', 0.5, 168, dyaw=4.0, push=0.04),   # the front crosses the field in about 8 s

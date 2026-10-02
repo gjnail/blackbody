@@ -108,9 +108,14 @@ Notable changes to Blackbody. The format follows
 - Snow, mud, clay and wet sand stick to the objects they touch, each as hard as it really does: a packing-snow ball
   thrown at a wall stays on it, powder snow slides off, dry sand does not stick.
 - Things that fall land on cloth and rest in it, and the cloth carries their weight: a crate dropped onto a sheet tied
-  at its corners sags it and stays there.
+  at its corners sags it and stays there. Each vertex of cloth pushes back with at most 100 N, so a sheet cannot stop
+  a wrecking ball however hard it is hit.
 - Cloth that tears (Fabric › Tears, Tear strength): it rips where it is pulled too far, caught on something moving
-  through it or overloaded, the rip running on from where it starts.
+  through it or overloaded, the rip running on from where it starts as a ragged slit (the vertex at its tip goes
+  next, judged by the pull on the threads it has left).
+- Fabric held by all its edges (Held by › All its edges): a trampoline, a sheet laced into a frame. Preset: Ball
+  through a sheet (a crate rests in a sheet laced into a frame; a steel ball dropped beside it rips through, and the
+  crate falls in after it).
 - Cloth and sand, snow, mud, jelly and clay meet: matter cannot pass through fabric, from either side. Sand poured onto
   a sling heaps in it and weighs it down, and a sheet dropped onto a heap drapes over it and leaves it standing.
   Preset: Sand into a sling.
@@ -187,6 +192,13 @@ Notable changes to Blackbody. The format follows
 - Contributor guide, code of conduct, security policy, issue and pull request
   templates, and CI that checks Windows, macOS and Linux.
 - Ko-fi links in the README and on the website.
+
+### Fixed
+
+- An object's outline in the fire render is its own silhouette: rays that only passed within a third of a fire-grid
+  cell of a ball, box or cylinder counted as hitting it, so the cloth behind it was hidden in a band round it (a
+  crate on a sheet showed a halo of floor) and the fire stopped short of its edges. They now go on to its surface,
+  or past it.
 
 ## [1.0.0] - 2026-09-30
 

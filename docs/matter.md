@@ -51,6 +51,8 @@ Right-click one in the viewer for *Made of*, *Let go at this frame*, *Pour it fr
 
 ![Sand into a sling](media/gif/sand_sling.gif "Sand into a sling: sand poured onto a cotton sheet tied to four posts heaps in the dip it makes, the sheet sagging under its weight.")
 
+![Snowballs at a wall](media/gif/snowballs.gif "Snowballs at a wall: three snowballs of packing snow thrown at a brick wall squash where they hit and stick to the bricks.")
+
 It is solid to the smoke and the water: smoke blown at a heap of sand goes round and over it, water poured on it runs off it and pools at its foot, and a pour pushes the air aside as it falls.
 
 Sand gets wet. Dry sand the water touches is damp after half a second: darker and glossier, its grains held together by the water between them, so it stands steeper and holds a cut edge. The water seeps on into damp sand, a couple of centimetres a second, and sand it soaks through lets go: its grains part. A sand castle the water reaches stands at first, then is undermined, slumps into a mound and is carried by the flow. Away from the water, soaked sand drains back to damp in a few seconds.

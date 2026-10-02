@@ -1,6 +1,6 @@
 # Fabric and burning cloth
 
-*+ Fabric* (in the Outliner) adds cloth: a curtain, a flag, a banner, a sheet that falls, or any mesh (a garment, a tablecloth modelled over its table, a tarp). It hangs from what holds it (*Held by*: its top edge, one side, its top corners, four corners, or nothing), drapes over colliders and the ground, folds onto itself without passing through, and blows in the fire's own air and the wind, slowing the air it hangs in. Keyframe its *Position* to move what holds it (a curtain being drawn, a flag carried); *Let go at* drops it. A scene holds up to 16 fabrics, in fire, liquid and fire-and-liquid scenes alike. However fine its *Detail*, hanging cloth does not stretch past its length and a stiff fabric drapes as stiffly as it is measured to.
+*+ Fabric* (in the Outliner) adds cloth: a curtain, a flag, a banner, a sheet that falls, or any mesh (a garment, a tablecloth modelled over its table, a tarp). It hangs from what holds it (*Held by*: its top edge, one side, its top corners, four corners, all its edges like a trampoline or a sheet laced into a frame, or nothing), drapes over colliders and the ground, folds onto itself without passing through, and blows in the fire's own air and the wind, slowing the air it hangs in. Keyframe its *Position* to move what holds it (a curtain being drawn, a flag carried); *Let go at* drops it. A scene holds up to 16 fabrics, in fire, liquid and fire-and-liquid scenes alike. However fine its *Detail*, hanging cloth does not stretch past its length and a stiff fabric drapes as stiffly as it is measured to.
 
 ![Burning curtain](media/gif/fabric_curtain.gif "Burning curtain: a lighter at the hem of a cotton curtain; the flame climbs it, chars it and burns through.")
 
@@ -14,7 +14,9 @@
 
 ## Tearing
 
-*Tears* (off unless you turn it on) lets the cloth rip where it is pulled too far: caught on something moving through it (a box swung through a hanging sheet punches a ragged hole and goes on) or overloaded (a weak sling heaped with sand splits and the sand pours out). The rip runs on from where it starts, a stitch at a time. *Tear strength* scales how far its threads stretch before they break: canvas, wool, polyester and nylon ripstop hold out longest, chiffon and linen give soonest. At 1, a cotton sheet holds ten litres of sand heaped on it, and a flag does not tear in a gale.
+*Tears* (off unless you turn it on) lets the cloth rip where it is pulled too far: caught on something moving through it (a box swung through a hanging sheet punches a ragged hole and goes on; a steel ball dropped onto a sheet laced into a frame stretches it into a cone and tears through) or overloaded (a weak sling heaped with sand splits and the sand pours out). The rip runs on from where it starts as a ragged slit, a stitch at a time, the stitch at its tip going next, and the torn flaps hang down. *Tear strength* scales how far its threads stretch before they break: canvas, wool, polyester and nylon ripstop hold out longest, chiffon and linen give soonest. At 1, a cotton sheet holds ten litres of sand heaped on it, and a flag does not tear in a gale.
+
+![Ball through a sheet](media/gif/sheet_rip.gif "Ball through a sheet: a crate dropped onto a cotton sheet laced into a frame rests in it; a steel ball dropped beside it rips a ragged hole, and the crate falls in after it.")
 
 ## Burning
 
@@ -32,7 +34,7 @@ It casts shadows, and is shadowed: it shades the smoke behind it, other cloth an
 
 ## Things that fall
 
-Things that fall land on fabric and rest in it: a crate dropped onto a sheet tied at its corners sags it and stays there, and the cloth carries its weight. They come to rest rather than bounce back up. See [Things that fall](physics.md#what-moves-them).
+Things that fall land on fabric and rest in it: a crate dropped onto a sheet tied at its corners or laced into a frame sags it and stays there, and the cloth carries its weight. They come to rest rather than bounce back up. Each vertex pushes back with at most 100 N, about what a couple of centimetres of real fabric holds, so a heavy thing hitting cloth hard goes on through it (and with *Tears* on, rips it). See [Things that fall](physics.md#what-moves-them).
 
 ## Sand, snow and mud
 

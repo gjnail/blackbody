@@ -142,7 +142,7 @@ class FabricSpec:
     fullness: float = 1.0           # panel, hanging: how gathered it is (cloth width over the width it hangs across)
     detail: int = 48                # cells across the panel's longer side
     orientation: str = 'hanging'    # panel: 'hanging' (upright, facing z) or 'lying' (flat)
-    pins: str = 'top'               # 'top', 'side', 'top_corners', 'corners', 'none'
+    pins: str = 'top'               # 'top', 'side', 'top_corners', 'corners', 'edges', 'none'
     pin_rows: int = 1
     material: str = 'cotton'
     stiffness: float = 1.0          # multipliers on the material
@@ -271,8 +271,10 @@ def panel_mesh(spec: FabricSpec) -> FabricMesh:
     top = j >= nv - (rows - 1)
     side = i <= rows - 1
     corner = lambda a, b: (np.abs(i - a) <= rows - 1) & (np.abs(j - b) <= rows - 1)
+    border = (i <= rows - 1) | (i >= nu - (rows - 1)) | (j <= rows - 1) | (j >= nv - (rows - 1))
     pinned = {'top': top, 'side': side, 'top_corners': corner(0, nv) | corner(nu, nv),
-              'corners': corner(0, 0) | corner(nu, 0) | corner(0, nv) | corner(nu, nv)}.get(spec.pins, np.zeros(len(i), bool))
+              'corners': corner(0, 0) | corner(nu, 0) | corner(0, nv) | corner(nu, nv),
+              'edges': border}.get(spec.pins, np.zeros(len(i), bool))
     return FabricMesh(rest.astype(np.float64), np.stack([u, v], -1), tris, pinned.astype(bool), np.array(edges, np.int64),
                       np.array(kk, np.float64), True)
 
@@ -308,6 +310,14 @@ def mesh_fabric(spec: FabricSpec) -> FabricMesh:
         pinned = np.zeros(len(v), bool)
         for p in pts[:2] if spec.pins == 'top_corners' else pts:
             pinned |= np.linalg.norm(v - np.asarray(p), axis=1) <= np.linalg.norm(v - np.asarray(p), axis=1).min() + tol
+    elif spec.pins == 'edges':
+        # its open edges (those of one triangle only), and rows - 1 rings in from them
+        sides = np.sort(np.concatenate([t[:, [0, 1]], t[:, [1, 2]], t[:, [2, 0]]]), axis=1)
+        sides, uses = np.unique(sides, axis=0, return_counts=True)
+        pinned = np.zeros(len(v), bool)
+        pinned[sides[uses == 1].ravel()] = True
+        for _ in range(rows - 1):
+            pinned[e[pinned[e[:, 0]] | pinned[e[:, 1]]].ravel()] = True
     else:
         pinned = np.zeros(len(v), bool)
     return FabricMesh(v, uv, t, pinned, e, np.full(len(e), m.stretch * spec.stiffness), False)
@@ -465,7 +475,9 @@ def build(specs):
         # c.z: a panel's hinge (its bending is solved by multigrid while it is whole: cloth_mg.py)
         hk.append(np.concatenate([K, comp[:, None], v0[:, None], np.full((len(hi), 1), 1.0 if fm.panel else 0.0),
                                   np.zeros((len(hi), 1))], 1))
-        tp, td = tethers(fm.rest, fm.stretch, fm.pinned) if spec.pins != 'none' else (np.full(n, -1), np.zeros(n))
+        # (none for cloth held all round its edges: it does not hang, and across its middle, where the nearest edge
+        # changes, tethers to opposite edges would pull it apart as it sags)
+        tp, td = tethers(fm.rest, fm.stretch, fm.pinned) if spec.pins not in ('none', 'edges') else (np.full(n, -1), np.zeros(n))
         teth.append(np.stack([np.where(tp >= 0, tp + base, -1), td], -1))
         ranges.append((base, n))
         base += n

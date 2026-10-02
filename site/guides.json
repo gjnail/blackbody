@@ -11,7 +11,7 @@
   "lava": {"image": "media/video/lava.jpg", "blurb": "Molten lava that glows and crusts, and fire, water and lava together in one box."},
   "heat": {"image": "media/video/ice_cubes.jpg", "blurb": "Freezing, melting, boiling and evaporating, with water's real heat capacities and latent heats."},
   "weather": {"image": "media/video/cumulus_day.jpg", "blurb": "Snow, sleet, freezing rain and hail decided by the air above, and clouds that build into storms."},
-  "lume": {"blurb": "The path-traced lighting engine for the set drawn in CG: light that bounces from surface to surface, shadows as soft as each light is big, an HDRI's own sun, glass, ice and jelly that bend light, and the denoiser."},
+  "lume": {"image": "media/img/lume-path.jpg", "blurb": "The path-traced lighting engine for the set drawn in CG: light that bounces from surface to surface, shadows as soft as each light is big, an HDRI's own sun, glass, ice and jelly that bend light, and the denoiser."},
   "compositing": {"image": "media/video/tracked_shot.jpg", "blurb": "Lining up the ground, camera tracking, surfaces, holdouts and roto, fire light on the footage, lens, haze, noise matching, lights in the set and OCIO."},
   "scene-import": {"image": "media/video/ui-track.jpg", "blurb": "Camera tracking, the 2D tracker, camera solves, USD scenes with cameras, objects and lights, and VDB volumes."},
   "outputs": {"image": "media/img/pass-heat.jpg", "blurb": "EXR layers, deep EXR, ProRes and PNG elements, composites, OpenVDB, and liquid meshes."},
