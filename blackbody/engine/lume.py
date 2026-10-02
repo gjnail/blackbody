@@ -18,6 +18,7 @@ from .gpu import Uniforms
 ENV_WIDTH = 512           # the HDRI's brightness map: at most this many columns (and half as many rows)
 VIEWER_PASSES = 2         # passes the viewer adds per refinement
 FINAL_SUBMIT = 4          # a final render submits its passes this many at a time (each command list stays short)
+FINAL_PER_PASS = 4        # paths per pixel each pass of a final render traces
 ATROUS_STEPS = (1, 2, 4, 8, 16)
 
 

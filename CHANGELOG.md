@@ -27,8 +27,12 @@ Notable changes to Blackbody. The format follows
 - Lume, a path-traced lighting engine for the set drawn in CG (Properties › Lume, off by default): light bounces from
   surface to surface, shadows are as soft as each light is big (the sun's disc, each fire light, hot metal, lamps,
   through the smoke), an HDRI's own sun is found and shadowed (importance sampling with MIS), glass, ice and jelly
-  refract and bounce light inside, and highlights are GGX. The viewer sharpens while you look, and a denoiser clears
-  the grain.
+  refract and bounce light inside, and highlights are GGX. Lamps are sphere lights, seen in reflections. The viewer
+  sharpens while you look, and a denoiser clears the grain. It is measured against ground truth (tools/lume_bench: the
+  same scenes rendered by Mitsuba 3 with Lume's own material) and agrees with it to within about 1% in mean brightness,
+  but for the light a glass ball focuses, which it does not trace yet.
+- Plain balls, boxes and cylinders on the stage are hit exactly by each ray instead of marched toward: Lume is up to 26
+  times faster on such sets, and the classic stage is faster too.
 - Things that break (Properties › Breaking): objects cut beforehand into chunks, bricks in running bond, glass
   shards or wood splinters, glued at joints that give way when pulled, sheared or bent past the material's
   strength. Hollow objects break as shells (a vase, a crate). Standing ones are held by their base or their edges.

@@ -26,13 +26,17 @@ Lume is Blackbody's path-traced lighting engine. It lights the set drawn in CG (
 
 While you drag or play, Lume shows one light path per pixel (denoised). Once you stop, it keeps adding paths, two at a time, until *Samples (viewer)* is reached. The stats overlay shows how far it has got (*Lume · 24/64 light paths per pixel · sharpening*). Any edit starts it afresh.
 
+## Accuracy
+
+Lume is measured against ground truth: the same scenes rendered by Mitsuba 3, a research path tracer, with Lume's own material (`tools/lume_bench`). On those scenes it is within about 1% of the truth in mean brightness (0.25% to 0.85% on the rooms, metal and plastic), except the light a glass ball focuses (a caustic), which is not yet traced: shadow rays pass through glass by its Fresnel losses and tint, straight through, which is exact for a pane but misses a curved piece's focused light. See `tools/lume_bench/README.md` for the scenes, the measures and the latest results.
+
 ## Speed
 
-On an RTX 3090, a simple set at 1920x1080 takes about 0.7 s for 64 paths per pixel with 4 bounces. A frame with fire light and smoke shadows takes a few times longer. Final renders trace their samples in passes of one path per pixel, submitted a few at a time, so long renders do not stall the GPU.
+Plain spheres, boxes and cylinders, the floor and broken pieces are hit exactly by each ray; meshes, hollow things and sand, snow and mud are found by marching toward them. On an RTX 3090, a simple set at 1920x1080 takes a few tenths of a second for 64 paths per pixel with 4 bounces; against Mitsuba with the GPU's ray-tracing cores, Lume has 1.2–5 times its error after the same time. A frame with fire light and smoke shadows takes a few times longer. Final renders trace their samples in passes of four paths per pixel (the viewer one), submitted a few at a time, so long renders do not stall the GPU.
 
 ## How it works
 
-Every pass traces one path per pixel from the camera. At each surface, Lume:
+Every pass traces a path per pixel from the camera (four in a final render). At each surface, Lume:
 
 1. takes the light coming straight from each light (next-event estimation): a direction in the sun's disc; one fire light and one hot-matter light, picked by how much light each brings; every lamp; and a direction in the HDRI picked by its brightness (weighed against finding it by bouncing: multiple importance sampling, power heuristic);
 2. bounces on, by the material (a GGX highlight sampled by its visible normals, or diffuse by the cosine), or through glass by its Fresnel term;

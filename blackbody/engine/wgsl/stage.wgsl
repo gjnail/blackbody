@@ -98,7 +98,7 @@ struct Params {
   col: array<Collider, MAX_COLLIDERS>,
   mat: array<Mat, MAT_ROWS>,
   lume: vec4<f32>,      // Lume (lume.wgsl): on (1/0), this pass (0, 1, ...), bounces, the cap on a bounce's light (0: none)
-  lume2: vec4<f32>,     // the HDRI's brightness map to pick directions from (ENV): width, height (0: none), _, _
+  lume2: vec4<f32>,     // the HDRI's brightness map to pick directions from (ENV): width, height (0: none); anything clear in the set (1/0), _
 };
 
 @group(0) @binding(0) var atlas: texture_3d<f32>;       // mesh distance fields (meshsdf.wgsl)
@@ -143,6 +143,7 @@ var<private> g_tau: f32;   // this sample's time in the shutter (s): objects are
 var<private> g_over: vec4<f32>;   // a colour a pattern puts in place of the material's (mortar), and how much
 var<private> g_plane: i32;        // the plane a piece was hit on (trace)
 var<private> g_opaque: bool;      // only what stops light counts (shadows, the sky's occlusion)
+var<private> g_skip_plain: bool;  // the march leaves the plain shapes out (trace() finds them exactly)
 var<private> g_jit: f32;          // this sample's random number in [0, 1) (soft shadows start their march a little apart)
 var<private> t_piece: f32;        // how far along the camera's ray the first piece is (see), -1: none
 var<private> t_footage: f32;      // and the footage's own surface (see), 1e9: none
@@ -228,6 +229,7 @@ fn scene_d(p: vec3<f32>, want: f32) -> vec2<f32> {
   for (var i = 0; i < i32(U.ccnt.x); i++) {
     if (U.mat[i].d.w < want) { continue; }
     if (g_opaque && U.mat[i].d.y > 0.5) { continue; }   // (glass lets the light through)
+    if (g_skip_plain && plain(i)) { continue; }
     let d = col_sdf(obj(i), p);
     if (d < best.x) { best = vec2<f32>(d, f32(i)); }
   }
@@ -357,11 +359,78 @@ fn trace_pieces(ro: vec3<f32>, rd: vec3<f32>, t0: f32, tmax: f32) -> vec3<f32> {
 }
 
 // The first thing along the ray from t0 to tmax: an object (drawn at least `want`), the floor, or none (-1).
+// Whether object i is a plain shape (a solid sphere, box or cylinder, nothing cut out of it): trace() finds it exactly,
+// with one test, instead of marching toward it.
+fn plain(i: i32) -> bool {
+  let k = U.col[i];
+  return i32(k.a.w + 0.5) <= 2 && k.x.w <= 0.0 && !all(k.y.xyz > vec3<f32>(0.0));
+}
+
+// Where a ray (fire-local) enters plain object k past t0: its distance along the ray, or -1 where it misses it or starts
+// inside it (a ray goes on through what it starts in, as the march does).
+fn plain_hit(k: Collider, ro: vec3<f32>, rd: vec3<f32>, t0: f32) -> f32 {
+  let o = col_to_local(k, ro);
+  let d = yaw_to_local(quat_rotate(vec4<f32>(-k.r.xyz, k.r.w), rd), k.b.w);
+  let shape = i32(k.a.w + 0.5);
+  var tn = -1.0;
+  var tf = -1.0;
+  if (shape == 0) {
+    let b = dot(o, d);
+    let h = b * b - (dot(o, o) - k.b.x * k.b.x);
+    if (h < 0.0) { return -1.0; }
+    let sq = sqrt(h);
+    tn = -b - sq;
+    tf = -b + sq;
+  } else if (shape == 1) {
+    let inv = vec3<f32>(1.0) / select(d, vec3<f32>(1e-12), abs(d) < vec3<f32>(1e-12));
+    let t1 = (-k.b.xyz - o) * inv;
+    let t2 = (k.b.xyz - o) * inv;
+    let lo = min(t1, t2);
+    let hi = max(t1, t2);
+    tn = max(max(lo.x, lo.y), lo.z);
+    tf = min(min(hi.x, hi.y), hi.z);
+    if (tf < tn) { return -1.0; }
+  } else {
+    // a cylinder round y: inside its round side and between its ends
+    let r = k.b.x;
+    let a = d.x * d.x + d.z * d.z;
+    let bq = o.x * d.x + o.z * d.z;
+    let cq = o.x * o.x + o.z * o.z - r * r;
+    var r0 = -1.0e30;
+    var r1 = 1.0e30;
+    if (a > 1e-12) {
+      let h = bq * bq - a * cq;
+      if (h < 0.0) { return -1.0; }
+      let sq = sqrt(h);
+      r0 = (-bq - sq) / a;
+      r1 = (-bq + sq) / a;
+    } else if (cq > 0.0) {
+      return -1.0;
+    }
+    var y0 = -1.0e30;
+    var y1 = 1.0e30;
+    if (abs(d.y) > 1e-12) {
+      let ta = (-k.b.y - o.y) / d.y;
+      let tb = (k.b.y - o.y) / d.y;
+      y0 = min(ta, tb);
+      y1 = max(ta, tb);
+    } else if (abs(o.y) > k.b.y) {
+      return -1.0;
+    }
+    tn = max(r0, y0);
+    tf = min(r1, y1);
+    if (tf < tn) { return -1.0; }
+  }
+  if (tn > t0) { return tn; }
+  return -1.0;
+}
+
 fn trace(ro: vec3<f32>, rd: vec3<f32>, t0: f32, tmax: f32, want: f32, floor_on: bool) -> Hit {
   var h = Hit(1.0e9, -1);
-  if (floor_on && U.stage.x > 0.5 && rd.y < -1e-6 && ro.y > U.stage.y) {
-    let tf = (U.stage.y - ro.y) / rd.y;
-    if (tf > t0 && tf < tmax) { h = Hit(tf, FLOOR); }
+  // (a ray from a hair under the floor going down, as from the underside of a ball resting on it, is in the ground)
+  if (floor_on && U.stage.x > 0.5 && rd.y < -1e-6 && ro.y > U.stage.y - 0.02) {
+    let tf = max((U.stage.y - ro.y) / rd.y, t0 + 1e-6);
+    if (tf < tmax) { h = Hit(tf, FLOOR); }
   }
   let pc = trace_pieces(ro, rd, t0, min(tmax, h.t));
   if (pc.y >= 0.0) {
@@ -369,10 +438,24 @@ fn trace(ro: vec3<f32>, rd: vec3<f32>, t0: f32, tmax: f32, want: f32, floor_on: 
     g_plane = i32(pc.z);
   }
   if (!objects_on()) { return h; }
+  // the plain shapes, exactly; only the rest (meshes, hollow things, things with openings, the matter) are marched
+  var rest = U.mn.w > 0.5;
+  for (var i = 0; i < i32(U.ccnt.x); i++) {
+    if (U.mat[i].d.w < want) { continue; }
+    if (g_opaque && U.mat[i].d.y > 0.5) { continue; }
+    if (!plain(i)) {
+      rest = true;
+      continue;
+    }
+    let tp = plain_hit(obj(i), ro, rd, t0);
+    if (tp > 0.0 && tp < min(tmax, h.t)) { h = Hit(tp, i); }
+  }
+  if (!rest) { return h; }
   let span = bound_span(ro, rd);
   var t = max(t0, span.x);
   let lim = min(min(tmax, h.t), span.y);
   let hp = h;
+  g_skip_plain = true;
   var escaping = true;   // a ray that starts inside an object goes on through it
   var t_out = t;         // the last point found outside everything
   for (var i = 0; i < 192; i++) {
@@ -392,13 +475,16 @@ fn trace(ro: vec3<f32>, rd: vec3<f32>, t0: f32, tmax: f32, want: f32, floor_on: 
           let m = 0.5 * (a + b);
           if (matter_d(ro + rd * m) > 0.0) { a = m; } else { b = m; }
         }
+        g_skip_plain = false;
         return Hit(b, MATTER);
       }
+      g_skip_plain = false;
       return Hit(t, i32(d.y));
     }
     t_out = t;
     t += max(d.x, 0.4 * eps);
   }
+  g_skip_plain = false;
   return hp;
 }
 

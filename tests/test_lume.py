@@ -130,3 +130,76 @@ def test_the_viewer_refines_progressively(vase):
     sc.data['lume']['engine'] = 'classic'
     _render(eng, sc, f, final=False, aa=4)
     assert not eng.stage.lume_pending
+
+
+def _bench_scene(spec, monkeypatch):
+    """A scene of the benchmark (tools/lume_bench) with its exact materials, for this test only: the benchmark patches
+    the stage's floors, looks and horizon for its whole process, and monkeypatch puts them back afterwards (left
+    patched, the next tests' objects all took the benchmark's looks)."""
+    import tempfile
+    from pathlib import Path
+    from blackbody.engine import stage
+    from blackbody.scene import materials
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1] / 'tools' / 'lume_bench'))
+    import lume_side
+    monkeypatch.setattr(stage, 'HORIZON_FADE', stage.HORIZON_FADE)
+    monkeypatch.setattr(stage, 'looks', stage.looks)
+    monkeypatch.setitem(materials.FLOORS, 'bench', None)
+    monkeypatch.setitem(stage.FLOORS, 'bench', None)
+    sky = Path(tempfile.mkdtemp()) / 'uniform.hdr'
+    lume_side.uniform_hdr(sky)
+    sc, rows = lume_side.build(spec, sky)
+    lume_side.patch(spec, rows)
+    return sc
+
+
+def _floor_only(**kw):
+    spec = dict(size=(96, 64), camera=dict(eye=(0.0, 1.2, 2.0), target=(0.0, 0.0, 0.0), hfov=40.0), sky=0.5,
+                floor=dict(alb=(0.6, 0.6, 0.6), rough=0.9), bounces=1, objects=[], lamps=[])
+    spec.update(kw)
+    return spec
+
+
+def _stage(engine, sc, spec, **lume):
+    f = sc.start
+    engine.prepare(sc, final=True)
+    engine.simulate_to(sc, f, cache=False)
+    sc.data['lume'].update(engine='lume', denoise=False, clamp=0.0, **lume)
+    engine.render(sc, f, spec['size'], mode='composite', final=True, samples=4, motion_blur=False)
+    return engine.gpu.read(engine.stage.tex).astype(np.float32)[..., :3]
+
+
+def test_the_last_bounce_still_finds_the_sky(engine, monkeypatch):
+    # an open floor under a uniform sky: nothing to bounce off, so one bounce lights it as fully as four (the sky half
+    # left to the bounce by the HDRI's picked light must still be traced at the last bounce)
+    spec = _floor_only()
+    sc = _bench_scene(spec, monkeypatch)
+    one = _stage(engine, sc, spec, samples=256, bounces=1)[40:, :].mean()
+    four = _stage(engine, sc, spec, samples=256, bounces=4)[40:, :].mean()
+    assert one == pytest.approx(four, rel=0.01)
+
+
+def test_a_lamp_lights_the_floor_below_it_as_a_sphere_does(engine, monkeypatch):
+    # a lamp 1 m over a matte floor, no sky: straight below it the floor's radiance is its albedo / pi times the lamp's
+    # intensity / d^2 (a sphere's irradiance), times what the floor's highlight leaves the diffuse (1 - its rough Fresnel)
+    I, d, alb, rough = 2.0, 1.0, 0.6, 0.9
+    spec = _floor_only(sky=0.0, camera=dict(eye=(0.0, 0.6, 0.6), target=(0.0, 0.0, 0.0), hfov=10.0),
+                       floor=dict(alb=(alb,) * 3, rough=rough),
+                       lamps=[dict(pos=(0.0, d, 0.0), radius=0.05, power=(I, I, I))])
+    sc = _bench_scene(spec, monkeypatch)
+    img = _stage(engine, sc, spec, samples=1024, bounces=1)
+    got = float(img[28:36, 44:52].mean())
+    # seen from the camera (45 degrees down), lit from straight above: Lume's material (lume.wgsl lu_eval) by hand
+    v = np.array([0.0, 0.6, 0.6]) / math.hypot(0.6, 0.6)
+    l = np.array([0.0, 1.0, 0.0])
+    nv, nl = v[1], 1.0
+    fv = 0.04 + (max(1.0 - rough, 0.04) - 0.04) * (1.0 - nv) ** 5
+    diffuse = alb / math.pi * (1.0 - fv)
+    h = (v + l) / np.linalg.norm(v + l)
+    a2 = (rough * rough) ** 2
+    D = a2 / (math.pi * (h[1] ** 2 * (a2 - 1.0) + 1.0) ** 2)
+    lv, ll = math.sqrt(a2 + (1 - a2) * nv * nv), math.sqrt(a2 + (1 - a2) * nl * nl)
+    G2 = 2 * nl * nv / (nl * lv + nv * ll)
+    F = 0.04 + 0.96 * (1.0 - float(v @ h)) ** 5
+    highlight = F * D * G2 / (4.0 * nv * nl)
+    assert got == pytest.approx((diffuse + highlight) * I / d ** 2, rel=0.015)

@@ -415,7 +415,9 @@ class Stage:
         ns = 1 if samples <= 1 else (8 if (shutter > 0.0 and samples >= 8) else 4)
         lume = LU.settings(scene)
         if lume.on:
-            ns = 1      # (Lume: one path per pixel per pass, the passes added up)
+            # (Lume: the passes added up, one path per pixel each in the viewer; a final render traces several per pass,
+            # so a simple set is not held up by the passes themselves)
+            ns = LU.FINAL_PER_PASS if (final and lume.samples >= 4 * LU.FINAL_PER_PASS) else 1
         u = (Uniforms().m4(camstate.inv_view_proj).m4(w2l)
              .v4(pw, ph, ns, shutter)
              .v4(*fit, float(comp.lens_k1), pix)
@@ -517,6 +519,8 @@ class Stage:
             key = (int(frame), pw, ph, bytes(np.asarray(camstate.inv_view_proj, np.float32).tobytes()), bool(footage),
                    float(shutter))
             first, count = L.plan(lume, key, final, samples)
+            if final:
+                count = -(-count // ns)
         elif self.lume is not None:
             self.lume.pending = False
         res = [meshes.atlas if meshes is not None else r._empty_r32,
@@ -536,14 +540,16 @@ class Stage:
             return self.tex
         # Lume: its passes, each a new path per pixel added to the ones before (lume.wgsl), then the denoiser
         base = list(u.data)
+        # (anything clear in the set: glass, ice, jelly; shadow rays then pass through them by their Fresnel and tint)
+        clear_on = 1.0 if (any(row[4] > 0.0 and row[0] != NOT_DRAWN for row in rows) or surf is not None) else 0.0
         # (Clamp bright paths: a bounce's light capped at that many times the sky's brightness; 0: none)
         cap = float(lume.clamp) * max(float(np.dot(np.asarray(sky, float), (0.2126, 0.7152, 0.0722))), 1e-4) if lume.clamp > 0 else 0.0
         ew, eh = L.env_dims if env is not None else (0, 0)
         for i in range(count):
             up = Uniforms()
-            up.data = base + [1.0, float(first + i), float(lume.bounces), cap, float(ew), float(eh), 0.0, 0.0]
+            up.data = base + [1.0, float(first + i), float(lume.bounces), cap, float(ew), float(eh), clear_on, 0.0]
             b.run(self.k, res, up, (pw, ph, 1))
-            if final and (i + 1) % LU.FINAL_SUBMIT == 0 and i + 1 < count:
+            if final and (i + 1) % max(1, LU.FINAL_SUBMIT // ns) == 0 and i + 1 < count:
                 b.submit(restart=True)
         if count > 0 or final:
             L.finish(b, self.tex, first + count, lume.denoise)

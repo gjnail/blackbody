@@ -149,7 +149,88 @@ fn lu_open(p: vec3<f32>, d: vec3<f32>, tmax: f32, eps: f32, want: f32) -> f32 {
   return select(1.0, 0.0, h.id >= 0);
 }
 
-// Whether light from a patch of hot matter dist away along d gets to p: the ray may end on the hot matter itself (the
+// How much light gets from p to p + d * tmax: 0 past anything that stops light; through glass, ice and jelly what their
+// surfaces let in and out (Fresnel, straight through: a slab's shadow exactly, a ball's without its focused caustic) and
+// their tint over the way through. (The light a curved one focuses is not found this way: paths through glass to a
+// light are not counted again either, see lu_path.)
+fn lu_shadow(p: vec3<f32>, d: vec3<f32>, tmax: f32, eps: f32, want: f32) -> f32 {
+  if (lu_open(p, d, tmax, eps, want) <= 0.0) { return 0.0; }
+  // a lamp is a solid bulb: it shades what is behind it (but not the light picked on its own surface, at tmax)
+  for (var k = 0; k < i32(U.ln.w); k++) {
+    let t = lu_sphere_t(p, d, lamps[k].p.xyz, max(lamps[k].p.w, 1e-3));
+    if (t > 2.0 * eps && t < tmax * (1.0 - 1e-3) - eps) { return 0.0; }
+  }
+  if (U.lume2.z < 0.5) { return 1.0; }   // (nothing clear in the set)
+  var tr = 1.0;
+  var q = p;
+  var left = tmax;
+  for (var j = 0; j < 4; j++) {
+    let h = trace(q, d, 2.0 * eps, left, want, true);
+    if (h.id < 0 || h.id == FLOOR) { break; }
+    let ph = q + d * h.t;
+    let cl = lu_clear(h, ph);
+    if (cl.clear <= 0.0) { return 0.0; }
+    let n = lu_hit_normal(h, ph, eps);
+    let fin = lu_fresnel(max(abs(dot(n, d)), 1e-4), cl.ior);
+    let ex = lu_exit(h, ph + d * eps, d, eps);
+    let co = max(abs(dot(ex.xyz, d)), 1e-4);
+    let fout = lu_fresnel(co, 1.0 / cl.ior);
+    tr *= cl.clear * (1.0 - fin) * (1.0 - fout) * luma(pow(max(cl.tint, vec3<f32>(1e-3)), vec3<f32>(ex.w / 0.1)));
+    if (tr < 1e-4) { return 0.0; }
+    let adv = h.t + ex.w + 2.0 * eps;
+    q = q + d * adv;
+    left -= adv;
+    if (left <= 0.0) { break; }
+  }
+  return tr;
+}
+
+// The outward normal of what h hit at p.
+fn lu_hit_normal(h: Hit, p: vec3<f32>, eps: f32) -> vec3<f32> {
+  if (h.id == MATTER) { return matter_normal(p); }
+  if (h.id >= PIECE) {
+    let kp = u32(h.id - PIECE);
+    let pose = piece_pose(kp);
+    return quat_rotate(pose[1], normalize(PL[u32(PC[kp].v.w) + u32(max(g_plane, 0))].xyz));
+  }
+  return obj_normal(h.id, p, eps);
+}
+
+// A sphere light of radius r at c, seen from p: (the cosine of its half-angle, the solid angle it covers), or
+// (-2, 0) from inside it.
+fn lu_cone_of(p: vec3<f32>, c: vec3<f32>, r: f32) -> vec2<f32> {
+  let dc = c - p;
+  let s2 = r * r / max(dot(dc, dc), 1e-12);
+  if (s2 >= 1.0) { return vec2<f32>(-2.0, 0.0); }
+  let cmax = sqrt(1.0 - s2);
+  return vec2<f32>(cmax, 2.0 * PI * s2 / (1.0 + cmax));   // (2 pi (1 - cmax), without the cancellation)
+}
+
+// How far along l from p the sphere (c, r) is, or -1.
+fn lu_sphere_t(p: vec3<f32>, l: vec3<f32>, c: vec3<f32>, r: f32) -> f32 {
+  let oc = p - c;
+  let b = dot(oc, l);
+  let h = b * b - (dot(oc, oc) - r * r);
+  if (h < 0.0) { return -1.0; }
+  let sq = sqrt(h);
+  if (-b - sq > 0.0) { return -b - sq; }
+  if (-b + sq > 0.0) { return -b + sq; }
+  return -1.0;
+}
+
+// The radiance of a lamp seen along l (toward it): its intensity spread over its disc, through its spot's cone or as
+// an area light faces.
+fn lu_lamp_radiance(lm: Lamp, l: vec3<f32>) -> vec3<f32> {
+  let r = max(lm.p.w, 1e-3);
+  var L = lm.c.rgb * (U.depth.w / (PI * r * r));
+  let kind = i32(lm.c.w + 0.5);
+  let facing = dot(-l, lm.d.xyz);
+  if (kind == 1) { L *= smoothstep(lm.d.w, lm.e.x, facing); }
+  if (kind == 2) { L *= max(facing, 0.0); }
+  return L;
+}
+
+// Whether a light from a patch of hot matter dist away along d gets to p: the ray may end on the hot matter itself (the
 // patch, within reach of it: that is where the light comes from), but nothing else may stand in the way.
 fn lu_open_glow(p: vec3<f32>, d: vec3<f32>, dist: f32, r: f32, eps: f32, want: f32) -> f32 {
   g_opaque = true;
@@ -239,7 +320,7 @@ fn lu_direct(s: Surf, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>) -> vec3<f32> {
     let l = sf[0] * lc.x + sf[1] * lc.y + sf[2] * lc.z;
     let e = lu_eval(m, vl, lu_to_local(fr, l));
     if (e.x + e.y + e.z > 0.0) {
-      var vis = lu_open(po, l, 1.0e4, s.eps, s.want);
+      var vis = lu_shadow(po, l, 1.0e4, s.eps, s.want);
       let ps = pl + s.n * 1.5 + l * 0.75;
       if (vis > 0.0 && in_light(ps)) { vis *= samp_c(L0, lin, ps, U.ln.xyz).a; }
       c += U.sun.rgb * e.xyz * vis;
@@ -277,7 +358,7 @@ fn lu_direct(s: Surf, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>) -> vec3<f32> {
           var vis = 1.0;
           if (U.fire.w > 0.0) {
             let reach = max(dist - a.w, 0.0);
-            let sh = lu_open(po, l, reach, s.eps, s.want) * smoke_tr(po, l, reach);
+            let sh = lu_shadow(po, l, reach, s.eps, s.want) * smoke_tr(po, l, reach);
             vis = mix(1.0, sh, U.fire.w);
           }
           let rad = lights[2u * k + 1u].rgb / (dot(d0, d0) + a.w * a.w);
@@ -321,30 +402,35 @@ fn lu_direct(s: Surf, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>) -> vec3<f32> {
       }
     }
   }
-  // the lights in the set: each, toward a point within it
+  // the lights in the set: each a sphere, a direction picked within the solid angle it covers (its soft shadow exactly),
+  // weighed against a bounce finding it (lu_path)
   for (var k = 0; k < i32(U.ln.w); k++) {
     let lm = lamps[k];
-    let q = lm.p.xyz + lu_ball() * lm.p.w;
-    let dv = q - po;
-    let d2 = dot(dv, dv);
-    let dist = sqrt(d2);
-    if (dist < 1e-4) { continue; }
-    let l = dv / dist;
-    let dc = lm.p.xyz - s.p;
-    var f = 1.0 / (dot(dc, dc) + lm.p.w * lm.p.w);
-    let kind = i32(lm.c.w + 0.5);
-    let facing = dot(-l, lm.d.xyz);
-    if (kind == 1) { f *= smoothstep(lm.d.w, lm.e.x, facing); }
-    if (kind == 2) { f *= max(facing, 0.0); }
-    if (f <= 0.0) { continue; }
+    let r = max(lm.p.w, 1e-3);
+    let cone = lu_cone_of(s.p, lm.p.xyz, r);   // (the solid angle as the surface itself sees it)
+    if (cone.x < -1.5) {
+      // inside the lamp: its light all round, as if from its middle
+      let dc = lm.p.xyz - s.p;
+      let l = normalize(dc + vec3<f32>(0.0, 1e-6, 0.0));
+      let e = lu_eval(m, vl, lu_to_local(fr, l));
+      c += lu_lamp_radiance(lm, l) * (PI * r * r / (dot(dc, dc) + r * r)) * e.xyz;
+      continue;
+    }
+    let lf = lu_frame(normalize(lm.p.xyz - s.p));
+    let lc = lu_cone(lu_rand2(), cone.x);
+    let l = lf[0] * lc.x + lf[1] * lc.y + lf[2] * lc.z;
+    let rad = lu_lamp_radiance(lm, l);
+    if (max(rad.r, max(rad.g, rad.b)) <= 0.0) { continue; }
     let e = lu_eval(m, vl, lu_to_local(fr, l));
     if (e.x + e.y + e.z <= 0.0) { continue; }
-    var vis = lu_open(po, l, max(dist - lm.p.w, 0.0), s.eps, s.want);
+    let tl = max(lu_sphere_t(po, l, lm.p.xyz, r), 0.0);
+    var vis = lu_shadow(po, l, tl, s.eps, s.want);
     if (vis > 0.0 && lm.e.y > 0.5) {
       let pq = pl + s.n * 1.5 + l * 0.75;
       if (in_light(pq)) { vis *= lamp_tr(pq, k); }
     }
-    c += lm.c.rgb * (f * vis * U.depth.w) * e.xyz;
+    let pdf = 1.0 / max(cone.y, 1e-12);
+    c += rad * e.xyz * (vis * lu_power(pdf, e.w) / pdf);
   }
   // the HDRI: a direction picked by its brightness, weighed against finding it by bouncing
   if (lu_env_on()) {
@@ -352,7 +438,7 @@ fn lu_direct(s: Surf, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>) -> vec3<f32> {
     let l = pk.xyz;
     let e = lu_eval(m, vl, lu_to_local(fr, l));
     if (pk.w > 0.0 && e.x + e.y + e.z > 0.0) {
-      var vis = lu_open(po, l, 1.0e4, s.eps, s.want);
+      var vis = lu_shadow(po, l, 1.0e4, s.eps, s.want);
       let pk2 = pl + s.n * 1.5;
       if (vis > 0.0 && in_light(pk2)) { vis *= samp_c(L1, lin, pk2, U.ln.xyz).x; }
       c += sky_dir(l) * e.xyz * (vis * lu_power(pk.w, e.w) / pk.w);
@@ -377,12 +463,12 @@ fn lu_sky(p: vec3<f32>, d: vec3<f32>, pdf: f32) -> vec3<f32> {
 
 struct LuClear { clear: f32, ior: f32, tint: vec3<f32> };
 
-fn lu_clear(h: Hit, s: Surf) -> LuClear {
+fn lu_clear(h: Hit, p: vec3<f32>) -> LuClear {
   var c = LuClear(0.0, 1.0, vec3<f32>(1.0));
   var row = h.id;
   if (h.id >= PIECE) { row = i32(PC[u32(h.id - PIECE)].o.w + 0.5); }
   if (h.id == MATTER) {
-    let uvw = matter_uvw(s.p);
+    let uvw = matter_uvw(p);
     c.clear = clamp(textureSampleLevel(m_phi, lin, uvw, 0.0).y, 0.0, 1.0);
     c.tint = textureSampleLevel(m_look, lin, uvw, 0.0).rgb;
     c.ior = 1.35;
@@ -445,8 +531,13 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
   let cap = U.lume.w;
   var depth = 0;
   var inner = 0;           // reflections inside glass so far
+  var glassed = false;     // the path has gone through glass since its last bounce off a surface (what it finds then,
+                           // the lights reached through glass, came in already as their shadows through it)
   for (var guard = 0; guard < 64; guard++) {
-    let s = surface_at(h, ro, rd, 1.0);
+    var s = surface_at(h, ro, rd, 1.0);
+    // a surface found exactly (the floor, a plain shape, a piece) needs only a hair's offset for the rays off it: a
+    // marched one keeps the stage's (a pixel or two), which would put the light's start that much nearer the lights
+    if (h.id == FLOOR || h.id >= PIECE || (h.id >= 0 && h.id < FLOOR && plain(h.id))) { s.eps = min(s.eps, 1.0e-4); }
     let v = -rd;
     if (depth == 0) {
       lu_nrm = s.n;
@@ -456,7 +547,7 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
     // light given off: lightning always; hot matter only as seen (its glow already lights the rest as its patches)
     if (depth == 0 || s.self_glow < 0.5) { L += thr * s.em; }
     // glass, ice, jelly: reflected or refracted at random by Fresnel, tinted over its path through it
-    let cl = lu_clear(h, s);
+    let cl = lu_clear(h, s.p);
     if (cl.clear > 0.0 && lu_rand() < cl.clear) {
       let n = s.n;
       let ci = max(dot(n, v), 1e-4);
@@ -493,6 +584,7 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
       }
       if (!go_on) { break; }
       pdf_last = 0.0;
+      if (depth > 0) { glassed = true; }
     } else {
       // an opaque surface (or the part of a clear one that is not): its light from the lights, then a bounce
       var sv = s;
@@ -513,8 +605,10 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
         if (y > cap) { add *= cap / y; }
       }
       L += add;
-      if (depth + 1 >= bounces) { break; }
-      // the bounce: the highlight (by its visible normals) or diffuse (by the cosine)
+      // the bounce: the highlight (by its visible normals) or diffuse (by the cosine). It is traced even after the
+      // last bounce, for the sky it may reach: that is this surface's light too, the half of the sky that the light
+      // picked from the HDRI above leaves to it (multiple importance sampling)
+      let last = depth + 1 >= bounces;
       var ll: vec3<f32>;
       if (lu_rand() < m.ps) {
         let hl = lu_vndf(vl, m.a, lu_rand2());
@@ -527,11 +621,12 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
       if (e.w <= 0.0) { break; }
       thr *= e.xyz / e.w;
       pdf_last = e.w;
+      glassed = false;
       rd = fr[0] * ll.x + fr[1] * ll.y + fr[2] * ll.z;
       ro = s.p + s.n * s.eps;
       depth += 1;
       // Russian roulette: paths that carry little light end, the rest carry more
-      if (depth >= 2) {
+      if (depth >= 2 && !last) {
         let q = clamp(max(thr.r, max(thr.g, thr.b)), 0.05, 0.95);
         if (lu_rand() >= q) { break; }
         thr /= q;
@@ -540,8 +635,37 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
     if (inner > 8) { break; }
     // on to the next surface, or out to the sky
     let hn = trace(ro, rd, 0.0, 1.0e5, 1.0, true);
+    // a lamp in the way (after a bounce: the camera does not see the lamps themselves), weighed against having picked it
+    if (depth > 0) {
+      var tl = 1.0e9;
+      var kl = -1;
+      for (var k = 0; k < i32(U.ln.w); k++) {
+        let t = lu_sphere_t(ro, rd, lamps[k].p.xyz, max(lamps[k].p.w, 1e-3));
+        if (t > 0.0 && t < tl) {
+          tl = t;
+          kl = k;
+        }
+      }
+      if (kl >= 0 && (hn.id < 0 || tl < hn.t)) {
+        if (!glassed) {
+          var w = 1.0;
+          if (pdf_last > 0.0) {
+            let cone = lu_cone_of(ro, lamps[kl].p.xyz, max(lamps[kl].p.w, 1e-3));
+            if (cone.x > -1.5) { w = lu_power(pdf_last, 1.0 / max(cone.y, 1e-12)); }
+          }
+          var add = thr * lu_lamp_radiance(lamps[kl], rd) * w;
+          if (cap > 0.0) {
+            let y = luma(add);
+            if (y > cap) { add *= cap / y; }
+          }
+          L += add;
+        }
+        break;
+      }
+    }
     if (!lu_drawn(hn)) {
       var sky = lu_sky(ro, rd, pdf_last);
+      if (glassed && lu_env_on()) { sky = vec3<f32>(0.0); }   // (the HDRI through glass: in its shadow ray already)
       var add = thr * sky;
       if (depth > 0 && cap > 0.0) {
         let y = luma(add);
@@ -550,6 +674,7 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
       L += add;
       break;
     }
+    if (depth >= bounces) { break; }   // (past the last bounce: only the sky counted)
     h = hn;
   }
   return L;
