@@ -321,7 +321,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         // by the phase's mean cosine (its flow: lume_toward)
         sun = phase(cos_sun, ice, U.look.x) * exp(-tau_s);
         let nl = vec3<i32>(i32(U.lume2.x), i32(U.lume.z), i32(U.lume.w));
-        skyl = lume_toward(pc / U.lume.y, nl, dir, mix(0.63, 0.475, ice) * U.look.x);
+        let g = mix(0.63, 0.475, ice) * U.look.x;
+        skyl = lume_toward(pc / U.lume.y, nl, dir, g);
+        // (the traced light is as coarse as its grid; the lobes the edge's detail carves finer than that shade one another:
+        // where the sun's way through the drawn edge differs from the grid's, so does the light scattered on from it, at
+        // the extinction light scattered forward meets, sigma (1 - g). 1 where the edge is the grid's own)
+        skyl *= clamp(exp(-(1.0 - g) * (tau_s - lv.x)), 0.25, 2.0);
       } else {
         var a = 1.0;
         var b = 1.0;

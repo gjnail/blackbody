@@ -1750,9 +1750,11 @@ fn lu_splat(s: Surf, rd: vec3<f32>, beta: vec3<f32>, colour_only: bool) {
   let val = beta * f * (nx / (dist * dist * cc * cc * cc) * U.lume3.z);
   let k = u32(px.y) * u32(U.res.x) + u32(px.x);
   let q = min(val * LU_CAU_SCALE, vec3<f32>(3.0e7));
-  atomicAdd(&CAU[3u * k], u32(q.r + 0.5));
-  atomicAdd(&CAU[3u * k + 1u], u32(q.g + 0.5));
-  atomicAdd(&CAU[3u * k + 2u], u32(q.b + 0.5));
+  // (rounded at random, as the cache's are: rounded to the nearest, a dim light's splats, each less than half a unit,
+  // all came to nothing, and its colour's dimmer channels first: a candle's caustic was red)
+  atomicAdd(&CAU[3u * k], u32(q.r + lu_pcg()));
+  atomicAdd(&CAU[3u * k + 1u], u32(q.g + lu_pcg()));
+  atomicAdd(&CAU[3u * k + 2u], u32(q.b + lu_pcg()));
 }
 
 // A light path from one of the lights, aimed at one of the curved clear things: (where from, which way, the light it
