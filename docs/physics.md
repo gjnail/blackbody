@@ -80,7 +80,8 @@ Preset: *Shed on fire*, a fire inside a wooden shed, its posts, walls and roof a
 
 *Joined by* (Properties › *Joint*) holds an object to another object or to a fixed point. An object with a joint falls (it needs no *Falls*).
 
-- **A rope** holds it at its length: it hangs and swings, goes slack when it is thrown up or knocked toward where it hangs from, and is caught again with a jolt. *Rope length* is how long it is (0: as long as it is at the start). *Rope is* draws it as a rope or a steel cable, hanging in a curve when it is slack, and *Thickness* is how thick.
+- **A rope** holds it at its length: it hangs and swings, goes slack when it is thrown up or knocked toward where it hangs from, and is caught again with a jolt. *Rope length* is how long it is (0: as long as it is at the start). *Rope is* draws it as a rope or a steel cable, hanging in a curve when it is slack, and *Thickness* is how thick. A rope goes round a post or a ball in its way (a cylinder or a sphere between its ends): thrown over a beam, a crate hangs from it and swings under it, the rope drawn over the top.
+- **A chain** (*Rope is* › *Chain*) is steel links that are links: it weighs what a chain of its *Thickness* does (12 mm: about 3 kg a metre), hangs in its own curve, catches on and drapes over what it meets and piles up where it lands, and holds what hangs from it, a couple of hundred kilograms on a 12 mm chain.
 - **A spring** pulls it back toward its length at rest (*Rope length*) with *Spring stiffness* newtons for every metre it is stretched. A weight on a spring bounces with the period 2π√(m/k) and settles stretched by its weight over the stiffness.
 - **A hinge** lets it turn about one line only (*Hinge axis*, in its own frame, through *Joint on it*): a door, a gate, a lid, a seesaw, a wheel on its axle.
 - **A ball joint** lets it turn any way about one point (*Joint on it*): a pendulum on a rod, a sign hanging from a bracket.
@@ -96,6 +97,15 @@ Where it is held:
 The *Ropes and hinges* blocks are a wrecking ball on a crane, a rope swing, a door on hinges in its frame, a hanging lamp (its light swings with it), a weight on a spring and a seesaw that flips a ball into the air. Preset: *Wrecking ball*, through a brick wall.
 
 ![Wrecking ball](media/gif/wrecking_ball.gif "Wrecking ball: a 900 kg ball on a crane's cable swings down into a brick wall at 6 m/s and bursts through it.")
+
+## People and cars
+
+*Build* (Properties › *Physics*) makes an object a thing of many parts on joints, in its box, all one object in the scene:
+
+- **A person**: a crash-test figure, 1.8 m in a box of 0.5 × 1.8 × 0.3 m (its *Size* scales it), about 80 kg. Its parts (head, chest, pelvis, upper arms, forearms, thighs, shins, feet) turn on ball joints and hinges within a body's reach: a knee bends only back, an elbow only forward. *Stance* › *Stands braced*: it stands on its feet, braced, until something hits it hard (faster than 1.5 m/s), and then it goes limp and falls as a body does, over a car's bonnet or down the stairs. *Limp*: it falls from the start.
+- **A car**: 4.4 m in a box of 4.4 × 1.5 × 1.8 m, about 1300 kg, its body, its tinted glass and four tyres on springs (they sink 6 cm under its weight and soak up bumps). *Drive* drives its rear wheels, all four, or none (it rolls, pushed or down a slope); *Speed* is the speed its motor holds (keyframe it; 0 brakes it, below 0 reverses), as far as the tyres' grip and a car's torque allow, and *Steer* turns its front wheels (left is positive; keyframe it). It drives over grass, leaving its tracks flattened, knocks walls down and carries a person on its bonnet.
+
+Their parts are drawn in the object's material (a car's in its colour, its tyres black rubber, its cabin tinted glass), the smoke and water flow round them, and sand and snow are pushed aside by them. Blocks: *People and cars* in Create.
 
 ## Explosions
 
@@ -149,8 +159,11 @@ CG objects go over the footage lit by the shot's light, and their shadows darken
 
 - A scene holds up to 16 objects in all, falling or not (a broken one's pieces do not count: there can be hundreds).
 - A broken mesh's pieces are convex, so a hollow or a dent in one is filled in (whole, it is drawn as itself).
-- A rope or a spring passes through things in its way: only its ends are held (it does not wrap round a post), and it
-  weighs nothing. Each object has one joint; hang a chain as links, each joined to the one above.
+- A rope or a steel cable goes round at most one post or ball in its way (the one nearest its line between its ends),
+  passes through anything else, and weighs nothing; a chain catches on everything but does not snap. Each object has
+  one joint.
+- A person's and a car's parts are rigid: a car crumples only as far as its body is one piece (it does not dent), and a
+  person does not grab or step.
 - The strengths are effective ones, set so that things hold and give way under steady loads as they look like they
   should (pottery's and glass's near a handbook's, the rest lower); hits break things by their speed (above).
 - A falling mesh collides as its convex hull: its hollows and dents are filled in.

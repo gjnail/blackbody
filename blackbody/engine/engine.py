@@ -861,7 +861,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine)
     def _pieces_for(self, scene, solver, grid='gas'):
         """Upload this frame's broken pieces for a solver's grid; True if there are any."""
         sub = getattr(self.solids, 'substep_pieces', None)
-        if not self.solids.sets or not sub or not any(sub):
+        if not (self.solids.sets or self.solids.asms) or not sub or not any(sub):
             return False
         return self.body_field_for(grid).prepare(scene, sub, solver.dims, solver.h, solver.origin)
 

@@ -48,7 +48,7 @@ class MatterEngine:
         """When there are things that fall: (longest step, fn) for the rigid bodies to step in lockstep with the matter
         through frame `frame` (Solids.advance), so the sand holds them up and they dent it. None otherwise."""
         m = self._matter
-        if m is None or not m.active or not self.solids.active or not (self.solids.bodies or self.solids.sets):
+        if m is None or not m.active or not self.solids.active or not (self.solids.bodies or self.solids.sets or self.solids.asms):
             return None
         if not self.solids.bodies and not self._pieces_near(fdt):
             return None
@@ -63,7 +63,7 @@ class MatterEngine:
             if self.solids.sets:
                 poses = {**poses, **{ps.index: self.solids.gone() for ps in self.solids.sets}}
             cols = scene.colliders_gpu(frame - 1 + f, poses)
-            pieces = (scene, self.solids.piece_poses(whole=True)) if self.solids.sets else None
+            pieces = (scene, self.solids.piece_poses(whole=True)) if (self.solids.sets or self.solids.asms) else None
             pushed = m.step(h, cols, atlas, lambda u, c, p=False: pack_colliders(u, c, meshes, pieces=p), pieces,
                             substeps=max(1, int(math.ceil(h / dt - 1e-9))))
             return {(enabled[k] if isinstance(k, int) else k): v for k, v in pushed.items()

@@ -181,7 +181,7 @@ class Strands:
         g = gpu
         self.k_root = g.kernel('strand_root.wgsl', ['rbuf', 'buf', 'buf', 'buf', 'buf', 'buf', 'utex3d'], workgroup=(64, 1, 1))
         self.k_step = g.kernel('strand_step.wgsl', ['rbuf', 'rbuf', 'rbuf', 'buf', 'buf', 'buf', 'tex3d', 'tex3d', 'smp',
-                                                    'utex3d'], workgroup=(64, 1, 1))
+                                                    'utex3d', 'utex3d', 'utex3d'], workgroup=(64, 1, 1))
         self.k_sclear = g.kernel('strand_splat.wgsl', ['rbuf', 'rbuf', 'rbuf', 'rbuf', 'buf'], entry='clear', workgroup=(64, 1, 1))
         self.k_splat = g.kernel('strand_splat.wgsl', ['rbuf', 'rbuf', 'rbuf', 'rbuf', 'buf'], entry='splat', workgroup=(64, 1, 1))
         self.k_feed = g.kernel('cloth_feed.wgsl', ['utex3d', 'rbuf', 'st3d:rgba16float:w'], workgroup=(4, 4, 4))
@@ -285,14 +285,17 @@ class Strands:
         gas = solver is not None and solver.dims is not None
         u = Uniforms().v4(h, steps, self.n, 1.0 if gas else 0.0)
         u.raw((solver._grid(h) if gas else Uniforms().v4(1, 1, 1, 1).v4().v4()).data)
-        u.v4(*wind, gust).v4(look.ambient_k, look.flame_k, self.time).v4(1.0 if ground else 0.0, ground_y)
+        pieces = gas and bool(getattr(solver, '_pieces_on', False))     # (broken pieces, people's and cars' parts)
+        u.v4(*wind, gust).v4(look.ambient_k, look.flame_k, self.time).v4(1.0 if ground else 0.0, ground_y, 1.0 if pieces else 0.0)
         pack_colliders(u, colliders, meshes)
         u.raw(self.patches.ravel())
         vel = solver.vel[0] if gas else self._dummy()
         scal = solver.scal[0] if gas else self._dummy()
         atlas = meshes.atlas if meshes is not None else self._dummy()
         k = self.bufs
-        b.run(self.k_step, [k['BL'], k['RT'], k['RN'], k['X'], k['XP'], k['ST'], vel, scal, self.gpu.linear, atlas], u,
+        bsdf = solver.sdf if pieces else self._dummy()
+        bvel = solver.solid_vel() if pieces else self._dummy()
+        b.run(self.k_step, [k['BL'], k['RT'], k['RN'], k['X'], k['XP'], k['ST'], vel, scal, self.gpu.linear, atlas, bsdf, bvel], u,
               (self.n, 1, 1))
         self.time += dt
 

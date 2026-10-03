@@ -1,19 +1,23 @@
 // Grass (engine/strands.py): a solver substep's share of blade substeps for every blade, one thread each. The air
 // (the gas in the box, the wind outside it) drags each point across the blade; the blade bends back toward its rest
 // shape from the root up and keeps its length (rest_dir, turn_by); it stays out of the ground and the objects, which
-// push it aside as they move through it. Where the gas is hot enough it heats, catches, burns down to stubble (the
+// push it aside as they move through it (broken pieces and people's and cars' parts too, from the gas grid's distance
+// to them). Where the gas is hot enough it heats, catches, burns down to stubble (the
 // solver shortens it) and goes out, its stubble glowing a while.
 //!include common.wgsl
 //!include meshsdf.wgsl
 //!include colliders.wgsl
 //!include strand_common.wgsl
 
+const CRUSH_SLACK: f32 = 0.9;      // of its spring a crushed blade loses
+const CRUSH_RECOVER: f32 = 40.0;   // s for a crushed blade to stand up again
+
 struct Params {
   sim: vec4<f32>,      // dt (one blade substep), blade substeps, blades, gas on (1/0)
   g: Grid,             // the simulation grid (fire-local metres)
   air: vec4<f32>,      // the wind outside the box (fire-local m/s), gustiness (0..1)
   air2: vec4<f32>,     // ambient K, flame K, time at the first substep (s), _
-  gnd: vec4<f32>,      // ground (1/0), its height (fire-local m), _, _
+  gnd: vec4<f32>,      // ground (1/0), its height (fire-local m), pieces in the gas grid's distance (1/0), _
   ccnt: vec4<f32>,
   col: array<Collider, MAX_COLLIDERS>,
   patches: array<Patch, MAX_PATCHES>,
@@ -29,7 +33,27 @@ struct Params {
 @group(0) @binding(7) var scal: texture_3d<f32>;
 @group(0) @binding(8) var lin: sampler;
 @group(0) @binding(9) var atlas: texture_3d<f32>;
+@group(0) @binding(10) var bsdf: texture_3d<f32>;   // the gas grid's distance to anything solid (cells), pieces included
+@group(0) @binding(11) var bvel: texture_3d<f32>;   // and its solid velocity: w above a half where a piece is
 @group(1) @binding(0) var<uniform> U: Params;
+
+// Fire-local point p pushed out of the broken pieces and people's and cars' parts by r (a blade's radius): along the gas
+// grid's distance to them, where a piece is (whole objects are kept off exactly, each by its own shape).
+fn off_pieces(p: vec3<f32>, r: f32) -> vec3<f32> {
+  let n = vec3<i32>(U.g.n.xyz);
+  let c = vec3<i32>(floor((p - U.g.org.xyz) / U.g.n.w));
+  if (any(c < vec3<i32>(1)) || any(c >= n - vec3<i32>(1))) { return p; }
+  if (textureLoad(bvel, c, 0).w < 0.5) { return p; }
+  let h = U.g.n.w;
+  let d = textureLoad(bsdf, c, 0).x * h;
+  if (d >= r) { return p; }
+  let g = vec3<f32>(textureLoad(bsdf, c + vec3<i32>(1, 0, 0), 0).x - textureLoad(bsdf, c - vec3<i32>(1, 0, 0), 0).x,
+                    textureLoad(bsdf, c + vec3<i32>(0, 1, 0), 0).x - textureLoad(bsdf, c - vec3<i32>(0, 1, 0), 0).x,
+                    textureLoad(bsdf, c + vec3<i32>(0, 0, 1), 0).x - textureLoad(bsdf, c - vec3<i32>(0, 0, 1), 0).x);
+  let gl = length(g);
+  if (gl < 1e-6) { return p; }
+  return p + g / gl * (r - d);
+}
 
 fn hash21(p: vec2<f32>) -> f32 {
   return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453);
@@ -153,14 +177,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         pr = rest_dir(up, b1.w, lean, k - 2u);
       }
       let goal = x[k - 1u] + turn_by(pr, pc, rest_dir(up, b1.w, lean, k - 1u)) * seg;
-      let sk = pa.phys.x * (1.0 - 0.5 * f32(k - 1u) / f32(POINTS - 2u));
+      // (a crushed blade, driven or walked over, has lost most of its spring and lies where it was pressed)
+      let sk = pa.phys.x * (1.0 - 0.5 * f32(k - 1u) / f32(POINTS - 2u)) * (1.0 - CRUSH_SLACK * st.w);
       x[k] = mix(x[k], goal, sk);
       let d = x[k] - x[k - 1u];
       x[k] = x[k - 1u] + d * (seg / max(length(d), 1e-7));
     }
     // out of the ground and the objects
+    var pressed = false;
     for (var k = 1u; k < POINTS; k++) {
       var p = x[k];
+      let before = p;
       if (U.gnd.x > 0.5 && p.y < U.gnd.y + r) { p.y = U.gnd.y + r; }
       if (near != 0u) {
         for (var c = 0; c < i32(U.ccnt.x); c++) {
@@ -170,8 +197,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           if (d < r) { p += col_normal(kk, p, 0.01) * (r - d); }
         }
       }
+      if (U.gnd.z > 0.5) { p = off_pieces(p, r); }
+      if (length(p - before) > 0.5 * r && p.y - U.gnd.y < 0.6 * seg * f32(k)) { pressed = true; }
       x[k] = p;
     }
+    // crushed: pressed down by a thing on it (a wheel, a foot) it goes slack in a tenth of a second, and springs back up
+    // over CRUSH_RECOVER seconds
+    st.w = select(max(st.w - dt / CRUSH_RECOVER, 0.0), min(st.w + 10.0 * dt, 1.0), pressed);
   }
   // fire: heating in hot gas until it catches, then burning down
   if (pa.burn.x > 0.5) {

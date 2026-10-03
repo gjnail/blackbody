@@ -340,6 +340,15 @@ COMPONENTS = [
                           opening=(0.13, 0.01, 0.13), opening_at=(0.0, 0.17, 0.0),   # (open at the top)
                           material='ceramic', own_colour=True, colour=(0.12, 0.25, 0.55), dynamic=True, breakable=True,
                           pieces=40, start_spin=(90.0, 0.0, 40.0))]),
+    # -- people and cars (engine/assemblies.py) --------------------------------------------------------------------------
+    Component('person', 'Person', 'People and cars', 'A crash-test figure, 1.8 m, standing braced: it stays on its feet until '
+              'something hits it hard, then falls as a body does.', 'person', room=(0.8, 2.0, 0.6),
+              objects=[_C(name='Person', shape='box', position=(0.0, 0.9, 0.0), size=(0.25, 0.9, 0.15), build='figure',
+                          material='person')]),
+    Component('car', 'Car', 'People and cars', 'A 4.4 m car on sprung wheels, driven at 30 km/h (its Speed, keyed: 0 '
+              'brakes it) and steered (Steer).', 'car', room=(6.0, 1.6, 2.2),
+              objects=[_C(name='Car', shape='box', position=(0.0, 0.75, 0.0), size=(2.2, 0.75, 0.9), build='car',
+                          material='painted', own_colour=True, colour=(0.55, 0.06, 0.04), drive='rear', drive_speed=30.0)]),
     # -- ropes, springs and hinges (engine/solids.py Joint) -------------------------------------------------------------
     Component('wrecking_ball', 'Wrecking ball', 'Ropes and hinges', 'A 900 kg steel ball on a crane\N{RIGHT SINGLE QUOTATION MARK}s cable, '
               'pulled back and let go: it swings through at 6 m/s. Put a brick wall at the bottom of its swing.', 'ball',

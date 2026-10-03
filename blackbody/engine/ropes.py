@@ -10,7 +10,7 @@ import math
 
 import numpy as np
 
-ROPE, CABLE, SPRING = 0, 1, 2          # looks (Solids.rope_poses)
+ROPE, CABLE, SPRING, CHAIN = 0, 1, 2, 3          # looks (Solids.rope_poses)
 SIDES = 8                              # a segment's cross-section: a regular octagon round the rope's radius
 UP = np.array([0.0, 1.0, 0.0])
 
@@ -85,6 +85,34 @@ def coil(a, b, rest, wire, n_per_turn=12):
     return np.concatenate([a[None], body, b[None]])
 
 
+def chain_links(pts, wire):
+    """A chain's links along its polyline (one link a segment), each a ring of four bars (its two sides and two ends),
+    each turned a quarter round from the last, as links interlock: [(centre, orientation (x, y, z, w) turning y onto
+    the bar, half length, bar radius)]. wire: the thickness of a link's wire."""
+    out = []
+    r = 0.5 * wire
+    for k in range(len(pts) - 1):
+        p0, p1 = np.asarray(pts[k], float), np.asarray(pts[k + 1], float)
+        d = p1 - p0
+        ln = float(np.linalg.norm(d))
+        if ln < 1e-7:
+            continue
+        y = d / ln
+        side = np.cross(y, [0.0, 1.0, 0.0] if abs(y[1]) < 0.9 else [1.0, 0.0, 0.0])
+        side /= np.linalg.norm(side)
+        if k % 2:
+            side = np.cross(y, side)
+        c = 0.5 * (p0 + p1)
+        half_w = 1.6 * wire
+        # its two sides, along it (a little longer than a segment: links overlap where they hook)
+        for s in (-1.0, 1.0):
+            out.append((c + s * half_w * side, _quat_onto_y(y), 0.5 * ln + 1.2 * wire, r))
+        # its two ends, across it
+        for e in (p0 - 0.6 * wire * y, p1 + 0.6 * wire * y):
+            out.append((e, _quat_onto_y(side), half_w + r, r))
+    return out
+
+
 def rope_points(rope, ground=None, n=None):
     """The polyline a rope (Solids.rope_poses entry) is drawn along and the velocity of each of its points:
     (points (m, 3), velocities (m, 3)). A snapped rope hangs from its anchor end, half its length (down to the
@@ -93,6 +121,12 @@ def rope_points(rope, ground=None, n=None):
     va, vb = np.asarray(rope['va'], float), np.asarray(rope['vb'], float)
     length = num(rope['length'])
     look = int(round(num(rope['look'])))
+    path = rope.get('path')
+    if path is not None and len(path) >= 2 and num(rope.get('broken', 0.0)) < 0.5:
+        # (wrapped round a post: along its path, taut)
+        path = np.asarray(path, float)
+        t = np.clip(np.linspace(0.0, 1.0, len(path)), 0.0, 1.0)
+        return path, va + t[:, None] * (vb - va)
     if look == SPRING:
         if num(rope.get('broken', 0.0)) > 0.5:
             return np.zeros((0, 3)), np.zeros((0, 3))

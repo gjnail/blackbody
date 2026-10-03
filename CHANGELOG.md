@@ -55,6 +55,19 @@ Notable changes to Blackbody. The format follows
   wrecking ball folds over. Meshes can break, a vase breaks into curved shards of mixed sizes, and things are drawn
   whole until their first crack opens. Joints are ten times stiffer (a wall no longer sways like jelly), and mortar
   holds 0.6 MPa.
+- People and cars (Properties › Physics › Build): an object built of many parts on joints. A person is a crash-test
+  figure, 1.8 m and about 80 kg, its head, chest, pelvis, arms and legs turning within a body's reach (a knee bends
+  only back). It stands braced until something hits it faster than 1.5 m/s, then goes limp and falls as a body does,
+  over a car's bonnet or down the stairs. A car is 4.4 m and about 1300 kg on four sprung tyres; Drive (rear, all or
+  none), Speed (its motor's, keyframable: 0 brakes, below 0 reverses) and Steer. It drives over grass leaving its
+  tracks flattened, knocks walls down and carries a person on its bonnet. Blocks: People and cars. Presets: Crash
+  test, Stunt fall.
+- A rope or a steel cable goes round a post or a ball in its way: thrown over a beam, a crate hangs from it and swings
+  under it. Chains (Rope is › Chain) are steel links: as heavy as a real chain of their thickness (12 mm: about 3 kg a
+  metre), hanging in their own curve, catching on and draping over what they meet, piling up where they land, and
+  holding a couple of hundred kilograms.
+- Grass is pushed aside by things that fall, broken pieces and people's and cars' parts; pressed flat by a wheel or a
+  foot it lies down, a track that stands up again over about 40 s.
 - Ropes, springs, hinges and ball joints (Properties › Joint): an object hangs on a rope (it swings, goes slack and
   is caught with a jolt), bounces on a spring, turns on a hinge or swings about a ball joint, from a fixed point or
   from another object (a beam, a crane's jib, a moving arm, another falling thing). Ropes and steel cables are drawn

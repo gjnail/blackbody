@@ -300,3 +300,34 @@ def test_the_cart_preset_jumps_its_ramp_bowls_the_tower_over_and_brakes():
     shot.links = [{'child': ['emitter', 'Log A'], 'parent': ['collider', 'Cart'], 'offset': [0.0, 0.0, 0.0]}]
     presets.apply_to(shot, 'cart_jump')
     assert shot.links == sc.links
+
+
+# ---- a rope over a post, a chain ------------------------------------------------------------------------------------
+
+def test_a_rope_goes_over_a_post_and_holds_what_hangs_from_it():
+    post = dict(name='Post', shape='cylinder', position=(0.0, 2.0, 0.0), size=(0.08, 0.6, 0.08), pitch=90.0, material='wood')
+    crate = dict(name='Crate', shape='box', position=(-0.6, 1.2, 0.0), size=(0.15, 0.15, 0.15), dynamic=True, material='wood',
+                 joint='rope', joint_anchor=(0.6, 0.3, 0.0), rope_length=3.2)
+    S, poses = run(scene_of(post, crate, fps=50), 4.0)
+    xs = np.array([o[1]['pos'][0] for o, _r in poses])
+    ys = np.array([o[1]['pos'][1] for o, _r in poses])
+    assert ys.min() > 0.4                                    # held up by the rope over the post (not dropped)
+    assert xs.min() < -0.3 and xs.max() > 0.2                # swinging under it
+    path = S.rope_poses()[1]['path']
+    assert path[:, 1].max() > 2.05                           # and the rope is drawn over its top
+
+
+def test_a_chain_hangs_with_its_weight_and_holds_its_load():
+    box = dict(name='Box', shape='box', position=(0.8, 1.5, 0.0), size=(0.15, 0.15, 0.15), dynamic=True, material='wood',
+               density=740.0, joint='rope', rope_look='chain', rope_thickness=0.012, joint_anchor=(0.0, 2.5, 0.0),
+               rope_length=1.2)
+    S, poses = run(scene_of(box, fps=50), 3.0)
+    path = S.rope_poses()[0]['path']
+    assert np.allclose(path[-1], (0.0, 2.5, 0.0), atol=0.01)            # held at its far end
+    links = np.linalg.norm(np.diff(path, axis=0), axis=1)
+    assert np.allclose(links, links.mean(), rtol=0.05) and abs(links.sum() - 1.2) < 0.06   # links that are links
+    ys = np.array([o[0]['pos'][1] for o, _r in poses])
+    assert ys.min() > 0.9                                     # it holds the box up, swinging below it
+    m = S.model
+    chain_mass = sum(float(m.body_mass[b]) for b in S.joints[0].link_ids)
+    assert 2.5 < chain_mass < 4.5                             # 12 mm chain: about 2.9 kg a metre

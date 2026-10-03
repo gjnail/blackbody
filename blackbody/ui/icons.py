@@ -590,6 +590,16 @@ def _g_car(p, s):
     p.drawEllipse(QPointF(s * 0.74, s * 0.72), s * 0.08, s * 0.08)
 
 
+def _g_person(p, s):
+    """A standing figure: a head, a body, arms and legs."""
+    p.drawEllipse(QPointF(s * 0.5, s * 0.17), s * 0.09, s * 0.09)
+    p.drawLine(QPointF(s * 0.5, s * 0.28), QPointF(s * 0.5, s * 0.58))
+    p.drawLine(QPointF(s * 0.5, s * 0.34), QPointF(s * 0.3, s * 0.52))
+    p.drawLine(QPointF(s * 0.5, s * 0.34), QPointF(s * 0.7, s * 0.52))
+    p.drawLine(QPointF(s * 0.5, s * 0.58), QPointF(s * 0.36, s * 0.88))
+    p.drawLine(QPointF(s * 0.5, s * 0.58), QPointF(s * 0.64, s * 0.88))
+
+
 def _g_hill(p, s):
     path = QPainterPath()
     path.moveTo(s * 0.04, s * 0.84)
@@ -830,7 +840,7 @@ GLYPHS = {
     'collider': _g_cube, 'light': _g_bulb, 'fabric': _g_fabric, 'book': _g_book,
     'logs': _g_logs, 'pool': _g_pool, 'line': _g_line, 'torch': _g_torch, 'ring': _g_ring, 'burst': _g_burst, 'jet': _g_jet,
     'spiral': _g_spiral, 'steam': _g_steam, 'pour': _g_pour, 'fountain': _g_fountain, 'ball': _g_ball, 'pillar': _g_pillar,
-    'wall': _g_wall, 'house': _g_house, 'car': _g_car, 'hill': _g_hill, 'flag': _g_flag, 'spot': _g_spot, 'window': _g_window,
+    'wall': _g_wall, 'house': _g_house, 'car': _g_car, 'person': _g_person, 'hill': _g_hill, 'flag': _g_flag, 'spot': _g_spot, 'window': _g_window,
     'mesh': _g_mesh, 'crate': _g_crate, 'roto': _g_roto, 'text': _g_text, 'shape': _g_shape,
     'cart': _g_cart, 'turntable': _g_turntable, 'windmill': _g_windmill, 'ramp': _g_ramp,
     'grass': _g_grass, 'strands': _g_grass, 'wheat': _g_wheat, 'reeds': _g_reeds,

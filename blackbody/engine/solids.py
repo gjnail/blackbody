@@ -136,6 +136,7 @@ MORTAR = 0.6e6          # Pa: mortar in tension, the glue between the bricks of 
 JOINT_FRICTION = 0.6    # shear a joint holds beyond its cohesion, per newton of compression across it
 GAP = 0.001             # m: cut faces are moved in by this for the physics, so glued neighbours do not touch
 BREAK_STEPS = 1         # steps in a row a weld must be overloaded to break (an impact lasts only a few)
+CHAIN_KG_M2 = 20000.0   # kg/m per square metre of its wire: a chain's weight (1 cm wire: 2 kg a metre)
 WELD_SOLIMP = (0.99, 0.999, 0.001)   # how hard a weld holds its pose (MuJoCo's impedance): MuJoCo's own 0.9-0.95 gives
                         # as the inertia of a small piece, so a post of steel segments whipped a metre either way like a
                         # fishing rod and a wall swayed; 0.999-0.9999 goes unstable
@@ -225,6 +226,10 @@ class Joint:
     radius: float = 0.0125      # the rope's (or the spring's wire's) radius, for drawing (m)
     look: int = 0               # ropes.ROPE, CABLE or SPRING
     broken: bool = False
+    post: tuple = None          # a rope: the post or ball it may wrap round (geom name, centre, axis, radius)
+    links: list = None          # a chain: its links' body names, from the far end to the object
+    link_ids: np.ndarray = None
+    link_half: np.ndarray = None   # each link's start (toward the far end) from its middle, in its own frame
     bid: int = -1               # MuJoCo ids, once compiled: its body, the other's (0: the world), sites, constraints, tendon
     oid: int = 0
     other_free: bool = False    # the other end is on a body that moves freely (it takes the joint's friction back)
@@ -238,8 +243,14 @@ _HITS = {}          # rehearsals (_rehearse) kept: scene -> {collider index: whe
 
 
 def breaks(c):
-    """Whether collider c is breakable."""
-    return bool(c.get('breakable'))
+    """Whether collider c is breakable (not a person or a car: those are their parts)."""
+    return bool(c.get('breakable')) and kind_of(c) is None
+
+
+def kind_of(c):
+    """The kind of assembly (engine/assemblies.py: 'figure', 'car') collider c is built as, or None."""
+    from .assemblies import kind_of as k
+    return k(c)
 
 
 def joined(c):
@@ -356,6 +367,9 @@ def fractured(c, size, hollow=0.0, impact=None, scene=None):
     """The pieces a breakable collider is cut into (kept: cutting takes a fraction of a second). impact: where it is
     hit (its own frame: PieceSet.impact), the cracks crowd round it. scene: for a mesh, where its file is."""
     from .fracture import fracture
+    if kind_of(c):           # (a person's or a car's parts)
+        from .assemblies import assembly
+        return assembly(kind_of(c), size).fracture()
     mesh = mesh_key = None
     if c['shape'] == 'mesh':
         mesh, mesh_key = mesh_of(scene, c, size)
@@ -456,6 +470,7 @@ class Solids:
         self._w = None             # the welds' data, flattened (_index_welds)
         self._imp = None           # the impact check's (_index_impact)
         self._set_bonds = []       # each breakable's welds between its pieces (rows of _w)
+        self.asms = []             # people and cars (_build_assemblies): their parts' bodies, joints and motors
         self._mocap_vel = {}       # mocap id -> its keys' velocity now (how fast a keyed thing hits)
         self._btab = None          # per body, for how fast contacts close (_bodies_table)
         self.rehearsal = False     # a rehearsal (_rehearse): nothing breaks; where each breakable is hit is noted (hits)
@@ -474,7 +489,7 @@ class Solids:
 
     @property
     def active(self):
-        return bool(self.bodies or self.sets)
+        return bool(self.bodies or self.sets or self.asms)
 
     @staticmethod
     def wanted(scene):
@@ -484,7 +499,7 @@ class Solids:
         for i, c in enumerate(scene.colliders):
             if not c['enabled']:
                 continue
-            if falls(c) or breaks(c) or (c.get('floating') and scene.kind in ('liquid', 'both')):
+            if falls(c) or breaks(c) or kind_of(c) or (c.get('floating') and scene.kind in ('liquid', 'both')):
                 out.append(i)
         return out
 
@@ -507,6 +522,7 @@ class Solids:
         self.model = self.data = None
         self.bodies, self.mocap, self.key = [], [], None
         self.sets, self.breaks, self._w, self._imp = [], [], None, None
+        self.asms = []
         self.joints, self.snaps, self._tendon0 = [], [], None
         self.started = False
         self._last = {}
@@ -751,6 +767,255 @@ class Solids:
                 pos, R = d.xpos[bid], d.xmat[bid].reshape(3, 3)
             self.hits[i] = [np.round(R.T @ (p - pos), 4), closing, False]
 
+    def _build_assemblies(self, scene, spec, w, idx, by_index, contact):
+        """People and cars: each its parts as MuJoCo bodies in a tree (the root on a free joint), on ball joints,
+        hinges and sliding springs within their ranges; a car's wheels driven and steered by motors. Returns a record
+        each for _index_assemblies."""
+        import mujoco
+        from .assemblies import STAND, LIMP, CAR_TORQUE, assembly
+        out = []
+        for i in idx:
+            c = scene.colliders[i]
+            cg = by_index.get(i)
+            kind = kind_of(c)
+            if cg is None or kind is None:
+                continue
+            A = assembly(kind, cg.size)
+            r = resolved(c)
+            q0 = turn_wxyz(cg)
+            R0 = q_rot(xyzw(q0))
+            limp = kind == 'figure' and c.get('stance', 'stands') == 'limp'
+            made, joints, names = [], [], []
+            for k, B in enumerate(A.bodies):
+                parent = w if B.parent < 0 else made[B.parent]
+                b = parent.add_body()
+                b.name = f'asm{i}_{k}'
+                if B.parent < 0:
+                    b.pos = list(map(float, np.asarray(cg.pos, float) + R0 @ B.at))
+                    b.quat = list(q0)
+                    b.add_freejoint()
+                else:
+                    b.pos = list(map(float, B.at - A.bodies[B.parent].at))
+                    j = b.add_joint()
+                    j.name = f'asm{i}_{k}_j'
+                    j.pos = list(map(float, B.anchor - B.at))
+                    j.armature = 0.01
+                    # (ranges in degrees: MuJoCo's compiler takes angles in degrees unless told otherwise)
+                    if B.joint == 'ball':
+                        j.type = mujoco.mjtJoint.mjJNT_BALL
+                        j.range = [0.0, float(B.range[1])]
+                    else:
+                        j.type = mujoco.mjtJoint.mjJNT_HINGE if B.joint == 'hinge' else mujoco.mjtJoint.mjJNT_SLIDE
+                        j.axis = list(map(float, B.axis))
+                        if B.range is not None:
+                            j.range = [float(x) for x in B.range]
+                    j.limited = mujoco.mjtLimited.mjLIMITED_TRUE if B.range is not None else mujoco.mjtLimited.mjLIMITED_FALSE
+                    if B.tone:
+                        stiff, damp = (LIMP if limp else STAND)[B.tone]
+                        j.stiffness, j.damping = [stiff, 0.0, 0.0], [damp, 0.0, 0.0]   # (3-vectors in MuJoCo 3.14's spec)
+                    if B.spring is not None:
+                        j.stiffness, j.damping = [B.spring[0], 0.0, 0.0], [B.spring[1], 0.0, 0.0]
+                        j.springref = B.spring[2]
+                    joints.append((k, j.name, B.tone))
+                mine = [n for n, kb in enumerate(A.piece_body) if kb == k]
+                for n in mine:
+                    pc = A.pieces[n]
+                    ma = spec.add_mesh()
+                    ma.name = f'asm{i}_{k}_{n}'
+                    ma.uservert = (pc.verts - B.at).ravel().tolist()
+                    g = b.add_geom()
+                    g.type = mujoco.mjtGeom.mjGEOM_MESH
+                    g.meshname = ma.name
+                    g.density = float(A.density[n])
+                    g.priority = 1
+                    look = A.looks[n]
+                    contact(g, 0.95 if look == 'rubber' else r['friction'], 0.3 if look == 'rubber' else r['bounce'])
+                if not mine:
+                    b.mass = float(B.mass)
+                    b.inertia = [1e-3 * B.mass] * 3
+                    b.explicitinertial = True
+                made.append(b)
+                names.append(b.name)
+            if kind == 'car':
+                # (its wheels turn in its wheel arches, and its hubs and steering knuckles inside it: none of them meet it)
+                for k, B in enumerate(A.bodies):
+                    if k > 0:
+                        ex = spec.add_exclude()
+                        ex.bodyname1, ex.bodyname2 = names[0], names[k]
+            motors = []
+            if kind == 'car' and c.get('drive', 'rear') != 'off':
+                driven = A.drive if c.get('drive', 'rear') == 'all' else [d for d in A.drive if A.bodies[d[0]].at[0] < 0.0]
+                for kb, radius in driven:
+                    a = spec.add_actuator()
+                    a.name = f'asm{i}_{kb}_drive'
+                    a.trntype = mujoco.mjtTrn.mjTRN_JOINT
+                    a.target = f'asm{i}_{kb}_j'
+                    a.set_to_velocity(kv=CAR_TORQUE / 2.0)
+                    a.forcelimited = mujoco.mjtLimited.mjLIMITED_TRUE
+                    a.forcerange = [-CAR_TORQUE, CAR_TORQUE]
+                    a.ctrllimited = mujoco.mjtLimited.mjLIMITED_FALSE
+                    motors.append(('drive', a.name, radius))
+            if kind == 'car':
+                for kb in A.steer:
+                    a = spec.add_actuator()
+                    a.name = f'asm{i}_{kb}_steer'
+                    a.trntype = mujoco.mjtTrn.mjTRN_JOINT
+                    a.target = f'asm{i}_{kb}_j'
+                    a.set_to_position(kp=4000.0, kv=200.0)
+                    a.forcelimited = mujoco.mjtLimited.mjLIMITED_TRUE
+                    a.forcerange = [-2000.0, 2000.0]
+                    a.ctrllimited = mujoco.mjtLimited.mjLIMITED_FALSE
+                    motors.append(('steer', a.name, 0.0))
+            out.append(dict(index=i, kind=kind, A=A, names=names, joints=joints, motors=motors, limp=limp, size=tuple(cg.size),
+                            throw=np.asarray(c.get('start_velocity', (0.0, 0.0, 0.0)), float),
+                            keyed=any(scene.curve(('collider', i, key)) is not None for key in ('drive_speed', 'steer'))))
+        return out
+
+    def _index_assemblies(self, asms):
+        """Each person's and car's body, joint, dof and motor ids, once the model is built; a car keyed to a speed starts
+        rolling at it."""
+        import mujoco
+        m, d = self.model, self.data
+        from .assemblies import kind_of as _k
+        del _k
+        for a in asms:
+            a['bodies'] = np.array([mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, n) for n in a['names']], np.int64)
+            a['jids'] = [(mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, n), tone) for _k2, n, tone in a['joints']]
+            a['acts'] = [(kind, mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, n), radius) for kind, n, radius in a['motors']]
+            a['part_body'] = a['bodies'][np.asarray(a['A'].piece_body, np.int64)]
+            a['part_off'] = np.array([pc.centroid - a['A'].bodies[kb].at for pc, kb in zip(a['A'].pieces, a['A'].piece_body)])
+            root = int(a['bodies'][0])
+            adr = int(m.jnt_dofadr[m.body_jntadr[root]])
+            d.qvel[adr:adr + 3] += a['throw']
+            if a['kind'] == 'figure' and a['limp']:
+                # (limp, no one balances: a little sway, about a level axis, to fall by)
+                rng = np.random.default_rng(a['index'] + 11)
+                th = rng.uniform(0.0, 2.0 * math.pi)
+                d.qvel[adr + 3:adr + 6] += 0.4 * np.array([math.cos(th), 0.0, math.sin(th)])
+        self.asms = asms
+        self._asm_body = {int(b): n for n, a in enumerate(asms) for b in a['bodies']}
+
+    def _assemblies_step(self, scene, frame):
+        """People and cars at this step: a car's motors set to its keyed speed and steering (0 km/h brakes it)."""
+        if not self.asms:
+            return
+        d = self.data
+        for a in self.asms:
+            if a['kind'] != 'car' or not a['acts']:
+                continue
+            i = a['index']
+            v = float(scene.get(('collider', i, 'drive_speed'), frame)) / 3.6
+            steer = math.radians(float(scene.get(('collider', i, 'steer'), frame)))
+            for kind, aid, radius in a['acts']:
+                d.ctrl[aid] = v / max(radius, 1e-3) if kind == 'drive' else steer
+
+    def _assemblies_hit(self, q0):
+        """A standing person hit hard (a contact closing on one of its parts faster than LIMP_SPEED, from anything
+        not of it) goes limp: its joints lose their bracing and it falls as a body does."""
+        from .assemblies import LIMP, LIMP_SPEED
+        if not self.asms or q0 is None or not any(a['kind'] == 'figure' and not a['limp'] for a in self.asms):
+            return
+        m, d = self.model, self.data
+        nc = int(d.ncon)
+        if nc == 0:
+            return
+        b1 = np.asarray(m.geom_bodyid[d.contact.geom1[:nc]], np.int64)
+        b2 = np.asarray(m.geom_bodyid[d.contact.geom2[:nc]], np.int64)
+        own1 = np.array([self._asm_body.get(int(b), -1) for b in b1])
+        own2 = np.array([self._asm_body.get(int(b), -1) for b in b2])
+        sel = np.nonzero(((own1 >= 0) | (own2 >= 0)) & (own1 != own2))[0]
+        if not len(sel):
+            return
+        speed = self._closing(q0, b1[sel], b2[sel], np.asarray(d.contact.pos[sel], float),
+                              np.asarray(d.contact.frame[sel, :3], float))
+        for k, v in zip(sel, speed):
+            if v < LIMP_SPEED:
+                continue
+            for n in (own1[k], own2[k]):
+                a = self.asms[n] if n >= 0 else None
+                if a is not None and a['kind'] == 'figure' and not a['limp']:
+                    self._go_limp(a, LIMP)
+
+    def _go_limp(self, a, tones):
+        m = self.model
+        for jid, tone in a['jids']:
+            if tone:
+                stiff, damp = tones[tone]
+                m.jnt_stiffness[jid] = stiff
+                adr, n = int(m.jnt_dofadr[jid]), 3 if m.jnt_type[jid] == 1 else 1
+                m.dof_damping[adr:adr + n] = damp
+        a['limp'] = True
+
+    def assembly_poses(self):
+        """People's and cars' parts as they are now, in piece_poses' form."""
+        import mujoco
+        m, d = self.model, self.data
+        out = {}
+        v6 = np.zeros(6)
+        for a in self.asms:
+            bs = a['part_body']
+            R = d.xmat[bs].reshape(-1, 3, 3)
+            pos = d.xpos[bs] + np.einsum('bij,bj->bi', R, a['part_off'])
+            q = d.xquat[bs]
+            vel, om = np.zeros((len(bs), 3)), np.zeros((len(bs), 3))
+            for n, b in enumerate(bs):
+                mujoco.mj_objectVelocity(m, d, mujoco.mjtObj.mjOBJ_BODY, int(b), v6, 0)
+                om[n] = v6[:3]
+                vel[n] = v6[3:] + np.cross(v6[:3], pos[n] - d.xpos[b])
+            out[a['index']] = dict(pos=pos, quat=np.concatenate([q[:, 1:], q[:, :1]], 1), vel=vel, omega=om,
+                                   size=np.asarray(a['size'], float), hollow=np.float32(0.0))
+        return out
+
+    @staticmethod
+    def _post_for(scene, by_index, free, i, j, P, B, L):
+        """A post or a ball a rope from P to B (L long) may wrap round: the cylinder or sphere (not either end's
+        object) whose middle passes nearest its line, within its radius and the rope's slack: (geom name, centre, axis,
+        radius) or None. (MuJoCo's tendon goes round it only while it is in the way.)"""
+        d = B - P
+        ln = float(np.linalg.norm(d))
+        if ln < 1e-6:
+            return None
+        u = d / ln
+        slack = 0.5 * max(L - ln, 0.0) + 0.05
+        best = None
+        up = np.array([0.0, 1.0, 0.0])
+        for n, c in enumerate(scene.colliders):
+            if n in (i, j) or not c['enabled'] or n not in by_index or c['shape'] not in ('cylinder', 'sphere'):
+                continue
+            if float(c.get('hollow', 0.0) or 0.0) > 0.0 or breaks(c) or kind_of(c):
+                continue
+            cg = by_index[n]
+            ctr = np.asarray(cg.pos, float)
+            rad = float(abs(cg.size[0]))
+            ax = q_rot(xyzw(turn_wxyz(cg))) @ np.array([0.0, 1.0, 0.0])
+            t = float((ctr - P) @ u)
+            dh = np.array([d[0], 0.0, d[2]])
+            th = float((ctr - P) @ dh) / max(float(dh @ dh), 1e-12) if float(np.linalg.norm(dh)) > 0.2 * ln else -1.0
+            if not (0.05 * ln < t < 0.95 * ln or 0.05 < th < 0.95):     # (between its ends, along it or across the ground)
+                continue
+            t = float(np.clip(t, 0.0, ln))
+            off = P + u * t - ctr
+            if c['shape'] == 'cylinder':
+                off = off - ax * float(off @ ax)
+                if abs(float((P + u * t - ctr) @ ax)) > abs(float(cg.size[1])):
+                    continue
+            gap = float(np.linalg.norm(off)) - rad
+            if gap < slack and (best is None or gap < best[0]):
+                name = f'bodygeom{n}' if n in free else f'fixed{n}_0'
+                # the side it goes round: away from the line (a line through it: over its top, or any way round)
+                away = -off
+                if c['shape'] == 'cylinder':
+                    away = away - ax * float(away @ ax)
+                if np.linalg.norm(away) < 1e-3 * rad:
+                    away = up - (ax * float(up @ ax) if c['shape'] == 'cylinder' else 0.0)
+                    if np.linalg.norm(away) < 1e-3:
+                        away = np.cross(ax, u)
+                away = away / max(float(np.linalg.norm(away)), 1e-12)
+                R = q_rot(xyzw(turn_wxyz(cg)))
+                best = (gap, (name, ctr, ax if c['shape'] == 'cylinder' else None, rad, free[n][0] if n in free else None,
+                              away, R))
+        return None if best is None else best[1]
+
     def _rehearsal_parts(self, spec, i, c, cg):
         """A breakable's pieces as one thing's shapes (a rehearsal): (shape, half size, centre, mesh) in its own frame."""
         from .fracture import inset
@@ -840,7 +1105,7 @@ class Solids:
 
     def _piece_v(self):
         """The velocities now (the impact check's before): every degree of freedom's."""
-        return None if self._imp is None and not self.rehearsal else self.data.qvel.copy()
+        return None if self._imp is None and not self.rehearsal and not self.asms else self.data.qvel.copy()
 
     def _bodies_table(self):
         """Per body, for how fast contacts close (_closing): its free joint's first dof (-1: none), its mocap id (-1:
@@ -965,7 +1230,7 @@ class Solids:
         """The objects' ropes, springs, hinges and ball joints (Properties › Joint): sites on the two bodies, and a
         tendon or connect constraints between them. Returns the Joints (their MuJoCo ids are found once compiled)."""
         import mujoco
-        from .ropes import CABLE, ROPE, SPRING
+        from .ropes import CABLE, CHAIN, ROPE, SPRING, rope_curve
         out = []
         free = {bd.index: (f'body{n}', bd) for n, bd in enumerate(bodies)}
         pieces = {ps.index: ps for ps in sets}
@@ -1036,7 +1301,75 @@ class Solids:
                        torque=float(c.get('motor_torque', 0.0) or 0.0),
                        keyed=kind == 'hinge' and scene.curve(('collider', i, 'motor_speed')) is not None,
                        radius=0.5 * float(c.get('rope_thickness', 0.025)),
-                       look=SPRING if kind == 'spring' else (CABLE if c.get('rope_look') == 'cable' else ROPE))
+                       look=SPRING if kind == 'spring' else {'cable': CABLE, 'chain': CHAIN}.get(c.get('rope_look'), ROPE))
+            if kind == 'rope' and jt.look == CHAIN:
+                # a chain: steel links, each a body on a ball joint to the last, from the far end (held there) to it
+                dist = float(np.linalg.norm(B - P))
+                L = float(c.get('rope_length', 0.0) or 0.0) or dist
+                wire = 2.0 * jt.radius
+                n_links = int(np.clip(round(L / (5.0 * wire)), 4, 60))
+                pts = rope_curve(B, P, L, n_links)
+                per_m = CHAIN_KG_M2 * wire * wire
+                load = mass(i) + (mass(j) if j is not None and ot[1] else 0.0)
+                prev, names, halves = None, [], []
+                for kl in range(n_links):
+                    a_, b_ = pts[kl], pts[kl + 1]
+                    seg = float(np.linalg.norm(b_ - a_))
+                    mid = 0.5 * (a_ + b_)
+                    parent = spec.worldbody if prev is None else prev
+                    lb = parent.add_body()
+                    lb.name = f'{tag}_link{kl}'
+                    lb.pos = list(map(float, mid if prev is None else mid - prev_mid))
+                    j_ = lb.add_joint() if (prev is not None or not ot[1] and not ot[0]) else None
+                    if prev is None and j_ is None:
+                        lb.add_freejoint()
+                    if j_ is not None:
+                        j_.type = mujoco.mjtJoint.mjJNT_BALL
+                        j_.pos = list(map(float, a_ - mid))
+                        j_.damping = [0.002 * per_m * seg, 0.0, 0.0]
+                        # (a light link between heavy ends blows up in MuJoCo: rotational inertia in proportion to
+                        # what it carries keeps it in hand; a 200 kg weight on 12 mm chain was unstable at once)
+                        j_.armature = max(1e-4, 0.6 * load * seg * seg)
+                    g_ = lb.add_geom()
+                    g_.type = mujoco.mjtGeom.mjGEOM_CAPSULE
+                    g_.fromto = [*map(float, a_ - mid), *map(float, b_ - mid)]
+                    g_.size = [1.6 * wire, 0.0, 0.0]
+                    g_.mass = max(per_m * seg, 1e-3)
+                    g_.priority = 1
+                    g_.friction = [0.5, 0.005, 0.0001]                  # (steel links: as contact() sets a body's)
+                    g_.solref = [-k, -2.0 * damping_ratio(0.1) * math.sqrt(k)]
+                    prev, prev_mid = lb, mid
+                    names.append(lb.name)
+                    halves.append(a_ - mid)
+                # held at the far end (on another thing: glued to it there) and at this end to the object
+                e1 = spec.add_equality()
+                e1.type = mujoco.mjtEq.mjEQ_CONNECT
+                e1.objtype = mujoco.mjtObj.mjOBJ_BODY
+                e1.name1 = names[-1]
+                e1.name2 = me[0]
+                d1 = np.array(e1.data, float)
+                d1[0:3] = pts[-1] - 0.5 * (pts[-2] + pts[-1])
+                e1.data = d1
+                e1.name = f'{tag}_end'
+                if me[0]:
+                    ex = spec.add_exclude()
+                    ex.bodyname1, ex.bodyname2 = names[-1], me[0]
+                if ot[0]:
+                    ex = spec.add_exclude()
+                    ex.bodyname1, ex.bodyname2 = names[0], ot[0]
+                    e2 = spec.add_equality()
+                    e2.type = mujoco.mjtEq.mjEQ_CONNECT
+                    e2.objtype = mujoco.mjtObj.mjOBJ_BODY
+                    e2.name1 = names[0]
+                    e2.name2 = ot[0]
+                    d2 = np.array(e2.data, float)
+                    d2[0:3] = pts[0] - 0.5 * (pts[0] + pts[1])
+                    e2.data = d2
+                    e2.name = f'{tag}_start'
+
+                jt.links, jt.length, jt.link_half = names, L, np.asarray(halves, float)
+                out.append(jt)
+                continue
             if kind in ('rope', 'spring'):
                 sa, sb = site(me, P, f'{tag}a'), site(ot, B, f'{tag}b')
                 dist = float(np.linalg.norm(B - P))
@@ -1045,6 +1378,18 @@ class Solids:
                 t = spec.add_tendon()
                 t.name = tag
                 t.wrap_site(sa)
+                reach = float(c.get('rope_length', 0.0) or 0.0) or float(np.linalg.norm(B - P))
+                post = self._post_for(scene, by_index, free, i, j, P, B, max(reach, 1e-3))
+                if kind == 'rope' and post is not None:
+                    # round a post or a ball in its way, on the side away from the straight line between its ends
+                    # (over the top of a post it is draped over): a side site there, on the post's body
+                    side = spec.worldbody if post[4] is None else spec.body(post[4])
+                    ss = side.add_site()
+                    ss.name = f'{tag}side'
+                    at = post[1] + post[5] * (1.5 * post[3])
+                    ss.pos = list(map(float, at if post[4] is None else post[6].T @ (at - post[1])))
+                    t.wrap_geom(post[0], ss.name)
+                    jt.post = post[:4]
                 t.wrap_site(sb)
                 if kind == 'rope':
                     t.limited = mujoco.mjtLimited.mjLIMITED_TRUE
@@ -1094,7 +1439,7 @@ class Solids:
     def _break_joints(self):
         """Snap the ropes and springs pulled, and tear out the hinges and ball joints loaded, past their Breaks at."""
         import mujoco
-        live = [jt for jt in self.joints if jt.strength > 0.0 and not jt.broken]
+        live = [jt for jt in self.joints if jt.strength > 0.0 and not jt.broken and not jt.links]   # (a chain does not snap)
         if not live:
             return
         m, d = self.model, self.data
@@ -1145,13 +1490,61 @@ class Solids:
         for jt in self.joints:
             if jt.kind not in ('rope', 'spring'):
                 continue
+            if jt.links:
+                # (its links end to end, from the far end to the object: where each starts, and where the last ends)
+                ids = jt.link_ids
+                R = d.xmat[ids].reshape(-1, 3, 3)
+                h = np.einsum('bij,bj->bi', R, jt.link_half)
+                path = np.concatenate([d.xpos[ids] + h, (d.xpos[ids[-1]] - h[-1])[None]])
+                still = np.zeros(3)
+                out[jt.index] = dict(a=path[-1].copy(), va=still, b=path[0].copy(), vb=still, length=np.float32(jt.length),
+                                     radius=np.float32(jt.radius), look=np.float32(jt.look), broken=np.float32(jt.broken),
+                                     path=path[::-1].copy())
+                continue
             ends = []
             for s in jt.sids[:2]:
                 mujoco.mj_objectVelocity(m, d, mujoco.mjtObj.mjOBJ_SITE, s, v6, 0)
                 ends += [d.site_xpos[s].copy(), v6[3:].copy()]
             out[jt.index] = dict(a=ends[0], va=ends[1], b=ends[2], vb=ends[3], length=np.float32(jt.length),
                                  radius=np.float32(jt.radius), look=np.float32(jt.look), broken=np.float32(jt.broken))
+            if getattr(jt, 'post', None) is not None and jt.tid >= 0 and not jt.broken:
+                path = self._wrapped(jt)
+                if path is not None:
+                    out[jt.index]['path'] = path
         return out
+
+    def _wrapped(self, jt):
+        """A rope's path round the post it wraps (MuJoCo's tendon path: its ends and where it meets and leaves the
+        post), the arc between those drawn round the post's side: points (m, 3), or None while it runs straight."""
+        m, d = self.model, self.data
+        adr, num = int(d.ten_wrapadr[jt.tid]), int(d.ten_wrapnum[jt.tid])
+        pts = np.asarray(d.wrap_xpos[adr:adr + num], float).reshape(-1, 3)
+        if num < 4:
+            return None
+        # (the tendon's points: an end, the post's two tangent points, the other end; bodies move the post)
+        _name, ctr0, ax0, rad = jt.post
+        gid = int(m.geom(_name).id)
+        ctr = d.geom_xpos[gid].copy()
+        ax = d.geom_xmat[gid].reshape(3, 3)[:, 2] if ax0 is not None else None
+        p1, p2 = pts[1], pts[2]
+        r = rad + jt.radius
+        a1, a2 = p1 - ctr, p2 - ctr
+        if ax is not None:
+            h1, h2 = float(a1 @ ax), float(a2 @ ax)
+            a1, a2 = a1 - ax * h1, a2 - ax * h2
+        n1, n2 = a1 / max(np.linalg.norm(a1), 1e-9), a2 / max(np.linalg.norm(a2), 1e-9)
+        ang = math.acos(float(np.clip(n1 @ n2, -1.0, 1.0)))
+        k = max(2, int(math.ceil(ang / 0.15)))
+        arc = []
+        for s in np.linspace(0.0, 1.0, k + 1):
+            # (slerp round the post, the height along a cylinder's axis going linearly)
+            w = math.sin((1 - s) * ang) / max(math.sin(ang), 1e-9), math.sin(s * ang) / max(math.sin(ang), 1e-9)
+            dirn = n1 * w[0] + n2 * w[1] if ang > 1e-4 else n1
+            q = ctr + dirn / max(np.linalg.norm(dirn), 1e-9) * r
+            if ax is not None:
+                q = q + ax * ((1 - s) * h1 + s * h2)
+            arc.append(q)
+        return np.concatenate([pts[:1], np.asarray(arc), pts[3:4]])
 
     def _break(self):
         """Break the welds whose joint is overloaded (BREAK_STEPS steps running): pulled apart harder than its strength over
@@ -1233,6 +1626,18 @@ class Solids:
             for r in torn:
                 self.breaks.append((self.time, d.xpos[W['body'][r]].copy(), float(W['area'][r]), int(W['collider'][r])))
 
+    def _restance(self, limp=None):
+        """Every person back to its stance as built (or, limp: which have gone limp, from a saved state)."""
+        from .assemblies import LIMP, STAND
+        for n, a in enumerate(self.asms):
+            if a['kind'] != 'figure':
+                continue
+            want = bool(limp[n]) if limp is not None and n < len(limp) else a.get('limp0', a['limp'])
+            a.setdefault('limp0', a['limp'])
+            a['limp'] = False
+            self._go_limp(a, LIMP if want else STAND)
+            a['limp'] = want
+
     def _unbend(self):
         """Every weld back to its rest pose as built, nothing bent."""
         W = self._w
@@ -1309,7 +1714,7 @@ class Solids:
         vel (n, 3), omega (n, 3) world, size: the size it was cut at, impact: where it was hit (if anywhere))}. (One
         still whole is not here, unless whole: it is itself, _poses.)"""
         d = self.data
-        out = {}
+        out = self.assembly_poses() if self.asms else {}
         for si, ps in enumerate(self.sets):
             if not whole and self.whole(si):
                 continue
@@ -1566,7 +1971,7 @@ class Solids:
         for i in idx:
             c = scene.colliders[i]
             cg = by_index.get(i)
-            if cg is None or (breaks(c) and not (self.rehearsal and falls(c))):
+            if cg is None or kind_of(c) or (breaks(c) and not (self.rehearsal and falls(c))):
                 continue
             r = resolved(c)
             if c.get('floating') and not c.get('dynamic') and float(c.get('density', 0.0) or 0.0) > 0.0:
@@ -1743,10 +2148,12 @@ class Solids:
                 ma.name = mesh
                 ma.uservert = bd.hull.ravel().tolist()
             g = fixed_geom(b, bd.shape, bd.size, mesh)
+            g.name = f'bodygeom{bd.index}'
             g.density = float(bd.density)
             g.priority = 1
             contact(g, bd.friction, bd.bounce, roll=bd.shape in ('sphere', 'cylinder'))
             bd.fb = self._float_body(bd, cg)
+        asms = self._build_assemblies(scene, spec, w, idx, by_index, contact)
         sets = [] if self.rehearsal else self._build_pieces(scene, spec, w, idx, by_index, contact, fixed_geom, k)
         joints = self._build_joints(scene, spec, by_index, bodies, sets, mocap, k, dt)
         self.model = spec.compile()
@@ -1760,6 +2167,8 @@ class Solids:
             jt.sids = tuple(mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, s) for s in jt.sites)
             jt.eids = tuple(mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_EQUALITY, e) for e in jt.eqs)
             jt.tid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_TENDON, jt.tendon) if jt.tendon else -1
+            if jt.links:
+                jt.link_ids = np.array([mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, nm) for nm in jt.links], np.int64)
         self.joints = joints
         self.snaps = []
         self._tendon0 = (m.tendon_limited.copy(), m.tendon_stiffness.copy(), m.tendon_damping.copy())
@@ -1785,6 +2194,7 @@ class Solids:
         self.sets = sets
         self.breaks = []
         self._index_welds()
+        self._index_assemblies(asms)
         # starting motion
         d = self.data
         for bd in bodies:
@@ -1970,6 +2380,7 @@ class Solids:
             self._w['over'][:] = 0
         self._unbend()
         self._impact_sync()
+        self._restance()
         for ps in self.sets:
             ps.held = False
         mujoco.mj_forward(self.model, self.data)
@@ -2338,10 +2749,11 @@ class Solids:
         for k in range(steps):
             while mi < len(marks) and marks[mi] <= t + 0.5 * h:
                 out.append(self._poses())
-                self.substep_pieces.append(self.piece_poses() if self.sets else None)
+                self.substep_pieces.append(self.piece_poses() if (self.sets or self.asms) else None)
                 mi += 1
             self._keyed(scene, frame - 1 + (t + 0.5 * h) / fdt)
             self._drive(scene, frame - 1 + (t + 0.5 * h) / fdt)
+            self._assemblies_step(scene, frame - 1 + (t + 0.5 * h) / fdt)
             for fb, where, kg in blasts:
                 if frame - 1 + t / fdt <= fb < frame - 1 + (t + h) / fdt:
                     self._blast(np.asarray(where, float), kg)
@@ -2352,6 +2764,7 @@ class Solids:
             if self.rehearsal:
                 self._note_hits(v0)
             self._impact(v0, h)
+            self._assemblies_hit(v0)
             self._break()
             self._break_joints()
             t += h
@@ -2360,7 +2773,7 @@ class Solids:
                 self._pushed = couple[1](h, self._poses(), t / fdt) or {}
         while mi < len(marks):
             out.append(self._poses())
-            self.substep_pieces.append(self.piece_poses() if self.sets else None)
+            self.substep_pieces.append(self.piece_poses() if (self.sets or self.asms) else None)
             mi += 1
         m.opt.timestep = dt
         self.started = True
@@ -2382,6 +2795,8 @@ class Solids:
                                  omega=(*(float(x) for x in vel6[:3]), 0.0))
         for si, ps in enumerate(self.sets):
             out[ps.index] = self._whole_pose(ps) if self.whole(si) and len(ps.bodies) else self.gone()
+        for a in self.asms:
+            out[a['index']] = self.gone()
         return out
 
     def overrides(self):
@@ -2467,7 +2882,8 @@ class Solids:
                     pieces={int(k): {kk: np.asarray(vv, np.float32) for kk, vv in v.items()} for k, v in self.piece_poses().items()},
                     joints=[bool(jt.broken) for jt in self.joints],
                     ropes={int(k): {kk: np.asarray(vv, np.float32) for kk, vv in v.items()} for k, v in self.rope_poses().items()},
-                    fire=[None if not ps.burnable else (ps.fire.copy(), ps.gone.copy()) for ps in self.sets])
+                    fire=[None if not ps.burnable else (ps.fire.copy(), ps.gone.copy()) for ps in self.sets],
+                    limp=[bool(a['limp']) for a in self.asms])
 
     def load_state(self, st):
         """Carry on from a saved state (state()). False if it does not fit the current model."""
@@ -2509,6 +2925,7 @@ class Solids:
             self._w['plastic'][:] = bend[1]
             for ps, b in zip(self.sets, bend[2]):
                 ps.bent = bool(b)
+        self._restance(st.get('limp'))
         self._impact_sync()
         self._weaken()
         self.snaps = []

@@ -744,6 +744,19 @@ COLLIDER_PARAMS = [
     F('release', 'Falls from', 0.0, -10.0, 60.0, 's', 2, tip='Seconds from the first frame when it is let go. Until then it is held '
       'where its keys put it, so it can be carried, lifted or placed and then dropped. Negative values let it go during the '
       'pre-roll, so it has already landed when the shot starts.', group='Physics'),
+    E('build', 'Build', 'none', (('none', 'As it is'), ('figure', 'A person'), ('car', 'A car')),
+      tip='Builds it as a thing of many parts on joints, in its box: a person (a crash-test figure, 1.8 m in a box of '
+      '0.5 x 1.8 x 0.3 m), who stands braced until something hits it hard and then falls as a body does, or a car (4.4 m '
+      'in a box of 4.4 x 1.5 x 1.8 m) on four sprung wheels that its motor drives and that steer. It falls (it is a body '
+      'of its own) and its parts are drawn in its material.', group='Physics'),
+    E('stance', 'Stance', 'stands', (('stands', 'Stands braced'), ('limp', 'Limp')),
+      tip='A person: stands braced until hit hard (then goes limp), or limp from the start.', group='Physics'),
+    E('drive', 'Drive', 'rear', (('rear', 'Rear wheels'), ('all', 'All four'), ('off', 'Off (rolls)')),
+      tip='A car: which wheels its motor drives, or none (it rolls freely, pushed or down a slope).', group='Physics'),
+    F('drive_speed', 'Speed', 0.0, -60.0, 200.0, 'km/h', 1, anim=True,
+      tip='A car: the speed its motor drives it at (keyframe it: 0 brakes it, below 0 reverses).', group='Physics'),
+    F('steer', 'Steer', 0.0, -35.0, 35.0, '°', 1, anim=True,
+      tip='A car: how far its front wheels turn (left is positive; keyframe it).', group='Physics'),
     B('breakable', 'Breaks', False, tip='It is made of pieces glued together, which come apart where it is hit or loaded harder '
       'than its material holds: a wall knocked through, a pane shattered, a crate smashed. Without Falls it stands where it '
       'is, held by what Held by says, until it breaks.', group='Breaking'),
@@ -779,7 +792,9 @@ COLLIDER_PARAMS = [
       'frame: (0, 1, 0) for a door, (1, 0, 0) for a seesaw or a lid.', group='Joint'),
     F('rope_length', 'Rope length', 0.0, 0.0, 100.0, 'm', 2, tip='How long the rope is (a spring: how long it is at rest). '
       '0: as long as it is from end to end at the start.', group='Joint'),
-    E('rope_look', 'Rope is', 'rope', (('rope', 'Rope'), ('cable', 'Steel cable')), tip='What the rope is drawn as.',
+    E('rope_look', 'Rope is', 'rope', (('rope', 'Rope'), ('cable', 'Steel cable'), ('chain', 'Chain')),
+      tip='What the rope is: a rope or a steel cable (weightless, wrapping round a post or a ball in its way), or a chain '
+      'of steel links that weigh what they do and catch on, drape over and pile on what they meet.',
       group='Joint'),
     F('rope_thickness', 'Thickness', 0.025, 0.002, 0.2, 'm', 3, tip='How thick the rope, or the spring’s wire, is.',
       group='Joint'),

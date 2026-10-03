@@ -75,6 +75,7 @@ MATERIALS = {m.key: m for m in (
     Material('plaster', 'Plaster wall', 900.0, 0.6, 0.2, 3.0e+05, (0.7, 0.68, 0.64), 0.9, inside=(0.8, 0.79, 0.76), dust=1.5, effusivity=600.0, impact=2.0, brittle=0.6),
     Material('fabric', 'Fabric (upholstery)', 250.0, 0.8, 0.2, 5.0e+05, (0.36, 0.08, 0.06), 0.95, effusivity=150.0, impact=0.0, brittle=0.0),
     Material('earth', 'Earth (soil)', 1600.0, 0.65, 0.1, 5.0e+04, (0.16, 0.12, 0.085), 0.95, pattern='concrete', dust=2.0, effusivity=800.0, impact=1.5, brittle=0.3),
+    Material('person', 'Person (crash-test figure)', 1010.0, 0.8, 0.15, 2.0e+06, (0.78, 0.6, 0.16), 0.55, effusivity=1300.0),
 )}
 
 OPTIONS = tuple((k, m.label) for k, m in MATERIALS.items())

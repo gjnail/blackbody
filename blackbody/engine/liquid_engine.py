@@ -462,8 +462,8 @@ class LiquidEngine:
     def piece_poses(self, frame):
         """The pieces of broken (breakable) objects at `frame`: {collider index: Solids.piece_poses entry}, or None."""
         solids = getattr(self, 'solids', None)
-        if self.sim_frame == frame and solids is not None and solids.sets:
-            return solids.piece_poses()
+        if self.sim_frame == frame and solids is not None and (solids.sets or solids.asms):
+            return solids.piece_poses() or None
         entry = self.cache.get(frame) if self.cache is not None else None
         st = entry.get('solids') if entry is not None else None
         if isinstance(st, dict) and st.get('pieces'):

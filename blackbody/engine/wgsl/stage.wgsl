@@ -47,7 +47,7 @@ const PI: f32 = 3.14159265;
 const FLOOR: i32 = 100;
 const PIECE: i32 = 1000;   // a hit on piece k has id PIECE + k
 const ROPE_ROW: i32 = 16;  // = MAX_COLLIDERS: the material rows of ropes (then steel cables and springs) follow the objects'
-const MAT_ROWS: u32 = 19u;
+const MAT_ROWS: u32 = 21u;   // the objects', rope, steel, lightning, then parts' own looks (a tyre, tinted glass)
 const LIGHTNING_ROW: i32 = 18;   // lightning: segments that glow (their r.xyz), casting no shadow
 const MATTER: i32 = 200;   // a hit on the matter (sand, snow, mud, jelly, clay: matter.py)
 
@@ -1186,12 +1186,13 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
     let cut = length(pl.xyz) > 1.5;
     s.n = quat_rotate(pose[1], normalize(pl.xyz));
     let row = i32(P.o.w + 0.5);
-    if (row >= ROPE_ROW) { return rope_surface(s, kp, pose, pl, row, fw); }
+    if (row >= ROPE_ROW && row <= LIGHTNING_ROW) { return rope_surface(s, kp, pose, pl, row, fw); }
     let m = U.mat[row];
-    // the pattern runs on through the pieces as it did through the whole object
+    // the pattern runs on through the pieces as it did through the whole object (a part's own look: at its own scale)
     let qi = vec4<f32>(-pose[1].xyz, pose[1].w);
     let q = quat_rotate(qi, s.p - pose[0].xyz) + P.r.xyz;
-    let pt = pattern(i32(m.d.z + 0.5), q, col_scale(U.col[row]), normalize(pl.xyz), fw);
+    let scale = select(vec3<f32>(1.0), col_scale(U.col[min(row, ROPE_ROW - 1)]), row < ROPE_ROW);
+    let pt = pattern(i32(floor(m.d.z + 0.5)), q, scale, normalize(pl.xyz), fw);
     let metal = clamp(m.d.x, 0.0, 1.0);
     var base = mix(max(m.c.rgb * pt.rgb, vec3<f32>(0.0)), g_over.rgb, g_over.a);
     if (cut) { base = m.e.rgb * (0.85 + 0.3 * fnoise(q * 40.0, fw * 40.0)); }

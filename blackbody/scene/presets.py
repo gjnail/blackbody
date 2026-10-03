@@ -1049,6 +1049,48 @@ PRESETS = {
                  start_velocity=(0.7, 0.0, 0.0), release=0.3),
         ],
     },
+    'crash_test': {
+        'name': 'Crash test', 'category': 'Things that fall', 'size': '4.4 m car at 30 km/h',
+        'blurb': 'A car driven at 30 km/h into a brick wall, a crash-test figure standing by it: the figure is hit, goes '
+                 'limp and folds over the bonnet, and the car knocks the wall down, runs on over the bricks and brakes. A '
+                 'car (its Speed keyed) and a person (Physics > Build), a brick wall that breaks.',
+        'render': {'end': 96},
+        'domain': {'size_x': 16.0, 'size_y': 4.0, 'size_z': 8.0, 'resolution': 96, 'preroll': 0.0},
+        'composite': {'backdrop': 'stage', 'floor': 'concrete'},
+        'lighting': {'sun_on': True, 'sun_intensity': 3.0, 'sun_elevation': 38.0, 'sun_azimuth': -130.0, 'ambient_intensity': 2.5},
+        'camera': {'distance': 10.0, 'target_y': 0.8, 'pitch': 10, 'yaw': -30, 'focal_mm': 35},
+        'emitters': [],
+        'colliders': [
+            dict(name='Car', shape='box', position=(-5.0, 0.75, 0.0), size=(2.2, 0.75, 0.9), build='car', material='painted',
+                 own_colour=True, colour=(0.55, 0.06, 0.04), drive='rear', start_velocity=(8.3, 0.0, 0.0),
+                 # (30 km/h through the wall, then braked to a stop past it)
+                 drive_speed=K((0.0, 30.0), (1.3, 30.0), (1.45, 0.0), interp='linear')),
+            dict(name='Person', shape='box', position=(1.2, 0.9, 0.6), size=(0.25, 0.9, 0.15), build='figure', material='person'),
+            dict(name='Wall', shape='box', position=(3.2, 0.6, 0.0), size=(0.1, 0.6, 1.6), breakable=True, fracture='bricks',
+                 material='brick', held='base'),
+        ],
+    },
+    'stunt_fall': {
+        'name': 'Stunt fall', 'category': 'Things that fall', 'size': '1.5 m drop',
+        'blurb': 'A crash-test figure standing braced on a concrete block is hit in the chest by a thrown ball: it goes limp, '
+                 'tumbles off the edge and lands in a heap past a stack of boxes. A person (Physics > Build) that stands '
+                 'until it is hit hard.',
+        'render': {'end': 72},
+        'domain': {'size_x': 8.0, 'size_y': 4.0, 'size_z': 4.0, 'resolution': 64, 'preroll': 0.0},
+        'composite': {'backdrop': 'stage', 'floor': 'concrete'},
+        'lighting': {'sun_on': True, 'sun_intensity': 3.0, 'sun_elevation': 40.0, 'sun_azimuth': -120.0, 'ambient_intensity': 2.5},
+        'camera': {'distance': 7.0, 'target_y': 1.3, 'pitch': 8, 'yaw': -15, 'focal_mm': 35},
+        'emitters': [],
+        'colliders': [
+            dict(name='Block', shape='box', position=(0.0, 0.75, 0.0), size=(0.8, 0.75, 0.8), material='concrete'),
+            dict(name='Person', shape='box', position=(0.35, 2.4, 0.0), size=(0.25, 0.9, 0.15), build='figure', material='person',
+                 yaw=90.0),
+            dict(name='Ball', shape='sphere', position=(-3.0, 2.9, 0.0), size=(0.22, 0.22, 0.22), dynamic=True, material='rubber',
+                 density=600.0, start_velocity=(7.5, 2.2, 0.0), release=0.6),
+            *[dict(name=f'Box {k + 1}', shape='box', position=(1.5, 0.25, 0.55 * (k - 1)), size=(0.25, 0.25, 0.25),
+                   dynamic=True, material='cardboard') for k in range(3)],
+        ],
+    },
     'cart_jump': {
         'name': 'Cart off a ramp', 'category': 'Things that fall', 'size': '1 m cart, 6 m run',
         'blurb': 'A cart with a fire on its back, its four wheels turned by motors, races up a ramp, jumps off its end and '
@@ -1198,7 +1240,7 @@ ORDER = ['campfire', 'bonfire', 'torch', 'candle', 'gas_ring', 'pool_fire', 'fir
          'curtain_fire', 'fabric_curtain', 'wet_towels', 'armchair_fire', 'room_fire', 'backdraft', 'flash_fire', 'gas_cloud', 'coloured_flames', 'road_flare',
          'grinder_sparks', 'fireworks', 'car_through_smoke', 'flag_wind', 'kettle_steam', 'steam_vent',
          'crates_in_fire', 'tower_knockdown', 'wall_smash', 'wrecking_ball', 'window_smash', 'vase_drop',
-         'yard_blast', 'lightning_strike', 'sheet_rip', 'cart_jump', 'meadow_fire', 'shed_fire', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag', 'sand_castle', 'sand_sling', 'iron_pour', 'chocolate_fire', 'chocolate_pan']
+         'yard_blast', 'lightning_strike', 'sheet_rip', 'crash_test', 'stunt_fall', 'cart_jump', 'meadow_fire', 'shed_fire', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag', 'sand_castle', 'sand_sling', 'iron_pour', 'chocolate_fire', 'chocolate_pan']
 
 
 def make(name: str, fps=None, start=None) -> Scene:

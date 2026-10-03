@@ -36,6 +36,9 @@ INPUT_LINEAR = 2         # composite.wgsl input transform: scene-linear
 ROPE_ROW = MAX_COLLIDERS  # the material rows after the objects': rope (manila), then steel (cables, springs)
 ROPE_LOOKS = (((0.456, 0.305, 0.127), 0.85, 0.0), ((0.55, 0.56, 0.57), 0.4, 1.0))   # (colour, roughness, metal)
 LIGHTNING_ROW = ROPE_ROW + 2   # after them: lightning (its glow is per segment)
+# then the looks of parts with their own (engine/assemblies.py): a car's tyres, its cabin's tinted glass
+PART_LOOKS = {'rubber': (LIGHTNING_ROW + 1, (0.03, 0.03, 0.03), 0.8, 0.0, 0.0),
+              'glass': (LIGHTNING_ROW + 2, (0.035, 0.045, 0.05), 0.04, 0.0, -2.0)}   # (row, colour, roughness, metal, pattern)
 BOLT_GLOW = 0.02          # how much of lightning's core radiance it scatters into the air round it
 GLOW_T0, GLOW_DT = 700.0, 100.0   # K: hot matter's blackbody table's first temperature and step (16 entries)
 GLOW_BLOCK = 8            # matter grid nodes to a block of hot surface lighting what is round it (matter_glow.wgsl)
@@ -224,7 +227,7 @@ class Stage:
         planes (p, 4), grid corner, cell size, grid dims, cells (g, 2) uint32, list uint32), or None.
         pieces: {collider index: Solids.piece_poses entry}; ropes: {collider index: Solids.rope_poses entry};
         ground_y: the ground's height (a snapped rope hangs down to it); bolts: lightning (Scene.bolts)."""
-        from .ropes import num, prism_planes, rope_points, segments
+        from .ropes import CHAIN, chain_links, num, prism_planes, rope_points, segments
         from .solids import fractured
         enabled = [i for i, c in enumerate(scene.colliders) if c['enabled']][:MAX_COLLIDERS]
         row_of = {ci: r for r, ci in enumerate(enabled)}
@@ -236,6 +239,7 @@ class Stage:
             frac = fractured(scene.colliders[ci], pose['size'], num(pose.get('hollow', 0.0)), pose.get('impact'), scene)
             n = min(len(frac.pieces), len(pose['pos']))
             burn = pose.get('burn')
+            looks = getattr(frac, 'looks', None)
             for k in range(n):
                 pc = frac.pieces[k]
                 pos = np.asarray(pose['pos'][k], float)
@@ -246,8 +250,9 @@ class Stage:
                 pl[pc.inner, :3] *= 2.0              # (a cut face: drawn in the inside colour)
                 rad = float(np.linalg.norm(pc.verts - pc.centroid, axis=1).max())
                 vel = np.asarray(pose['vel'][k], float)
+                row = PART_LOOKS[looks[k]][0] if looks and k < len(looks) and looks[k] in PART_LOOKS else row_of[ci]
                 P.append([[*pos, len(pl)], [*np.asarray(pose['quat'][k], float)], [*vel, first],
-                          [*np.asarray(pose['omega'][k], float), row_of[ci]], [*pc.centroid, rad],
+                          [*np.asarray(pose['omega'][k], float), row], [*pc.centroid, rad],
                           [*(np.asarray(burn[k], float) if burn is not None and k < len(burn) else (0.0, 0.0, 0.0, 0.0))]])
                 PL.append(pl)
                 first += len(pl)
@@ -262,6 +267,18 @@ class Stage:
             row = ROPE_ROW + (0 if look == 0 else 1)
             strands, twist = STRANDS.get(look, (0.0, 0.0))
             rad = max(num(rope['radius']), 1e-4)
+            if look == CHAIN:
+                # (its links: rings of four bars, steel)
+                for centre, quat, half, r in chain_links(pts, 2.0 * rad):
+                    pl = prism_planes(r, half)
+                    bound = math.hypot(half, r)
+                    P.append([[*centre, len(pl)], [*quat], [0.0, 0.0, 0.0, first], [0.0, 0.0, 0.0, ROPE_ROW + 1],
+                              [0.0, 0.0, 0.0, bound], [0.0] * 4])
+                    PL.append(pl)
+                    first += len(pl)
+                    centres.append(centre)
+                    radii.append(bound)
+                continue
             for centre, quat, v, half, along in segments(pts, vel, rad):
                 pl = prism_planes(rad, half)
                 bound = math.hypot(half, rad)
@@ -530,6 +547,8 @@ class Stage:
         for colour, rough, metal in ROPE_LOOKS:
             u.v4(*colour, rough).v4(metal, 0.0, 0.0, float(CG)).v4(*colour, 1.5)
         u.v4(0.0, 0.0, 0.0, 1.0).v4(0.0, 1.0, 0.0, float(CG)).v4(0.0, 0.0, 0.0, 1.0)   # (lightning: lets the light by)
+        for _row, colour, rough, metal, pattern in PART_LOOKS.values():
+            u.v4(*colour, rough).v4(metal, 0.0, pattern, float(CG)).v4(*colour, 1.5)
         black = r._black
         lume_bufs = self._lume_off
         if lume.on:
