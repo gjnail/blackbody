@@ -262,7 +262,11 @@ fn scene_d(p: vec3<f32>, want: f32) -> vec2<f32> {
     best = vec2<f32>(matter_d(p), f32(MATTER));
   }
   var bored = 1.0e9;   // (the holes bullets made: carved out of every object)
-  if (bores_on()) { bored = bore_d(p); }
+  if (bores_on()) {
+    bored = bore_d(p);
+    let fd = fray_d(p);   // (and the splinters standing out of where they came out of wood: marks.wgsl)
+    if (fd < best.x) { best = vec2<f32>(fd, f32(FRAY)); }
+  }
   for (var i = 0; i < i32(U.ccnt.x); i++) {
     if (U.mat[i].d.w < want) { continue; }
     if (g_opaque && U.mat[i].d.y > 0.5) { continue; }   // (glass lets the light through)
@@ -528,6 +532,10 @@ fn trace(ro: vec3<f32>, rd: vec3<f32>, t0: f32, tmax: f32, want: f32, floor_on: 
     var tp = -1.0;
     if (sp.y >= sp.x && sp.x > t0) { tp = bore_pass(ro, rd, sp.x, sp.y); }
     if (tp > 0.0 && tp < min(tmax, h.t)) { h = Hit(tp, i); }
+  }
+  if (F_SHOTS) {
+    let tf = fray_hit(ro, rd, t0, min(tmax, h.t));   // (splinters standing out of a bullet's way out of wood)
+    if (tf > 0.0) { h = Hit(tf, FRAY); }
   }
   if (!rest || !F_MARCH) { return h; }
   let span = bound_span(ro, rd);
@@ -899,7 +907,7 @@ fn shade(s: Surf, v: vec3<f32>) -> vec3<f32> {
   let n = s.n;
   let nv = max(dot(n, v), 1e-4);
   let po = s.p + n * s.eps;
-  let pl = light_cell(s.p);
+  let pl = light_cell(select(s.p, g_light_p.xyz, F_SHOTS && g_light_p.w > 0.5));   // (a bullet hole's wall: marks.wgsl)
   var diff = vec3<f32>(0.0);   // irradiance on the diffuse part
   var spec = vec3<f32>(0.0);   // reflected radiance, before the Fresnel term
   // the key light
@@ -1130,10 +1138,13 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
   if (F_WATER && h.id == WATER) { return w_surface(h, ro, rd); }
   var s: Surf;
   g_ao_reach = 0.0;
+  g_frost = 0.0;
+  g_light_p.w = 0.0;
   s.p = ro + rd * h.t;
   let fw = max(U.fit.w * h.t, 1e-5);
   s.eps = max(2.0 * fw, 5.0e-4);
   s.want = want;
+  if (F_SHOTS && h.id == FRAY) { return fray_surface(s, fw); }
   if (h.id == FLOOR) {
     s.n = vec3<f32>(0.0, 1.0, 0.0);
     let fl = floor_look(s.p.xz, fw / sqrt(max(abs(rd.y), 0.03)));
@@ -1384,7 +1395,7 @@ fn see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w: vec3
   for (var bounce = 0; bounce < 3; bounce++) {
     let h = trace(ro, rd, 0.0, select(1.0e5, t_foot - t_all, footage), 1.0, !footage);
     var drawn = false;
-    if (h.id == FLOOR || h.id >= PIECE || h.id == MATTER) { drawn = true; }
+    if (h.id == FLOOR || h.id >= PIECE || h.id == MATTER || h.id == FRAY) { drawn = true; }
     if (h.id >= 0 && h.id < FLOOR) { drawn = U.mat[h.id].d.w > 1.5; }
     if ((h.id >= PIECE || h.id == MATTER) && bounce == 0) { t_piece = h.t; }
     if (!drawn) {
@@ -1419,6 +1430,7 @@ fn see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w: vec3
       tint_c = U.mat[row].c.rgb;
       ior = max(U.mat[row].e.w, 1.0);
     }
+    if (F_SHOTS) { clear *= 1.0 - g_frost; }   // (glass crushed or cracked by a bullet: frosted, marks.wgsl)
     if (clear <= 0.0 || bounce == 2) { break; }
     // glass, ice, jelly: its reflection (above) and then the light refracted through it
     let n = s.n;

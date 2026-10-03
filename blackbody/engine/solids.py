@@ -2219,7 +2219,10 @@ class Solids:
                 self._spin_set(ps, self.data, np.asarray(by_index[ps.index].vel, float) + ps.throw, ps.spin)
         self.sets = sets
         self.breaks = []
+        from .wood import Cleaver, bend_welds
+        bend_welds(self)      # (wood bends before it breaks: its welds as stiff as the wood is)
         self._index_welds()
+        self._cleaver = Cleaver.of(self)    # (an edge driven into wood's end grain splits it: wood.py)
         from .ballistics import Ballistics
         self.shots = Ballistics(scene, self) if Ballistics.wanted(scene) else None
         self._index_assemblies(asms)
@@ -2799,6 +2802,8 @@ class Solids:
             self._assemblies_hit(v0)
             self._break()
             self._break_joints()
+            if getattr(self, '_cleaver', None) is not None:
+                self._cleaver.step(self)
             t += h
             self.time += h
             if couple is not None:

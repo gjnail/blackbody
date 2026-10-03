@@ -38,4 +38,3 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
     atomicOr(&OCC[k * NB + bin], 1u << min(slot, 15u));
   }
 }
-

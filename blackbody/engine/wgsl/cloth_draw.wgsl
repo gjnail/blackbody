@@ -67,6 +67,7 @@ struct Params {
 @group(0) @binding(16) var<storage, read> PW: array<vec4<f32>>;   // w: how wet it is (0 dry .. 1 soaked)
 @group(0) @binding(17) var LV: texture_3d<f32>;    // Lume's light (lume_light.wgsl)
 @group(0) @binding(18) var LVD: texture_3d<f32>;
+@group(0) @binding(19) var<storage, read> HL: array<vec4<f32>>;   // bullet holes: [0].x how many; u, v (m), radius, fabric
 @group(1) @binding(0) var<uniform> U: Params;
 
 struct VOut {
@@ -538,6 +539,24 @@ fn fs(i: VOut) -> FOut {
   let rg2 = 0.5 * vnoise(i.uv * 38.0) + 0.3 * vnoise(i.uv * 140.0 + vec2<f32>(7.3, 1.1)) + 0.2 * vnoise(i.uv * 520.0);
   let bcn = i.bc + 0.12 * (rg2 - 0.5);
   if (bcn > 0.9) { discard; }   // burnt through
+  // bullet holes (bullet_media.py): through the weave, as fine as the pixels however coarse the cloth; their edge
+  // ragged at the threads' scale, a few threads left across them, the weave round them pulled and darker
+  var holed = 0.0;
+  let nh = u32(HL[0].x + 0.5);
+  let tp = max(DM[i.fab].c2.y, 2.0e-4);
+  for (var k = 0u; k < nh; k++) {
+    let hr = HL[1u + k];
+    if (u32(hr.w + 0.5) != i.fab) { continue; }
+    let dv = i.uv - hr.xy;
+    let d = length(dv);
+    if (d > 2.0 * hr.z) { continue; }
+    let ang = atan2(dv.y, dv.x);
+    let edge = hr.z * (1.0 + 0.3 * (vnoise(vec2<f32>(ang * 1.7, hr.x * 997.0)) - 0.5) + 0.35 * (vnoise(i.uv / tp) - 0.5));
+    let th = fract(i.uv / tp);
+    let left = select(0.0, 1.0, min(th.x, th.y) < 0.18 && hash2(floor(i.uv / tp) + hr.xy * 513.0) > 0.88 && d > 0.45 * edge);
+    if (d < edge && left < 0.5) { discard; }
+    holed = max(holed, 1.0 - smoothstep(edge, edge * 1.7, d));
+  }
   let v = normalize(U.eye.xyz - i.p);
   var n = normalize(i.n);
   if (dot(n, v) < 0.0) { n = -n; }   // both sides of the sheet
@@ -550,7 +569,7 @@ fn fs(i: VOut) -> FOut {
   t = normalize(t - n * dot(n, t) + vec3<f32>(1e-6, 0.0, 0.0));
   let b = cross(n, t);
   // the weave, faded out where its threads are smaller than a pixel
-  var alb = dm.c0.rgb;
+  var alb = dm.c0.rgb * (1.0 - 0.3 * holed);
   var nn = n;
   let pitch = max(dm.c2.y, 1e-5);
   let foot = max(length(dux) + length(duy), 1e-9) / pitch;

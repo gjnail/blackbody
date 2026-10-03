@@ -406,6 +406,7 @@ fn lu_shadow(p: vec3<f32>, d: vec3<f32>, tmax: f32, eps: f32, want: f32, caustic
 // The outward normal of what h hit at p.
 fn lu_hit_normal(h: Hit, p: vec3<f32>, eps: f32) -> vec3<f32> {
   if (F_MARCH && h.id == MATTER) { return matter_normal(p); }
+  if (F_SHOTS && h.id == FRAY) { return fray_normal(p, eps); }
   if (F_PIECES && h.id >= PIECE) {
     let kp = u32(h.id - PIECE);
     let pose = piece_pose(kp);
@@ -1043,6 +1044,7 @@ fn lu_surf(h: Hit, ro: vec3<f32>, rd: vec3<f32>) -> Surf {
 fn lu_drawn(h: Hit) -> bool {
   if (h.id == FLOOR || h.id >= PIECE || h.id == MATTER) { return true; }
   if (F_WATER && (h.id == WATER || h.id == MEDIUM)) { return true; }
+  if (F_SHOTS && h.id == FRAY) { return true; }   // (a splinter standing out of a bullet's way out of wood: marks.wgsl)
   if (h.id >= 0 && h.id < FLOOR) { return U.mat[h.id].d.w > 1.5; }
   return false;
 }
@@ -1142,7 +1144,8 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
         scattered = true;
       }
     }
-    let cl = lu_clear(h, s.p);
+    var cl = lu_clear(h, s.p);
+    if (F_SHOTS) { cl.clear *= 1.0 - g_frost; }   // (glass crushed or cracked by a bullet: frosted, marks.wgsl)
     if (through_water) {
       // (done: on to what it meets)
     } else if (cl.clear > 0.0 && lu_rand() < cl.clear) {

@@ -73,5 +73,52 @@ def test_a_bullet_holes_a_curtain(engine):
     engine.prepare(sc, final=False)
     for f in range(sc.start, sc.start + 9):
         engine.simulate_to(sc, f, cache=False)
+    holes = engine.solids.shots.cloth_holes
+    # (nine pellets through it: a hole each, in the weave's own coordinates, a little smaller than a pellet; drawn
+    # through it (cloth_draw.wgsl) without tearing its vertices away, which are farther apart than a pellet is wide)
+    assert len(holes) >= 7
+    assert all(0.003 < h[2] < 0.005 for h in holes)
+    uv = np.array([h[:2] for h in holes])
+    assert np.ptp(uv[:, 0]) < 0.2 and abs(uv[:, 0].mean() - 0.6) < 0.1      # (round where it was aimed: the middle)
     _x, gone = engine.cloth.positions()
-    assert gone.sum() >= 1
+    assert gone.sum() == 0
+    v = engine.shot_view(engine.sim_frame)
+    assert len(v['cloth_holes']) == len(holes)
+
+
+def test_a_bullet_skipping_off_steel_meets_the_sand_it_turns_into(engine):
+    sc = shot_scene()
+    sc.data['domain'].update(size_x=1.6, size_y=0.8, size_z=0.8, matter_detail=64)
+    sc.add_collider(name='Plate', shape='box', position=(-0.3, 0.02, 0.0), size=(0.2, 0.01, 0.15), material='steel')
+    sc.add_matter(material='sand', shape='box', position=(0.45, 0.15, 0.0), size=(0.2, 0.15, 0.25))
+    sc.add_shot(position=(-3.0, 0.03 + 2.7 * np.tan(np.radians(8.0)), 0.0), aim=(-0.3, 0.03, 0.0), round='9mm', start=0.02,
+                scatter=0.0, flash=False)
+    engine.prepare(sc, final=False)
+    for f in range(sc.start, sc.start + 3):
+        engine.simulate_to(sc, f, cache=False)
+    kinds = [(i.kind, i.surface) for i in engine.solids.shots.impacts]
+    assert kinds[:2] == [('glance', 'steel'), ('stop', 'sand')]     # (in the frame it glanced: looked ahead on again)
+
+
+def test_a_bullet_opens_its_cavity_in_deep_water_too(engine):
+    # with a narrow band the deep water has no particles: the bullet's way is kept in the band while its cavity lasts
+    import math
+    sc = shot_scene('liquid')
+    sc.data['domain'].update(size_x=0.8, size_y=1.0, size_z=0.8, resolution=48, time_scale=0.05, preroll=0.3)
+    sc.data['liquid'].update(water_level=0.8, settle=True, narrow_band=True, band_width=3)
+    a = math.radians(80.0)
+    sc.add_shot(position=(0.0, 0.8 + 2.0 * math.sin(a), 2.0 * math.cos(a)), aim=(0.0, 0.8, 0.0), round='9mm', start=0.002,
+                scatter=0.0, flash=False)
+    engine.prepare(sc, final=False)
+    for f in range(sc.start, sc.start + 8):
+        engine.simulate_to(sc, f, cache=False)
+    L = engine.liquid
+    w, vel = (np.asarray(x, float) for x in L.read_particles())
+    A = np.array([0.0, 0.8, 0.0])
+    u = np.array([0.0, -math.sin(a), -math.cos(a)])
+    t = np.clip((w - A) @ u, 0.0, 0.8)
+    off = w - A - t[:, None] * u
+    r = np.linalg.norm(off, axis=1)
+    near = (r < 0.05) & (w[:, 1] < 0.8 - 4 * L.h)
+    out = ((off / np.maximum(r, 1e-6)[:, None]) * vel).sum(1)
+    assert near.sum() > 500 and out[near].mean() > 0.2      # (particles down there, thrown outward: its cavity)

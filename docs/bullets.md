@@ -33,19 +33,19 @@ A bullet meeting a surface either glances off it, stops in it, or goes through a
 
 | Surface | What it does |
 |---|---|
-| Glass, ice | A hole with a white ring of crushed glass round it and cracks radiating from it, crossed by rings; a cone of glass spalled out of the back. A breakable pane cracks in its web round the hole and stays up; a bottle or a vase bursts. |
-| Wood (every species) | A hole going in; going out, a split torn along the grain with splinters standing out of it, and splinters flying. A thin board splits along its grain. |
-| Steel, aluminium | Thin: holed, its exit petalled out. Thick: a polished dent, the bullet's lead splashed in a grey star round it, a flash and a spray of sparks along the plate. A hinged steel target swings. |
-| Painted metal (a car) | Holed through each panel, paint chipped off to bare steel round the hole. A car's windows: holed, and through into the cabin. |
-| Concrete, stone, brick, plaster | A crater: broken out round the hole, its walls freshly broken stone and cement (brick's fired clay, plaster's chalk), powder round it, hairline cracks; dust puffs out of it. A bullet that goes through scabs a wider crater off the back. |
+| Glass, ice | A hole ringed with glass crushed to a white frost that glints and lets little light through; cracks radiating from it, some forking, joined ring by ring by arcs from one to the next, each catching the light along its length; a cone of glass spalled out of the back, frosted. A breakable pane cracks in its web round the hole and stays up; a bottle or a vase bursts. |
+| Wood (every species) | A hole going in, its fibres crushed in round it and wiped grey. Going out, a scoop torn out of the back along the grain, its ends a brush of fibres torn to different lengths, and real splinters standing out of it round the split: strips of the face, held at their far end, lifted and curling, each casting its shadow. Splinters fly. A thin board splits along its grain. MDF, which has no grain, breaks out round about, fuzzy. |
+| Steel, aluminium | Thin: holed, its exit petalled out. Thick: a polished dent and the bullet's lead splashed over the plate: a matte grey smear round the dent, fine streaks sprayed out from it, droplets beyond; a painted target loses its paint round it. A flash and a spray of sparks along the plate. A hinged steel target swings. |
+| Painted metal (a car) | Holed through each panel, the paint flaked off round the hole to dull bare steel and crazed beyond it, the lip pushed in going in, out going out. A car's windows: holed, and through into the cabin. |
+| Concrete, stone, brick, plaster | A crater about as wide as the energy left there breaks out (3.5 cm from a pistol, 8 to 9 cm from a rifle): a shallow cone of flat facets with sharp creases between them, its walls freshly broken (concrete's cement, its stones cut through and its air holes; brick's fired clay, its mortar grey; plaster's chalk), at its floor the bullet's own pocket with its lead smeared grey; powder thrown out round it in streaks; a hairline crack or two; dust puffs out of it. A bullet that goes through scabs a wider crater off the back. |
 | Earth | A crater and a spurt of dirt. |
 | Plastic, rubber, cardboard, foam, fabric | A hole, the grey wipe of the bullet's lead round the way in. |
 | Gel, jelly | The bullet slows through it and opens a temporary cavity along its track that swells and collapses (a rifle's widest where it turns sideways), leaving its track; seen through clear gel, a bullet that stops stays where it stopped. |
-| Water | A crater opens where it goes in, a cavity behind it that closes and throws up the splash; it slows within a metre or so (a rifle bullet breaks up sooner). Shallower than about 7° it skips. |
+| Water | A crater opens where it goes in, a cavity behind it that closes and throws up the splash; it slows within a metre or so (a rifle bullet breaks up sooner). Shallower than about 7° it skips. In water with a narrow band (only its surface carried by particles) its way through the deep water is kept in the band while its cavity lasts, so the cavity opens there too. |
 | Sand, snow, mud | It stops within a few hand's breadths (sand is very good at stopping rifle bullets), throwing a crater's worth up and back out of the hole. |
-| Cloth | A hole torn where it went through, and a flick round it. |
+| Cloth | A hole through the weave where it went through, a little smaller than the bullet however coarse the cloth's mesh, its edge frayed at the threads' scale, a thread or two left across it; it moves with the cloth. A flick round it. A slug or a load of shot close up tears the cloth itself. |
 
-Holes and craters are real: they are carved out of what they are in, so you see through a hole in a board or a door, light shines through it, and a crater's walls take the light and shade themselves. They stay with what they are in: a hole in a falling crate falls with it.
+Holes and craters are real: they are carved out of what they are in, so you see through a hole in a board or a door, light shines through it, and a crater's walls take the light and shade themselves (lit as the light is at the hole's mouth). Splinters round a hole out of wood are real too. They stay with what they are in: a hole in a falling crate falls with it.
 
 What is hit is pushed by the momentum the bullet left in it (a bullet's momentum is small: a can jumps off a post, a gong swings, a person or a car hardly moves). What flies off a hit is real debris: chips of stone and concrete, splinters of wood, shards of glass, flakes of paint, clods of earth, lead splashed off steel, and sparks that cool from white through orange to red as they fly; each bounces and settles. In a scene with gas (fire, or fire and liquid), each hit throws up dust as its material does (a cloud off plaster, a wisp off wood, none off steel), and each round fired puffs gun smoke.
 
@@ -62,9 +62,8 @@ A bullet crosses a room in a hundredth of a second: in real time a frame sees it
 - *Machine gun at dusk*: a burst of tracers across a concrete wall and the dirt.
 - *Bullets through boards*: a pistol and a rifle into six spaced pine boards (see [Wood](wood.md)).
 
+A bullet meets the matter and the water on its way, looked ahead on at the start of each frame and again the moment it turns (a ricochet off a steel plate into a sand heap meets the sand in the same frame).
+
 ## Limits
 
-- A bullet meets the matter and the water where its path through them is looked ahead on at the start of each frame; one that turns off that path inside a frame (a ricochet into a sand heap) meets them a frame later.
-- Holes in cloth are as fine as the cloth's own mesh: a bullet takes out the nearest vertices.
-- In deep water (below the liquid's narrow band of particles) a bullet's cavity is not drawn; near the surface it is.
 - Bullets do not wound: a crash-test figure is plastic.

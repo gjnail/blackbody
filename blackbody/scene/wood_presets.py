@@ -39,9 +39,9 @@ def wood_presets(K):
         'boards_shot': {
             'name': 'Bullets through boards', 'category': 'Wood', 'size': 'six 19 mm pine boards',
             'blurb': 'The classic penetration test: six pine boards stood 2.5 cm apart, a 9 mm pistol and a .308 rifle '
-                     'fired into them. The pistol bullet slows through each and stops in the last; the rifle bullet goes '
-                     'through all six. Each board is holed going in and torn out along its grain going out, splinters '
-                     'flying from its back.',
+                     'fired into them. The pistol bullet slows through each and only just gets through the last; the '
+                     'rifle bullet goes through all six. Each board is holed going in and torn out along its grain going '
+                     'out, splinters standing out of its back and flying from it.',
             'render': {'end': 60},
             'domain': {'size_x': 1.2, 'size_y': 1.0, 'size_z': 1.0, 'resolution': 64, 'preroll': 0.0},
             'motion': STILL, 'shading': DUST,

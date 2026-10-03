@@ -153,3 +153,69 @@ def test_a_light_knock_leaves_a_board_whole_and_a_hard_one_snaps_it_in_two():
 def test_oak_takes_more_than_balsa():
     assert len(drop_on_board(2.0, 0.4, 'balsa')) >= 2
     assert len(drop_on_board(2.0, 0.4, 'oak')) == 1
+
+
+def _groups(S):
+    W = S._w
+    n = len(S.sets[0].bodies)
+    parent = list(range(n))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    for r_ in range(len(W['over'])):
+        if W['over'][r_] >= 0 and W['other'][r_] >= 0:
+            parent[find(int(W['first'][r_]))] = find(int(W['other'][r_]))
+    groups = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+    return sorted((len(g) for g in groups.values()), reverse=True)
+
+
+def test_a_long_plank_sags_under_a_load_as_wood_does_and_holds_it():
+    # a 2 m span of 19 x 140 mm pine, 10 kg in its middle: beam theory sags it 2.6 cm (with its own weight); it holds
+    s = Scene()
+    s.data['domain'].update(ground=True, open_sides=True, preroll=0.0)
+    s.data['render']['fps'] = 24.0
+    s.emitters = []
+    s.add_collider(name='Left', shape='box', position=(-1.05, 0.3, 0.0), size=(0.08, 0.3, 0.12), material='concrete')
+    s.add_collider(name='Right', shape='box', position=(1.05, 0.3, 0.0), size=(0.08, 0.3, 0.12), material='concrete')
+    s.add_collider(name='Plank', shape='box', position=(0.0, 0.6105, 0.0), size=(1.15, 0.0095, 0.07), material='wood',
+                   breakable=True, fracture='splinters', pieces=60, dynamic=True)
+    s.add_collider(name='Load', shape='box', position=(0.0, 0.745, 0.0), size=(0.12, 0.12, 0.12), material='steel',
+                   dynamic=True, density=10.0 / 0.24 ** 3)
+    S = Solids()
+    S.configure(s, ((96, 96, 96), 4.0 / 96, (-2.0, 0.0, -2.0)))
+    S.reset()
+    for f in range(s.start + 1, s.start + 37):
+        S.advance(s, f, 1.0 / 24, 1)
+    ps = S.sets[0]
+    x = S.data.xpos[ps.bodies]
+    sag = 0.6105 - float(x[np.abs(x[:, 0]) < 0.25, 1].mean())
+    assert 0.012 < sag < 0.05, sag
+    assert len(_groups(S)) == 1
+
+
+def test_an_edge_driven_into_a_log_splits_it_along_its_grain():
+    def strike(v):
+        s = Scene()
+        s.data['domain'].update(ground=True, open_sides=True, preroll=0.0)
+        s.data['render']['fps'] = 24.0
+        s.emitters = []
+        s.add_collider(name='Log', shape='cylinder', position=(0.0, 0.2, 0.0), size=(0.12, 0.2, 0.12), material='wood',
+                       breakable=True, fracture='splinters', pieces=48, dynamic=True)
+        h = 0.05
+        s.add_collider(name='Wedge', shape='box', position=(0.0, 0.4 + h * 1.42 + 0.003, 0.0), size=(h, h, 0.08), roll=45.0,
+                       material='steel', dynamic=True, density=3.0 / (2 * h * 2 * h * 0.16), start_velocity=(0.0, -v, 0.0))
+        S = Solids()
+        S.configure(s, ((96, 96, 96), 4.0 / 96, (-2.0, 0.0, -2.0)))
+        S.reset()
+        for f in range(s.start + 1, s.start + 13):
+            S.advance(s, f, 1.0 / 24, 1)
+        return _groups(S)
+    # (a 3 kg wedge: at 8 m/s, an axe's blow, about 100 J, it splits the log in two; at 3 m/s it only checks its top)
+    split = strike(8.0)
+    assert len(split) >= 2 and split[1] >= 0.25 * sum(split)
+    assert len(strike(3.0)) == 1

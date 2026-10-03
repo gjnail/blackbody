@@ -65,6 +65,17 @@ fn wood_axis(s: vec3<f32>, shape: i32) -> i32 {
 fn wood_look(kind: i32, q: vec3<f32>, s: vec3<f32>, n: vec3<f32>, fw: f32, seed: f32, shape: i32) -> vec4<f32> {
   let sp = wood_sp(kind);
   let ax = wood_axis(s, shape);
+  let fine = 1.0 - smoothstep(0.0002, 0.0008, fw);   // (what is finer than a pixel is not worked out at all)
+  if (kind == 24) {
+    // MDF: a felt of fibres: a fine speckle, no rings
+    var Ln = vec3<f32>(0.0, 1.0, 0.0);
+    if (ax == 0) { Ln = vec3<f32>(1.0, 0.0, 0.0); }
+    if (ax == 2) { Ln = vec3<f32>(0.0, 0.0, 1.0); }
+    let endm = smoothstep(0.6, 0.9, abs(dot(n, Ln)));
+    var sp_n = 0.05 * gnoise(q * 80.0);
+    if (fine > 0.0) { sp_n += 0.12 * gnoise(q * 1500.0) * fine; }
+    return vec4<f32>(vec3<f32>(1.0 + sp_n) * mix(1.0, 0.72, endm), 0.05 + 0.15 * endm);
+  }
   // the grain's frame: L along it, a and b across (a the wider of a box's two other sides)
   var L = vec3<f32>(0.0, 1.0, 0.0);
   var A = vec3<f32>(1.0, 0.0, 0.0);
@@ -139,24 +150,23 @@ fn wood_look(kind: i32, q: vec3<f32>, s: vec3<f32>, n: vec3<f32>, fw: f32, seed:
   let heart = 1.0 - smoothstep(0.08, 0.14, length(c));
   col *= mix(vec3<f32>(1.0), sp.heart, heart);
   // fibres along the grain; figure (curl) as a ripple in their sheen
-  let fine = 1.0 - smoothstep(0.0002, 0.0008, fw);
-  let fib = gnoise(vec3<f32>(c * 2500.0, z * 25.0)) * fine;
-  let streak = gnoise(vec3<f32>(c * 300.0, z * 4.0)) * (1.0 - smoothstep(0.0015, 0.005, fw));
-  col *= 1.0 + 0.06 * fib + 0.06 * streak;
+  let coarse = 1.0 - smoothstep(0.0015, 0.005, fw);
+  if (fine > 0.0) { col *= 1.0 + 0.06 * gnoise(vec3<f32>(c * 2500.0, z * 25.0)) * fine; }
+  if (coarse > 0.0) { col *= 1.0 + 0.06 * gnoise(vec3<f32>(c * 300.0, z * 4.0)) * coarse; }
   var rough = 0.0;
-  if (sp.figure > 0.0) {
+  if (sp.figure > 0.0 && coarse > 0.0) {
     let curl = sin(z * 600.0 + 3.0 * gnoise(vec3<f32>(c * 40.0, z * 5.0))) * sp.figure;
     col *= 1.0 + 0.08 * curl;
     rough -= 0.1 * curl;
   }
   // ring-porous: rows of open vessels in the earlywood, dark dashes along the grain
-  if (sp.pores > 0.0) {
+  if (sp.pores > 0.0 && fine > 0.0) {
     let pv = gnoise(vec3<f32>(c * 2200.0, z * 90.0));
     let pore = smoothstep(0.35, 0.6, pv) * (1.0 - smoothstep(0.0, 0.3, f)) * sp.pores * fine;
     col *= 1.0 - 0.55 * pore;
   }
   // rays: thin radial plates, silvery flecks where a face cuts them square (oak's quarter-sawn figure)
-  if (sp.rays > 0.1) {
+  if (sp.rays > 0.1 && fine > 0.0) {
     let rq = vec3<f32>(theta * length(c) * 350.0, r * 25.0, z * 40.0);
     let ray = smoothstep(0.45, 0.65, gnoise(rq)) * sp.rays;
     let square = abs(dot(normalize(vec3<f32>(c.x, c.y, 0.001)), vec3<f32>(dot(n, A), dot(n, B), 0.0)));
@@ -176,11 +186,6 @@ fn wood_look(kind: i32, q: vec3<f32>, s: vec3<f32>, n: vec3<f32>, fw: f32, seed:
     let layer = floor(ply);
     let glue = 1.0 - smoothstep(0.0, 0.06, abs(fract(ply) - 0.5) - 0.44);
     col = mix(col * select(1.0, 0.82, i32(layer) % 2 == 0), vec3<f32>(0.25, 0.18, 0.1), glue * 0.7);
-  }
-  // MDF: a felt of fibres: a fine speckle, no rings
-  if (kind == 24) {
-    col = sp.base * (1.0 + 0.12 * gnoise(q * 1500.0) * fine + 0.05 * gnoise(q * 80.0));
-    rough = 0.05 + 0.15 * endg;
   }
   // (rings narrower than a pixel fade to their mean: the shader's own AA, as the stage's patterns do)
   return vec4<f32>(col / max(sp.base, vec3<f32>(1e-3)), rough);

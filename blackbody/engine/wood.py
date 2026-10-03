@@ -93,17 +93,23 @@ WOOD_KEYS = ('wood',) + tuple(k for k in SPECIES if k != 'pine')
 SPECIES_OF = {'wood': 'pine'}     # (the materials' key for pine is 'wood')
 
 # A bond's strength over the material's (materials.py: what an irregular chunk of it holds). Between two lengths of a
-# bundle, end grain to end grain, the fibres hold it: ALONG times. Between two bundles side by side the wood holds it
-# across its grain: ALONG x ACROSS x its strength across over its strength in bending, less on a wide face: a split
+# bundle, end grain to end grain, the fibres hold it, as strong in bending as a sawn board is (about half the clear
+# wood's modulus of rupture, as common lumber with its knots and slope of grain is rated: pine's 0.48 x 87 MPa over the
+# material's 2 MPa): ALONG times; the joint gives as the wood does first (bend_welds), so a long plank
+# sags under a load before it breaks. Between two bundles side by side the wood holds it across its grain: SIDE x
+# ACROSS x its strength across over its strength in bending, less on a wide face: a split
 # along the grain runs as a crack, the load on its tip, so a face bigger than SPLIT_FACE holds (SPLIT_FACE / its
 # area)^SPLIT_POWER of that. (Not the handbook's ratio: the welds judge a side bond's bending on a square section, which
 # undersells a long thin face; these are what make a board behave.) Calibrated (tests/test_wood.py): a 19 mm pine board on a
 # 30 cm span takes a 1 kg weight dropped 30 cm on it whole, and a 5 kg one dropped 50 cm snaps it in two, its fibres
 # broken at staggered places along it.
-ALONG = 5.0
+ALONG = 21.0
+SIDE = 5.0
 ACROSS = 40.0
 SPLIT_POWER = 1.0
 SPLIT_FACE = 2.0e-4          # m^2
+FLEX_STIFF = float(__import__('os').environ.get('BB_FLEX', '2.4'))   # (calibrated: tests/test_wood.py; the joints and the
+                            # side bonds together give this much more than E I / L alone says)
 SLIVER = 0.12               # a bond with less than this of the median's area is dropped
 SLANT = (0.35, 0.8)         # radians: how far a length's end is slanted off square to the grain (a splinter's point)
 
@@ -133,7 +139,7 @@ def grain_axis(shape, size):
 def bond_strengths(species: Species):
     """(along, across): a bond's strength as a multiple of the material's, end grain to end grain and side by side."""
     along = ALONG
-    across = ALONG * max(species.across, species.shear * 0.5) / max(species.mor, 1.0) * ACROSS
+    across = SIDE * max(species.across, species.shear * 0.5) / max(species.mor, 1.0) * ACROSS
     return along, across
 
 
@@ -162,7 +168,78 @@ def fibres(shape, size, pieces=24, seed=0, impact=None, species=None):
         # (a split along the grain runs as a crack, its tip carrying the load: the wider the face, the less of its
         # strength it holds, as fracture mechanics has it, by the square root of its size)
         b.k = along if end else across * min(1.0, (SPLIT_FACE / max(b.area, 1e-12)) ** SPLIT_POWER)
+        if end:
+            b.flex = _flex(frac.pieces[b.i], frac.pieces[b.j], b, ax)
     return frac
+
+
+def bend_welds(solids):
+    """Wood bends before it breaks: each weld between two lengths of a bundle (_flex) made as stiff in bending as the
+    bundle of wood is, E I / L, by its impedance. MuJoCo's soft constraint at rest gives way by r = R f / (k d), its
+    R = (1 - d) / d x A (A: the two bodies' mean inverse inertias, body_invweight0), k its stiffness (solref): so d is
+    set where that is the wood's own give, (1 - d) / d^2 = k / (K A). Never stiffer than any weld (solids WELD_SOLIMP).
+    Run once the model is compiled."""
+    import mujoco
+    from .solids import WELD_SOLIMP
+    m = solids.model
+    for ps in solids.sets:
+        cols = getattr(solids, '_scene', None).colliders
+        c = cols[ps.index] if ps.index < len(cols) else {}
+        sp = species_of(c.get('material', ''))
+        if sp is None:
+            continue
+        soft = {}       # piece -> the softest of its end joints
+        sides = []
+        for n, bond in enumerate(ps.frac.bonds):
+            e = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_EQUALITY, f'bond{ps.index}_{n}')
+            if e < 0:
+                continue
+            flex = getattr(bond, 'flex', None)
+            if flex is None:
+                sides.append((e, bond.i, bond.j))
+                continue
+            K = FLEX_STIFF * sp.E * float(flex[0])
+            A = float(m.body_invweight0[m.eq_obj1id[e], 1] + m.body_invweight0[m.eq_obj2id[e], 1])
+            k = -float(m.eq_solref[e, 0])
+            if K <= 0.0 or A <= 0.0 or k <= 0.0:
+                continue
+            x = k / (K * A)
+            d = (math.sqrt(1.0 + 4.0 * x) - 1.0) / (2.0 * x)
+            d = min(max(d, 0.3), WELD_SOLIMP[1])
+            m.eq_solimp[e, 0] = d
+            m.eq_solimp[e, 1] = d
+            # (a short stiff length rings faster than the step can follow: its joint is held as stiff as the step
+            # allows, softer than the wood. Struck, a softer thing feels a smaller peak force, as the square root of its
+            # stiffness for the same energy: so its strength is held down by as much, that a blow breaks it as a blow
+            # breaks the wood; a long plank, as stiff as its wood, keeps all of its strength)
+            K_sim = k * d * d / max((1.0 - d) * A, 1e-30)
+            if K_sim < K and n < len(ps.welds):
+                w = list(ps.welds[n])
+                w[4] *= math.sqrt(K_sim / K)
+                ps.welds[n] = tuple(w)
+            for p in (bond.i, bond.j):
+                soft[p] = min(soft.get(p, 1.0), d)
+        # (bundles side by side bend together: where their joints are staggered, a side bond as stiff as the bundles
+        # would hold the bend off at each joint and take all of it itself, twisting apart. It gives as they do)
+        for e, i, j in sides:
+            if i in soft and j in soft:
+                d = min(soft[i], soft[j])
+                m.eq_solimp[e, 0] = d
+                m.eq_solimp[e, 1] = d
+
+
+def _flex(pi, pj, bond, ax):
+    """How a joint between two lengths of a bundle bends (wood bends before it breaks): (I / L (m^3): times the wood's
+    stiffness along its grain E, the joint's stiffness in bending, as the bundle's own over its length; the two
+    lengths' moment of inertia about it, per unit density (m^5)). bend_welds makes the weld that soft."""
+    perp = [k for k in range(3) if k != ax]
+    ei, ej = np.ptp(pi.verts, axis=0), np.ptp(pj.verts, axis=0)
+    h = max(min(float(ei[perp].min()), float(ej[perp].min())), 1e-4)       # (it bends through its thinnest side)
+    A = float(bond.area) * abs(float(np.asarray(bond.normal, float)[ax]))  # (the bundle's section, square to the grain)
+    L = max(abs(float(pj.centroid[ax] - pi.centroid[ax])), 1e-4)
+    I_i = pi.volume * (ei[ax] ** 2 + h ** 2) / 12.0
+    I_j = pj.volume * (ej[ax] ** 2 + h ** 2) / 12.0
+    return (A * h * h / 12.0 / L, float(I_i * I_j / max(I_i + I_j, 1e-30)))
 
 
 def _slants(cuts, lo, hi, reach, rng):
@@ -302,3 +379,129 @@ def _logs(s, pieces, rng, impact):
                     frac.pieces.append(piece)
     frac.bonds = touching_bonds(frac.pieces)
     return frac
+
+
+# ---- cleaving: an edge driven into end grain -------------------------------------------------------------------------
+
+CLEAVE_G = 800.0        # J/m^2: what splitting wood along its grain takes, with the wedge's friction in the cleft (its
+                        # fracture energy across the grain is 150-350 J/m^2; an axe needs about 100 J for a 25 cm round
+                        # of pine, half a metre long)
+CLEAVE_FACE = 0.9       # cos: an edge or a corner meets the wood (no face of the striker's box within ~25 deg of square
+                        # to the contact)
+CLEAVE_END = 0.75       # cos: the contact is on end grain (its normal within ~40 deg of the grain)
+CLEAVE_OPEN = 0.15      # of the edge's speed: how fast the halves are pushed apart by the wedge's faces as it goes in
+CLEAVE_REST = 0.08      # s: a striker that has cleaved a piece of wood does not cleave it again for this long
+
+
+class Cleaver:
+    """An edge driven into the end grain of wood splits it along the grain, in the plane of the edge, as an axe or a
+    wedge does: a rigid striker cannot cut its way in, so its blow opens the split instead. Solids calls step() after
+    each of its steps. Its blow's energy along the contact's normal (half its mass times its speed into the wood
+    squared) runs the crack as far down the grain as it pays for at CLEAVE_G over the wood's width; the welds across the
+    split there go, and the halves are pushed apart, the edge's faces then holding them open. A striker is any free body
+    that is not wood, meeting it on an edge or a corner of a box (a wedge, an axe's head, a falling crate's corner)."""
+
+    def __init__(self, solids):
+        import mujoco
+        m = solids.model
+        self.piece = {}          # body -> (set index, piece index)
+        self.axis = {}           # set index -> the grain's axis in its pieces' frame (0, 1, 2)
+        self.width = {}          # set index -> its width across the grain (m)
+        self.length = {}         # set index -> its length along the grain (m)
+        cols = solids._scene.colliders
+        for si, ps in enumerate(solids.sets):
+            c = cols[ps.index] if ps.index < len(cols) else {}
+            mat = c.get('material', '')
+            if species_of(mat) is None or mat == 'mdf' or c.get('shape') not in ('box', 'cylinder'):
+                continue
+            ax = grain_axis(c['shape'], ps.size)
+            self.axis[si] = ax
+            s = np.abs(np.asarray(ps.size, float))
+            self.width[si] = 2.0 * float(max(s[k] for k in range(3) if k != ax))
+            self.length[si] = 2.0 * float(s[ax])
+            for k, b in enumerate(ps.bodies):
+                self.piece[int(b)] = (si, k)
+        self.box = int(mujoco.mjtGeom.mjGEOM_BOX)
+        self.v = {}              # body -> its velocity at the end of the last step (world m/s)
+        self.rest = {}           # (body, set) -> the time it last cleaved it
+        self.free = [b for b in range(1, m.nbody) if b not in self.piece and m.body_jntnum[b] > 0
+                     and m.jnt_type[m.body_jntadr[b]] == mujoco.mjtJoint.mjJNT_FREE]
+
+    @staticmethod
+    def of(solids):
+        """A Cleaver for this world, or None (no wood that splits)."""
+        if solids.rehearsal or not solids.sets:
+            return None
+        c = Cleaver(solids)
+        return c if c.axis and c.free else None
+
+    def step(self, solids):
+        m, d = solids.model, solids.data
+        W = solids._w
+        if W is not None and d.ncon:
+            g1 = d.contact.geom1[:d.ncon]
+            g2 = d.contact.geom2[:d.ncon]
+            b1, b2 = m.geom_bodyid[g1], m.geom_bodyid[g2]
+            for i in range(d.ncon):
+                for wb, sb, sg, sgn in ((int(b1[i]), int(b2[i]), int(g2[i]), 1.0),
+                                        (int(b2[i]), int(b1[i]), int(g1[i]), -1.0)):
+                    if wb in self.piece and sb in self.v and m.geom_type[sg] == self.box:
+                        self._blow(solids, i, wb, sb, sg, sgn)
+        for b in self.free:
+            a = m.jnt_dofadr[m.body_jntadr[b]]
+            self.v[b] = np.array(d.qvel[a:a + 3], float)
+
+    def _blow(self, solids, i, wb, sb, sg, sgn):
+        m, d = solids.model, solids.data
+        si, _k = self.piece[wb]
+        if si not in self.axis:
+            return
+        last = self.rest.get((sb, si))
+        if last is not None and 0.0 <= solids.time - last < CLEAVE_REST:
+            return
+        # (the contact's normal points from geom1 to geom2: `into` from the striker into the wood)
+        n = np.array(d.contact.frame[i][:3], float)
+        into = -n * sgn
+        g = d.xmat[wb].reshape(3, 3)[:, self.axis[si]]
+        if abs(float(g @ into)) < CLEAVE_END:
+            return
+        R = d.geom_xmat[sg].reshape(3, 3)
+        c = np.abs(R.T @ into)
+        if float(c.max()) > CLEAVE_FACE:
+            return       # (a face of it, flat on the end grain: it bounces, as a mallet would)
+        vn = float(self.v[sb] @ into)
+        if vn <= 0.5:
+            return
+        E = 0.5 * float(m.body_subtreemass[sb]) * vn * vn
+        edge = R[:, int(np.argmin(c))]
+        pn = np.cross(g, edge)
+        if float(np.linalg.norm(pn)) < 0.3:
+            return       # (an edge along the grain cleaves nothing)
+        pn /= np.linalg.norm(pn)
+        self.rest[(sb, si)] = solids.time
+        reach = min(E / (CLEAVE_G * self.width[si]), self.length[si] * 1.05)
+        if reach < 0.005:
+            return
+        at = np.array(d.contact.pos[i], float)
+        ps = solids.sets[si]
+        W = solids._w
+        rows = np.nonzero((W['set'] == si) & (W['over'] >= 0) & (W['other'] >= 0))[0]
+        if not len(rows):
+            return
+        pf = d.xpos[ps.bodies[W['first'][rows]]]
+        po = d.xpos[ps.bodies[W['other'][rows]]]
+        across = ((pf - at) @ pn) * ((po - at) @ pn) < 0.0
+        down = ((0.5 * (pf + po) - at) @ into) < reach
+        cut = rows[across & down]
+        if not len(cut):
+            return
+        d.eq_active[W['eq'][cut]] = 0
+        W['over'][cut] = -(1 << 40)
+        for r in cut:
+            solids.breaks.append((solids.time, d.xpos[W['body'][r]].copy(), float(W['area'][r]), int(W['collider'][r])))
+        # the wedge's faces push the halves apart as it goes in
+        side = (d.xpos[ps.bodies] - at) @ pn
+        near = ((d.xpos[ps.bodies] - at) @ into) < reach + 0.25 * self.length[si]
+        for k in np.nonzero(near)[0]:
+            a = m.jnt_dofadr[m.body_jntadr[ps.bodies[k]]]
+            d.qvel[a:a + 3] += pn * (CLEAVE_OPEN * vn * (1.0 if side[k] > 0.0 else -1.0))

@@ -642,8 +642,13 @@ class LiquidSolver:
         for _ in range(w + 1):
             b.run(k['band_dist'], [self.DENS, cur, self.SDF, src, dst], gb + Uniforms().v4(thr, 1.0).tobytes(), n)
             src, dst = dst, src
-        b.run(k['band_update'], [self.DENS, cur, src, self.SDF, new, self.bank],
-              gb + Uniforms().v4(thr, w, prm.ppc).tobytes(), n)
+        # (a bullet's way through the water is kept in the band while its cavity lasts: bullet_media.py keep_band)
+        kb = list(getattr(self, 'keep_band', None) or [])[:8]
+        ub = Uniforms().v4(thr, w, prm.ppc, len(kb))
+        for j in range(8):
+            a, b_, r = kb[j][:3] if j < len(kb) else ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0), 0.0)
+            ub.v4(*a, r).v4(*b_, 0.0)
+        b.run(k['band_update'], [self.DENS, cur, src, self.SDF, new, self.bank], gb + ub.tobytes(), n)
         b.run_indirect(k['band_cull'], [self.parts, self.ctr, self.freelist, new, cur, self.cellcount, self.SDF, self.bank],
                        gb + Uniforms().v4(self.capacity, prm.ppc).tobytes(), self.args, 0)
         m = round(prm.ppc ** (1.0 / 3.0))

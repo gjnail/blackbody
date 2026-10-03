@@ -81,13 +81,16 @@ Notable changes to Blackbody. The format follows
   water, concrete and steel when they come in flatter than its critical angle. Glass cracks in its web round the hole,
   bottles burst, a steel gong swings, and what they hit is moved by what they carry. In the interface: a gun's muzzle
   and aim drawn in the viewer, with a handle to aim it. Presets: Shooting range, Bullet through glass, Bottles on a
-  fence, Steel gong, Machine gun at dusk. (From the bullets session.)
+  fence, Steel gong, Machine gun at dusk. (From the bullets session.) What they leave is drawn as it is: 3-D splinters standing out
+  of a board's exit, faceted craters in concrete and brick, frosted crushed glass and its web of cracks, lead splashed on
+  steel, MDF broken out round; cloth holed as finely as the bullet; and deep cavities in water.
 - Wood: fifteen woods (pine, spruce, Douglas fir, oak, ash, maple, birch, walnut, cherry, mahogany, teak, cedar, balsa,
   plywood and MDF), each with its density, stiffness and strength along and across its grain from the USDA Wood
   Handbook, and drawn solid through: rings, grain, knots, pores, rays and heartwood, so a cut, a break or a bullet's
   hole shows the wood inside. It splits along its grain far more easily than it breaks across it: a board snaps in a
-  jagged break with splinters standing out of both halves, a log splits along its rays. Presets: Breaking a board,
-  Bullets through boards, Woods.
+  jagged break with splinters standing out of both halves, a log splits along its rays. A board bends before it
+  breaks (as stiff as its wood, about half its clear wood's strength, as sawn lumber is rated), and end grain struck by
+  an edge or a corner cleaves. Presets: Breaking a board, Bullets through boards, Woods.
 - People and cars (Properties › Physics › Build): an object built of many parts on joints. A person is a crash-test
   figure, 1.8 m and about 80 kg, its head, chest, pelvis, arms and legs turning within a body's reach (a knee bends
   only back). It stands braced until something hits it faster than 1.5 m/s, then goes limp and falls as a body does,

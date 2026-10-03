@@ -110,6 +110,9 @@ def reached(med, now):
     return float(np.interp(dt, t, s))
 
 
+KEEP_S = 0.3           # s: how long a bullet's way through deep water is kept in the narrow band (its cavity's life)
+HOLE_SHARE = 0.9       # a bullet's hole through cloth: its radius as a share of the bullet's (the weave closes a little)
+
 class BulletMedia:
     """The kernels that let bullets meet the matter and the liquid, and push them."""
 
@@ -148,6 +151,19 @@ class BulletMedia:
             self._find(shots, paths, (lo, hi), 'liquid', liquid)
         for v in shots.ahead.values():
             v.sort(key=lambda x: float(np.linalg.norm(x[0])))
+
+    def reahead(self, shots, b, matter=None, liquid=None):
+        """Look ahead again along the way bullet b has just turned onto (Ballistics._turned): what of the matter and the
+        liquid lies on it joins shots.ahead."""
+        sp = b.speed
+        paths = [((b.shot, b.n), b.pos.copy(), b.vel / sp, REACH)]
+        if matter is not None and matter.active and matter.count:
+            wb = matter.world_bounds()
+            if wb is not None:
+                self._find(shots, paths, wb, 'matter', matter)
+        if liquid is not None and getattr(liquid, 'dims', None) is not None and liquid.h:
+            lo = np.asarray(liquid.origin, float)
+            self._find(shots, paths, (lo, lo + np.asarray(liquid.dims, float) * liquid.h), 'liquid', liquid)
 
     @staticmethod
     def _paths(shots, fdt):
@@ -233,7 +249,25 @@ class BulletMedia:
                         surf = MATTER_SURFACES.get(mkey, 'sand')
                     else:
                         surf = 'water'
+                        self._keep_band(shots, obj, A + u_ * s0, A + u_ * s1, key)
                     shots.ahead.setdefault(key, []).append((A + u_ * s0, A + u_ * s1, surf, medium))
+
+    @staticmethod
+    def _keep_band(shots, L, a, b, key):
+        """Water with a narrow band (liquid.py) holds particles only near its surface: deeper, a bullet's cavity would have
+        nothing to push aside. Its way through the water is kept in the band (liq_band_update.wgsl) while its cavity
+        opens and closes (KEEP_S), as wide as the cavity gets, so particles are seeded along it first."""
+        if not getattr(L, 'band', None):
+            return
+        cal = 0.009
+        for bl in shots.bullets:
+            if (bl.shot, bl.n) == key:
+                cal = bl.calibre
+        reach = max(14.0 * cal, 0.04) + 2.0 * L.h
+        A = tuple(float(x) for x in a)
+        kb = [k for k in (getattr(L, 'keep_band', None) or []) if k[3] > shots.now and not (k[4] == key and k[0] == A)]
+        kb.append((A, tuple(float(x) for x in b), reach, shots.now + KEEP_S, key))
+        L.keep_band = kb[-8:]
 
     # -- kicking ---------------------------------------------------------------------------------------------
 
@@ -287,6 +321,38 @@ class BulletMedia:
 
     # -- fabric ----------------------------------------------------------------------------------------------
 
+    def _cloth_crossings(self, shots, cloth, segs):
+        """Where the segments (a, b, bullet radius) cross the cloth's triangles now: holes (Ballistics.cloth_holes)."""
+        B = cloth.built
+        X, gone = cloth.positions()
+        tri = np.asarray(B.tris[:, :3], np.int64)
+        ok = ~gone[tri].any(axis=1)
+        v0, v1, v2 = X[tri[:, 0]], X[tri[:, 1]], X[tri[:, 2]]
+        e1, e2 = v1 - v0, v2 - v0
+        UV = np.asarray(B.uv, float)
+        for a, b, rb in segs:
+            d = b - a
+            L = float(np.linalg.norm(d))
+            if L < 1e-9:
+                continue
+            dn = d / L
+            pv = np.cross(dn, e2)
+            det = np.einsum('ij,ij->i', e1, pv)
+            good = ok & (np.abs(det) > 1e-14)
+            inv = np.where(good, 1.0 / np.where(good, det, 1.0), 0.0)
+            tv = a - v0
+            u = np.einsum('ij,ij->i', tv, pv) * inv
+            qv = np.cross(tv, e1)
+            v = (qv @ dn) * inv
+            t = np.einsum('ij,ij->i', e2, qv) * inv
+            hit = good & (u >= 0.0) & (v >= 0.0) & (u + v <= 1.0) & (t >= 0.0) & (t <= L)
+            for k in np.nonzero(hit)[0][:4]:
+                w = np.array([1.0 - u[k] - v[k], u[k], v[k]])
+                q = w @ UV[tri[k], :2]
+                shots.cloth_holes.append((float(q[0]), float(q[1]), float(rb * HOLE_SHARE), float(UV[tri[k, 0], 2])))
+        if len(shots.cloth_holes) > 256:
+            del shots.cloth_holes[:-256]
+
     def cloth(self, shots, cloth, fdt):
         """The bullets' ways through this frame (fdt seconds) through the fabric: holes torn in it, and a push round them
         (bullet_cloth.wgsl)."""
@@ -304,9 +370,16 @@ class BulletMedia:
                     segs.append((np.asarray(pa, float), np.asarray(pb, float), 0.5 * b.calibre))
         if not segs:
             return
-        # (a hole no smaller than the cloth's own grain lets it show: half the length of its threads between vertices)
-        hole = max(1.3 * max(sg[2] for sg in segs), 0.45 * float(getattr(cloth.built, 'mean_edge', 0.02)))
-        reach = 4.0 * hole
+        # where each crosses the cloth: its hole, in the weave's own coordinates (drawn as finely as the pixels,
+        # however coarse the cloth: cloth_draw.wgsl), a little smaller than the bullet (the weave stretches round it
+        # before its threads part)
+        self._cloth_crossings(shots, cloth, segs)
+        # (vertices are torn away only where the hole is bigger than the cloth's own grain: a slug, a load of shot
+        # close up; otherwise the cloth round the hole is only pushed along its way)
+        big = max(sg[2] for sg in segs) * HOLE_SHARE
+        grain = 0.45 * float(getattr(cloth.built, 'mean_edge', 0.02))
+        hole = big if big > grain else 0.0
+        reach = 4.0 * max(big, grain)
         k = self._k.get('cloth')
         if k is None:
             k = self._k['cloth'] = self.gpu.kernel('bullet_cloth.wgsl', ['rbuf', 'buf', 'buf'], workgroup=(64, 1, 1))

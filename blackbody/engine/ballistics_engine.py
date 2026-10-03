@@ -26,13 +26,18 @@ class BallisticsEngine:
         if not self.shooting:
             return
         m, L = self._shot_media()
+        shots = self.solids.shots
         if m is None and L is None:
-            self.solids.shots.ahead = {}
+            shots.ahead = {}
+            shots.reahead = None
             return
         if self._bullet_media is None:
             from .bullet_media import BulletMedia
             self._bullet_media = BulletMedia(self.gpu)
-        self._bullet_media.look_ahead(self.solids.shots, fdt, matter=m, liquid=L)
+        self._bullet_media.look_ahead(shots, fdt, matter=m, liquid=L)
+        # (one that turns this frame, off something it glanced off, is looked ahead on again along its new way)
+        media = self._bullet_media
+        shots.reahead = lambda b: media.reahead(shots, b, matter=m, liquid=L)
 
     def _shots_kick(self, fdt=None):
         """After: what they did along their tracks through the matter and the liquid goes into them, and their holes
@@ -64,13 +69,34 @@ class BallisticsEngine:
     def shot_view(self, frame):
         """What the bullets leave to draw at `frame` (Ballistics.view): live, or from the cache. None: nothing."""
         solids = getattr(self, 'solids', None)
+        v = None
         if self.sim_frame == frame and solids is not None and solids.shots is not None:
-            return solids.shots.view(solids) or None
-        entry = self.cache.get(frame) if self.cache is not None else None
-        st = entry.get('solids') if entry is not None else None
-        if isinstance(st, dict) and st.get('shots_view'):
-            return st['shots_view']
-        return None
+            v = solids.shots.view(solids) or None
+        else:
+            entry = self.cache.get(frame) if self.cache is not None else None
+            st = entry.get('solids') if entry is not None else None
+            if isinstance(st, dict) and st.get('shots_view'):
+                v = st['shots_view']
+        self._cloth_holes(v)
+        return v
+
+    def _cloth_holes(self, view):
+        """The holes bullets made through the cloth at this frame, for its drawing (cloth_draw.wgsl: binding 19)."""
+        cloth = getattr(self, 'cloth', None)
+        if cloth is None or not getattr(cloth, 'active', False):
+            return
+        H = view.get('cloth_holes') if view else None
+        n = 0 if H is None else len(H)
+        if n == 0 and getattr(cloth, 'holes_buf', None) is None:
+            return
+        from .ballistics import CLOTH_HOLES_MOST
+        if getattr(cloth, 'holes_buf', None) is None:
+            cloth.holes_buf = self.gpu.buffer(16 * (1 + CLOTH_HOLES_MOST), 'cloth-holes')
+        a = np.zeros((1 + CLOTH_HOLES_MOST, 4), np.float32)
+        a[0, 0] = n
+        if n:
+            a[1:1 + n] = np.asarray(H, np.float32)[-CLOTH_HOLES_MOST:]
+        self.gpu.write_buffer(cloth.holes_buf, a)
 
     def _shot_puffs(self, scene, fdt, substeps):
         """Dust where bullets hit (as much as the energy they left and the material's dustiness give: a cloud off

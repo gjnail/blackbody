@@ -41,6 +41,7 @@ STOP_SPEED = 12.0      # m/s: a bullet slower than this inside something has sto
 LEAD = 11340.0         # kg/m^3
 SPARK_LIFE = 0.12      # s a spark glows, on average
 BORES_MOST = 128       # the most holes and craters carved at once (the newest)
+CLOTH_HOLES_MOST = 64  # the most holes drawn through cloth (the newest: cloth_draw.wgsl)
 PUSH_MOST = 40.0       # m/s: the most speed a bullet gives a body or a piece it hits
 PUSH_SPIN = 300.0      # rad/s: and spin
 RIM = 0.006            # m: a bullet meets what comes within this of its axis at least (breakable things' pieces have
@@ -454,9 +455,10 @@ def crater_radius(energy, s: Surface, calibre, through=False, exit_side=False):
         # glass, pottery, ice: the hole about the bullet's size, its crushed cone's mouth twice that, wider out the back
         return base * ((2.4 if exit_side else 1.6) + 0.3 * math.sqrt(e / 500.0))
     if s.debris in ('chips', 'shards'):
-        # brittle: a cone of it breaks out, its volume in proportion to the energy (~ 60 J/cm^3 for concrete)
-        vol = e / (max(s.R, 6.0e7) * 0.6)
-        r = (3.0 * vol / math.pi) ** (1.0 / 3.0)
+        # brittle: a cone of it breaks out, wider the more energy was left there, as craters in concrete are measured:
+        # about 3.5 cm across from a pistol (500 J), 8-9 cm from a rifle (3500 J): across ~ E^0.45; smaller in
+        # stronger stuff (by the cube root of its strength), bigger in weaker
+        r = 0.0175 * (max(e, 1.0) / 500.0) ** 0.45 * (2.15e8 / max(s.R, 6.0e7)) ** (1.0 / 3.0)
         if exit_side:
             r *= 1.6
         return max(base * 1.2, min(r, (14.0 if exit_side else 8.0) * calibre))
@@ -473,7 +475,7 @@ def crater_radius(energy, s: Surface, calibre, through=False, exit_side=False):
 
 def splash_radius(energy, calibre):
     """How far the lead splashes round a bullet that stops on hard metal (m): the grey star a steel target wears."""
-    return calibre * (2.5 + 2.0 * math.sqrt(max(energy, 0.0) / 500.0))
+    return calibre * (1.8 + 1.4 * math.sqrt(max(energy, 0.0) / 500.0))
 
 
 # ---- shots in a scene, flown through the rigid world -----------------------------------------------------------
@@ -571,6 +573,8 @@ class Bore:
     rough: float = 0.1          # how ragged its edge is
     cls: int = 0                # what it is in (CLASS)
     lobes: float = 6.0          # how many ragged lobes round it
+    row: int = -1               # the stage's material row of what it is in (splinters standing out of it are drawn in
+                                # its wood: marks.wgsl fray_*), -1 the ground
 
 
 def _unit(v):
@@ -605,6 +609,7 @@ class Ballistics:
         self.bores: list[Bore] = []
         self.flashes = []        # (time, position, strength, kind, direction): muzzle flashes, lead flashing on steel
         self.media = []          # bullets through matter and water, for their kernels (bullet_matter/liquid.wgsl)
+        self.cloth_holes = []    # (u, v, radius, fabric): holes through the cloth, in its weave's coordinates (m)
         self.fired = [0] * len(self.specs)
         self.t_first = [None] * len(self.specs)
         self.rngs = [np.random.default_rng(1000 + 7919 * s.seed + s.index) for s in self.specs]
@@ -796,6 +801,14 @@ class Ballistics:
             best = (max(s, 0.0), -1, None, (np.asarray(A, float), np.asarray(B, float), key, medium))
         return best
 
+    def _turned(self, solids, b):
+        """A bullet that turned off its way this frame (a glance, a deflection) is looked ahead on again along its new
+        one, so the matter and the water there meet it now, not a frame later (the engine sets `reahead`:
+        bullet_media.py)."""
+        f = getattr(self, 'reahead', None)
+        if f is not None and not getattr(solids, 'rehearsal', False) and b.speed > 1.0:
+            f(b)
+
     @staticmethod
     def _rim(u, r):
         """Offsets from a bullet's axis (along unit u) to its middle and eight points round its edge, radius r."""
@@ -887,6 +900,7 @@ class Ballistics:
             d_out, sp = glance(b, s, u, n, angle, rng)
             b.vel = d_out * sp
             b.pos = P + n * 2.0e-4
+            self._turned(solids, b)
             e = 0.5 * m_in * float(v_in @ v_in) - b.energy
             imp = Impact(b.t, P, n, u, float(np.linalg.norm(v_in)), sp, 'glance', s.key, owner, max(e, 0.0), cal, b.shot)
             if medium is None:
@@ -906,6 +920,7 @@ class Ballistics:
             d_out = deflect(u, n, angle, s, rng)
             b.vel = d_out * pas.speed_out
             b.pos = Q + d_out * 2.0e-5
+            self._turned(solids, b)
             if medium is None:      # (not to meet the same thing again on its way out)
                 b.skip = (self._tab[0][g][:2], float(np.linalg.norm(b.pos - P)) + 0.01)
             # (it comes out when it has had time to go through: it flies on from then)
@@ -1000,6 +1015,7 @@ class Ballistics:
         E = imp.energy
         row = self._row(imp.owner)
         self._cls = CLASS.get(s.key, 5 if s.debris == 'splinters' else 0)
+        self._mrow = self._mat_row(imp.owner)
         self._rng = rng
         grain = self._grain(solids, imp.owner, body)
         self._grain_now = grain
@@ -1065,8 +1081,16 @@ class Ballistics:
             elif s.mark == 5:
                 # wood: in through a hole a little narrower than the bullet (the fibres close behind it), out through a
                 # split torn along the grain, ragged with fibres
-                r1 = max(a, min(r_out, 8.0 * a)) * 0.6
-                self._bore(solids, body, P - u * lip, Q + u * lip, 0.9 * a, r1, elong=2.2, rough=0.4, lobes=16.0)
+                # split torn along the grain, ragged with fibres: the bullet's own channel through the board, and
+                # out of its back a shallow scoop broken out, longer along the grain, its torn fibres facing out
+                r1 = max(a, min(r_out, 8.0 * a)) * 0.5
+                thick = float(np.linalg.norm(Q - P))
+                scoop = min(0.4 * thick, 0.8 * r1)
+                g_now = self._grain_now
+                self._grain_now = None
+                self._bore(solids, body, P - u * lip, Q + u * lip, 0.9 * a, a, rough=0.2, lobes=9.0)
+                self._grain_now = g_now
+                self._bore(solids, body, Q - u * scoop, Q + u * lip, 0.9 * a, r1, elong=1.5, rough=0.4, lobes=16.0)
             elif s.mark == 4:
                 # glass: the bullet's hole, its far side a cone of glass spalled out (conchoidal, ragged)
                 self._bore(solids, body, P - u * lip, Q + u * lip, 1.15 * a, max(1.2 * a, min(r_out, 12.0 * a)), rough=0.25,
@@ -1079,9 +1103,12 @@ class Ballistics:
             return
         depth = max(float(imp.depth), 0.0)
         if style == 1 or s.debris == 'dirt':
-            # a crater: a cone broken out round where it went in, chunky, narrowing to the bullet's own hole
-            self._bore(solids, body, P + n * lip, P + u * max(min(0.45 * r_in, depth + 0.3 * r_in), a), r_in, 0.9 * a,
-                       rough=0.35, lobes=6.0)
+            # a crater: a shallow cone spalled out round where it went in, broken into facets, and at its floor the
+            # bullet's own pocket, narrower, as deep as it went
+            cone = max(min(0.4 * r_in, depth), a)
+            self._bore(solids, body, P + n * lip, P + u * cone, r_in, max(0.9 * a, 0.3 * r_in), rough=0.35, lobes=6.0)
+            if depth > cone + 0.5 * a:
+                self._bore(solids, body, P + u * (0.6 * cone), P + u * depth, 0.85 * a, 0.55 * a, rough=0.2, lobes=5.0)
         elif style == 3:
             # a dent: a shallow dish pushed into the metal
             self._bore(solids, body, P + n * (0.3 * r_in), P + u * max(min(depth, 0.25 * r_in), 2.0e-4), r_in, 0.4 * r_in,
@@ -1100,7 +1127,7 @@ class Ballistics:
         self.bores.append(Bore(body, R.T @ (np.asarray(A, float) - x), R.T @ (np.asarray(B, float) - x), float(ra), float(rb),
                                None if g is None else R.T @ np.asarray(g, float), float(rng.random()) if rng is not None else 0.0,
                                float(elong if g is not None else 0.0), float(rough), int(getattr(self, '_cls', 0)),
-                               float(lobes)))
+                               float(lobes), int(getattr(self, '_mrow', -1))))
         if len(self.bores) > BORES_MOST:
             del self.bores[:-BORES_MOST]
 
@@ -1109,14 +1136,22 @@ class Ballistics:
             return int(owner[1])
         return GROUND_ROW
 
+    def _mat_row(self, owner):
+        """The stage's material row of what was hit (stage.py: the enabled objects in order), or -1."""
+        if owner[0] not in ('collider', 'body', 'piece'):
+            return -1
+        enabled = [i for i, c in enumerate(self.scene.colliders) if c['enabled']][:16]
+        ci = int(owner[1])
+        return enabled.index(ci) if ci in enabled else -1
+
     def _grain(self, solids, owner, body):
         """Wood's grain where it was hit (world): along the object's longest side, as the stage draws its rings."""
         if owner[0] not in ('collider', 'body', 'piece') or int(owner[1]) < 0:
             return None
         from .wood import grain_axis, is_wood
         c = self.scene.colliders[int(owner[1])]
-        if not is_wood(c.get('material', '')):
-            return None
+        if not is_wood(c.get('material', '')) or c.get('material') == 'mdf':
+            return None     # (MDF is a felt of fibres: no grain to split along)
         ax = grain_axis(c.get('shape', 'box'), c.get('size', (1.0, 1.0, 1.0)))
         e = np.zeros(3)
         e[ax] = 1.0
@@ -1268,6 +1303,7 @@ class Ballistics:
         return dict(bullets=copy.deepcopy(self.bullets), impacts=list(self.impacts), marks=list(self.marks),
                     bores=list(self.bores),
                     flashes=list(self.flashes), fired=list(self.fired), t_first=list(self.t_first),
+                    cloth_holes=list(self.cloth_holes),
                     rngs=[r.bit_generator.state for r in self.rngs], debris=self.debris.state(), now=self.now)
 
     def load_state(self, st):
@@ -1280,6 +1316,7 @@ class Ballistics:
         self.marks = list(st['marks'])
         self.bores = list(st.get('bores', []))
         self.flashes = list(st['flashes'])
+        self.cloth_holes = list(st.get('cloth_holes', []))
         self.fired = list(st['fired'])
         self.t_first = list(st['t_first'])
         for r, s in zip(self.rngs, st['rngs']):
@@ -1350,9 +1387,11 @@ class Ballistics:
                 Bv[k, 1, 3] = bo.rb
                 Bv[k, 2, :3] = (R @ bo.grain) if bo.grain is not None else 0.0
                 Bv[k, 2, 3] = bo.seed
-                Bv[k, 3] = (bo.elong, bo.rough, bo.cls, bo.lobes)
+                Bv[k, 3] = (bo.elong, bo.rough, bo.cls + 16 * (bo.row + 1), bo.lobes)   # (marks.wgsl bore_cls, bore_row)
             out['bores'] = Bv
         fl = [f for f in self.flashes if now - f[0] < 0.004 + 0.5 * shutter]
         if fl:
             out['flashes'] = np.array([[*p, s, *dd, 1.0 if k == 'muzzle' else 0.0] for (t, p, s, k, dd) in fl], np.float32)
+        if self.cloth_holes:
+            out['cloth_holes'] = np.asarray(self.cloth_holes[-CLOTH_HOLES_MOST:], np.float32)
         return out

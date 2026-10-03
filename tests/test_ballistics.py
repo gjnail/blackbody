@@ -214,12 +214,15 @@ def test_holes_are_carved_where_bullets_went_and_move_with_what_they_are_in():
     bores = v['bores']
     # a hole through the board, flaring out of its back along the grain; a crater in the concrete
     assert len(bores) >= 2
-    wood = [b for b in bores if int(b[3, 2]) == CLASS['wood']]
-    crater = [b for b in bores if int(b[3, 2]) == CLASS['concrete']]
+    wood = [b for b in bores if int(b[3, 2]) % 16 == CLASS['wood']]
+    crater = [b for b in bores if int(b[3, 2]) % 16 == CLASS['concrete']]
     assert wood and crater
-    w = wood[0]
-    assert w[1, 3] > w[0, 3] and w[3, 0] > 0.0               # (wider where it came out, longer along the grain)
-    assert abs(w[0, 2] - 0.011) < 0.005 and abs(w[1, 2] + 0.011) < 0.005
+    w = max(wood, key=lambda b: b[3, 0])                     # (the scoop torn out of its back, not the bullet's own
+    assert w[1, 3] > w[0, 3] and w[3, 0] > 0.0               # channel through it): wider where it came out, longer
+                                                             # along the grain
+    ch = min(wood, key=lambda b: b[3, 0])
+    assert abs(ch[0, 2] - 0.011) < 0.005 and abs(ch[1, 2] + 0.011) < 0.005   # (the channel: from face to face)
+    assert abs(w[1, 2] + 0.011) < 0.005 and w[0, 2] < 0.0                     # (the scoop: out of the back)
     c = crater[0]
     assert c[0, 3] > 2.0 * 0.0045                              # (a crater wider than the bullet)
     # marks carry what they are in, and which side

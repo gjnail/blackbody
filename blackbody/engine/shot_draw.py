@@ -141,16 +141,70 @@ def glow_rows(view, glow_row, shutter=0.0, frame_dt=1.0 / 24.0):
 
 
 def marks_buffer(view):
-    """The marks and the bores for marks.wgsl: a header (how many marks, how many bores, where the bores start, in
-    vec4), then four vec4 a mark (the newest MARKS_MOST) and four a bore, float32."""
+    """The marks, the bores and the splinters for marks.wgsl: a header (how many marks, how many bores, where the bores
+    start, in vec4, how many wood exits have splinters), then four vec4 a mark (the newest MARKS_MOST), four a bore,
+    one each exit (splinters), then three each splinter; float32."""
     M = view.get('marks') if view else None
     B = view.get('bores') if view else None
     M = np.zeros((0, 4, 4), np.float32) if M is None else np.asarray(M, np.float32)[-MARKS_MOST:]
     B = np.zeros((0, 4, 4), np.float32) if B is None else np.asarray(B, np.float32)[-BORES_MOST:]
     if not len(M) and not len(B):
         return np.zeros(4, np.float32)
-    head = np.array([len(M), len(B), 1 + 4 * len(M), 0.0], np.float32)
-    return np.concatenate([head, M.reshape(-1), B.reshape(-1)])
+    first = 1 + 4 * len(M)
+    scoops, spl = splinters(B, first)
+    head = np.array([len(M), len(B), first, len(scoops)], np.float32)
+    s0 = first + 4 * len(B) + len(scoops)
+    S = np.asarray(scoops, np.float32).reshape(-1, 4)
+    if len(S):
+        S[:, 1] += s0
+    return np.concatenate([head, M.reshape(-1), B.reshape(-1), S.reshape(-1),
+                           np.asarray(spl, np.float32).reshape(-1)])
+
+
+SPLINTERS = 22           # splinters standing round a wood exit (some left out)
+BORE_LIP = 0.0015        # m: a bore starts and ends this far outside the surface it goes through (ballistics.py _carve)
+
+
+def splinters(B, first=0):
+    """The splinters standing out of the back of a board where bullets came out of it, for each of the bores that is
+    such a scoop (wood, along its grain, in an object: marks.wgsl is_scoop): strips of the face along the grain, held at
+    their far end, their free end at the split lifted out toward where the bullet went, tapering, curling. Returns
+    (scoops: [(the bore's record in the buffer, its first splinter (counted from the first), how many, the radius round
+    it they reach)], splinters: [((hinge, width), (tip, thickness), (the way across, curl))])."""
+    scoops, out = [], []
+    for j, b in enumerate(np.asarray(B, float)):
+        code = int(round(float(b[3, 2])))
+        if code & 15 != 5 or b[3, 0] <= 0.0 or (code >> 4) - 1 < 0:
+            continue
+        A, Bp = b[0, :3], b[1, :3]
+        u = Bp - A
+        u /= max(float(np.linalg.norm(u)), 1e-12)
+        g = b[2, :3] - u * float(b[2, :3] @ u)
+        g /= max(float(np.linalg.norm(g)), 1e-12)
+        hh = np.cross(u, g)
+        seed, r, elong = float(b[2, 3]), float(b[1, 3]), float(b[3, 0])
+        rng = np.random.default_rng(int(seed * 1.0e6) + 7)
+        asym = 0.65 + 0.7 * ((seed * 7.7) % 1.0)    # (as bore_one tears it: longer one way along the grain)
+        face = Bp - u * BORE_LIP
+        k0 = len(out)
+        for i in range(SPLINTERS):
+            hx, hy, hz, hw = rng.random(4)
+            if hw <= 0.25:
+                continue
+            phi = (i + 0.5 + 0.7 * (hx - 0.5)) / SPLINTERS * 2.0 * math.pi
+            cp = math.cos(phi)
+            side = asym if cp >= 0.0 else 2.0 - asym
+            xr, yr = r * (1.0 + elong * side) * cp * 0.85, r * math.sin(phi) * 0.85
+            sgn = (1.0 if hy > 0.5 else -1.0) if abs(cp) < 0.35 else (1.0 if cp >= 0.0 else -1.0)
+            ln = r * (0.7 + 2.0 * hy * hy) * (0.45 + 0.55 * abs(cp))
+            lift = 0.2 + 0.9 * hz * hz
+            w = r * (0.05 + 0.16 * hx * hw)
+            h = face + g * (xr + sgn * ln) + hh * yr
+            t = h - g * (sgn * ln * math.cos(lift)) + u * (ln * math.sin(lift))
+            out.append([[*h, w], [*t, w * (0.3 + 0.25 * hy)], [*hh, 0.25 * (hz - 0.3) * (1.0 + hw)]])
+        if len(out) > k0:
+            scoops.append((first + 4 * j, 3 * k0, len(out) - k0, r * (4.2 + 1.4 * elong)))
+    return scoops, out
 
 
 def flash_lamps(view, shutter=0.0, frame_dt=1.0 / 24.0):

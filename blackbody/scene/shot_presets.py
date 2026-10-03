@@ -54,11 +54,13 @@ def shot_presets(K):
                 dict(name='Board foot', shape='box', position=(0.85, 0.15, -0.1), size=(0.15, 0.15, 0.1), material='concrete'),
                 dict(name='Block', shape='box', position=(1.5, 0.3, 0.0), size=(0.25, 0.3, 0.2), material='concrete'),
             ],
-            'shots': [dict(name='Pistol', round='9mm', position=(x * 0.35, 1.2, 6.0), aim=aim, start=t, count=n, rate=240.0,
-                           scatter=0.15, seed=k)
-                      for k, (x, aim, t, n) in enumerate(((-1.5, (-1.5, 0.98, 0.0), 0.3, 1), (-0.65, (-0.62, 0.95, 0.0), 0.9, 2),
-                                                          (0.15, (0.15, 0.87, 0.0), 1.6, 1), (0.85, (0.85, 0.85, 0.0), 2.0, 2),
-                                                          (1.5, (1.5, 0.35, 0.2), 2.5, 2)))],
+            'shots': [dict(name=f'Pistol at the {what}', round='9mm', position=(x * 0.35, 1.2, 6.0), aim=aim, start=t, count=n,
+                           rate=240.0, scatter=0.15, seed=k)
+                      for k, (what, x, aim, t, n) in enumerate((('pane', -1.5, (-1.5, 0.98, 0.0), 0.3, 1),
+                                                                ('gong', -0.65, (-0.62, 0.95, 0.0), 0.9, 2),
+                                                                ('can', 0.15, (0.15, 0.87, 0.0), 1.6, 1),
+                                                                ('board', 0.85, (0.85, 0.85, 0.0), 2.0, 2),
+                                                                ('block', 1.5, (1.5, 0.35, 0.2), 2.5, 2)))],
         },
         'glass_slowmo': {
             'name': 'Bullet through glass', 'category': 'Bullets', 'size': '9 mm, slowed 400 times',

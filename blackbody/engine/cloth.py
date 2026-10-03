@@ -1201,6 +1201,17 @@ class Cloth:
         g.write_buffer(self._view['DR'], self._drops_array(arrays.get('DR')))
         self._view_on = True
 
+    def _holes(self):
+        """The holes bullets made through the cloth (ballistics_engine.py sets holes_buf: [0].x how many, then u, v,
+        radius, fabric each), or none."""
+        hb = getattr(self, 'holes_buf', None)
+        if hb is None:
+            if getattr(self, '_no_holes_buf', None) is None:
+                self._no_holes_buf = self.gpu.buffer(16, 'cloth-no-holes')
+                self.gpu.write_buffer(self._no_holes_buf, np.zeros(4, np.float32))
+            hb = self._no_holes_buf
+        return hb
+
     def _src(self):
         if self._view is not None and getattr(self, '_view_on', False):
             return self._view
@@ -1238,6 +1249,7 @@ class Cloth:
             ent.append({'binding': 16, 'visibility': SS.VERTEX, 'buffer': {'type': 'read-only-storage'}})   # wetness
             for i in (17, 18):   # Lume's light grids (lume_light.wgsl)
                 ent.append({'binding': i, 'visibility': SS.FRAGMENT, 'texture': {'sample_type': 'float', 'view_dimension': '3d'}})
+            ent.append({'binding': 19, 'visibility': SS.FRAGMENT, 'buffer': {'type': 'read-only-storage'}})   # bullet holes
             self.layout0 = dev.create_bind_group_layout(entries=ent)
             from .renderer import BB_DEFINES
             module = dev.create_shader_module(code=load_wgsl('cloth_draw.wgsl', BB_DEFINES), label='cloth_draw')
@@ -1315,6 +1327,7 @@ class Cloth:
             {'binding': 16, 'resource': {'buffer': src['P'].buf, 'offset': 0, 'size': src['P'].size}},
             {'binding': 17, 'resource': (r.LV_lume if lume else r._empty).view},
             {'binding': 18, 'resource': (r.LVD_lume if lume else r._empty).view},
+            {'binding': 19, 'resource': {'buffer': self._holes().buf, 'offset': 0, 'size': self._holes().size}},
         ]
         bg = g.device.create_bind_group(layout=self.layout0, entries=entries)
         l2w = np.asarray(fire.local_to_world(), float)
