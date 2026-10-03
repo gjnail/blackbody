@@ -323,7 +323,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
             wind = scene.wind(frame, scene.v('camera', 'fire_yaw', frame))
             gust = scene.v('motion', 'gust', frame)
             ground_on = bool(d['ground'])
-        burning = poses is not None and self._burn_pieces(scene, fdt)   # (things that break and burn)
+        burning = poses is not None and self._burn_pieces(scene, fdt, frame)   # (things that break and burn)
         pieces = poses is not None and self._pieces_for(scene, self.solver)
         dust = self.solids.dust(scene, fdt, n) if (poses is not None and self.solids.sets) else None
         shot = self._shot_puffs(scene, fdt, n) if self.shooting else None   # (bullets' dust and gun smoke)
@@ -410,7 +410,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
             self._pfire = PieceFire(self.gpu)
         return self._pfire
 
-    def _burn_pieces(self, scene, fdt):
+    def _burn_pieces(self, scene, fdt, frame=None):
         """Things that break and burn (solids.py): the gas's heat round each piece, their fire through the frame, and the
         fuel the burning ones give the gas this frame. True when some burn. (Before the frame's batch: it reads back.)"""
         if not (self.solids.active and self.solids.burning and self.solver.dims):
@@ -420,7 +420,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
         pf = self.piece_fire
         pts, own = self.solids.fire_points()
         T = pf.temperatures(self.solver, pts)
-        sp = scene.data['spread']
+        sp = dict(scene.data['spread'])
+        sp['burn_speed'] = float(scene.get(('spread', 'burn_speed'), frame))   # (it can be keyed)
         self.solids.burn(fdt, T, own, sp)
         fp, fv = self.solids.fuel_points(sp)
         pf.prepare_frame(self.solver, fp, fv)

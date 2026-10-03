@@ -174,6 +174,21 @@ class PieceSet:
     half: np.ndarray = None     # (n, 3) its half extents in its frame (m)
     pairs: np.ndarray = None    # (b, 2) the pieces glued to each other
     crumble: np.ndarray = None  # (n,) how far its smoulder dies down before it falls to ash (0..1)
+    wood: object = None         # a wood's burning (wood_fire.WoodFire) when it is wood: it burns as wood does, spot by spot
+    spots: np.ndarray = None    # (n x 54, 4) its pieces' surfaces as wood_fire's spots (a 3 x 3 grid on each face)
+    wstate: dict = None         # wood_fire.step_spots' state per spot: char depth (m), seconds alight, seconds starved of heat
+    spot_local: np.ndarray = None   # (n, 54, 3) where each spot is on its piece (its own frame, from its middle)
+    spot_area: np.ndarray = None    # (n, 54) the surface each stands for (m^2)
+    spot_edges: np.ndarray = None   # (E, 2) the spots a flame creeps between (on a piece and across to the next)
+    spot_lens: np.ndarray = None    # (E,) how far apart (m)
+    spot_open: np.ndarray = None    # (n x 54,) which are on its open faces (not on one glued to the next piece: inside the wood)
+    spot_sync: np.ndarray = None    # (S, 2) spots that are the same place on the wood (a shared edge, a corner, a seam)
+    spot_thick: np.ndarray = None   # (n x 54,) the wood's thickness straight through each, to its twin on the other face
+    spot_opp: np.ndarray = None     # (n x 54,) that twin
+    spot_blend: np.ndarray = None   # (B, 2) spots beside each other on the same face of the wood, across a seam (drawn
+                                    # blended: _spots_drawn)
+    spot_blend_w: np.ndarray = None     # (B,) how much each takes of the other
+    spot_blend_rest: np.ndarray = None  # (B,) how far apart they are, the wood whole (m)
     v_break: float = 0.0        # m/s: a piece of it stopped this fast by a hit breaks away (materials impact x Strength)
     impact: np.ndarray = None   # where it is hit (its own frame, _rehearse), what its cracks crowd round; None: nowhere
     brittle: float = 0.0        # how far a crack runs on from a hit (materials)
@@ -183,6 +198,9 @@ class PieceSet:
 
 
 ROPE_BOUNCE = 0.3       # the share of its speed a falling thing keeps when its rope snaps taut
+
+from . import wood_fire as WF   # noqa: E402  (wood burning as wood does)
+SPOTS = 54     # a wood piece's spots: a 3 x 3 grid on each of its faces (wood_fire.template)
 
 
 def blast_impulse(kg, r):
@@ -613,6 +631,9 @@ class Solids:
             ps.area = 2.0 * (ext[:, 0] * ext[:, 1] + ext[:, 1] * ext[:, 2] + ext[:, 2] * ext[:, 0])
             ps.pairs = np.array([(bd.i, bd.j) for bd in frac.bonds], np.int64).reshape(-1, 2)
             ps.burnable = bool(c.get('burnable')) and bool(scene.data['spread']['enabled'])
+            ps.wood = WF.props(str(c.get('material', 'wood')), float(r['density'])) if (ps.burnable and WF.is_wood(str(c.get('material', 'wood')))) else None
+            if ps.wood is not None:
+                self._wood_spots(ps, frac.pieces)
             ps.joints_show = c.get('fracture') == 'bricks'
             rng = np.random.default_rng(31 * i + 7)
             # (most burnt-out pieces fall to ash as their embers die; some stay, black charcoal)
@@ -1756,6 +1777,9 @@ class Solids:
             if ps.burnable:
                 e = out[ps.index]
                 e['burn'] = ps.fire.astype(np.float32).copy()
+                if ps.wood is not None:
+                    e['burn_spots'] = self._spots_drawn(ps).astype(np.float32).reshape(-1, SPOTS, 4)
+                    e['burn_half'] = np.asarray(ps.half, np.float32).copy()
                 if ps.gone.any():       # (crumbled to ash: far below, where nothing draws or meets it)
                     e['pos'][ps.gone] = (0.0, -1.0e4, 0.0)
                     e['vel'][ps.gone] = 0.0
@@ -1776,6 +1800,123 @@ class Solids:
         ps.fire[:, 0] = 1.0
         ps.fire[:, 2] = 1.0 if ps.burnable else 0.0
         ps.gone = np.zeros(n, bool)
+        if ps.wood is not None:
+            ps.spots = np.zeros((n * SPOTS, 4))
+            ps.spots[:, 0] = 1.0
+            ps.spots[:, 2] = 1.0
+            ps.wstate = {k: np.zeros(n * SPOTS) for k in ('char', 'lit', 'low')}
+        else:
+            ps.spots = ps.wstate = None
+
+    @staticmethod
+    def _wood_spots(ps, pieces):
+        """A wood's spots: a 3 x 3 grid on each face of each piece (wood_fire.template), the surface each stands for,
+        which are on its open faces (a face glued to the next piece is inside the wood: its spots never feel the fire) and
+        which a flame creeps between: neighbours on a piece, and across each glued joint the open spots that meet there."""
+        t = WF.template()
+        n = len(ps.half)
+        centroids = np.array([p.centroid for p in pieces], float)
+        ps.spot_local = t[None] * ps.half[:, None, :]
+        area = np.zeros((n, SPOTS))
+        for f, (ax, _sgn) in enumerate(WF.FACES):
+            o = [a for a in range(3) if a != ax]
+            area[:, f * 9:(f + 1) * 9] = (4.0 * ps.half[:, o[0]] * ps.half[:, o[1]] / 9.0)[:, None]
+        ps.spot_area = area
+        # (straight through each, to its twin on the opposite face: how thick the wood is there)
+        axis = np.repeat(np.array([ax for ax, _sgn in WF.FACES]), 9)
+        ps.spot_thick = (2.0 * ps.half[:, axis]).reshape(-1)
+        ps.spot_opp = (np.arange(n)[:, None] * SPOTS + WF.template_opposite()[None, :]).reshape(-1)
+        # (a spot a little off its face, inside the piece glued there: it is on a glued face)
+        rest = centroids[:, None, :] + ps.spot_local
+        off = rest + (np.abs(t) > 0.99)[None] * np.sign(t)[None] * 0.005
+        shut = np.zeros((n, SPOTS), bool)
+        for a, b in ps.pairs:
+            for x, y in ((a, b), (b, a)):
+                pl = pieces[y].planes
+                shut[x] |= (off[x] @ pl[:, :3].T - pl[:, 3]).max(1) <= 0.0
+        ps.spot_open = ~shut.reshape(-1)
+        te = WF.template_edges()
+        ts = WF.template_sync()
+        E, L, Y = [], [], []
+        for k in range(n):
+            E.append(te + k * SPOTS)
+            L.append(np.linalg.norm((t[te[:, 0]] - t[te[:, 1]]) * ps.half[k], axis=1))
+            Y.append(ts + k * SPOTS)
+        # (across a glued joint: the open spots that meet there, at rest, within about a spot's spacing of each other)
+        space = 0.7 * np.sort(ps.half, axis=1)[:, 1]          # (a piece's finer spacing over its broad faces)
+        op = ps.spot_open.reshape(n, SPOTS)
+        for a, b in ps.pairs:
+            d = np.linalg.norm(rest[a][:, None, :] - rest[b][None, :, :], axis=2)
+            d[~op[a]] = np.inf
+            d[:, ~op[b]] = np.inf
+            if not np.isfinite(d).any():
+                continue
+            i, j = np.nonzero(d <= 0.004)          # (the same place: either side of the seam, where the joint meets the surface)
+            Y.append(np.stack([a * SPOTS + i, b * SPOTS + j], 1))
+            near = d <= space[a] + space[b] + 1e-4
+            near &= d <= 1.2 * min(space[a], space[b]) + 1e-4
+            if not near.any():
+                near = d <= d.min() + 1e-6
+            i, j = np.nonzero(near)
+            E.append(np.stack([a * SPOTS + i, b * SPOTS + j], 1))
+            L.append(np.maximum(d[i, j], 0.25 * min(space[a], space[b])))
+        E = np.concatenate(E).astype(np.int64) if E else np.zeros((0, 2), np.int64)
+        L = np.concatenate(L) if L else np.zeros(0)
+        keep = ps.spot_open[E[:, 0]] & ps.spot_open[E[:, 1]] if len(E) else np.zeros(0, bool)
+        ps.spot_edges, ps.spot_lens = E[keep], L[keep]
+        Y = np.concatenate(Y).astype(np.int64) if Y else np.zeros((0, 2), np.int64)
+        ps.spot_sync = Y[ps.spot_open[Y[:, 0]] & ps.spot_open[Y[:, 1]]] if len(Y) else Y
+        # (drawn: across each glued joint, the open spots on the same face of the wood within about a spot's spacing
+        # of each other, nearer ones taking more of each other)
+        B, Wt, D = [], [], []
+        for a, b in ps.pairs:
+            for f, (ax, _sgn) in enumerate(WF.FACES):
+                o = [k for k in range(3) if k != ax]
+                ia = np.nonzero(op[a, f * 9:(f + 1) * 9])[0] + f * 9
+                ib = np.nonzero(op[b, f * 9:(f + 1) * 9])[0] + f * 9
+                if not len(ia) or not len(ib):
+                    continue
+                dd = rest[b][None, ib, :] - rest[a][ia, None, :]
+                flat = np.abs(dd[..., ax]) <= 0.003
+                hu = max(ps.half[a, o[0]], ps.half[b, o[0]], 1e-4)
+                hv = max(ps.half[a, o[1]], ps.half[b, o[1]], 1e-4)
+                dn = np.sqrt((dd[..., o[0]] / hu) ** 2 + (dd[..., o[1]] / hv) ** 2)
+                i, j = np.nonzero(flat & (dn <= 1.2))
+                if not len(i):
+                    continue
+                B.append(np.stack([a * SPOTS + ia[i], b * SPOTS + ib[j]], 1))
+                Wt.append(np.exp(-dn[i, j] ** 2))
+                D.append(np.linalg.norm(dd[i, j], axis=1))
+        ps.spot_blend = np.concatenate(B).astype(np.int64) if B else np.zeros((0, 2), np.int64)
+        ps.spot_blend_w = np.concatenate(Wt) if Wt else np.zeros(0)
+        ps.spot_blend_rest = np.concatenate(D) if D else np.zeros(0)
+
+    def _spots_drawn(self, ps):
+        """A wood's spots as the stage draws them: each blended with the spots beside it on the same face of the wood
+        across the seams to its neighbours, while they are still in place, so its char runs on across the boards rather
+        than stepping at each one (where it burns is still each spot's own)."""
+        X = ps.spots
+        P = ps.spot_blend
+        if P is None or not len(P):
+            return X.copy()
+        d = self.data
+        R = d.xmat[ps.bodies].reshape(-1, 3, 3)
+        pos = (d.xipos[ps.bodies][:, None, :] + np.einsum('bij,bkj->bki', R, ps.spot_local)).reshape(-1, 3)
+        a, b = P[:, 0], P[:, 1]
+        gone = np.repeat(ps.gone, SPOTS)
+        w = ps.spot_blend_w * ((np.linalg.norm(pos[a] - pos[b], axis=1) <= ps.spot_blend_rest + 0.01)
+                               & ~gone[a] & ~gone[b])
+        cols = [0, 1, 3]
+        S = X[:, cols]
+        acc = S.copy()
+        wsum = np.ones(len(X))
+        np.add.at(acc, a, w[:, None] * S[b])
+        np.add.at(acc, b, w[:, None] * S[a])
+        np.add.at(wsum, a, w)
+        np.add.at(wsum, b, w)
+        out = X.copy()
+        out[:, cols] = acc / wsum[:, None]
+        return out
 
     # where on a piece the gas's temperature is taken: a 3 x 3 grid just off each of its six faces (its own frame, in half
     # extents; the 1.0 across a face is moved 2 cm further out)
@@ -1797,27 +1938,38 @@ class Solids:
 
     def fire_points(self):
         """Where to take the gas's temperature round the pieces that can still catch: a grid of points just off each of
-        their faces, so a flame licking any part of one is felt. (points (m, 3) fire-local, owners (m, 2): set, piece)."""
+        their faces, so a flame licking any part of one is felt (and, wood, its spots: each burns as the heat on it says).
+        (points (m, 3) fire-local, owners (m, 3): set, piece, which of its 54 points)."""
         pts, own = [], []
         if self.data is None:
-            return np.zeros((0, 3)), np.zeros((0, 2), np.int64)
+            return np.zeros((0, 3)), np.zeros((0, 3), np.int64)
         d = self.data
         probe = self._probe()
         out = np.abs(probe) > 0.99                    # (the face's own axis: 2 cm further out)
         for si, ps in enumerate(self.sets):
             if not ps.burnable:
                 continue
-            live = np.nonzero(~ps.gone & (ps.fire[:, 2] < 1.5) & (ps.fire[:, 0] > 0.0) & (ps.fire[:, 1] < 1.0))[0]
+            can = ~ps.gone & (ps.fire[:, 2] < 1.5) & (ps.fire[:, 0] > 0.0)
+            # (wood that burns is felt too: the heat on it keeps its flames going, or they go out)
+            live = np.nonzero(can if ps.wood is not None else can & (ps.fire[:, 1] < 1.0))[0]
+            probe = self._probe() if ps.wood is None else WF.template()
+            out = np.abs(probe) > 0.99
             if not len(live):
                 continue
             c = d.xipos[ps.bodies[live]]
             R = d.xmat[ps.bodies[live]].reshape(-1, 3, 3)
             local = probe[None] * ps.half[live][:, None, :] + out[None] * np.sign(probe)[None] * 0.02     # (m, 54, 3)
             p = c[:, None, :] + np.einsum('bij,bkj->bki', R, local)
-            pts.append(p.reshape(-1, 3))
-            own.append(np.stack([np.full(len(live) * len(probe), si), np.repeat(live, len(probe))], 1))
+            o = np.stack([np.full(len(live) * len(probe), si), np.repeat(live, len(probe)),
+                          np.tile(np.arange(len(probe)), len(live))], 1)
+            p = p.reshape(-1, 3)
+            if ps.wood is not None:     # (wood: its open spots, each its own)
+                keep = ps.spot_open[o[:, 1] * SPOTS + o[:, 2]]
+                p, o = p[keep], o[keep]
+            pts.append(p)
+            own.append(o)
         if not pts:
-            return np.zeros((0, 3)), np.zeros((0, 2), np.int64)
+            return np.zeros((0, 3)), np.zeros((0, 3), np.int64)
         return np.concatenate(pts), np.concatenate(own).astype(np.int64)
 
     def burn(self, dt, temps, owners, sp):
@@ -1834,16 +1986,39 @@ class Solids:
         creep = float(sp['creep'])
         inv_smoulder = 1.0 / max(float(sp['smoulder']), 1e-3)
         hot = {}
+        owners = np.asarray(owners, np.int64).reshape(-1, 3) if len(temps) else np.zeros((0, 3), np.int64)
+        temps = np.asarray(temps, float)
         if len(temps):
-            for (si, k), T in zip(owners, temps):
+            for (si, k, _j), T in zip(owners, temps):
                 key = (int(si), int(k))
                 hot[key] = max(hot.get(key, 0.0), float(T))
+        speed = max(float(sp.get('burn_speed', 1.0)), 0.0)
         for si, ps in enumerate(self.sets):
             if not ps.burnable:
                 continue
             F = ps.fire
             n = len(F)
             T = np.array([hot.get((si, k), 0.0) for k in range(n)])
+            if ps.wood is not None:
+                # wood: as wood burns (wood_fire.py), spot by spot over its pieces, Burn speed-up times faster than real
+                mine = owners[:, 0] == si
+                Ts = np.zeros(n * SPOTS)
+                np.maximum.at(Ts, owners[mine, 1] * SPOTS + owners[mine, 2], temps[mine])
+                d = self.data
+                R = d.xmat[ps.bodies].reshape(-1, 3, 3)
+                pos = (d.xipos[ps.bodies][:, None, :] + np.einsum('bij,bkj->bki', R, ps.spot_local)).reshape(-1, 3)
+                WF.step_spots(ps.wood, ps.spots, ps.wstate, Ts, pos, ps.spot_edges, ps.spot_lens, ps.spot_thick,
+                              dt * speed, speed, ps.spot_opp)
+                WF.sync_spots(ps.spots, ps.wstate, ps.spot_sync)
+                F[:] = WF.pieces_from_spots(ps.spots, n, ps.spot_open)
+                for k in np.nonzero((F[:, 2] >= 1.5) & (F[:, 3] <= ps.crumble) & ~ps.gone)[0]:
+                    crumbled.append((self.data.xipos[ps.bodies[k]].copy(), float(np.linalg.norm(ps.half[k]))))
+                    self._crumble(si, ps, int(k))
+                if ps.gone.any():   # (ash: its spots spent and cold)
+                    g = np.repeat(ps.gone, SPOTS)
+                    ps.spots[g, 2] = 2.0
+                    ps.spots[g, 3] = 0.0
+                continue
             alight = (F[:, 2] < 1.5) & (F[:, 1] >= 1.0) & (F[:, 0] > 0.0) & ~ps.gone
             nb = np.zeros(n, bool)
             if len(ps.pairs):
@@ -1888,6 +2063,37 @@ class Solids:
             d.eq_active[W['eq'][mine]] = 0
             W['over'][mine] = -(1 << 40)
 
+    def _wood_fuel(self, ps, sp, pts, val):
+        """A wood's flames: fuel, heat and smoke off each spot that burns, just off its face, as fierce as it burns; a
+        little smoke and warmth off its glowing char."""
+        X = ps.spots
+        n = len(ps.half)
+        live = ~np.repeat(ps.gone, SPOTS) & ps.spot_open
+        burning = (X[:, 1] >= 1.0) & (X[:, 0] > 0.0) & (X[:, 2] < 1.5)
+        on = np.nonzero(live & burning)[0]
+        glow = np.nonzero(live & ~burning & (X[:, 3] > 0.0))[0]
+        if not len(on) and not len(glow):
+            return
+        d = self.data
+        probe = WF.template()
+        out = (np.abs(probe) > 0.99) * np.sign(probe) * 0.02
+        local = (ps.spot_local + out[None]).reshape(-1, 3)
+        k = np.arange(n * SPOTS) // SPOTS
+        for idx, flame in ((on, True), (glow, False)):
+            if not len(idx):
+                continue
+            R = d.xmat[ps.bodies[k[idx]]].reshape(-1, 3, 3)
+            p = d.xipos[ps.bodies[k[idx]]] + np.einsum('bij,bj->bi', R, local[idx])
+            rate = float(sp['fuel']) * FIRE_AREA_DEPTH * ps.spot_area.reshape(-1)[idx]
+            if flame:
+                rate = rate * X[idx, 3] * (ps.wood.hrr / 180.0e3)
+                v = np.stack([rate, np.full(len(idx), float(sp['heat'])), rate * float(sp['smoke'])], 1)
+            else:
+                w = X[idx, 3]
+                v = np.stack([np.zeros(len(idx)), 0.45 * float(sp['heat']) * w, rate * float(sp['smoulder_smoke']) * w], 1)
+            pts.append(p)
+            val.append(v)
+
     def _weaken(self):
         """The glue between burning pieces: as strong as the less charred of the two lets it be, (1 - char)^2."""
         W = self._w
@@ -1915,6 +2121,9 @@ class Solids:
         for ps in self.sets:
             if not ps.burnable:
                 continue
+            if ps.wood is not None:
+                self._wood_fuel(ps, sp, pts, val)
+                continue
             on = np.nonzero((ps.fire[:, 2] < 1.5) & (ps.fire[:, 1] >= 1.0) & (ps.fire[:, 0] > 0.0) & ~ps.gone)[0]
             sm = np.nonzero((ps.fire[:, 2] >= 1.5) & (ps.fire[:, 3] > 0.0) & ~ps.gone)[0]
             for idx, flame in ((on, True), (sm, False)):
@@ -1925,6 +2134,8 @@ class Solids:
                 off = np.einsum('bij,kbj->kbi', R, (self.SIDES[:, None, :] * (0.5 * ps.half[idx])[None]))
                 p = np.concatenate([c[None], c[None] + off], 0).reshape(-1, 3)
                 rate = float(sp['fuel']) * ps.area[idx] * FIRE_AREA_DEPTH / 7.0
+                if flame and ps.wood is not None:
+                    rate = rate * ps.fire[idx, 3] * (ps.wood.hrr / 180.0e3)    # (its heat release now, of its peak)
                 if flame:
                     v = np.stack([rate, np.full(len(idx), float(sp['heat'])), rate * float(sp['smoke'])], 1)
                 else:   # smouldering: a little smoke and warmth, no fuel
@@ -2921,7 +3132,10 @@ class Solids:
                     pieces={int(k): {kk: np.asarray(vv, np.float32) for kk, vv in v.items()} for k, v in self.piece_poses().items()},
                     joints=[bool(jt.broken) for jt in self.joints],
                     ropes={int(k): {kk: np.asarray(vv, np.float32) for kk, vv in v.items()} for k, v in self.rope_poses().items()},
-                    fire=[None if not ps.burnable else (ps.fire.copy(), ps.gone.copy()) for ps in self.sets],
+                    fire=[None if not ps.burnable else (ps.fire.copy(), ps.gone.copy(),
+                                                        None if ps.wstate is None else dict({k: v.copy() for k, v in ps.wstate.items()},
+                                                                                           spots=ps.spots.copy()))
+                          for ps in self.sets],
                     shots=None if self.shots is None else self.shots.state(),
                     shots_view=None if self.shots is None else self.shots.view(self),
                     limp=[bool(a['limp']) for a in self.asms])
@@ -2955,6 +3169,12 @@ class Solids:
         for si, (ps, f) in enumerate(zip(self.sets, st.get('fire') or [])):
             if f is not None and ps.burnable and np.shape(f[0]) == ps.fire.shape:
                 ps.fire[:] = f[0]
+                if ps.wstate is not None and len(f) > 2 and f[2] is not None:
+                    for k, v in f[2].items():
+                        if k in ps.wstate and np.shape(v) == ps.wstate[k].shape:
+                            ps.wstate[k][:] = v
+                        elif k == 'spots' and np.shape(v) == ps.spots.shape:
+                            ps.spots[:] = v
                 for k in np.nonzero(np.asarray(f[1], bool))[0]:
                     self._crumble(si, ps, int(k))
         if self._w is not None and st.get('over') is not None and np.shape(st['over']) == self._w['over'].shape:

@@ -333,7 +333,7 @@
   "name": "Shed on fire",
   "category": "Things that fall",
   "size": "2 m wooden shed",
-  "blurb": "A fire inside a wooden shed: its walls and posts catch, char and weaken until the posts burn through, the roof falls in and the walls break up, the burnt pieces smouldering and crumbling to ash. Objects that are both Breakable and Burnable burn piece by piece."
+  "blurb": "A pile of rubbish burning in the back corner of a pine shed: its flames climb the corner, the walls catch and the fire runs up them and along the underside of the roof while it creeps only slowly sideways and down. The boards char black and crack, glowing in the cracks; they char through, the roof falls in and the walls break up, the burnt pieces glowing and crumbling to ash. Wood burning as wood does, time-lapsed (Spreading fire › Burn speed-up)."
  },
  {
   "key": "sand_hopper",
@@ -767,7 +767,7 @@
   "name": "Bullets through boards",
   "category": "Wood",
   "size": "six 19 mm pine boards",
-  "blurb": "The classic penetration test: six pine boards stood 2.5 cm apart, a 9 mm pistol and a .308 rifle fired into them. The pistol bullet slows through each and stops in the last; the rifle bullet goes through all six. Each board is holed going in and torn out along its grain going out, splinters flying from its back."
+  "blurb": "The classic penetration test: six pine boards stood 2.5 cm apart, a 9 mm pistol and a .308 rifle fired into them. The pistol bullet slows through each and only just gets through the last; the rifle bullet goes through all six. Each board is holed going in and torn out along its grain going out, splinters standing out of its back and flying from it."
  },
  {
   "key": "wood_lineup",

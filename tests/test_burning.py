@@ -12,7 +12,9 @@ def post_scene(burnable=True, burner_stops=None):
                    **({'stop': burner_stops} if burner_stops else {}))
     sc.add_collider(name='Post', shape='box', position=(0.0, 0.8, 0.0), size=(0.07, 0.8, 0.07), material='wood', breakable=True,
                     burnable=burnable, pieces=14, held='base')
-    sc.data['spread'].update(enabled=True, ground=False, burn_time=2.0, catch_temp=0.3, catch_time=0.4, creep=0.06, smoulder=4.0)
+    # (pine: as pine burns, 1300 times faster: it catches, chars through and falls in seconds rather than hours)
+    sc.data['spread'].update(enabled=True, ground=False, burn_time=2.0, catch_temp=0.3, catch_time=0.4, creep=0.06, smoulder=4.0,
+                             burn_speed=1300.0)
     sc.data['domain'].update(size_x=2.4, size_y=2.6, size_z=2.0, resolution=64, preroll=0.0)
     return sc
 

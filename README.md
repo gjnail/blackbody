@@ -77,7 +77,7 @@ Cloth holds what lands on it, and tears when it cannot. Things that fall come to
 
 <img src="docs/media/gif/tower_knockdown.gif" width="49%" alt="A bowling ball knocking down a tower of wooden blocks beside a falling domino run"> <img src="docs/media/gif/wall_smash.gif" width="49%" alt="A steel ball punching through a brick wall, the bricks above caving in">
 
-Any object can fall: it tumbles, slides, bounces, stacks and knocks things over, in real materials (wood, stone, brick, steel, glass, rubber and more), and the smoke, the water and the wind push it about. Burning ones keep burning as they tumble, and lights or flames attached to them go along. Things that break and burn go piece by piece: a shed on fire chars, sags and falls in, its burnt pieces crumbling to ash. [The guide](docs/physics.md)
+Any object can fall: it tumbles, slides, bounces, stacks and knocks things over, in real materials (wood, stone, brick, steel, glass, rubber and more), and the smoke, the water and the wind push it about. Burning ones keep burning as they tumble, and lights or flames attached to them go along. Wood burns as wood does: it catches where enough heat reaches it, fire climbs it fast and creeps over it slowly, it chars black and cracks, glowing in the cracks, and it chars through. A shed on fire flashes over, burns all over and falls in, its burnt pieces crumbling to ash. [The guide](docs/physics.md)
 
 <img src="docs/media/gif/window_smash.gif" width="49%" alt="A stone thrown through a window: the glass cracks out from where it hits to the frame and stays in it"> <img src="docs/media/gif/vase_drop.gif" width="49%" alt="A vase tipped off a table, whole until it shatters on the floor into curved shards">
 

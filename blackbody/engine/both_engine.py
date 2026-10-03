@@ -332,7 +332,7 @@ class BothEngine:
             ggust = scene.v('motion', 'gust', frame)
         pieces = poses is not None and self._pieces_for(scene, self.solver)
         lpieces = poses is not None and self._pieces_for(scene, L, 'liquid')
-        burning = poses is not None and self._burn_pieces(scene, fdt)   # (things that break and burn)
+        burning = poses is not None and self._burn_pieces(scene, fdt, frame)   # (things that break and burn)
         dust = self.solids.dust(scene, fdt, n) if (poses is not None and self.solids.sets) else None
         shot = self._shot_puffs(scene, fdt, n) if self.shooting else None   # (bullets' dust and gun smoke)
         if shot:

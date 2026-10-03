@@ -198,6 +198,35 @@ def test_a_long_plank_sags_under_a_load_as_wood_does_and_holds_it():
     assert len(_groups(S)) == 1
 
 
+def wall_at_a_small_step():
+    """A wall of 19 mm pine boards standing on its base, and a door header's small pieces 1.5 m off making the step
+    short: (Solids, the wall's pieces where they start) once configured."""
+    s = Scene()
+    s.data['domain'].update(ground=True, open_sides=True, preroll=0.0)
+    s.data['render']['fps'] = 24.0
+    s.emitters = []
+    s.add_collider(name='Wall', shape='box', position=(0.0, 0.97, 0.0), size=(0.905, 0.95, 0.0095), material='wood',
+                   breakable=True, fracture='splinters', pieces=24, held='base')
+    s.add_collider(name='Header', shape='box', position=(0.0, 1.81, 1.5), size=(0.4, 0.11, 0.0095), material='wood',
+                   breakable=True, fracture='splinters', pieces=4, held='edges')
+    S = Solids()
+    S.configure(s, ((96, 96, 96), 4.0 / 96, (-2.0, 0.0, -2.0)))
+    S.reset()
+    return s, S, S.data.xpos[S.sets[0].bodies].copy()
+
+
+def test_a_wall_of_boards_stands_still_at_a_small_step():
+    # (its bending joints, made as soft as the wood by a weak hold on a stiff spring, rang up at a short step and burst
+    # it in a tenth of a second: wood.BEND_IMPEDANCE)
+    s, S, x0 = wall_at_a_small_step()
+    assert S.model.opt.timestep < 1.2e-3
+    for f in range(s.start + 1, s.start + 13):
+        S.advance(s, f, 1.0 / 24, 1)
+    W = S._w
+    assert (S.data.eq_active[W['eq'][W['set'] == 0]] == 1).all()          # whole
+    assert np.abs(S.data.xpos[S.sets[0].bodies] - x0).max() < 0.002      # and still
+
+
 def test_an_edge_driven_into_a_log_splits_it_along_its_grain():
     def strike(v):
         s = Scene()

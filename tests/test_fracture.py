@@ -214,7 +214,7 @@ def test_breaking_is_deterministic():
 # ---- breaking and burning (Breakable and Burnable: each piece burns on its own) ----------------------------------------
 
 SPREAD = dict(catch_temp=0.3, catch_time=0.4, creep=0.06, burn_time=2.0, smoulder=3.0, fuel=8.0, heat=0.5, smoke=1.0,
-              smoulder_smoke=1.0)
+              smoulder_smoke=1.0, burn_speed=1.0)
 POST = dict(name='Post', shape='box', position=(0.0, 0.8, 0.0), size=(0.07, 0.8, 0.07), material='wood', breakable=True,
             burnable=True, pieces=14, held='base')
 
@@ -228,25 +228,119 @@ def burning_post(**kw):
     return sc, S
 
 
-def flames_at_foot(S, height=0.3):
-    """The gas temperature at fire_points(): a flame round the post's foot, up to `height`."""
+def flames(S, lo=-1.0, hi=0.3):
+    """The gas temperature at fire_points(): flames (field temperature 1) round the post from height lo to hi."""
     pts, own = S.fire_points()
-    return np.where(pts[:, 1] < height, 1.0, 0.0), own
+    return np.where((pts[:, 1] >= lo) & (pts[:, 1] < hi), 1.0, 0.0), own
+
+
+def burn_for(sc, S, seconds, speed, lo=-1.0, hi=0.3, fall=True, every=None):
+    sp = dict(SPREAD, burn_speed=speed)
+    f0 = sc.start + 1
+    for i, f in enumerate(range(f0, f0 + int(seconds * 24))):
+        T, own = flames(S, lo, hi)
+        S.burn(1.0 / 24.0, T, own, sp)
+        if fall:
+            S.advance(sc, f, 1.0 / 24.0, 1)
+        if every is not None:
+            every(i + 1)
+
+
+def test_wood_catches_in_flames_and_chars_at_its_charring_rate():
+    from blackbody.engine import wood_fire as WF
+    sc, S = burning_post()
+    ps = S.sets[0]
+    assert ps.wood is not None and ps.wstate is not None
+    # in its flames (about 50 kW/m^2) pine catches within ten seconds or so; then chars at about 0.65 mm a minute
+    caught = []
+    burn_for(sc, S, 20.0, 1.0, hi=9.0, fall=False, every=lambda i: caught.append((ps.fire[:, 1] >= 1.0).mean()))
+    first = (np.array(caught) >= 1.0).argmax() / 24.0
+    assert 2.0 < first < 12.0, first
+    q = WF.flux(1.0)
+    assert 40.0e3 < q < 60.0e3
+    rate = ps.wood.char_rate * np.sqrt(np.clip(q / WF.Q_REF, 0.5, 2.0))
+    lit = ps.wstate['lit']
+    assert np.allclose(ps.wstate['char'], rate * lit, rtol=0.02)
+    assert 0.5 / 60000.0 < ps.wood.char_rate < 0.8 / 60000.0
+
+
+def test_a_flame_spreads_up_wood_far_faster_than_down():
+    sc, S = burning_post()
+    ps = S.sets[0]
+    y = S.data.xipos[ps.bodies][:, 1]
+    mid = np.argsort(np.abs(y - 0.8))[0]
+    ps.spots[mid * 54:(mid + 1) * 54, 1] = 1.0  # (one piece in the middle alight, no flames round it)
+    for _ in range(int(24 * 40)):
+        pts, own = S.fire_points()
+        T = np.where(own[:, 1] == mid, 1.0, 0.0)   # (its own flames, and nothing more)
+        S.burn(1.0 / 24.0, T, own, dict(SPREAD, burn_speed=5.0))
+    al = ps.fire[:, 1] >= 1.0
+    up, down = al[y > y[mid] + 0.01].sum(), al[y < y[mid] - 0.01].sum()
+    assert up >= 3 and up > 2 * down, (up, down)
+
+
+def test_wood_goes_out_where_too_little_heat_reaches_it_and_glows():
+    from blackbody.engine import wood_fire as WF
+    sc, S = burning_post()
+    ps = S.sets[0]
+    burn_for(sc, S, 0.5, 20.0, hi=9.0, fall=False)          # (all of it alight in its flames)
+    assert (ps.fire[:, 1] >= 1.0).all()
+    burn_for(sc, S, 2.0 * max(WF.SUSTAIN_TIME / 20.0, WF.SUSTAIN_GAS), 20.0, lo=9.0, hi=9.0, fall=False)   # (then no flames)
+    assert not (ps.fire[:, 1] >= 1.0).any() and (ps.fire[:, 3] > 0.0).all() and (ps.fire[:, 0] > 0.0).all()
+
+
+def test_a_board_burning_on_one_face_chars_through_its_whole_thickness():
+    from blackbody.engine import wood_fire as WF
+    wf = WF.props('wood', 500.0)
+    # (a spot alight in flames, and its twin straight through the 19 mm board on the other face, in the cold)
+    X = np.zeros((2, 4))
+    X[:, 0], X[:, 2], X[0, 1] = 1.0, 1.0, 1.0
+    st = {k: np.zeros(2) for k in ('char', 'lit', 'low')}
+    args = (np.array([1.0, 0.0]), np.zeros((2, 3)), np.zeros((0, 2), np.int64), np.zeros(0), np.full(2, 0.019))
+    t = 0
+    while st['char'][0] < 0.6 * 0.019:
+        WF.step_spots(wf, X, st, *args, 1.0, 1.0, np.array([1, 0]))
+        t += 1
+    assert (X[:, 2] < 1.5).all()                        # past half of it from one face, not through (from both, it would be)
+    assert np.isclose(X[0, 0], X[1, 0]) and 0.3 < X[0, 0] < 0.45      # (what is left of it there, the same either side)
+    while X[0, 2] < 1.5:
+        WF.step_spots(wf, X, st, *args, 1.0, 1.0, np.array([1, 0]))
+        t += 1
+    assert 0.0185 < st['char'][0] < 0.0195 and st['char'][1] == 0.0
+    assert X[1, 2] >= 1.5 and X[1, 1] >= 1.0           # through: spent on both faces, its char showing on the cold one
+    assert 20.0 < t / 60.0 < 35.0                       # (about half an hour in flames, at its charring rate)
+
+
+def test_wood_is_drawn_with_its_char_running_on_across_the_seams_between_its_boards():
+    sc = scene_of(dict(name='Wall', shape='box', position=(0.0, 0.97, 0.0), size=(0.6, 0.95, 0.0095), material='wood',
+                       breakable=True, burnable=True, fracture='splinters', pieces=8, held='base'))
+    sc.data['spread']['enabled'] = True
+    S = Solids()
+    S.configure(sc, ((96, 96, 96), 12.0 / 96, (-6.0, 0.0, -6.0)))
+    S.reset()
+    ps = S.sets[0]
+    assert len(ps.spot_blend) > 0
+    k = int(ps.pairs[0, 0])
+    ps.spots[k * 54:(k + 1) * 54, 1] = 1.5              # (one board's spots alight, the rest cold)
+    drawn = S._spots_drawn(ps)
+    piece = np.arange(len(ps.spots)) // 54
+    nb = set(int(x) for x in ps.pairs[(ps.pairs == k).any(1)].ravel()) - {k}
+    beside = np.isin(piece, list(nb))
+    assert (drawn[beside, 1] > 0.05).any()              # its char runs on across the seams to the boards beside it
+    assert (drawn[~beside & (piece != k), 1] == 0.0).all()    # (and no further)
+    assert (ps.spots[piece != k, 1] == 0.0).all()       # (where it burns is still each spot's own)
 
 
 def test_a_burnable_breakable_burns_piece_by_piece_and_falls_when_its_foot_burns_through():
     sc, S = burning_post()
     ps = S.sets[0]
     assert ps.burnable and S.burning and (ps.fire[:, 0] == 1.0).all()
-    for f in range(sc.start + 1, sc.start + 1 + 24 * 20):
-        T, own = flames_at_foot(S)
-        S.burn(1.0 / 24.0, T, own, SPREAD)
-        S.advance(sc, f, 1.0 / 24.0, 1)
-        if f == sc.start + 24:
-            y = S.data.xipos[ps.bodies][:, 1]
-            alight = (ps.fire[:, 1] >= 1.0) & (ps.fire[:, 0] > 0.0)
-            assert alight[y < 0.3].all() and not alight[y > 0.9].any()   # its foot caught in the flames within a second
-    assert (ps.fire[:, 2] >= 1.5).all()                              # the fire crept up it, and it burnt through
+    y = S.data.xipos[ps.bodies][:, 1]
+    burn_for(sc, S, 1.0, 60.0, hi=0.3)
+    alight = (ps.fire[:, 1] >= 1.0) & (ps.fire[:, 0] > 0.0)
+    assert alight[y < 0.3].all() and not alight[y > 0.9].any()   # its foot caught in the flames, its top not yet
+    burn_for(sc, S, 24.0, 600.0, hi=9.0)
+    assert (ps.fire[:, 2] >= 1.5).all()                              # in its flames it burnt through
     assert S.data.xipos[ps.bodies[~ps.gone]][:, 1].max() < 0.3        # it fell
     assert 0 < ps.gone.sum() < len(ps.gone)                          # most crumbled to ash, some charcoal is left
     assert (S.piece_poses()[0]['pos'][ps.gone][:, 1] < -1.0e3).all()  # (the ash is drawn nowhere)
@@ -256,10 +350,7 @@ def test_a_breakable_that_does_not_burn_or_is_not_near_fire_stays_whole():
     sc, S = burning_post(burnable=False)
     assert not S.burning
     sc, S = burning_post()
-    for f in range(sc.start + 1, sc.start + 1 + 24 * 3):
-        pts, own = S.fire_points()
-        S.burn(1.0 / 24.0, np.zeros(len(pts)), own, SPREAD)
-        S.advance(sc, f, 1.0 / 24.0, 1)
+    burn_for(sc, S, 3.0, 100.0, lo=9.0, hi=9.0)
     ps = S.sets[0]
     assert (ps.fire[:, 1] == 0.0).all() and S.data.xipos[ps.bodies][:, 1].max() > 1.4     # (still standing, unlit)
 
@@ -267,15 +358,12 @@ def test_a_breakable_that_does_not_burn_or_is_not_near_fire_stays_whole():
 def test_burning_pieces_feed_the_fire_and_their_glue_weakens_with_their_char():
     sc, S = burning_post()
     ps = S.sets[0]
-    for _ in range(24):
-        T, own = flames_at_foot(S)
-        S.burn(1.0 / 24.0, T, own, SPREAD)
+    burn_for(sc, S, 0.5, 60.0, fall=False)
     pts, val = S.fuel_points(SPREAD)
-    alight = ((ps.fire[:, 1] >= 1.0) & (ps.fire[:, 0] > 0.0)).sum()
-    assert len(pts) == 7 * alight > 0 and (val[:, 0] > 0.0).all() and (val[:, 1] == 0.5).all()
-    for _ in range(24 * 2):
-        T, own = flames_at_foot(S)
-        S.burn(1.0 / 24.0, T, own, SPREAD)
+    X = ps.spots
+    alight = ((X[:, 1] >= 1.0) & (X[:, 0] > 0.0) & (X[:, 2] < 1.5)).sum()       # (wood: its flames off its burning spots)
+    assert len(pts) == alight > 0 and (val[:, 0] > 0.0).all() and (val[:, 1] == 0.5).all()
+    burn_for(sc, S, 3.0, 600.0, fall=False)
     W = S._w
     char = 1.0 - ps.fire[:, 0]
     worst = np.maximum(char[W['first']], np.where(W['other'] >= 0, char[np.maximum(W['other'], 0)], 0.0))
@@ -286,17 +374,16 @@ def test_burning_pieces_feed_the_fire_and_their_glue_weakens_with_their_char():
 def test_burning_is_kept_with_the_state_and_undone_by_a_reset():
     sc, S = burning_post()
     ps = S.sets[0]
-    for f in range(sc.start + 1, sc.start + 1 + 24 * 12):
-        T, own = flames_at_foot(S)
-        S.burn(1.0 / 24.0, T, own, SPREAD)
-        S.advance(sc, f, 1.0 / 24.0, 1)
+    burn_for(sc, S, 16.0, 800.0, hi=9.0)
     assert ps.gone.any()
     st = S.state()
-    fire, gone = ps.fire.copy(), ps.gone.copy()
+    fire, gone, char = ps.fire.copy(), ps.gone.copy(), ps.wstate['char'].copy()
     S.reset()
     assert not ps.gone.any() and (ps.fire[:, 0] == 1.0).all() and np.allclose(S._w['strength'], S._w['strength0'])
+    assert (ps.wstate['char'] == 0.0).all()
     g = int(S.model.body_geomadr[int(ps.bodies[np.nonzero(gone)[0][0]])])
     assert S.model.geom_contype[g] != 0                              # (the ash is whole again)
     assert S.load_state(st)
+    assert np.allclose(ps.fire, fire) and np.array_equal(ps.gone, gone) and np.allclose(ps.wstate['char'], char)
     assert np.array_equal(ps.fire, fire) and np.array_equal(ps.gone, gone)
     assert S.model.geom_contype[g] == 0

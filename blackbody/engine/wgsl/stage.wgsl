@@ -64,6 +64,7 @@ const F_MARCH: bool = ${F_MARCH};
 const F_SHOTS: bool = ${F_SHOTS};   // (what bullets leave: marks and bores, marks.wgsl)
 const F_WOOD: bool = ${F_WOOD};     // (wood, by its species: wood.wgsl)
 const F_WATER: bool = ${F_WATER};   // (Lume traces the water: lume_water.wgsl)
+const F_CHAR: bool = ${F_CHAR};     // (something burns: char, its cracks and their glow, burnt_at)
 
 struct Mat {
   c: vec4<f32>,   // albedo (linear rgb), roughness
@@ -163,6 +164,7 @@ struct PieceG { a: vec4<f32>, q: vec4<f32>, v: vec4<f32>, o: vec4<f32>, r: vec4<
 @group(0) @binding(34) var w_ww: texture_3d<f32>;     // its spray, foam, bubbles
 @group(0) @binding(35) var w_caus: texture_2d<f32>;   // the key light on the ground under it (liq_caustics.wgsl)
 @group(0) @binding(36) var w_wet_t: texture_2d<f32>;  // how wet the ground it ran over is
+@group(0) @binding(37) var<storage, read> PB: array<vec4<f32>>;          // wood burning spot by spot (point_burn)
 @group(1) @binding(0) var<uniform> U: Params;
 
 var<private> g_tau: f32;   // this sample's time in the shutter (s): objects are moved along their motion
@@ -1105,30 +1107,112 @@ fn rope_surface(s0: Surf, kp: u32, pose: array<vec4<f32>, 2>, pl: vec4<f32>, row
 }
 
 // A burnable surface as the fire has left it (b: its spot's state, burn_common.wgsl): browned where it is heating, black
-// with char where it has burnt, flecked with grey ash where its fuel is nearly gone, glowing in cracks where it burns and
-// a dull red where it smoulders.
+// char cracked into blocks where it has burnt, its cracks glowing where it burns and a dull red as it cools, grey with
+// ash where it is spent.
 fn burnt(s_in: Surf, b: vec4<f32>) -> Surf {
   return burnt_at(s_in, b, s_in.p);
 }
 
-// The same, its flecks and embers placed by q (a piece's own frame, so they stay on it as it falls).
+// Wood's burning where on a piece: its spots (solids.py, wood_fire.py) are a 3 x 3 grid on each face of the piece, at
+// -1, 0, 1 of its half extents along the face's two other axes; PB[off] is its half extents, then its 54 spots,
+// face by face (-x, +x, -y, +y, -z, +z). ql: the point in the piece's frame, from its middle. Between the spots, theirs
+// blended, so a flame's char spreads over the piece from where it touched it.
+fn point_burn(off: u32, ql: vec3<f32>, warp: vec3<f32>) -> vec4<f32> {
+  let h = max(PB[off].xyz, vec3<f32>(1e-4));
+  let a0 = ql / h;
+  let aa = abs(a0);
+  var ax = 0u;
+  if (aa.y > aa.x && aa.y >= aa.z) { ax = 1u; } else if (aa.z > aa.x && aa.z > aa.y) { ax = 2u; }
+  // (read `warp` off where it is, along its face: never through a thin board to the other side's)
+  let a = (ql + warp) / h;
+  var u = a.y;
+  var v = a.z;
+  if (ax == 1u) { u = a.x; v = a.z; } else if (ax == 2u) { u = a.x; v = a.y; }
+  let face = ax * 2u + select(0u, 1u, a0[ax] > 0.0);
+  let gu = clamp(u + 1.0, 0.0, 2.0);
+  let gv = clamp(v + 1.0, 0.0, 2.0);
+  let iu = min(u32(gu), 1u);
+  let iv = min(u32(gv), 1u);
+  let fu = gu - f32(iu);
+  let fv = gv - f32(iv);
+  let base = off + 1u + face * 9u;
+  let s00 = PB[base + iu * 3u + iv];
+  let s01 = PB[base + iu * 3u + iv + 1u];
+  let s10 = PB[base + (iu + 1u) * 3u + iv];
+  let s11 = PB[base + (iu + 1u) * 3u + iv + 1u];
+  return mix(mix(s00, s01, fv), mix(s10, s11, fv), fu);
+}
+
+// Char's crack network at q (m): burning wood shrinks as it chars and its char splits into blocks (alligatoring), small
+// where it has just caught and bigger as the char deepens (cell, m). x: how near a crack (1 on one, softened over the
+// pixel fw), y: the block's own random value, z: how near its middle (0 at a crack, 1 at the middle).
+fn char_cracks(q: vec3<f32>, cell: f32, width: f32, fw: f32) -> vec3<f32> {
+  let p = q / cell;
+  let i = floor(p);
+  var d1 = 9.0;
+  var d2 = 9.0;
+  var id = 0.0;
+  for (var z = -1; z <= 1; z++) {
+    for (var y = -1; y <= 1; y++) {
+      for (var x = -1; x <= 1; x++) {
+        let c = i + vec3<f32>(f32(x), f32(y), f32(z));
+        let h = vec3<f32>(hash31(c), hash31(c + vec3<f32>(17.0, 3.0, 11.0)), hash31(c + vec3<f32>(5.0, 29.0, 13.0)));
+        let d = length(c + 0.15 + 0.7 * h - p);
+        if (d < d1) { d2 = d1; d1 = d; id = h.x; } else if (d < d2) { d2 = d; }
+      }
+    }
+  }
+  let edge = 0.5 * (d2 - d1) * cell;                // (m to the crack between this block and the next)
+  let f = max(fw, 1e-5);
+  // (where the blocks are smaller than the pixel: as much crack as there is on average, so the glow does not sparkle)
+  let avg = clamp(2.5 * width / cell, 0.0, 1.0);
+  let crack = mix(1.0 - smoothstep(width - f, width + f, edge), avg, smoothstep(0.25, 0.8, fw / cell));
+  return vec3<f32>(crack, mix(id, 0.5, smoothstep(0.4, 1.0, fw / cell)), clamp(edge / (0.35 * cell), 0.0, 1.0));
+}
+
+// The same, its char and its glow placed by q (a piece's own frame, so they stay on it as it falls). b as burn_common's
+// spots: x fuel left, y catching (1 alight), z 1 (2 once burnt through), w how fiercely it burns, or how its char glows.
 fn burnt_at(s_in: Surf, b: vec4<f32>, q: vec3<f32>) -> Surf {
   var s = s_in;
-  if (b.z < 0.5) { return s; }
-  // (burning wood blackens at once; it goes on charring deeper as its fuel goes)
-  let ch = max(burn_char(b), select(0.0, 0.8, burn_alight(b)));
-  let toast = select(0.0, clamp(b.y, 0.0, 1.0), b.y > 0.0 && b.y < 1.0 && b.z < 1.5);
-  s.alb = mix(s.alb, s.alb * vec3<f32>(0.45, 0.3, 0.14), 0.8 * toast);
-  let fleck = hash31(floor(q / 0.012) + vec3<f32>(3.0, 1.0, 7.0));
-  let ash = smoothstep(0.7, 1.0, ch) * smoothstep(0.65, 0.92, fleck) * 0.8;
-  s.alb = mix(s.alb, mix(vec3<f32>(0.026, 0.023, 0.02), vec3<f32>(0.25, 0.24, 0.23), ash), ch);
-  s.rough = mix(s.rough, 0.95, ch);
-  s.f0 = mix(s.f0, vec3<f32>(0.02), ch);
-  let flick = 0.75 + 0.5 * hash31(floor(q / 0.03) + vec3<f32>(floor(U.depth.z * 0.5), 5.0, 0.0));
-  if (burn_alight(b)) {
-    s.em += vec3<f32>(2.2, 0.55, 0.08) * (0.02 + 1.2 * smoothstep(0.78, 0.97, fleck)) * flick;
+  if (!F_CHAR || b.z < 0.5) { return s; }
+  let lit = burn_alight(b);
+  let spent = b.z > 1.5;
+  // its char front: where it has caught (y past 1: a wood piece's spots, blended; a burnable object's spot alight: y 1,
+  // all of it), ragged as a flame front is (noise at q, the wood's own frame: running on across its pieces' seams, and
+  // going with them as they fall)
+  let yy = select(b.y, 1.5, lit && b.y <= 1.0001) + select(0.0, 0.5, spent || (b.w > 0.0 && b.y < 1.0));
+  let n = 0.5 + 0.5 * (0.6 * gnoise(q * 5.0) + 0.4 * gnoise(q * 13.0 + vec3<f32>(4.1, 2.3, 0.7)));
+  let front = smoothstep(0.0, 0.06, yy - 1.0 + 0.5 * (n - 0.5) + 0.1);
+  // ahead of it, heating toward catching: it browns, then darkens
+  let toast = clamp(yy, 0.0, 1.0);
+  s.alb = mix(s.alb, s.alb * vec3<f32>(0.42, 0.27, 0.12), 0.85 * toast * toast * (1.0 - front));
+  if (front <= 0.0) { return s; }
+  let ch = clamp(1.0 - b.x, 0.0, 1.0);
+  let fw = max(s.eps * 0.5, 1e-5);
+  let cell = mix(0.009, 0.032, sqrt(ch));
+  let k = char_cracks(q, cell, cell * mix(0.02, 0.045, ch), fw);
+  // char: black, faintly silvery, each block a little different; spent char greys with ash on its blocks
+  var char_alb = vec3<f32>(0.03, 0.026, 0.022) * (0.8 + 0.4 * k.y);
+  if (spent) {
+    // (its ash lies on what faces up, and flakes off what does not)
+    let ash = smoothstep(0.35, 0.9, 1.0 - b.w) * smoothstep(0.25, 0.9, k.z) * step(0.35, k.y) * smoothstep(0.15, 0.7, s.n.y);
+    char_alb = mix(char_alb, vec3<f32>(0.34, 0.33, 0.31) * (0.8 + 0.3 * k.y), 0.8 * ash);
+  }
+  char_alb *= 1.0 - 0.75 * k.x;                     // (the cracks are deep and dark)
+  s.alb = mix(s.alb, char_alb, front);
+  s.rough = mix(s.rough, mix(0.55, 0.95, k.x), front);
+  s.f0 = mix(s.f0, vec3<f32>(0.035), front);
+  // glowing, in patches (hottest where the flames are thickest; most of it black): in the cracks, orange as fiercely
+  // as it burns, a dull red as its char cools
+  let hn = 0.5 + 0.5 * (0.7 * gnoise(q * 3.0 + vec3<f32>(3.1, 0.0, 1.7)) + 0.3 * gnoise(q * 9.0 + vec3<f32>(1.3, 7.0, 0.4)));
+  if (lit) {
+    let f = select(clamp(b.w, 0.0, 1.5), 1.0, b.w <= 0.0);   // (a burnable object's spot, burn.wgsl: alight, at full)
+    let hot = smoothstep(0.45, 0.8, hn + 0.15 * (f - 0.7));
+    s.em += vec3<f32>(1.2, 0.28, 0.04) * f * k.x * hot * front * (0.4 + 0.8 * k.y);
+    s.em += vec3<f32>(0.5, 0.07, 0.007) * f * 0.04 * hot * smoothstep(0.6, 0.95, k.y) * (1.0 - k.z) * front;
   } else if (b.w > 0.0) {
-    s.em += vec3<f32>(0.8, 0.14, 0.02) * (b.w * smoothstep(0.75, 0.95, fleck)) * flick;
+    let hot = smoothstep(0.6, 0.85, hn);
+    s.em += vec3<f32>(0.7, 0.1, 0.014) * (b.w * b.w) * k.x * hot * (0.4 + 0.9 * k.y);
   }
   return s;
 }
@@ -1252,7 +1336,16 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
         if (bw.w > 0.5) { s = bore_surface(s, bw, m.e.rgb, fw); }
       }
     }
-    if (P.b.z > 0.5) { s = burnt_at(s, P.b, q); }   // (a piece of something that burns: its own fire)
+    if (P.b.z > 0.5) {
+      // (a piece of something that burns: its own fire; wood, spot by spot over it)
+      var bb = P.b;
+      if (F_CHAR && bb.z > 9.5) {
+        // (its spots, read a little off where it is: the char front wanders between them as a real one does)
+        let wp = vec3<f32>(gnoise(q * 6.0), gnoise(q * 6.0 + vec3<f32>(7.1, 0.0, 3.3)), gnoise(q * 6.0 + vec3<f32>(1.7, 9.2, 0.0)));
+        bb = point_burn(u32(bb.z - 10.0 + 0.5), q - P.r.xyz, 0.035 * wp);
+      }
+      s = burnt_at(s, bb, q);
+    }
     return s;
   }
   let k = obj(h.id);

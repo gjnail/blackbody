@@ -159,7 +159,7 @@ def matter_glow_scale(look):
 
 WOOD_FLOOR = 2              # (the floor's pattern of wooden boards, stage.wgsl floor_look)
 WOOD_PATTERNS = {1} | set(range(11, 25))   # (the woods' patterns, wood.wgsl wood_kind)
-ALL_FEATURES = {'F_PIECES': 'true', 'F_MARCH': 'true', 'F_SHOTS': 'true', 'F_WOOD': 'true', 'F_WATER': 'false'}
+ALL_FEATURES = {'F_PIECES': 'true', 'F_MARCH': 'true', 'F_SHOTS': 'true', 'F_WOOD': 'true', 'F_WATER': 'false', 'F_CHAR': 'true'}
 WATER_FLOATS = 48   # (stage.wgsl Params wat: the water Lume traces, liquid_render.LumeWater)   # (stage.wgsl: the classic kernel has everything)
 
 
@@ -177,7 +177,7 @@ class Stage:
                                            'rbuf', 'tex2d', 'tex2d', 'tex2d', 'tex3d', 'st2d:rgba16float:w',
                                            'rbuf', 'rbuf', 'rbuf', 'rbuf', 'st2d:rgba16float:w', 'tex3d', 'tex3d', 'tex2d',
                                            'utex3d', 'utex3d', 'rbuf', 'tex3d', 'rbuf', 'buf', 'buf', 'rbuf', 'buf', 'rbuf',
-                                           'tex3d', 'tex3d', 'tex2d', 'utex2d'],
+                                           'tex3d', 'tex3d', 'tex2d', 'utex2d', 'rbuf'],
                             defines=ALL_FEATURES, workgroup=(8, 8, 1))
         # Lume's caustics: light traced from the lights through curved glass (lume.wgsl caustics), same bindings
         self.k_caustics = gpu.kernel('stage.wgsl', self.k.bindings, 'caustics', defines=ALL_FEATURES, workgroup=(64, 1, 1))
@@ -240,6 +240,7 @@ class Stage:
         enabled = [i for i, c in enumerate(scene.colliders) if c['enabled']][:MAX_COLLIDERS]
         row_of = {ci: r for r, ci in enumerate(enabled)}
         P, PL, centres, radii = [], [], [], []
+        SP = []          # (wood that burns, spot by spot: per piece a row of its half extents, then its 54 spots)
         first = 0
         for ci, pose in (pieces or {}).items():
             if ci not in row_of or ci >= len(scene.colliders):
@@ -247,6 +248,7 @@ class Stage:
             frac = fractured(scene.colliders[ci], pose['size'], num(pose.get('hollow', 0.0)), pose.get('impact'), scene)
             n = min(len(frac.pieces), len(pose['pos']))
             burn = pose.get('burn')
+            spots, halves = pose.get('burn_spots'), pose.get('burn_half')
             looks = getattr(frac, 'looks', None)
             for k in range(n):
                 pc = frac.pieces[k]
@@ -259,9 +261,12 @@ class Stage:
                 rad = float(np.linalg.norm(pc.verts - pc.centroid, axis=1).max())
                 vel = np.asarray(pose['vel'][k], float)
                 row = PART_LOOKS[looks[k]][0] if looks and k < len(looks) and looks[k] in PART_LOOKS else row_of[ci]
+                b = np.asarray(burn[k], float).copy() if burn is not None and k < len(burn) else np.zeros(4)
+                if spots is not None and halves is not None and k < len(spots):
+                    b[2] = 10.0 + 55 * len(SP)    # (stage.wgsl point_burn: where its spots are)
+                    SP.append(np.concatenate([[[*halves[k], 0.0]], spots[k]], 0))
                 P.append([[*pos, len(pl)], [*np.asarray(pose['quat'][k], float)], [*vel, first],
-                          [*np.asarray(pose['omega'][k], float), row], [*pc.centroid, rad],
-                          [*(np.asarray(burn[k], float) if burn is not None and k < len(burn) else (0.0, 0.0, 0.0, 0.0))]])
+                          [*np.asarray(pose['omega'][k], float), row], [*pc.centroid, rad], [*b]])
                 PL.append(pl)
                 first += len(pl)
                 centres.append(pos)
@@ -349,7 +354,7 @@ class Stage:
         counts = np.array([len(L) for L in lists], np.uint32)
         starts = np.concatenate([[0], np.cumsum(counts)[:-1]]).astype(np.uint32)
         flat = np.array([k for L in lists for k in L], np.uint32)
-        return P, PL, lo, cell, dims, np.stack([starts, counts], 1), flat
+        return P, PL, lo, cell, dims, np.stack([starts, counts], 1), flat, (np.concatenate(SP).astype(np.float32) if SP else None)
 
     def environment_image(self, key, img):
         """An HDRI from an image (the physical sky, engine/sky.py), kept while its key is the same."""
@@ -418,7 +423,7 @@ class Stage:
         centre = 0.5 * (lo + hi)
         return tuple(centre), float(np.linalg.norm(hi - lo) * 0.5)
 
-    def lume_kernel(self, pieces=True, march=True, shots=True, wood=True, water=False):
+    def lume_kernel(self, pieces=True, march=True, shots=True, wood=True, water=False, char=True):
         """Lume's camera kernel (lume.wgsl lume_main), compiled the first time a set wants it: the classic stage's main
         without the classic shading in it (and the classic one without Lume's), and without the code for what the set
         does not have (broken pieces, ropes and lightning; anything marched; what bullets leave: stage.wgsl F_PIECES,
@@ -428,7 +433,7 @@ class Stage:
             return self.k_lume
         defines = {'F_PIECES': 'true' if pieces else 'false', 'F_MARCH': 'true' if march else 'false',
                    'F_SHOTS': 'true' if shots else 'false', 'F_WOOD': 'true' if wood else 'false',
-                   'F_WATER': 'true' if water else 'false'}
+                   'F_WATER': 'true' if water else 'false', 'F_CHAR': 'true' if char else 'false'}
         return self.gpu.kernel('stage.wgsl', self.k.bindings, 'lume_main', defines=defines, workgroup=(8, 8, 1))
 
     def draw(self, b, r, scene, camstate, fire, colliders, meshes, light: StageLight, comp, size, plate_fit=(1.0, 1.0),
@@ -542,11 +547,13 @@ class Stage:
               if (pieces or ropes or bolts or drawn_shots) else None)
         self.has_pieces = pa is not None
         if pa is not None:
-            P, PL, glo, gcell, gdims, GC, GL = pa
+            P, PL, glo, gcell, gdims, GC, GL, SPB = pa
             u.v4(*glo, gcell).v4(*gdims, len(P))
             nb = int(np.sum(P[:, 3, 3] == LIGHTNING_ROW))       # (lightning's segments come last)
             bufs = [self._buffer('pieces', P), self._buffer('planes', PL), self._buffer('cells', GC), self._buffer('list', GL)]
+            spots = self._buffer('spots', SPB if SPB is not None else np.zeros(4, np.float32))
         else:
+            spots = self._buffer('spots', np.zeros(4, np.float32))
             nb = 0
             u.v4().v4()
             bufs = [self._buffer('pieces', np.zeros(24, np.float32)), self._buffer('planes', np.zeros(4, np.float32)),
@@ -650,7 +657,7 @@ class Stage:
                burns.slots if obj_burn is not None else r._no_slots, look2, self._ml, *lume_bufs,
                self._buffer('marks', SD.marks_buffer(shots)),
                water.surf if water is not None else r._empty, water.ww if water is not None else r._empty,
-               water.caus if water is not None else black, water.wet if water is not None else black]
+               water.caus if water is not None else black, water.wet if water is not None else black, spots]
         if not lume.on:
             b.run(self.k, res, u.raw([0.0] * (LU.TAIL_FLOATS + WATER_FLOATS)), (pw, ph, 1))
             return self.tex
@@ -660,7 +667,9 @@ class Stage:
         k_lume = self.lume_kernel(pieces=bool(pieces or ropes or bolts or drawn_shots),
                                   march=surf is not None or any(not plain_shape(c) for c in cols), shots=bool(shots),
                                   wood=fl.pattern == WOOD_FLOOR or any(r[5] in WOOD_PATTERNS for r in rows),
-                                  water=water is not None)
+                                  water=water is not None,
+                                  char=floor_burn is not None or obj_burn is not None or any(
+                                      isinstance(v, dict) and v.get('burn') is not None for v in (pieces or {}).values()))
         # (anything clear in the set: glass, ice, jelly; shadow rays then pass through them by their Fresnel and tint)
         clear_on = 1.0 if (any(row[4] > 0.0 and row[0] != NOT_DRAWN for row in rows) or surf is not None) else 0.0
         # (Clamp bright paths: a bounce's light capped at that many times the sky's brightness; 0: none)

@@ -82,7 +82,9 @@ CLIPS = {
     'yard_blast': clip('yard_blast', 0.0, 96, dyaw=6.0, push=0.05),
     'cart_jump': clip('cart_jump', 0.4, 100, dyaw=4.0, push=0.04),   # the action runs 0.5-4.5 s
     'meadow_fire': clip('meadow_fire', 0.5, 168, dyaw=4.0, push=0.04),   # the front crosses the field in about 8 s
-    'shed_fire': clip('shed_fire', 3.0, 300, dyaw=4.0, push=0.03),   # it catches at 4 s and falls in at about 13 s
+    # (the whole burn-down, 40 s, played twice as fast: the corner fire grows, flames roll out under the roof, the walls
+    # catch one by one, then 200x faster it chars through and falls in)
+    'shed_fire': clip('shed_fire', 0.0, 480, every=2, dyaw=4.0, push=0.03),
     'lightning_strike': clip('lightning_strike', 0.0, 96, dyaw=4.0, push=0.04),   # the flash is at frames 6-10
     'window_smash': clip('window_smash', 0.0, 48, dyaw=6.0, push=0.04),
     'vase_drop': clip('vase_drop', 0.0, 48, dyaw=6.0, push=0.04),

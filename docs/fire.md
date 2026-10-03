@@ -114,6 +114,8 @@ Turn on *Spreading fire* (its own section in Settings) and fire spreads by itsel
 
 ### Spot fires
 
+Wood (an object made of a wood that *Breaks* and is *Burnable*) burns as wood does, by its own figures rather than *Catch time*, *Creep speed* and *Burn time*: it catches where enough heat reaches it, fire climbs it fast and creeps over it slowly, and it chars at its real rate, through and falls in. Real wood takes minutes to catch all over and tens of minutes to char through, so Spreading fire › *Burn speed-up* time-lapses its burning while the flames and smoke move at their own speed (see [Breaking and burning](physics.md#breaking-and-burning)).
+
 Spreading fire › *Spot fires* is the chance that a hot ember landing on something burnable starts a new fire there: the burnable ground, or any collider marked *Burnable* (a roof, a deck, a terrain heightfield). Embers blown ahead of a front start spot fires the wind then joins up.
 
 ![Spot fires](media/gif/spot_fires.gif "Spot fires: embers blown ahead of a grass fire start new fires where they land.")

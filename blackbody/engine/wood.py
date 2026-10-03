@@ -110,6 +110,9 @@ SPLIT_POWER = 1.0
 SPLIT_FACE = 2.0e-4          # m^2
 FLEX_STIFF = float(__import__('os').environ.get('BB_FLEX', '2.4'))   # (calibrated: tests/test_wood.py; the joints and the
                             # side bonds together give this much more than E I / L alone says)
+BEND_IMPEDANCE = 0.8        # the softest impedance a bending joint is given: below about 0.7 a chain of them rings up
+                            # and flies apart (stiff springs, (0.6 / dt)^2 at a small step, applied that weakly). Past
+                            # it, the wood's give comes from a softer spring instead (bend_welds)
 SLIVER = 0.12               # a bond with less than this of the median's area is dropped
 SLANT = (0.35, 0.8)         # radians: how far a length's end is slanted off square to the grain (a splinter's point)
 
@@ -177,8 +180,9 @@ def bend_welds(solids):
     """Wood bends before it breaks: each weld between two lengths of a bundle (_flex) made as stiff in bending as the
     bundle of wood is, E I / L, by its impedance. MuJoCo's soft constraint at rest gives way by r = R f / (k d), its
     R = (1 - d) / d x A (A: the two bodies' mean inverse inertias, body_invweight0), k its stiffness (solref): so d is
-    set where that is the wood's own give, (1 - d) / d^2 = k / (K A). Never stiffer than any weld (solids WELD_SOLIMP).
-    Run once the model is compiled."""
+    set where that is the wood's own give, (1 - d) / d^2 = k / (K A). Never stiffer than any weld (solids WELD_SOLIMP),
+    and never softer than BEND_IMPEDANCE: there k is softened instead, k = K A (1 - d) / d^2, the same give. Run once
+    the model is compiled."""
     import mujoco
     from .solids import WELD_SOLIMP
     m = solids.model
@@ -188,7 +192,7 @@ def bend_welds(solids):
         sp = species_of(c.get('material', ''))
         if sp is None:
             continue
-        soft = {}       # piece -> the softest of its end joints
+        soft = {}       # piece -> the softest of its end joints: (its give, its impedance, its stiffness)
         sides = []
         for n, bond in enumerate(ps.frac.bonds):
             e = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_EQUALITY, f'bond{ps.index}_{n}')
@@ -205,7 +209,12 @@ def bend_welds(solids):
                 continue
             x = k / (K * A)
             d = (math.sqrt(1.0 + 4.0 * x) - 1.0) / (2.0 * x)
-            d = min(max(d, 0.3), WELD_SOLIMP[1])
+            d = min(d, WELD_SOLIMP[1])
+            if d < BEND_IMPEDANCE:
+                d = BEND_IMPEDANCE
+                k = K * A * (1.0 - d) / (d * d)
+                m.eq_solref[e, 0] = -k
+                m.eq_solref[e, 1] = -2.0 * math.sqrt(k)
             m.eq_solimp[e, 0] = d
             m.eq_solimp[e, 1] = d
             # (a short stiff length rings faster than the step can follow: its joint is held as stiff as the step
@@ -217,15 +226,19 @@ def bend_welds(solids):
                 w = list(ps.welds[n])
                 w[4] *= math.sqrt(K_sim / K)
                 ps.welds[n] = tuple(w)
+            give = (1.0 - d) / max(k * d * d, 1e-30)
             for p in (bond.i, bond.j):
-                soft[p] = min(soft.get(p, 1.0), d)
+                if p not in soft or give > soft[p][0]:
+                    soft[p] = (give, d, k)
         # (bundles side by side bend together: where their joints are staggered, a side bond as stiff as the bundles
         # would hold the bend off at each joint and take all of it itself, twisting apart. It gives as they do)
         for e, i, j in sides:
             if i in soft and j in soft:
-                d = min(soft[i], soft[j])
+                _g, d, k = max(soft[i], soft[j])
                 m.eq_solimp[e, 0] = d
                 m.eq_solimp[e, 1] = d
+                m.eq_solref[e, 0] = -k
+                m.eq_solref[e, 1] = -2.0 * math.sqrt(k)
 
 
 def _flex(pi, pj, bond, ax):

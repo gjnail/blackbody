@@ -258,6 +258,11 @@ SECTIONS = {
         F('creep', 'Creep speed', 0.05, 0.0, 2.0, 'm/s', 3, tip='Spread from a burning spot to the spots next to it by contact and radiant heat, even in still air. Wind-blown flames spread much faster through the gas.', group='Catching'),
         F('smoulder', 'Smoulder time', 4.0, 0.0, 60.0, 's', 1, tip='After flaming, a spot smoulders (smoke and a little heat) for this long, then is burnt out for good.', group='Burning out'),
         F('smoulder_smoke', 'Smoulder smoke', 1.0, 0.0, 20.0, '/s', 2, group='Burning out'),
+        F('burn_speed', 'Burn speed-up', 1.0, 1.0, 1000.0, '×', 0, anim=True, tip='Wood catches, chars and burns this many '
+          'times faster than in reality, while the flames and the smoke move at their own speed: a time-lapse of a shed '
+          'burning down (real wood takes minutes to catch all over and tens of minutes to burn through). 1 is real time. '
+          'Keyframe it to let a fire grow at its own pace, then speed through the burning down. Wood only: other burnable '
+          'things go by Burn time and Catch time.', group='Burning out', log=True),
         F('dry_time', 'Drying time', 20.0, 0.0, 600.0, 's', 1, tip='Water that puts a surface out soaks it: it cannot catch again until it has dried, which takes this long (less in hot gas). Wet surfaces show darker in the composite. 0: it can catch again at once.', group='Water'),
         F('spotting', 'Spot fires', 0.0, 0.0, 1.0, '', 3, tip='Chance that a hot ember landing on the burnable ground starts a new fire there, ahead of the main fire. Wind-blown embers then carry the fire across gaps. Needs Embers.', group='Spot fires'),
         F('spot_temp', 'Ember heat needed', 900.0, 400.0, 2000.0, 'K', 0, tip='Embers that have cooled below this land without starting anything.', group='Spot fires', advanced=True),

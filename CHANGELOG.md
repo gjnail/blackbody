@@ -64,6 +64,20 @@ Notable changes to Blackbody. The format follows
   Hundreds of pieces, drawn on the stage and in footage, hiding the fire and the liquid behind them; the gas and the
   water flow round them and are pushed by them; dust where they break. Blocks: brick wall, glass pane, concrete
   pillar, wooden crate, vase. Presets: Ball through a brick wall, Stone through a window, Vase off a table.
+- Wood burns as wood does (wood that Breaks and is Burnable: engine/wood_fire.py), spot by spot over its pieces'
+  surfaces (a grid of spots on each face, the seams between pieces burning as one), so its char starts where the
+  flames touch it and spreads from there rather than a whole board darkening at once. It catches where enough heat
+  reaches it, its surface brought to its piloted ignition temperature by the flames' and hot smoke's heat as its
+  thermal inertia says (about 5 s in flames for pine, never below about 12 kW/m^2), so hot smoke trapped under a roof
+  can flash a room over. Fire climbs it fast and creeps over it at about a millimetre a second, slower downward. It
+  chars at its charring rate (0.65 mm a minute for softwoods, 0.5 for hardwoods), its heat release fiercest as it
+  catches and falling as its char thickens, goes out where too little heat reaches it, chars through its whole
+  thickness (from one face or both: a wall burning from inside takes twice as long as a board in the flames), and its
+  glue weakens with what is left of it. Spreading fire › Burn speed-up (keyframable) time-lapses its burning while the
+  flames and smoke move at their own speed. On the stage, char cracks into blocks that grow as it deepens, glowing in
+  its cracks in patches, greying with ash where it faces up, its front ragged and running on across the seams between
+  boards. Preset: Shed on fire, rebuilt (a rubbish fire in the
+  back corner of a pine shed with a door: it climbs the corner, flashes over, chars through and falls in).
 - Breaking that looks real: a piece breaks away when something meets it faster than its material takes (glass and
   pottery about 2.5 m/s, brick 2, wood 7, steel 60), less so when what hits it is much lighter. Where each thing is
   first hit is found by running the shot once with nothing breaking, and its cracks crowd round that spot: small chips
@@ -265,6 +279,10 @@ Notable changes to Blackbody. The format follows
   cell of a ball, box or cylinder counted as hitting it, so the cloth behind it was hidden in a band round it (a
   crate on a sheet showed a halo of floor) and the fire stopped short of its edges. They now go on to its surface,
   or past it.
+- Wood's bending joints flew apart in scenes with small pieces: there the physics takes a shorter step, and the
+  joints were made as soft as the wood by a weaker hold on a stiffer spring, which below a point rings up (a shed
+  with a door header burst in a tenth of a second, nothing touching it). Past that point the wood's give now comes
+  from a softer spring instead, the same give.
 
 ## [1.0.0] - 2026-09-30
 

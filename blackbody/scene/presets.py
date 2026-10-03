@@ -1191,39 +1191,53 @@ PRESETS = {
     },
     'shed_fire': {
         'name': 'Shed on fire', 'category': 'Things that fall', 'size': '2 m wooden shed',
-        'blurb': 'A fire inside a wooden shed: its walls and posts catch, char and weaken until the posts burn through, '
-                 'the roof falls in and the walls break up, the burnt pieces smouldering and crumbling to ash. Objects '
-                 'that are both Breakable and Burnable burn piece by piece.',
-        'render': {'end': 480},
+        'blurb': 'A pile of rubbish burning in the back corner of a pine shed: its flames climb the corner, the walls '
+                 'catch and the fire runs up them and along the underside of the roof while it creeps only slowly '
+                 'sideways and down. The boards char black and crack, glowing in the cracks; they char through, the '
+                 'roof falls in and the walls break up, the burnt pieces glowing and crumbling to ash. Wood burning as '
+                 'wood does, time-lapsed (Spreading fire › Burn speed-up).',
+        'render': {'end': 960},
         'domain': {'size_x': 4.2, 'size_y': 4.4, 'size_z': 3.6, 'resolution': 160, 'preroll': 0.0},
-        'combustion': {'burn_rate': 6.0, 'heat': 0.6, 'soot': 0.45, 'cooling': 2.2, 'flame_life': 0.08},
+        'combustion': {'burn_rate': 6.0, 'heat': 0.6, 'soot': 0.7, 'cooling': 1.0, 'flame_life': 0.08},
         'motion': {'buoyancy': 5.5, 'turbulence': 3.0, 'turb_freq': 2.0, 'vorticity': 1.6, 'disturbance': 2.0,
                    'disturb_block': 0.04},
-        'spread': {'enabled': True, 'ground': False, 'coverage': 1.0, 'burn_time': 3.5, 'fuel': 6.0, 'heat': 0.5, 'smoke': 1.4,
-                   'catch_temp': 0.32, 'catch_time': 1.0, 'creep': 0.05, 'smoulder': 6.0, 'smoulder_smoke': 1.0},
-        'shading': {'flame_k': 1650, 'max_k': 2250, 'smoke_density': 4.5, 'smoke_albedo': (0.22, 0.21, 0.2), 'exposure': -1.0},
+        # (pine: catching, charring and burning through as pine does; 8x faster than real, then 200x once the whole shed is
+        # alight, the flames and the smoke at their own speed)
+        'spread': {'enabled': True, 'ground': False, 'coverage': 1.0, 'fuel': 8.0, 'heat': 0.55, 'smoke': 1.2,
+                   'smoulder_smoke': 1.0,
+                   'burn_speed': K((0.0, 8.0), (16.0, 8.0), (26.0, 200.0), interp='smooth')},
+        'shading': {'flame_k': 1500, 'max_k': 1900, 'smoke_density': 5.0, 'smoke_albedo': (0.22, 0.21, 0.2), 'exposure': -1.6},
         'lighting': {'sun_on': True, 'sun_intensity': 0.5, 'sun_azimuth': -60.0, 'sun_elevation': 8.0,
                      'ambient': (0.32, 0.38, 0.5), 'ambient_intensity': 0.45},
         'composite': {'backdrop': 'stage', 'floor': 'dirt'},
-        'embers': {'rate': 90, 'launch': 1.6, 'lifetime': 2.4},
+        'embers': {'rate': 70, 'launch': 1.6, 'lifetime': 2.4},
         'camera': {'distance': 7.0, 'target_y': 1.2, 'pitch': 8, 'yaw': 28, 'anchor_x': 0.5, 'anchor_y': 0.62, 'focal_mm': 35},
         'colliders': [
-            *[dict(name=f'Post {k + 1}', shape='box', position=(sx * 0.95, 1.0, sz * 0.75), size=(0.06, 1.0, 0.06), material='wood',
+            *[dict(name=f'Post {k + 1}', shape='box', position=(sx * 0.95, 1.0, sz * 0.75), size=(0.04, 1.0, 0.04), material='wood',
                    breakable=True, burnable=True, pieces=8, held='base')
               for k, (sx, sz) in enumerate(((-1, -1), (1, -1), (-1, 1), (1, 1)))],
-            dict(name='Back wall', shape='box', position=(0.0, 0.97, -0.75), size=(0.885, 0.95, 0.025), material='wood',
+            # (19 mm pine cladding)
+            dict(name='Back wall', shape='box', position=(0.0, 0.97, -0.75), size=(0.905, 0.95, 0.0095), material='wood',
                  breakable=True, burnable=True, fracture='splinters', pieces=24, held='base'),
-            dict(name='Left wall', shape='box', position=(-0.95, 0.97, 0.0), size=(0.025, 0.95, 0.685), material='wood',
+            dict(name='Left wall', shape='box', position=(-0.95, 0.97, 0.0), size=(0.0095, 0.95, 0.705), material='wood',
                  breakable=True, burnable=True, fracture='splinters', pieces=20, held='base'),
-            dict(name='Right wall', shape='box', position=(0.95, 0.97, 0.0), size=(0.025, 0.95, 0.685), material='wood',
+            dict(name='Right wall', shape='box', position=(0.95, 0.97, 0.0), size=(0.0095, 0.95, 0.705), material='wood',
                  breakable=True, burnable=True, fracture='splinters', pieces=20, held='base'),
+            # (the front: a door 0.8 m wide, open, and a header over it nailed to the boards each side)
+            dict(name='Front left', shape='box', position=(-0.6525, 0.97, 0.75), size=(0.2525, 0.95, 0.0095), material='wood',
+                 breakable=True, burnable=True, fracture='splinters', pieces=8, held='base'),
+            dict(name='Front right', shape='box', position=(0.6525, 0.97, 0.75), size=(0.2525, 0.95, 0.0095), material='wood',
+                 breakable=True, burnable=True, fracture='splinters', pieces=8, held='base'),
+            dict(name='Door header', shape='box', position=(0.0, 1.81, 0.75), size=(0.4, 0.11, 0.0095), material='wood',
+                 breakable=True, burnable=True, fracture='splinters', pieces=4, held='edges'),
             # (resting on the posts, held by nothing else)
-            dict(name='Roof', shape='box', position=(0.0, 2.045, 0.0), size=(1.08, 0.04, 0.88), material='wood',
+            dict(name='Roof', shape='box', position=(0.0, 2.012, 0.0), size=(1.08, 0.012, 0.88), material='wood',
                  breakable=True, burnable=True, fracture='splinters', pieces=28, held='free'),
         ],
         'emitters': [
-            dict(name='Fire inside', shape='cylinder', position=(0.2, 0.06, -0.45), size=(0.2, 0.06, 0.2), fuel=8,
-                 temperature=0.5, noise_rise=1.5),
+            # (a pile of rubbish and cardboard against the back corner, burning hard)
+            dict(name='Burning rubbish', shape='box', position=(-0.66, 0.14, -0.5), size=(0.22, 0.14, 0.2), fuel=9,
+                 temperature=0.55, noise_rise=1.5),
         ],
     },
     'crates_in_fire': {
