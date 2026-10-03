@@ -205,6 +205,17 @@ def pack_lamps(u: Uniforms, lamps, gain=1.0, fire_gain=None):
                 u.v4(0.0, 0.0, 0.0, 0.0)
 
 
+@dataclass
+class LumeWater:
+    """The water Lume traces (stage.wgsl, lume_water.wgsl): its surface, whitewater, caustic map and wet ground
+    (textures), and its uniforms (wat[0..11], 48 floats)."""
+    surf: object
+    ww: object
+    caus: object
+    wet: object
+    data: list
+
+
 class LiquidRenderer:
     def __init__(self, gpu: GPU, renderer):
         self.gpu = gpu
@@ -299,6 +310,7 @@ class LiquidRenderer:
         from .ocean import Sea
         self.ocean = Sea(g)
         self.k_caus_res = g.kernel('liq_caustics_resolve.wgsl', ['rbuf', 'st2d:rgba16float:w'], workgroup=(8, 8, 1))
+        self.k_lume_clear = g.kernel('liq_lume_clear.wgsl', ['st2d:rgba16float:w'] * 4)
         self._one = g.texture2d(1, 1, 'rgba16float', 'liq-one')
         g.upload(self._one, np.ones((1, 1, 4), np.float16))
         self._no_env = g.texture2d(1, 1, 'rgba16float', 'liq-no-env')
@@ -703,6 +715,42 @@ class LiquidRenderer:
               (dims[0] * k, dims[1] * k, 1))
         b.run(self.k_caus_res, [self._caus_acc, self.caus], Uniforms().v4(dims[0], dims[1], k * k), (dims[0], dims[1], 1))
         self.caus_tex = self.caus
+
+    # -- Lume ----------------------------------------------------------------------------------------
+
+    def lume_ok(self, view: LiquidView, look: WaterLook):
+        """Whether Lume can trace this liquid itself (stage.wgsl lume_water.wgsl): clear or murky water, honey, oil. Not
+        yet: a molten one (its glow and crust), ice, dye, the sea's waves; those the march draws over the set Lume lit."""
+        return not (look.glow > 0.0 or (look.ice and view.ice is not None)
+                    or (view.ocean is not None and getattr(view.ocean, 'on', False))
+                    or view.dye is not None or view.count <= 0)   # (the frame's own: build() makes its dye later)
+
+    def lume_water(self, view: LiquidView, look: WaterLook, time=0.0):
+        """The water for Lume (the surface build() made, the caustic map caustics() traced): LumeWater."""
+        lvl_on = view.level > 0.0 and view.open[0]
+        absorb = -np.log(np.clip(np.asarray(look.color, float), 1e-4, 1.0)) / max(look.clarity, 1e-3)
+        caus_on = self.caus_tex is not self._one
+        u = Uniforms()
+        u.v4(*view.origin, view.h).v4(*view.dims, self.fscale)
+        u.v4(*absorb, look.murk).v4(*look.murk_color, look.ior)
+        u.v4(1.0, 1.0 if lvl_on else 0.0, view.level / view.h if lvl_on else -1.0, view.level_blend)
+        u.v4(look.ripple, look.ripple_freq, look.ripple_speed, time)
+        u.v4(*view.sea_sides)
+        u.v4(look.spray * (1.0 - 0.7 * min(1.0, look.droplets)), look.foam, look.bubbles,
+             1.0 if (look.whitewater and view.ww_count) else 0.0)
+        u.v4(*look.foam_color, look.foam_scale)
+        u.v4(look.wet_darken, look.wet_gloss, view.current[0] if lvl_on else 0.0, view.current[2] if lvl_on else 0.0)
+        u.v4(look.roughness, look.caustics, 1.0 if caus_on else 0.0, 1.0 if look.bottomless else 0.0)
+        u.v4(self._liquid_top(view, lvl_on), look.foam_lace, 0.0, 0.0)
+        return LumeWater(self.surf, self.ww_tex, self.caus_tex, view.wet, list(u.data))
+
+    def lume_clear(self, b, size):
+        """The liquid's own element left empty (Lume drew the water into the stage's picture): for the drops, the rain
+        and the composite to go over."""
+        r = self.renderer
+        w, h = size
+        r._ensure_fire(w, h)
+        b.run(self.k_lume_clear, [r.beauty, r.emit, r.aux, r.mask], Uniforms().v4(w, h), (w, h, 1))
 
     # -- tracing ----------------------------------------------------------------------------------
 

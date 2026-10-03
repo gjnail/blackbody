@@ -158,7 +158,8 @@ def matter_glow_scale(look):
 
 WOOD_FLOOR = 2              # (the floor's pattern of wooden boards, stage.wgsl floor_look)
 WOOD_PATTERNS = {1} | set(range(11, 25))   # (the woods' patterns, wood.wgsl wood_kind)
-ALL_FEATURES = {'F_PIECES': 'true', 'F_MARCH': 'true', 'F_SHOTS': 'true', 'F_WOOD': 'true'}   # (stage.wgsl: the classic kernel has everything)
+ALL_FEATURES = {'F_PIECES': 'true', 'F_MARCH': 'true', 'F_SHOTS': 'true', 'F_WOOD': 'true', 'F_WATER': 'false'}
+WATER_FLOATS = 48   # (stage.wgsl Params wat: the water Lume traces, liquid_render.LumeWater)   # (stage.wgsl: the classic kernel has everything)
 
 
 def plain_shape(c):
@@ -174,7 +175,8 @@ class Stage:
         self.k = gpu.kernel('stage.wgsl', ['utex3d', 'tex3d', 'tex3d', 'tex3d', 'tex3d', 'smp', 'smp', 'rbuf', 'rbuf',
                                            'rbuf', 'tex2d', 'tex2d', 'tex2d', 'tex3d', 'st2d:rgba16float:w',
                                            'rbuf', 'rbuf', 'rbuf', 'rbuf', 'st2d:rgba16float:w', 'tex3d', 'tex3d', 'tex2d',
-                                           'utex3d', 'utex3d', 'rbuf', 'tex3d', 'rbuf', 'buf', 'buf', 'rbuf', 'buf', 'rbuf'],
+                                           'utex3d', 'utex3d', 'rbuf', 'tex3d', 'rbuf', 'buf', 'buf', 'rbuf', 'buf', 'rbuf',
+                                           'tex3d', 'tex3d', 'tex2d', 'utex2d'],
                             defines=ALL_FEATURES, workgroup=(8, 8, 1))
         # Lume's caustics: light traced from the lights through curved glass (lume.wgsl caustics), same bindings
         self.k_caustics = gpu.kernel('stage.wgsl', self.k.bindings, 'caustics', defines=ALL_FEATURES, workgroup=(64, 1, 1))
@@ -400,7 +402,7 @@ class Stage:
         centre = 0.5 * (lo + hi)
         return tuple(centre), float(np.linalg.norm(hi - lo) * 0.5)
 
-    def lume_kernel(self, pieces=True, march=True, shots=True, wood=True):
+    def lume_kernel(self, pieces=True, march=True, shots=True, wood=True, water=False):
         """Lume's camera kernel (lume.wgsl lume_main), compiled the first time a set wants it: the classic stage's main
         without the classic shading in it (and the classic one without Lume's), and without the code for what the set
         does not have (broken pieces, ropes and lightning; anything marched; what bullets leave: stage.wgsl F_PIECES,
@@ -409,12 +411,14 @@ class Stage:
         if self.k_lume is not None:
             return self.k_lume
         defines = {'F_PIECES': 'true' if pieces else 'false', 'F_MARCH': 'true' if march else 'false',
-                   'F_SHOTS': 'true' if shots else 'false', 'F_WOOD': 'true' if wood else 'false'}
+                   'F_SHOTS': 'true' if shots else 'false', 'F_WOOD': 'true' if wood else 'false',
+                   'F_WATER': 'true' if water else 'false'}
         return self.gpu.kernel('stage.wgsl', self.k.bindings, 'lume_main', defines=defines, workgroup=(8, 8, 1))
 
     def draw(self, b, r, scene, camstate, fire, colliders, meshes, light: StageLight, comp, size, plate_fit=(1.0, 1.0),
              samples=1, shutter=0.0, footage=False, vol=None, ground_y=0.0, frame=0, objects=True, floor=True,
-             pieces=None, ropes=None, matter=None, bolts=None, grass=None, burns=None, final=False, shots=None):
+             pieces=None, ropes=None, matter=None, bolts=None, grass=None, burns=None, final=False, shots=None,
+             water=None, colours=None):
         """Draw the stage into self.tex (size: the plate's, footage or output) and return it.
         r: the Renderer (its footage plate and holdouts, light volume, fire lights and lamp buffer);
         colliders: the objects as the solver has them (ColliderGPU, moving ones where they are this frame);
@@ -426,13 +430,19 @@ class Stage:
         ropes: the ropes and springs, {collider index: Solids.rope_poses entry};
         matter: the sand, snow, mud, jelly and clay (matter.Matter), or None; bolts: lightning (Scene.bolts);
         shots: what bullets do (ballistics.Ballistics.view): debris, bullets, sparks, tracers, flashes, marks;
-        final: a final render (with Lume: all its passes now; else the viewer's, a few at a time)."""
+        final: a final render (with Lume: all its passes now; else the viewer's, a few at a time);
+        water: the liquid for Lume to trace (liquid_render.LumeWater), or None: then the floor is drawn under it (with a
+        background colour behind the set too); colours: per object, a plain colour to draw it in CG in, or None for its
+        look (a liquid scene's grey stand-ins, when Lume traces the water)."""
         g = self.gpu
         pw, ph = int(size[0]), int(size[1])
         self._ensure(pw, ph)
         rows = looks(scene, footage)
         if not objects:
             rows = [(IN_FOOTAGE if row[0] == CG else row[0],) + tuple(row[1:]) for row in rows]
+        if colours is not None:
+            rows = [(CG, tuple(c), 0.8, 0.0, 0.0, 0, tuple(c), 1.5) if (c is not None and row[0] != NOT_DRAWN) else row
+                    for row, c in zip(rows, list(colours) + [None] * (len(rows) - len(colours)))]
         cols = list(colliders or [])[:MAX_COLLIDERS]
         rows = rows[:len(cols)] + [(NOT_DRAWN, (0.5, 0.5, 0.5), 0.6, 0.0, 0.0, 0, (0.5, 0.5, 0.5), 1.5)] * (len(cols) - len(rows))
         cd = scene.data['composite']
@@ -468,7 +478,8 @@ class Stage:
         fl = FLOORS.get(cd.get('floor', 'concrete'), FLOORS['concrete'])
         tint = np.asarray(cd.get('floor_tint', (1.0, 1.0, 1.0)), float)
         stage_on = not footage and cd.get('backdrop', 'stage') == 'stage'
-        floor_on = stage_on and bool(d['ground']) and floor
+        water = water if (water is not None and LU.settings(scene).on) else None
+        floor_on = (stage_on or water is not None) and bool(d['ground']) and floor
         # objects: how far ambient occlusion reaches (about half the size of a typical one)
         sizes = [float(np.max(np.abs(cg.size))) for cg, row in zip(cols, rows) if row[0] != NOT_DRAWN]
         ao_reach = float(np.clip(0.6 * np.median(sizes), 0.05, 1.5)) if sizes else 0.3
@@ -618,16 +629,19 @@ class Stage:
                self.tex, *bufs, self.hold, *mtex, grass[0] if grass is not None else black,
                floor_burn if floor_burn is not None else r._empty, obj_burn if obj_burn is not None else r._empty,
                burns.slots if obj_burn is not None else r._no_slots, look2, self._ml, *lume_bufs,
-               self._buffer('marks', SD.marks_buffer(shots))]
+               self._buffer('marks', SD.marks_buffer(shots)),
+               water.surf if water is not None else r._empty, water.ww if water is not None else r._empty,
+               water.caus if water is not None else black, water.wet if water is not None else black]
         if not lume.on:
-            b.run(self.k, res, u.raw([0.0] * LU.TAIL_FLOATS), (pw, ph, 1))
+            b.run(self.k, res, u.raw([0.0] * (LU.TAIL_FLOATS + WATER_FLOATS)), (pw, ph, 1))
             return self.tex
         # Lume: its passes, each a new path per pixel added to the ones before (lume.wgsl), then the denoiser
         base = list(u.data)
         # (its kernel for what the set has: anything marched, broken pieces, ropes, lightning)
         k_lume = self.lume_kernel(pieces=bool(pieces or ropes or bolts or drawn_shots),
                                   march=surf is not None or any(not plain_shape(c) for c in cols), shots=bool(shots),
-                                  wood=fl.pattern == WOOD_FLOOR or any(r[5] in WOOD_PATTERNS for r in rows))
+                                  wood=fl.pattern == WOOD_FLOOR or any(r[5] in WOOD_PATTERNS for r in rows),
+                                  water=water is not None)
         # (anything clear in the set: glass, ice, jelly; shadow rays then pass through them by their Fresnel and tint)
         clear_on = 1.0 if (any(row[4] > 0.0 and row[0] != NOT_DRAWN for row in rows) or surf is not None) else 0.0
         # (Clamp bright paths: a bounce's light capped at that many times the sky's brightness; 0: none)
@@ -653,7 +667,8 @@ class Stage:
             caust.v4(*(targets[k] if k < len(targets) else (0.0, 0.0, 0.0, 0.0)))
         for i in range(count):
             up = Uniforms()
-            up.data = base + [1.0, float(first + i), float(lume.bounces), cap, float(ew), float(eh), clear_on, env_w] + caust.data
+            up.data = (base + [1.0, float(first + i), float(lume.bounces), cap, float(ew), float(eh), clear_on, env_w] + caust.data
+                       + (list(water.data) if water is not None else [0.0] * WATER_FLOATS))
             if n_paths:
                 b.clear_buffer(L.cau)
                 b.run(self.k_caustics, res, up, groups=(-(-n_paths // 64), 1, 1))

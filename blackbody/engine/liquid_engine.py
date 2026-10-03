@@ -598,8 +598,27 @@ class LiquidEngine:
         if grass and clook is None:
             clook = self._raster_look(scene, frame, final, look)
         nlamps = r.pack_lamps(lamps) if (cloth or grass) else 0   # (the set's lights on the fabric and the grass)
+        # Lume traces the water itself (stage.wgsl lume_water.wgsl): the set drawn round and under it (the floor, the
+        # objects in CG), the liquid's own element left empty. Not yet with fabric or grass (the march sets them in the
+        # liquid) or a liquid it does not trace (LiquidRenderer.lume_ok): then the march draws it over the set Lume lit.
+        from . import lume as LU
+        lume_water = (LU.settings(scene).on and mode == 'composite' and not footage and not (cloth or grass)
+                      and LR.lume_ok(vol, look))
+        if lume_water:
+            stage_on = True
+            objects = True
 
         def march(b, jit, s):
+            if lume_water:
+                LR.lume_clear(b, (fw, fh))
+                if wview is not None:
+                    self.weather_r.cover(b, wview, cs, fire, look, (fw, fh))
+                LR.drops(b, vol, cs, fire, look, (fw, fh), jitter=jit, shutter=drop_shutter)
+                LR.rain(b, cs, fire, look, (fw, fh), jitter=jit, shutter=drop_shutter, frame=frame,
+                        wind=scene.liquid_params(frame).wind, ground=ground)
+                if wview is not None:
+                    self.weather_r.draw(b, wview, cs, fire, look, (fw, fh), jitter=jit, shutter=drop_shutter, time=t)
+                return
             lay = None
             if cloth or grass:
                 # the fabric and the grass, drawn first: the march sees them in front of the liquid and through it
@@ -620,6 +639,10 @@ class LiquidEngine:
 
         r._ensure_fire(fw, fh)
         with self.gpu.batch() as b:
+            # the liquid's surface and the key light's caustics under it first: Lume traces them in the stage
+            LR.build(b, vol, look)
+            LR.sea(b, vol, look)
+            LR.caustics(b, vol, look, fire)
             stage = None
             if stage_on:
                 light = stage_mod.water_light(look, comp)
@@ -632,14 +655,14 @@ class LiquidEngine:
                                                plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage,
                                                ground_y=vol.origin[1], frame=frame, objects=objects,
                                                floor=not look.bottomless, pieces=pieces, ropes=ropes, matter=matter, bolts=bolts,
-                                               grass=self._strands.ground_map(b) if grass else None, final=final, shots=shots)
+                                               grass=self._strands.ground_map(b) if grass else None, final=final, shots=shots,
+                                               water=LR.lume_water(vol, look, t) if lume_water else None,
+                                               colours=([tuple(c[:3]) if c[3] > 0.5 else tuple(look.standin_color) for c in standins]
+                                                        if (lume_water and look.colliders_look == 'shaded') else None))
                 if self.stage.has_pieces or self.stage.has_matter:   # the liquid is hidden behind the pieces and the matter
                     r.hold_stage = self.stage.hold
                     r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])
                 p_transform, p_gain = INPUT_TRANSFORMS['linear'], 1.0
-            LR.build(b, vol, look)
-            LR.sea(b, vol, look)
-            LR.caustics(b, vol, look, fire)
             if samples == 1:
                 march(b, (0.0, 0.0), base_seed)
             else:

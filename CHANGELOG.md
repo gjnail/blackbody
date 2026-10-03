@@ -44,6 +44,10 @@ Notable changes to Blackbody. The format follows
   inside thick pale smoke and steam and darker smoke, it is within a tenth on average, where the classic engine's
   estimate is 1.4 to 5 times too bright. So under Lume smoke can look darker than under classic: set Smoke colour to
   what the smoke is (pale for wood and grass smoke, near black for oil and rubber; steam near white).
+- Lume traces water: its surface a rough dielectric with exact Fresnel and its ripples, the water absorbing in its
+  colour and its murk scattering, foam a white lace, spray and bubbles scattering, the floor under it lit by the caustics
+  its surface makes, in the water's colour, and Snell's window from underwater. (The wave sea, lava, ice, dye, fire and
+  water in one box, and liquid scenes with fabric or grass are still drawn by the classic water renderer.)
 - Plain balls, boxes and cylinders on the stage are hit exactly by each ray instead of marched toward: Lume is up to 26
   times faster on such sets, and the classic stage is faster too.
 - Things that break (Properties › Breaking): objects cut beforehand into chunks, bricks in running bond, glass

@@ -46,22 +46,22 @@ Left out of the measures: the lamps themselves and two pixels round them (Lume d
 
 The reference is Mitsuba with 262,144 multi-jittered samples per pixel. Its ground is a 100 m square with four long pieces round it out to 2 km: one rectangle 4 km across puts the hits near its middle a fraction of a millimetre off the ground, and shadow rays from there are wrongly blocked (the reference was up to 14% dark under a low lamp). Lume's scenes use flat materials with no pattern at all (a plain surface in Blackbody is otherwise a little uneven, ±6%, which the reference does not have).
 
-## Results, 2026-10-02 (RTX 3090, timings the fastest of three)
+## Results, 2026-10-02, run 12 (RTX 3090, timings the fastest of three)
 
 | Scene | Bias | Error, Lume at 1024 samples | Equal-time error, Lume / Mitsuba (random) | Lume / Mitsuba (its best sampler) |
 |---|---|---|---|---|
-| furnace | 0.9999 | 0.000002 | 0.14x | 0.95x (multijitter) |
-| cornell | 0.9995 | 0.00080 | 0.53x | 0.59x (multijitter) |
-| cornell_direct | 0.9995 | 0.000001 | 0.004x | 0.50x (multijitter) |
-| cornell_2 | 0.9995 | 0.00030 | 0.16x | 0.22x (ldsampler) |
-| glossy | 0.9995 | 0.00019 | 0.37x | 0.37x (independent) |
-| glossy_direct | 0.9995 | 0.000003 | 0.06x | 0.17x (multijitter) |
-| glossy_2 | 0.9995 | 0.00017 | 0.14x | 0.26x (ldsampler) |
-| glass | 0.9997 | 0.000028 | 0.023x | 0.023x (independent) |
-| glass_sky | 0.9994 | 0.000014 | 0.26x | 0.66x (multijitter) |
-| glass_above | 0.9991 | 0.0012 | 0.096x | 0.097x (stratified) |
+| furnace | 0.9999 | 0.000002 | 0.17x | 1.2x (multijitter) |
+| cornell | 0.9995 | 0.00080 | 0.42x | 0.76x (multijitter) |
+| cornell_direct | 0.9995 | 0.000001 | 0.0009x | 0.33x (multijitter) |
+| cornell_2 | 0.9995 | 0.00030 | 0.20x | 0.30x (multijitter) |
+| glossy | 0.9995 | 0.000048 | 0.10x | 0.11x (multijitter) |
+| glossy_direct | 0.9995 | 0.000003 | 0.062x | 0.43x (multijitter) |
+| glossy_2 | 0.9996 | 0.000032 | 0.001x | 0.086x (stratified) |
+| glass | 0.9997 | 0.000028 | 0.035x | 0.036x (stratified) |
+| glass_sky | 0.9994 | 0.000014 | 0.30x | 0.86x (multijitter) |
+| glass_above | 0.9991 | 0.0012 | 0.18x | 0.18x (independent) |
 
-Below 1x Lume is closer to the truth than Mitsuba after the same time. Against Mitsuba's best sampler for each scene, Lume is closer on all ten: from about the same on the simplest (a white ball under an even sky, a few milliseconds a frame) to forty times closer with a glass ball under a lamp. Where it is furthest ahead, it traces the light a lamp focuses through glass or throws off smooth metal from the lamp itself (a camera's path finds it rarely, in fireflies), and takes the caustic it sees through glass or in a mirror from a cache of where that light landed; its random numbers (Owen-scrambled Sobol) spread its paths as evenly as Mitsuba's stratified samplers do. Timings vary from run to run (the GPU's clocks, other programs), so these ratios move by a tenth or two between runs; each run here was started on an idle GPU.
+Below 1x Lume is closer to the truth than Mitsuba after the same time. Against Mitsuba's best sampler for each scene, Lume is closer on nine of the ten: from a little closer under the sky (a glass ball, 0.86x; a room, 0.76x) to nine to twelve times closer on the glossy rooms and thirty times on the glass ball under a lamp. On the simplest (a white ball under an even sky: a few milliseconds a frame, so the time is mostly each renderer's own overhead) Mitsuba is a little ahead (1.2x). Since the last run, the glossy rooms' error at 1024 samples fell four to five times (the glossy coat split by lobe, the sparkles' caustic cache); the other ratios moved by a tenth or two, as timings do between runs. Where it is furthest ahead, it traces the light a lamp focuses through glass or throws off smooth metal from the lamp itself (a camera's path finds it rarely, in fireflies), and takes the caustic it sees through glass or in a mirror from a cache of where that light landed; its random numbers (Owen-scrambled Sobol) spread its paths as evenly as Mitsuba's stratified samplers do. Timings vary from run to run (the GPU's clocks, other programs), so these ratios move by a tenth or two between runs; each run here was started on an idle GPU.
 
 What is left:
 

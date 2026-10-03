@@ -42,6 +42,7 @@
 //!include burn_common.wgsl
 //!include burnobj.wgsl
 //!include lume.wgsl
+//!include lume_water.wgsl
 //!include marks.wgsl
 //!include wood.wgsl
 
@@ -61,6 +62,7 @@ const F_PIECES: bool = ${F_PIECES};
 const F_MARCH: bool = ${F_MARCH};
 const F_SHOTS: bool = ${F_SHOTS};   // (what bullets leave: marks and bores, marks.wgsl)
 const F_WOOD: bool = ${F_WOOD};     // (wood, by its species: wood.wgsl)
+const F_WATER: bool = ${F_WATER};   // (Lume traces the water: lume_water.wgsl)
 
 struct Mat {
   c: vec4<f32>,   // albedo (linear rgb), roughness
@@ -115,6 +117,7 @@ struct Params {
   cvp: mat4x4<f32>,     // world -> clip
   cl2w: mat4x4<f32>,    // fire-local -> world
   ctg: array<vec4<f32>, 8>,   // the curved clear things and mirrors the light is aimed at: a sphere round each (fire-local centre, radius)
+  wat: array<vec4<f32>, 12>,  // the water Lume traces (lume_water.wgsl; stage.py water_uniforms): its grid, look, open water
 };
 
 @group(0) @binding(0) var atlas: texture_3d<f32>;       // mesh distance fields (meshsdf.wgsl)
@@ -155,6 +158,10 @@ struct PieceG { a: vec4<f32>, q: vec4<f32>, v: vec4<f32>, o: vec4<f32>, r: vec4<
 @group(0) @binding(30) var<storage, read> ENV: array<f32>;               // Lume: the HDRI's cumulative sums and pdf
 @group(0) @binding(31) var<storage, read_write> CAU: array<atomic<u32>>; // Lume: this pass's caustics, per pixel rgb (fixed point)
 @group(0) @binding(32) var<storage, read> MK: array<vec4<f32>>;          // bullet marks (marks.wgsl): [0].x how many, 4 each
+@group(0) @binding(33) var w_surf: texture_3d<f32>;   // the water (lume_water.wgsl): its distance (surface cells), velocity
+@group(0) @binding(34) var w_ww: texture_3d<f32>;     // its spray, foam, bubbles
+@group(0) @binding(35) var w_caus: texture_2d<f32>;   // the key light on the ground under it (liq_caustics.wgsl)
+@group(0) @binding(36) var w_wet_t: texture_2d<f32>;  // how wet the ground it ran over is
 @group(1) @binding(0) var<uniform> U: Params;
 
 var<private> g_tau: f32;   // this sample's time in the shutter (s): objects are moved along their motion
@@ -1123,6 +1130,7 @@ fn burnt_at(s_in: Surf, b: vec4<f32>, q: vec3<f32>) -> Surf {
 
 // The surface at a hit: where, which way it faces, and its material there.
 fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
+  if (F_WATER && h.id == WATER) { return w_surface(h, ro, rd); }
   var s: Surf;
   g_ao_reach = 0.0;
   s.p = ro + rd * h.t;
@@ -1153,6 +1161,17 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
       }
     }
     s.f0 = vec3<f32>(0.04);
+    if (water_on() && U.stage.z < 0.5) {
+      // (no set, a background colour behind: the ground under the water is that colour, as the march has it)
+      s.alb = U.bg.rgb;
+      s.rough = 0.7;
+    }
+    if (water_on()) {
+      // where the liquid ran over it: darker, and glossy with the film it left (liq_march.wgsl ground_shade)
+      let wt = w_wet(s.p);
+      s.alb *= 1.0 - U.wat[9].x * wt;
+      s.rough = mix(s.rough, 0.08, U.wat[9].y * wt);
+    }
     if (marks_on()) { s = bullet_marks(s, min(s.alb * 1.4 + vec3<f32>(0.02), vec3<f32>(0.9)), fw); }
     if (s.p.y < U.stage.y - s.eps) {
       let bw = bore_wall(s.p, s.eps);        // (a crater in the ground: its wall)
