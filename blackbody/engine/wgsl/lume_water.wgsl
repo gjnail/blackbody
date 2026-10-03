@@ -326,7 +326,9 @@ fn w_event(ro: vec3<f32>, rd: vec3<f32>, tseg: f32, in_water: bool, u: vec2<f32>
   var keep = vec3<f32>(1.0);
   if (in_water && w_murk() > 0.0) {
     tev = -log(max(1.0 - u.x, 1e-12)) / w_murk();
-    keep = U.wat[3].xyz;   // (the murk's colour)
+    // (the murk's colour: the hue of what it scatters; murk, silt and plankton scatter most of what they stop, so its
+    // brightest part keeps 0.95, as spray's and bubbles' white does)
+    keep = U.wat[3].xyz * (0.95 / max(max(U.wat[3].x, U.wat[3].y), max(U.wat[3].z, 1e-3)));
   }
   let tw = w_ww_event(ro, rd, min(tseg, tev), in_water, u.y, jit);
   if (tw >= 0.0 && tw < tev) {
@@ -372,9 +374,11 @@ fn w_shadow(p: vec3<f32>, d: vec3<f32>, tmax: f32, eps: f32, sun_floor: bool) ->
       break;
     }
     if (inside) { lw += tc - t; }
+    // (the light comes from the air along d: each crossing let through as the light crossing into the water at d's
+    // angle in the air; by reciprocity the same leaving it. At d's angle the water's side would wrongly reflect it all.)
     let n = w_normal(p + d * tc);
     let ci = max(abs(dot(n, d)), 1e-4);
-    trf *= 1.0 - lu_fresnel(ci, select(w_ior(), 1.0 / w_ior(), inside));
+    trf *= 1.0 - lu_fresnel(ci, w_ior());
     if (trf <= 1e-5) { return 0.0; }
     inside = !inside;
     t = tc;
