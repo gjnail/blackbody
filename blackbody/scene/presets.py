@@ -742,6 +742,34 @@ PRESETS = {
                  material='steel', start_velocity=(0.0, 0.6, 5.0), release=0.25),
         ],
     },
+    'chain_swing': {
+        'name': 'Chain and rope', 'category': 'Things that fall', 'size': '1.4 m chain',
+        'blurb': 'A steel weight on a 12 mm chain swings down from a beam into a stack of crates and knocks it over, the '
+                 'chain going slack and snapping taut as it goes, while a crate on a rope thrown over the same beam '
+                 'drops, is caught and swings under it. Objects on a rope (Properties › Joint): Rope is Chain, and a '
+                 'rope over a post.',
+        'render': {'end': 120},
+        'domain': {'size_x': 5.0, 'size_y': 3.6, 'size_z': 3.0, 'resolution': 48, 'preroll': 0.0},
+        'composite': {'backdrop': 'stage', 'floor': 'boards'},
+        'lighting': {'sun_on': True, 'sun_intensity': 3.0, 'sun_elevation': 40.0, 'sun_azimuth': -130.0, 'ambient_intensity': 2.5},
+        'camera': {'distance': 6.2, 'target_y': 1.3, 'pitch': 6, 'yaw': -12, 'focal_mm': 35},
+        'emitters': [],
+        'colliders': [
+            dict(name='Post', shape='box', position=(-0.1, 1.2, -1.05), size=(0.06, 1.2, 0.06), material='wood'),
+            dict(name='Post 2', shape='box', position=(-0.1, 1.2, 1.05), size=(0.06, 1.2, 0.06), material='wood'),
+            dict(name='Beam', shape='cylinder', position=(-0.1, 2.46, 0.0), size=(0.07, 1.12, 0.07), pitch=90.0,
+                 material='wood'),
+            dict(name='Weight', shape='sphere', position=(-1.45, 2.2, -0.45), size=(0.14, 0.14, 0.14), dynamic=True,
+                 material='steel', joint='rope', rope_look='chain', rope_thickness=0.012, joint_anchor=(-0.1, 2.38, -0.45),
+                 rope_length=1.45, release=0.3),
+            *[dict(name=f'Crate {k + 1}', shape='box', position=(0.75 + dx, 0.15 + 0.3 * k, -0.45), size=(0.15, 0.15, 0.15),
+                   yaw=yaw, dynamic=True, material='wood', density=300.0, friction=0.7, bounce=0.05)
+              for k, (dx, yaw) in enumerate(((0.0, 0.0), (0.03, 12.0), (-0.02, -8.0), (0.02, 20.0)))],
+            dict(name='Hanging crate', shape='box', position=(-0.75, 1.5, 0.5), size=(0.18, 0.18, 0.18), dynamic=True,
+                 material='wood', joint='rope', rope_look='rope', rope_thickness=0.02, joint_anchor=(0.55, 0.0, 0.5),
+                 rope_length=4.1, release=0.6),
+        ],
+    },
     'wrecking_ball': {
         'name': 'Wrecking ball', 'category': 'Things that fall', 'size': '2 m wall',
         'blurb': 'A 900 kg wrecking ball on a crane\N{RIGHT SINGLE QUOTATION MARK}s cable swings down into a brick wall at 6 m/s '
@@ -1239,7 +1267,7 @@ ORDER = ['campfire', 'bonfire', 'torch', 'candle', 'gas_ring', 'pool_fire', 'fir
          'vehicle_fire', 'smoke_plume', 'fire_whirl', 'waved_torch', 'hose_douse', 'grass_fire', 'spot_fires', 'hillside_fire',
          'curtain_fire', 'fabric_curtain', 'wet_towels', 'armchair_fire', 'room_fire', 'backdraft', 'flash_fire', 'gas_cloud', 'coloured_flames', 'road_flare',
          'grinder_sparks', 'fireworks', 'car_through_smoke', 'flag_wind', 'kettle_steam', 'steam_vent',
-         'crates_in_fire', 'tower_knockdown', 'wall_smash', 'wrecking_ball', 'window_smash', 'vase_drop',
+         'crates_in_fire', 'tower_knockdown', 'wall_smash', 'wrecking_ball', 'chain_swing', 'window_smash', 'vase_drop',
          'yard_blast', 'lightning_strike', 'sheet_rip', 'crash_test', 'stunt_fall', 'cart_jump', 'meadow_fire', 'shed_fire', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag', 'sand_castle', 'sand_sling', 'iron_pour', 'chocolate_fire', 'chocolate_pan']
 
 

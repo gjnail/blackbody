@@ -70,6 +70,8 @@ The *Things that fall* blocks include a brick wall, a glass pane in its frame, a
 
 ![Ball through a brick wall](media/gif/wall_smash.gif "Ball through a brick wall: a 260 kg steel ball punches through, the bricks above cave in and the dust rolls out.")
 
+![Stone through a window](media/gif/window_smash.gif "Stone through a window: the glass cracks out from where the stone hits to the frame, and its daggers stay in it.") ![Vase off a table](media/gif/vase_drop.gif "Vase off a table: it tips off the edge whole and shatters on the floor into curved shards.")
+
 ## Breaking and burning
 
 An object that both *Breaks* and is *Burnable* (with Spreading fire on) burns piece by piece. Each piece heats where flames or hot gas touch any part of it, or from a burning piece glued to it as the fire creeps across, and catches. It burns through its fuel over Spreading fire's *Burn time*, longer the thicker it is, giving the fire its fuel, heat and smoke. Then it smoulders, glowing as it dies down, and most pieces crumble to ash, while some stay as black charcoal. The glue between two pieces is only as strong as the less charred of them lets it be, so a burning structure sags and falls in: a post burnt through at its foot topples, and a shed's posts give way under its roof. Pieces that have fallen burn on where they lie.
@@ -98,6 +100,8 @@ The *Ropes and hinges* blocks are a wrecking ball on a crane, a rope swing, a do
 
 ![Wrecking ball](media/gif/wrecking_ball.gif "Wrecking ball: a 900 kg ball on a crane's cable swings down into a brick wall at 6 m/s and bursts through it.")
 
+![Chain and rope](media/gif/chain_swing.gif "Chain and rope: a steel weight on a 12 mm chain swings into a stack of crates and knocks it over, while a crate on a rope thrown over the beam drops, is caught and swings under it.")
+
 ## People and cars
 
 *Build* (Properties › *Physics*) makes an object a thing of many parts on joints, in its box, all one object in the scene:
@@ -106,6 +110,8 @@ The *Ropes and hinges* blocks are a wrecking ball on a crane, a rope swing, a do
 - **A car**: 4.4 m in a box of 4.4 × 1.5 × 1.8 m, about 1300 kg, its body, its tinted glass and four tyres on springs (they sink 6 cm under its weight and soak up bumps). *Drive* drives its rear wheels, all four, or none (it rolls, pushed or down a slope); *Speed* is the speed its motor holds (keyframe it; 0 brakes it, below 0 reverses), as far as the tyres' grip and a car's torque allow, and *Steer* turns its front wheels (left is positive; keyframe it). It drives over grass, leaving its tracks flattened, knocks walls down and carries a person on its bonnet.
 
 Their parts are drawn in the object's material (a car's in its colour, its tyres black rubber, its cabin tinted glass), the smoke and water flow round them, and sand and snow are pushed aside by them. Blocks: *People and cars* in Create.
+
+![Crash test](media/gif/crash_test.gif "Crash test: a car at 30 km/h hits a crash-test figure, which folds over its bonnet, then bursts through a brick wall and stops among the bricks.") ![Stunt fall](media/gif/stunt_fall.gif "Stunt fall: a figure standing braced on a block is hit in the chest by a thrown ball, goes limp and tumbles off.")
 
 ## Explosions
 

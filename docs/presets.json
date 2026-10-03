@@ -259,6 +259,13 @@
   "blurb": "A 900 kg wrecking ball on a crane’s cable swings down into a brick wall at 6 m/s and bursts through it in a cloud of dust. An object joined to the crane by a rope (Properties › Joint) and a breakable box in Bricks."
  },
  {
+  "key": "chain_swing",
+  "name": "Chain and rope",
+  "category": "Things that fall",
+  "size": "1.4 m chain",
+  "blurb": "A steel weight on a 12 mm chain swings down from a beam into a stack of crates and knocks it over, the chain going slack and snapping taut as it goes, while a crate on a rope thrown over the same beam drops, is caught and swings under it. Objects on a rope (Properties › Joint): Rope is Chain, and a rope over a post."
+ },
+ {
   "key": "window_smash",
   "name": "Stone through a window",
   "category": "Things that fall",
@@ -292,6 +299,20 @@
   "category": "Things that fall",
   "size": "2 m sheet",
   "blurb": "A crate dropped onto a cotton sheet laced into a frame lands in it and rests, the sheet sagging under it. Then a steel ball dropped beside it rips a ragged hole: the crate tips in after it, both fall through, and the torn flaps hang down. Fabric held by all its edges, with Tears on; objects with Falls on."
+ },
+ {
+  "key": "crash_test",
+  "name": "Crash test",
+  "category": "Things that fall",
+  "size": "4.4 m car at 30 km/h",
+  "blurb": "A car driven at 30 km/h into a brick wall, a crash-test figure standing by it: the figure is hit, goes limp and folds over the bonnet, and the car knocks the wall down, runs on over the bricks and brakes. A car (its Speed keyed) and a person (Physics > Build), a brick wall that breaks."
+ },
+ {
+  "key": "stunt_fall",
+  "name": "Stunt fall",
+  "category": "Things that fall",
+  "size": "1.5 m drop",
+  "blurb": "A crash-test figure standing braced on a concrete block is hit in the chest by a thrown ball: it goes limp, tumbles off the edge and lands in a heap past a stack of boxes. A person (Physics > Build) that stands until it is hit hard."
  },
  {
   "key": "cart_jump",

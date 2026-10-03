@@ -65,7 +65,7 @@ Notable changes to Blackbody. The format follows
 - A rope or a steel cable goes round a post or a ball in its way: thrown over a beam, a crate hangs from it and swings
   under it. Chains (Rope is › Chain) are steel links: as heavy as a real chain of their thickness (12 mm: about 3 kg a
   metre), hanging in their own curve, catching on and draping over what they meet, piling up where they land, and
-  holding a couple of hundred kilograms.
+  holding a couple of hundred kilograms. Preset: Chain and rope.
 - Grass is pushed aside by things that fall, broken pieces and people's and cars' parts; pressed flat by a wheel or a
   foot it lies down, a track that stands up again over about 40 s.
 - Ropes, springs, hinges and ball joints (Properties › Joint): an object hangs on a rope (it swings, goes slack and

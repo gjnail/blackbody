@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Fire, water, cloth, destruction, sand and weather, simulated on your GPU and put into your footage.</b><br>
-  Build an effect from nothing or start from one of 100 presets, line it up with your shot, and render a finished composite or the passes your compositor wants.
+  Build an effect from nothing or start from one of 103 presets, line it up with your shot, and render a finished composite or the passes your compositor wants.
 </p>
 
 <p align="center">
@@ -77,11 +77,19 @@ Cloth holds what lands on it, and tears when it cannot. Things that fall come to
 
 <img src="docs/media/gif/tower_knockdown.gif" width="49%" alt="A bowling ball knocking down a tower of wooden blocks beside a falling domino run"> <img src="docs/media/gif/wall_smash.gif" width="49%" alt="A steel ball punching through a brick wall, the bricks above caving in">
 
-Any object can fall: it tumbles, slides, bounces, stacks and knocks things over, in real materials (wood, stone, brick, steel, glass, rubber and more), and the smoke, the water and the wind push it about. Things break where and as hard as they are hit, the cracks crowding round where they are struck: a brick wall comes apart at the mortar, a stone thrown through a window leaves daggers of glass in the frame, and a vase stays whole until it shatters on the tiles into curved shards, in a puff of dust. Metal and plastic bend and stay bent: a post hit by a wrecking ball folds over. Burning ones keep burning as they tumble, and lights or flames attached to them go along. Things that break and burn go piece by piece: a shed on fire chars, sags and falls in, its burnt pieces crumbling to ash. [The guide](docs/physics.md)
+Any object can fall: it tumbles, slides, bounces, stacks and knocks things over, in real materials (wood, stone, brick, steel, glass, rubber and more), and the smoke, the water and the wind push it about. Burning ones keep burning as they tumble, and lights or flames attached to them go along. Things that break and burn go piece by piece: a shed on fire chars, sags and falls in, its burnt pieces crumbling to ash. [The guide](docs/physics.md)
 
-<img src="docs/media/gif/wrecking_ball.gif" width="49%" alt="A wrecking ball on a crane's cable swinging through a brick wall"> <img src="docs/media/gif/window_smash.gif" width="49%" alt="A stone thrown through a window, shards breaking away and falling">
+<img src="docs/media/gif/window_smash.gif" width="49%" alt="A stone thrown through a window: the glass cracks out from where it hits to the frame and stays in it"> <img src="docs/media/gif/vase_drop.gif" width="49%" alt="A vase tipped off a table, whole until it shatters on the floor into curved shards">
 
-Objects hang on ropes, steel cables, springs, hinges and ball joints, from a fixed point or from another object: a wrecking ball on a crane, a door on its hinges, a lamp swaying on its flex, a seesaw. Ropes go slack and are caught with a jolt, and they snap past their strength. Without footage, everything is drawn in CG on a stage, a floor out to the horizon lit by the fire. In your footage it goes in with its shadows on the real ground.
+Things break where and as hard as they are hit. A piece breaks away when something meets it faster than its material takes (glass and pottery about 2.5 m/s, brick 2, wood 7, steel 60), and the cracks crowd round where it is struck: small chips there, larger pieces further off. A crack runs on as far as the material lets it: a stone thrown through a window leaves daggers of glass in the frame, a vase stays whole until it shatters on the tiles into curved shards, in a puff of dust, and a brick wall comes apart at the mortar. Metal and plastic bend and stay bent: a post hit by a wrecking ball folds over. [Breaking](docs/physics.md#breaking)
+
+<img src="docs/media/gif/wrecking_ball.gif" width="49%" alt="A wrecking ball on a crane's cable swinging through a brick wall"> <img src="docs/media/gif/chain_swing.gif" width="49%" alt="A steel weight on a chain swinging into a stack of crates, and a crate on a rope thrown over a beam">
+
+Objects hang on ropes, steel cables, chains, springs, hinges and ball joints, from a fixed point or from another object: a wrecking ball on a crane, a door on its hinges, a lamp swaying on its flex, a seesaw. Ropes go slack and are caught with a jolt, they snap past their strength, and a rope thrown over a beam or a post goes round it: a crate hangs from it and swings under it. A chain is steel links, as heavy as a real one (12 mm: about 3 kg a metre), hanging in its own curve, catching on what it meets and piling up where it lands. [Joints and ropes](docs/physics.md#joints-and-ropes)
+
+<img src="docs/media/gif/crash_test.gif" width="49%" alt="A car driven at 30 km/h into a crash-test figure and a brick wall: the figure folds over the bonnet and the car bursts through the wall"> <img src="docs/media/gif/stunt_fall.gif" width="49%" alt="A crash-test figure standing on a block, hit by a thrown ball, goes limp and tumbles off">
+
+**People and cars** are objects built of parts on joints. A person is a crash-test figure, 1.8 m and about 80 kg, its limbs turning only as a body's can (a knee bends only back). It stands braced until something hits it faster than 1.5 m/s, then goes limp and falls as a body does, over a car's bonnet or off a ledge. A car is 4.4 m and about 1300 kg on four sprung tyres: drive it, keyframe its speed and steering, and it drives over grass leaving its tracks flattened, knocks walls down and carries a person on its bonnet. Without footage, everything is drawn in CG on a stage, a floor out to the horizon lit by the fire. In your footage it goes in with its shadows on the real ground. [People and cars](docs/physics.md#people-and-cars)
 
 <img src="docs/media/img/lume-classic.jpg" width="49%" alt="A wooden shed with a fire inside, lit by the classic engine: its inner walls flat brown"> <img src="docs/media/img/lume-path.jpg" width="49%" alt="The same shed path traced with Lume: the fire's light on its inner walls and floor, bounced round inside it">
 
@@ -169,7 +177,7 @@ Blackbody opens in **Build**: an empty stage with a camera of your own. Put in o
 
 - **Animate it.** Click the ◆ next to a setting to keyframe it. The animation editor lists every animated setting with its keys, and the timeline shows each source's start and stop, each cloth's let-go time and each pour as bars you drag.
 - **Layers and roto.** Layers put several effects in one shot, such as a campfire in front and a waterfall behind, each its own simulation, composited back to front. Roto shapes drawn round what is in front of the effect, and keyed over the shot, put the effect behind them.
-- **Start from an effect.** The Effects tab has 100 presets, from a candle to a thunderstorm, sorted into fire, liquids, fabric, the sea, smoke, blasts, ice, weather, falling and breaking, and sand, snow and mud. Click one and it simulates live.
+- **Start from an effect.** The Effects tab has 103 presets, from a candle to a thunderstorm, sorted into fire, liquids, fabric, the sea, smoke, blasts, ice, weather, falling and breaking, and sand, snow and mud. Click one and it simulates live.
 
 <img src="docs/media/gif/ui-effects.gif" width="100%" alt="The Effects tab: the Falling and breaking chip and the wrecking ball, the Sand chip and the hopper, the Fire chip and the campfire">
 

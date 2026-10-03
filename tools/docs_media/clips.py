@@ -70,6 +70,15 @@ CLIPS = {
     'wall_smash': clip('wall_smash', 0.0, 72, dyaw=8.0, push=0.06),
     'wrecking_ball': clip('wrecking_ball', 0.0, 96, dyaw=6.0, push=0.05),
     'sheet_rip': clip('sheet_rip', 0.0, 108, dyaw=6.0, push=0.05),     # the crate rests by 1 s, the ball rips through at 2.2 s
+    # the car hits the figure at 0.5 s and the wall at 0.7 s and runs on to stop 7.6 m on: a still camera pans after it
+    'crash_test': clip('crash_test', 0.0, 72,
+                       camera=dict(mode='free', position=(4.0, 3.0, 11.0), rotation=(-10.82, 26.57, 0.0), focal_mm=40,
+                                   use_anchor=False),
+                       camera_keys={'rotation': [(0.0, (-10.82, 26.57, 0.0)), (0.8, (-11.83, 11.31, 0.0)),
+                                                 (1.3, (-12.06, 0.0, 0.0)), (1.8, (-11.94, -8.28, 0.0)),
+                                                 (2.6, (-11.81, -11.81, 0.0))]}),
+    'stunt_fall': clip('stunt_fall', 0.0, 72, dyaw=4.0, push=0.04),     # the ball hits at 0.8 s, it lands by 2 s
+    'chain_swing': clip('chain_swing', 0.0, 96, dyaw=5.0, push=0.04),   # the weight hits the crates at 1.2 s
     'yard_blast': clip('yard_blast', 0.0, 96, dyaw=6.0, push=0.05),
     'cart_jump': clip('cart_jump', 0.4, 100, dyaw=4.0, push=0.04),   # the action runs 0.5-4.5 s
     'meadow_fire': clip('meadow_fire', 0.5, 168, dyaw=4.0, push=0.04),   # the front crosses the field in about 8 s
