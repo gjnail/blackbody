@@ -249,6 +249,8 @@ class Renderer:
         # the stage's holdouts in place of the footage's this render (Stage.hold: the pieces' and the footage's
         # surfaces as a distance from the camera, the footage's matte), and whether that matte is on
         self.hold_stage = None
+        self.L0_march = self.L1_march = None   # Lume's light volume for the march in place of L0, L1 (lume_volume.py)
+        self.LV_lume = self.LVD_lume = None    # and its light grids, for the cloth and the grass (lume_light.wgsl)
         self.hold_stage_matte = False
         self.deep_n = 0
         self.deep = None
@@ -631,7 +633,7 @@ class Renderer:
         u.v4(1.0 if limit is not None else 0.0, 1.0 if self.occluded else 0.0)
         u.v4(look.coal_bed, look.coal_k, COAL_FREQ, max(look.coal_height, 0.005))
         self._haze_src = (solver, camstate, fire, look, time)
-        b.run(self.k_march, [solver.scal[0], solver.vel[0], self.L0, self.L1, self.noise, self.bb,
+        b.run(self.k_march, [solver.scal[0], solver.vel[0], self.L0_march or self.L0, self.L1_march or self.L1, self.noise, self.bb,
                              self.gpu.linear, self.gpu.repeat, self._aux_of(solver), self._chem_of(solver),
                              self.beauty, self.emit, self.aux, self.surf, self.mask, self.lights, self.light_count,
                              sf.burn or self._empty, sf.burn_obj or self._empty, sf.slots or self._no_slots,

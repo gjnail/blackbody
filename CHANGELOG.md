@@ -38,6 +38,12 @@ Notable changes to Blackbody. The format follows
   its own camera kernel for what the set has, on first use (a few seconds). A lamp's light off glossy metal, plastic
   and painted coats is traced from the lamp (no sparkles), and the denoiser carries its estimate of the noise through
   its levels (half the error it left before, thin highlights kept).
+- Lume lights the whole frame: the set, the smoke and steam, and the cloth and grass. In the smoke it traces the light
+  at each point from the flames (each an optically thick blackbody), the key light and the sky, scattered and bounced
+  in the smoke, on a grid of at most 56 cells a side, settling while the frame holds still. Checked against Mitsuba
+  inside thick pale smoke and steam and darker smoke, it is within a tenth on average, where the classic engine's
+  estimate is 1.4 to 5 times too bright. So under Lume smoke can look darker than under classic: set Smoke colour to
+  what the smoke is (pale for wood and grass smoke, near black for oil and rubber; steam near white).
 - Plain balls, boxes and cylinders on the stage are hit exactly by each ray instead of marched toward: Lume is up to 26
   times faster on such sets, and the classic stage is faster too.
 - Things that break (Properties › Breaking): objects cut beforehand into chunks, bricks in running bond, glass

@@ -613,7 +613,9 @@ SECTIONS = {
           'with soft shadows. Lume traces the light as it really travels: it bounces from surface to surface (a red wall '
           'tints the floor beside it, a room is lit by its walls), shadows are as soft as each light is big, glass, ice and '
           'jelly bend and tint what is seen through them, and the fire lights the set from each of its flames, through the '
-          'smoke. Slower: the viewer sharpens over a few seconds once you stop.', group='Lume'),
+          'smoke. Smoke, steam, cloth and grass take the same light: the fire\'s from inside, the sky\'s, the sunlit '
+          'ground\'s from below, bounce after bounce (smoke looks as dark as its Smoke colour makes it). Slower: the viewer '
+          'sharpens over a few seconds once you stop.', group='Lume'),
         I('bounces', 'Bounces', 4, 1, 16, tip='How many times light bounces from surface to surface. 3–4 for most shots; '
           'more for rooms and glass, which pass light on many times.', group='Lume'),
         I('samples', 'Samples (final)', 256, 4, 8192, tip='Light paths traced per pixel in final renders. More is cleaner and '

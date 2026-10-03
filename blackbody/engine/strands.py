@@ -470,7 +470,7 @@ class Strands:
         ent.append({'binding': 7, 'visibility': SS.FRAGMENT, 'sampler': {'type': 'filtering'}})
         for i in (8, 9, 10):
             ent.append({'binding': i, 'visibility': SS.FRAGMENT, 'buffer': {'type': 'read-only-storage'}})
-        for i in (11, 12):
+        for i in (11, 12, 13, 14):   # (13, 14: Lume's light grids, lume_light.wgsl)
             ent.append({'binding': i, 'visibility': SS.FRAGMENT, 'texture': {'sample_type': 'float', 'view_dimension': '3d'}})
         self.layout0 = dev.create_bind_group_layout(entries=ent)
         from .renderer import BB_DEFINES
@@ -508,10 +508,13 @@ class Strands:
         lt = r.LT if (getattr(r, '_lamps_on', 0) and r.LT is not None) else r._empty
         vol_on = solver is not None and getattr(r, 'L0', None) is not None
         L0, L1, E = (r.L0, r.L1, r.E) if vol_on else (r._empty, r._empty, r._empty)
+        if vol_on and getattr(r, 'LV_lume', None) is not None:
+            L0 = r.L0_march   # (Lume's: the key light's shadows through the smoke as deep as they are; only .a is read)
         lights = r.lights if (fire_lights and r.lights is not None) else self._no_lights()
         if not (fire_lights and r.lights is not None):
             self._no_lights()
         count = r.light_count if (fire_lights and r.lights is not None) else self._no_count
+        lume = vol_on and getattr(r, 'LV_lume', None) is not None
         k = self.bufs
         entries = [
             {'binding': 0, 'resource': {'buffer': src['X'].buf, 'offset': 0, 'size': src['X'].size}},
@@ -527,6 +530,8 @@ class Strands:
             {'binding': 10, 'resource': {'buffer': r._lamp_buf.buf, 'offset': 0, 'size': r._lamp_buf.size}},
             {'binding': 11, 'resource': lt.view},
             {'binding': 12, 'resource': E.view},
+            {'binding': 13, 'resource': (r.LV_lume if lume else r._empty).view},
+            {'binding': 14, 'resource': (r.LVD_lume if lume else r._empty).view},
         ]
         bg = g.device.create_bind_group(layout=self.layout0, entries=entries)
         l2w = np.asarray(fire.local_to_world(), float)
@@ -551,7 +556,7 @@ class Strands:
              .v4(*(np.asarray(ld, float) / np.asarray(dims, float)),
                  (2.0 if getattr(r, 'occluded', False) else 1.0) if vol_on else 0.0))
         pack_look(u, look, r.log_y_ref(look.flame_k), getattr(look, 'time', 0.0))
-        u.v4(light_gain, getattr(look, 'time', 0.0))
+        u.v4(light_gain, getattr(look, 'time', 0.0), 1.0 if lume else 0.0)
         u.raw(self.patches.ravel())
         off = b.uniform_offset(u)
         rp.set_pipeline(self._pipe)

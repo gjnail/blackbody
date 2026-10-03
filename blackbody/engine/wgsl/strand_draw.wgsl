@@ -17,6 +17,7 @@
 //!include common.wgsl
 //!include shade.wgsl
 //!include strand_common.wgsl
+//!include lume_light.wgsl
 
 struct Lamp { p: vec4<f32>, c: vec4<f32>, d: vec4<f32>, e: vec4<f32> };
 
@@ -32,7 +33,8 @@ struct Params {
   lsc: vec4<f32>,      // light-volume cells per simulation cell (xyz), light volume present (1/0; 2: with the objects'
                        // extinction in L1.w)
   look: Look,
-  xp: vec4<f32>,       // its reflected light times this (the liquid render's exposure; 1 with the fire), time (s), _, _
+  xp: vec4<f32>,       // its reflected light times this (the liquid render's exposure; 1 with the fire), time (s),
+                       // lit by Lume (1/0), _
   patches: array<Patch, MAX_PATCHES>,
 };
 
@@ -49,6 +51,8 @@ struct Params {
 @group(0) @binding(10) var<storage, read> lamps: array<Lamp>;
 @group(0) @binding(11) var LT: texture_3d<f32>;
 @group(0) @binding(12) var E: texture_3d<f32>;   // the light volume's emission and extinction (smoke and cloth)
+@group(0) @binding(13) var LV: texture_3d<f32>;  // Lume's light (lume_light.wgsl)
+@group(0) @binding(14) var LVD: texture_3d<f32>;
 @group(1) @binding(0) var<uniform> U: Params;
 
 struct VOut {
@@ -256,6 +260,14 @@ fn fs(i: VOut) -> FOut {
   let pk = pl + vec3<f32>(0.0, 1.5, 0.0);
   if (in_light(pk)) { sky *= samp_c(L1, lin, pk, U.ln.xyz).x; }
   c += light_blade(L.sun.rgb * sun_tr, U.sund.xyz, nn, v, alb, tr, gloss);
+  if (U.xp.z > 0.5) {
+    // Lume's light, every way but the key light's and the lamps' beams (the fire's, the sky's, what the ground, the
+    // objects and the smoke send on), on the side seen and through the blade, less deep in the canopy
+    let sim = U.ln.xyz / U.lsc.xyz;
+    let e_f = lume_irradiance(LV, LVD, lg, sim, nn);
+    let e_b = lume_irradiance(LV, LVD, lg, sim, -nn);
+    c += alb * 0.31830988 * mix(0.25, 1.0, exp(-0.7 * sig * depth)) * (e_f * (1.0 - 0.5 * tr) + e_b * (0.5 * tr));
+  } else {
   // the sky, from above (a blade facing up sees more of it), a little through it
   c += L.amb.rgb * sky * alb * ((0.55 + 0.45 * abs(nn.y)) * (1.0 - 0.5 * tr) + 0.2 * tr);
   // the fire
@@ -282,6 +294,7 @@ fn fs(i: VOut) -> FOut {
     cf *= fire_shadow(i.p, pc, sqrt(max(fc2 / fw - dot(pc, pc), 0.0)) + fr / fw);
   }
   c += cf * mix(0.35, 1.0, exp(-0.5 * sig * depth));
+  }
   // the lights in the set
   for (var k = 0; k < i32(U.ln.w); k++) {
     let lm = lamps[k];

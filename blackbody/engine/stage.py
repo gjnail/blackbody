@@ -567,7 +567,10 @@ class Stage:
         elif self.lume is not None:
             self.lume.pending = False
         res = [meshes.atlas if meshes is not None else r._empty_r32,
-               r.L0 if vol_on else r._empty, r.L1 if vol_on else r._empty, r.E if vol_on else r._empty,
+               # (with Lume lighting the smoke, its light volume: the key light's shadows through the smoke as deep as
+               # they are, lume_volume.py; only its transmittance is read here)
+               (getattr(r, 'L0_march', None) or r.L0) if vol_on else r._empty, r.L1 if vol_on else r._empty,
+               r.E if vol_on else r._empty,
                r.LT if (vol_on and light.lamps and r.LT is not None) else r._empty,
                g.linear, g.repeat,
                r.lights if fire_on else self._zero, r.light_count if fire_on else self._zero, r._lamp_buf,

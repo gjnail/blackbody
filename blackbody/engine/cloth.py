@@ -1236,6 +1236,8 @@ class Cloth:
             for i in (14, 15):
                 ent.append({'binding': i, 'visibility': SS.FRAGMENT, 'texture': {'sample_type': 'float', 'view_dimension': '3d'}})
             ent.append({'binding': 16, 'visibility': SS.VERTEX, 'buffer': {'type': 'read-only-storage'}})   # wetness
+            for i in (17, 18):   # Lume's light grids (lume_light.wgsl)
+                ent.append({'binding': i, 'visibility': SS.FRAGMENT, 'texture': {'sample_type': 'float', 'view_dimension': '3d'}})
             self.layout0 = dev.create_bind_group_layout(entries=ent)
             from .renderer import BB_DEFINES
             module = dev.create_shader_module(code=load_wgsl('cloth_draw.wgsl', BB_DEFINES), label='cloth_draw')
@@ -1288,6 +1290,9 @@ class Cloth:
         lt = r.LT if (getattr(r, '_lamps_on', 0) and r.LT is not None) else r._empty
         vol_on = solver is not None and getattr(r, 'L0', None) is not None
         L0, L1, E = (r.L0, r.L1, r.E) if vol_on else (r._empty, r._empty, r._empty)
+        lume = vol_on and getattr(r, 'LV_lume', None) is not None
+        if lume:
+            L0 = r.L0_march   # (Lume's: the key light's shadows through the smoke as deep as they are; only .a is read)
         lights = r.lights if (fire_lights and r.lights is not None) else self._no_lights()
         count = r.light_count if (fire_lights and r.lights is not None) else self._no_count
         entries = [
@@ -1308,6 +1313,8 @@ class Cloth:
             {'binding': 14, 'resource': lt.view},
             {'binding': 15, 'resource': E.view},
             {'binding': 16, 'resource': {'buffer': src['P'].buf, 'offset': 0, 'size': src['P'].size}},
+            {'binding': 17, 'resource': (r.LV_lume if lume else r._empty).view},
+            {'binding': 18, 'resource': (r.LVD_lume if lume else r._empty).view},
         ]
         bg = g.device.create_bind_group(layout=self.layout0, entries=entries)
         l2w = np.asarray(fire.local_to_world(), float)
@@ -1335,7 +1342,7 @@ class Cloth:
              .v4(*(np.asarray(ld, float) / np.asarray(dims, float)),
                  (2.0 if getattr(r, 'occluded', False) else 1.0) if vol_on else 0.0))
         pack_look(u, look, r.log_y_ref(look.flame_k), getattr(look, 'time', 0.0))
-        u.v4(light_gain)
+        u.v4(light_gain, 1.0 if lume else 0.0)
         off = b.uniform_offset(u)
         own = rp is None
         if own:

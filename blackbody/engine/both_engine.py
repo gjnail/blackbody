@@ -599,11 +599,13 @@ class BothEngine:
             fire_gain = tuple(float(c) * comp.fire_gain * comp.surface_light * ambient for c in comp.tint)
             fire_lit = True
 
+        march_look = look   # (Lume's, once it has lit the smoke: Engine._lume_volume)
+
         def one(b, jit, s):
             # (the fire's point lights as r.light left them: it may have reallocated them for this box)
             fire_lights = (r.lights, r.light_count) if fire_lit and r.lights is not None else None
             # the fire, whole: behind the liquids it is seen through them
-            r.march(b, vol, cs, fire, look, (fw, fh), jitter=jit, seed=s, shutter=shutter, ground=ground, time=t,
+            r.march(b, vol, cs, fire, march_look, (fw, fh), jitter=jit, seed=s, shutter=shutter, ground=ground, time=t,
                     surfaces=surfaces)
             b.run(self.k_bfp, [r.beauty, ptex if ptex is not None else r._black, self.gpu.linear, T['fp']], fp_u, size)
             water_plate = T['fp']
@@ -640,7 +642,7 @@ class BothEngine:
             for src, key in ((r.beauty, 'lb'), (r.emit, 'le'), (r.aux, 'la')):
                 b.copy_texture(src, T[key], size)
             # the fire in front of the liquids, over them
-            r.march(b, vol, cs, fire, look, (fw, fh), jitter=jit, seed=s, shutter=shutter, ground=ground, time=t,
+            r.march(b, vol, cs, fire, march_look, (fw, fh), jitter=jit, seed=s, shutter=shutter, ground=ground, time=t,
                     surfaces=surfaces, limit=T['la'])
             for src, key in ((r.beauty, 'fb'), (r.emit, 'fe'), (r.aux, 'fa')):
                 b.copy_texture(src, T[key], size)
@@ -662,6 +664,7 @@ class BothEngine:
                 VR.build(b, kv, klook)
             r.light(b, vol, look, fire, t, emit=glow if kv is not None else None,
                     occluder=self.cloth.occlusion if cloth else None, colliders=surfaces.colliders, meshes=surfaces.meshes)
+            march_look = self._lume_volume(b, r, scene, vol, look, fire, surfaces, footage, final, t)
             stage = None
             if stage_on:
                 light = stage_mod.water_light(wlook, comp, look)
@@ -705,5 +708,6 @@ class BothEngine:
             r.composite(b, (W, H), comp, time=t, frame=frame, plate_fit=plate_fit, liquid='both', stage=stage)
             LR.lens_drops(b, wlook, (W, H), time=t)
         r.hold_stage = None
+        r.L0_march = r.L1_march = r.LV_lume = r.LVD_lume = None
         self.last_render_ms = (time.perf_counter() - t0) * 1000.0
         return cs

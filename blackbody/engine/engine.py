@@ -183,6 +183,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine)
             out = self._prepare_cloud(scene, final, soft)
         else:
             out = self._prepare_fire(scene, final, soft)
+        if getattr(self, '_lvol', None) is not None:
+            self._lvol.reset()   # (Lume's light in the smoke: none carried over from another scene or run)
         self._attach_disk(scene, final)
         return out
 
@@ -789,6 +791,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine)
         with self.gpu.batch() as b:
             r.light(b, vol, look, fire, t, occluder=self.cloth.occlusion if cloth else None,
                     colliders=surfaces.colliders, meshes=surfaces.meshes)
+            march_look = self._lume_volume(b, r, scene, vol, look, fire, surfaces, footage, final, t)
             stage = None
             if stage_on:
                 light = stage_mod.fire_light(scene, frame, look, comp)
@@ -804,7 +807,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine)
                     r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])
             if samples == 1:
                 lim = cloth_pass(b, 0, (0.0, 0.0))
-                r.march(b, vol, cs, fire, look, (fw, fh), seed=base_seed, shutter=shutter, ground=ground, time=t,
+                r.march(b, vol, cs, fire, march_look, (fw, fh), seed=base_seed, shutter=shutter, ground=ground, time=t,
                         surfaces=surfaces, comp=comp, plate_fit=plate_fit, deep_pass=0, limit=lim)
                 if cloth or grass:
                     self.raster.merge(b, r, 0, 1, 0.35 * (vol.cell or vol.h))
@@ -818,7 +821,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine)
                 for i in range(samples):
                     jit = (halton(i + 1, 2) - 0.5, halton(i + 1, 3) - 0.5)
                     lim = cloth_pass(b, i, jit)
-                    r.march(b, vol, cs, fire, look, (fw, fh), jitter=jit, seed=base_seed + i, shutter=shutter,
+                    r.march(b, vol, cs, fire, march_look, (fw, fh), jitter=jit, seed=base_seed + i, shutter=shutter,
                             ground=ground, time=t, surfaces=surfaces, comp=comp, plate_fit=plate_fit, deep_pass=i, limit=lim)
                     if cloth or grass:
                         self.raster.merge(b, r, i, samples, 0.35 * (vol.cell or vol.h))
@@ -838,8 +841,34 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine)
             r.bloom(b, comp.bloom_radius)
             r.composite(b, (W, H), comp, time=t, frame=frame, plate_fit=plate_fit, stage=stage)
         r.hold_stage = None
+        r.L0_march = r.L1_march = r.LV_lume = r.LVD_lume = None
         self.last_render_ms = (time.perf_counter() - t0) * 1000.0
         return cs
+
+    def _lume_volume(self, b, r, scene, vol, look, fire, surfaces, footage, final, t):
+        """With Lume on: the light scattered in the smoke traced by Lume (lume_volume.py) for the ray march, and the
+        look the march then uses. Else the look as it is."""
+        from . import lume as LU
+        from .lume_volume import LumeVolume, march_look
+        from ..scene.materials import FLOORS
+        if not LU.settings(scene).on or vol.scal is None:
+            return look
+        if getattr(self, '_lvol', None) is None:
+            self._lvol = LumeVolume(self.gpu)
+        rows = stage_mod.looks(scene, footage)
+        albedos = []
+        for row in rows[:len(surfaces.colliders)]:
+            drawn, colour, _rough, metal, clear = row[:5]
+            albedos.append((tuple(float(x) * (1.0 - 0.7 * float(metal)) for x in colour), drawn != stage_mod.NOT_DRAWN and clear < 0.5))
+        cd = scene.data['composite']
+        fl = FLOORS.get(cd.get('floor', 'concrete'), FLOORS['concrete'])
+        floor = (0.25, 0.25, 0.25) if footage else tuple(float(c) * float(k) for c, k in zip(fl.colour, cd.get('floor_tint', (1.0, 1.0, 1.0))))
+        ground = bool(scene.data['domain']['ground'])
+        key = (round(float(t), 6), repr(look), floor, ground,
+               tuple((tuple(c.pos), tuple(c.size), float(c.rot_y), tuple(c.quat)) for c in surfaces.colliders))
+        self._lvol.compute(b, r, vol, look, fire, surfaces.colliders, surfaces.meshes, albedos, floor, ground,
+                           float(vol.origin[1]), final, t, key=key)
+        return march_look(look)
 
     def _carried_lamps(self, scene, frame, look):
         """Lights attached to falling or floating objects, where those are at `frame`."""

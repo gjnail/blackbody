@@ -258,7 +258,8 @@ class EngineWorker(QThread):
         if LE is None:
             return False
         engines = [LE.base] + list(LE.extra.values())
-        return any(getattr(getattr(e, '_stage', None), 'lume_pending', False) for e in engines)
+        return any(getattr(getattr(e, '_stage', None), 'lume_pending', False)
+                   or getattr(getattr(e, '_lvol', None), 'pending', False) for e in engines)
 
     def _layers(self):
         """The shot's layers to draw [(uid, scene)] back to front, and the one being edited (uid, scene)."""

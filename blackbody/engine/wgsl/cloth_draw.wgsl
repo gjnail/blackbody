@@ -21,6 +21,7 @@
 //!include common.wgsl
 //!include shade.wgsl
 //!include cloth_common.wgsl
+//!include lume_light.wgsl
 
 struct DrawMat {
   c0: vec4<f32>,   // colour (linear), sheen strength
@@ -43,7 +44,7 @@ struct Params {
   lsc: vec4<f32>,      // light-volume cells per simulation cell (xyz), light volume present (1/0; 2: with the
                        // cloth's and the objects' extinction in L1.z, L1.w)
   look: Look,
-  xp: vec4<f32>,       // its reflected light times this (the liquid render's exposure; 1 with the fire), _
+  xp: vec4<f32>,       // its reflected light times this (the liquid render's exposure; 1 with the fire), lit by Lume (1/0)
 };
 
 @group(0) @binding(0) var<storage, read> X: array<vec4<f32>>;
@@ -63,6 +64,8 @@ struct Params {
 @group(0) @binding(14) var LT: texture_3d<f32>;
 @group(0) @binding(15) var E: texture_3d<f32>;   // the light volume's emission and extinction (smoke and cloth)
 @group(0) @binding(16) var<storage, read> PW: array<vec4<f32>>;   // w: how wet it is (0 dry .. 1 soaked)
+@group(0) @binding(17) var LV: texture_3d<f32>;    // Lume's light (lume_light.wgsl)
+@group(0) @binding(18) var LVD: texture_3d<f32>;
 @group(1) @binding(0) var<uniform> U: Params;
 
 struct VOut {
@@ -593,11 +596,21 @@ fn fs(i: VOut) -> FOut {
   let pk = pl + n * 1.5;   // the sky over the side seen (under a canopy, the canopy hides it)
   if (in_light(pk)) { sky = samp_c(L1, lin, pk, U.ln.xyz).x; }
   c += light_cloth(L.sun.rgb * sun_tr, U.sund.xyz, nn, v, t, alb, dm, sheen_on, spec_on);
+  let sheen_k = 1.0 + 0.5 * dm.c0.w * sheen_on * pow(1.0 - max(dot(nn, v), 0.0), 3.0);
+  let fres = film * spec_on * (0.02 + 0.98 * pow(1.0 - max(dot(nn, v), 0.0), 5.0));
+  if (U.xp.y > 0.5) {
+    // Lume's light, every way but the key light's and the lamps' beams (the fire's, the sky's, what the ground, the
+    // objects and the smoke send on), on the side seen and through from behind; a film of water mirrors it
+    let sim = U.ln.xyz / U.lsc.xyz;
+    let e_f = lume_irradiance(LV, LVD, lg, sim, nn);
+    let e_b = lume_irradiance(LV, LVD, lg, sim, -nn);
+    c += alb * 0.31830988 * (e_f * (1.0 - 0.5 * dm.c2.x) + e_b * (0.5 * dm.c2.x)) * sheen_k;
+    if (film > 0.0) { c += e_f * (0.31830988 * fres); }
+  } else {
   // the sky: from above, dimmed where the smoke hides it; a little comes through from behind
-  c += L.amb.rgb * sky * alb * ((0.6 + 0.4 * nn.y) * (1.0 - 0.5 * dm.c2.x) + 0.15 * dm.c2.x)
-       * (1.0 + 0.5 * dm.c0.w * sheen_on * pow(1.0 - max(dot(nn, v), 0.0), 3.0));
+  c += L.amb.rgb * sky * alb * ((0.6 + 0.4 * nn.y) * (1.0 - 0.5 * dm.c2.x) + 0.15 * dm.c2.x) * sheen_k;
   // a film of water mirrors the sky, most at grazing angles
-  if (film > 0.0) { c += L.amb.rgb * sky * (film * spec_on * (0.02 + 0.98 * pow(1.0 - max(dot(nn, v), 0.0), 5.0))); }
+  if (film > 0.0) { c += L.amb.rgb * sky * fres; }
   // the fire: one shadow toward the centre of its light here, soft by the fire's spread around it
   let nf = light_count[0];
   var cf = vec3<f32>(0.0);
@@ -622,6 +635,7 @@ fn fs(i: VOut) -> FOut {
     cf *= fire_shadow(i.p, n, pc, sqrt(max(fc2 / fw - dot(pc, pc), 0.0)) + fr / fw);
   }
   c += cf;
+  }
   // the lights in the set
   for (var k = 0; k < i32(U.ln.w); k++) {
     let lm = lamps[k];
