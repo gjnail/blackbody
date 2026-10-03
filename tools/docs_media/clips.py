@@ -127,6 +127,10 @@ CLIPS = {
     'boiling_pot': clip('boiling_pot', 0.8, 96, plate='ground', plate_args=DAY_FINE),
     'pond_freeze': clip('pond_freeze', 0.0, 120, plate='ground', plate_args=DAY_SKY),
     'hot_plate': clip('hot_plate', 0.2, 96, plate='ground', plate_args=DAY_STONE),
+    # (on its own stage, the floor and sky, where the steel glows: let go at 0.6 s, in the water at about 0.9 s, held off
+    # it by its steam, then boiling it hard as its glow fades; the steam peaks at about 1.2-1.5 s)
+    'quench': clip('quench', 0.5, 72, camera=dict(pitch=40, target_y=0.2, anchor_y=0.5),
+                   camera_keys={'yaw': [(0.0, 13.5), (3.0, 16.5)], 'distance': [(0.0, 1.3), (3.0, 1.22)]}),
     'boiling_throw': clip('boiling_throw', 0.1, 96, plate='ground', plate_args=dict(DAY_SKY)),
     'frozen_pour': clip('frozen_pour', 0.5, 96, plate='ground', plate_args=DAY_FINE),
     'steaming_pool': clip('steaming_pool', 0.5, 96, plate='ground', plate_args=DAY_SKY),

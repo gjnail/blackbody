@@ -2,14 +2,15 @@
 // evening out through them, and past their melting point they melt into a liquid of the same stuff (a runny one, or
 // chocolate's thick one), which sets again where it cools below it: a candle's top melts into a pool that runs down
 // its side and sets in drips, chocolate beside a fire slumps into a puddle, an ingot in a furnace glows and runs.
-//  - lights: the fire as a short list of heat sources, for the heat it radiates: the gas's grid cut into blocks, every
-//    block of hot gas a source at its centre with the power its gas radiates (4 kappa sigma T^4 a cubic metre, as an
-//    optically thin flame does)
+//  - the heat radiated onto it is the frame's shared radiant sources' (radiant.py: the fire's hot gas, lava, hot
+//    objects), and what glows radiates into them in turn (rad_add.wgsl), for the cloth, the objects and the next frame
 //  - splat: each particle's heat to the eight nodes round it (fixed point), for the heat to even out through the matter
 //  - main: each particle takes on its neighbourhood's temperature (the nodes'); where it meets the air, the air's (the
 //    gas's next to it in a fire box; the ambient air's otherwise), the fire's radiant heat from the side it faces out
 //    to, and the heat it radiates itself; where it meets the liquid, the water's; where it touches an object, the
-//    object's (a hot pan, a cold mould: as fast as the two conduct, by their effusivities); and melts or sets. What burns (dry
+//    object's (a hot pan, a cold mould: as fast as the two conduct, by their effusivities), adding up the heat each
+//    object gives or takes (objheat.py warms and cools it by that); where it lies on the ground, the ground's; and melts
+//    or sets. What burns (dry
 //    leaves, sawdust, coal) catches past its ignition point and burns down to ash, held at its burning temperature
 //    where the air reaches it and smouldering slowly inside a heap; mpm_fire.wgsl gives the gas its flames.
 // A particle's temperature (K) is its f0.w.
@@ -38,6 +39,14 @@ struct Params {
   ccnt: vec4<f32>,              // the objects (solver.pack_colliders)
   col: array<Collider, MAX_COLLIDERS>,
   touch: array<vec4<f32>, MAX_COLLIDERS>,   // per object: its temperature (K), its effusivity (W s^0.5/m^2/K)
+  rg: RadGrid,                  // the shared radiant sources' coarse grid, for what glows (rad_add.wgsl)
+  rad: vec4<f32>,               // radiant sources on (1/0), the air grid's cell size (m: a glowing particle's surface is its
+                                // volume over it), a particle's volume (m^3), objects' heat added up (1/0)
+  gr: vec4<f32>,                // the ground: its height (fire-local m), temperature (K), effusivity, on (1/0)
+  jk: array<vec4<f32>, 4>,      // per material slot (16): the heat a particle of it holds a kelvin (J/K)
+  ab: array<vec4<f32>, 4>,      // per material slot (16): the share of radiant heat it absorbs, and so how well it radiates
+  lv: vec4<f32>,                // lava on (1/0, its field on the gas's grid), lava's effusivity, the heat speed, the
+                                // simulation's time (s)
 };
 
 @group(0) @binding(0) var<storage, read_write> P: array<MParticle>;
@@ -46,15 +55,21 @@ struct Params {
 @group(0) @binding(3) var lin: sampler;
 @group(0) @binding(4) var gsdf: texture_3d<f32>;   // the gas's distance to solids (cells; < 0 inside)
 @group(0) @binding(5) var LTYPE: texture_3d<f32>;  // the liquid's cells: 0 air, 1 liquid, 2 solid
-@group(0) @binding(6) var<storage, read_write> HL: array<vec4<f32>>;      // heat sources: (position, _), (power W, ...)
-@group(0) @binding(7) var<storage, read_write> HLC: array<atomic<u32>>;   // how many
+@group(0) @binding(6) var<storage, read> RL: array<vec4<f32>>;   // the shared radiant sources (rad_common.wgsl)
+@group(0) @binding(7) var<storage, read> RLC: array<u32>;
 @group(0) @binding(8) var atlas: texture_3d<f32>;   // the meshes' distance fields (meshsdf.wgsl)
+@group(0) @binding(9) var<storage, read_write> RA: array<atomic<i32>>;   // what glows, added to them (rad_add.wgsl)
+@group(0) @binding(10) var<storage, read_write> OJ: array<atomic<i32>>;  // per object: the heat it gave (J x FX_OJ)
+@group(0) @binding(11) var LAVA: texture_3d<f32>;   // lava on the gas's grid: x its temperature (K), y the cell's share
 @group(1) @binding(0) var<uniform> U: Params;
+
+//!include rad_common.wgsl
+//!include rad_add.wgsl
 
 const FX_HM: f32 = 65536.0;   // weight
 const FX_HT: f32 = 256.0;     // weight x temperature (K)
 const SIGMA: f32 = 5.670e-8;  // Stefan-Boltzmann (W/m^2/K^4)
-const PI4: f32 = 12.566371;
+const FX_OJ: f32 = 256.0;     // objects' heat (matter.py OBJECT_J)
 
 fn kelvin_of(t: f32) -> f32 { return U.k.y + (U.k.z - U.k.y) * clamp(t, 0.0, 1.0); }
 
@@ -62,35 +77,6 @@ fn thermal(slot: u32) -> bool {
   let h = U.heat[slot];
   let c = U.cond[slot];
   return h.x > 0.0 || h.w > 0.0 || c.x > 0.0 || c.z > 0.0 || U.burn[slot].x > 0.0;
-}
-
-@compute @workgroup_size(4, 4, 4)
-fn lights(@builtin(global_invocation_id) id: vec3<u32>) {
-  let b = i32(U.lt.x);
-  let dims = vec3<i32>(U.g.n.xyz);
-  let lo = vec3<i32>(id) * b;
-  if (any(lo >= dims)) { return; }
-  let hi = min(lo + vec3<i32>(b), dims);
-  let h = U.g.n.w;
-  let amb4 = pow(U.k.y, 4.0);
-  var power = 0.0;
-  var centre = vec3<f32>(0.0);
-  for (var z = lo.z; z < hi.z; z++) {
-    for (var y = lo.y; y < hi.y; y++) {
-      for (var x = lo.x; x < hi.x; x++) {
-        let t = textureLoad(scal, vec3<i32>(x, y, z), 0).x;
-        if (t <= U.lt.y) { continue; }
-        let e = max(pow(kelvin_of(t), 4.0) - amb4, 0.0);
-        power += e;
-        centre += (vec3<f32>(f32(x), f32(y), f32(z)) + 0.5) * e;
-      }
-    }
-  }
-  if (power <= 0.0) { return; }
-  let i = atomicAdd(&HLC[0], 1u);
-  if (i >= u32(U.lt.w)) { return; }
-  HL[2u * i] = vec4<f32>(U.g.org.xyz + centre / power * h, 0.5 * f32(b) * h);
-  HL[2u * i + 1u] = vec4<f32>(4.0 * U.lt.z * SIGMA * power * h * h * h, 0.0, 0.0, 0.0);
 }
 
 @compute @workgroup_size(64, 1, 1)
@@ -167,19 +153,39 @@ fn air_at(pos: vec3<f32>) -> Air {
 }
 
 // The object pos touches, if any (within a node spacing of its surface: matter resting on it settles some three
-// quarters of one off it; the nearest):
-// its temperature (K), its effusivity, 1; or zeros.
-fn touching(pos: vec3<f32>) -> vec3<f32> {
-  var best = vec3<f32>(0.0);
+// quarters of one off it; the nearest), or else the ground: its temperature (K), its effusivity, 1, which (0..15 an
+// object, -1 the ground); or zeros.
+fn touching(pos: vec3<f32>) -> vec4<f32> {
+  var best = vec4<f32>(0.0);
   var nearest = U.m.w;
   for (var i = 0; i < i32(U.ccnt.x); i++) {
     let d = col_sdf(U.col[i], pos);
     if (d < nearest) {
       nearest = d;
-      best = vec3<f32>(U.touch[i].x, U.touch[i].y, 1.0);
+      best = vec4<f32>(U.touch[i].x, U.touch[i].y, 1.0, f32(i));
     }
   }
+  if (best.z < 0.5 && U.gr.w > 0.5 && pos.y - U.gr.x < U.m.w) {
+    best = vec4<f32>(U.gr.y, U.gr.z, 1.0, -1.0);
+  }
   return best;
+}
+
+// The temperature (K) of lava touching pos (in its cell or the six beside it), or 0.
+fn lava_at(pos: vec3<f32>) -> f32 {
+  if (U.lv.x < 0.5) { return 0.0; }
+  let n = vec3<i32>(U.g.n.xyz);
+  let c = vec3<i32>(floor((pos - U.g.org.xyz) / U.g.n.w));
+  var t = 0.0;
+  for (var a = 0; a < 7; a++) {
+    var o = vec3<i32>(0);
+    if (a > 0) { o[(a - 1) / 2] = select(-1, 1, (a & 1) == 0); }
+    let q = c + o;
+    if (any(q < vec3<i32>(0)) || any(q >= n)) { continue; }
+    let l = textureLoad(LAVA, q, 0);
+    if (l.y > 0.5) { t = max(t, l.x); }
+  }
+  return t;
 }
 
 // Whether the liquid is next to pos.
@@ -196,25 +202,6 @@ fn water_at(pos: vec3<f32>) -> bool {
     if (t > 0.5 && t < 1.5) { return true; }
   }
   return false;
-}
-
-// The fire's radiant heat on a surface at pos facing out along `out` (W/m^2): every heat source on that side, by the
-// inverse square of its distance and the cosine of its angle.
-fn radiant(pos: vec3<f32>, out: vec3<f32>) -> f32 {
-  let lo = length(out);
-  if (lo < 1.0e-6) { return 0.0; }
-  let nrm = out / lo;
-  let cnt = min(atomicLoad(&HLC[0]), u32(U.lt.w));
-  var q = 0.0;
-  for (var i = 0u; i < cnt; i++) {
-    let a = HL[2u * i];
-    let d = a.xyz - pos;
-    let r2 = max(dot(d, d), a.w * a.w);
-    let c = dot(d, nrm) * inverseSqrt(r2);
-    if (c <= 0.0) { continue; }
-    q += HL[2u * i + 1u].x * c / (PI4 * r2);
-  }
-  return q;
 }
 
 @compute @workgroup_size(64, 1, 1)
@@ -254,21 +241,44 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
   if (air.on > 0.5) {
     T += (air.t - T) * (1.0 - exp(-h.w * dt));
     if (cd.z > 0.0) {
-      // the fire's radiant heat in, its own out (a hot surface radiates as it absorbs: Kirchhoff)
+      // the radiant heat in (the fire's, lava's, hot objects'), its own out (a hot surface radiates as it absorbs:
+      // Kirchhoff), into the shared sources for the rest
       var q = SIGMA * (pow(U.k.y, 4.0) - pow(T, 4.0));
-      if (U.k.w > 0.5) { q += radiant(pos, air.out); }
+      if (U.rad.x > 0.5) { q += rad_irradiance(pos, air.out, -2.0, false); }
+      let lo = length(air.out);
+      if (T > U.k.y + 30.0 && lo > 1.0e-6) {
+        let absorbs = U.ab[slot / 4u][slot % 4u];
+        let area = U.rad.z / max(U.rad.y, 1.0e-6);
+        rad_add(U.rg, pos, absorbs * SIGMA * (pow(T, 4.0) - pow(U.k.y, 4.0)) * area, air.out / lo);
+      }
       T = max(T + cd.z * q * dt, min(T, U.k.y));
     }
   }
   if (water_at(pos)) { T += (U.k.y - T) * (1.0 - exp(-h.w * max(cd.y, 1.0) * dt)); }
-  // an object it touches, at its own temperature: the face between them is at the temperature the two effusivities
-  // weigh them to (two bodies in contact: a steel pan gives chocolate nearly its own heat, a wooden board little), and
-  // the particle takes it on through half its own depth (twice the pace its heat spreads to the next particle)
-  if (cd.x > 0.0 && U.ccnt.x > 0.5) {
+  // lava against it: their face at the temperature their effusivities weigh them to, taken on through half a
+  // particle's depth
+  let tl = lava_at(pos);
+  if (tl > 0.0 && cd.x > 0.0) {
+    let tc = (cd.w * T + U.lv.y * tl) / max(cd.w + U.lv.y, 1.0e-6);
+    T += (tc - T) * (1.0 - exp(-2.0 * cd.x * dt));
+  }
+  // an object it touches, at its own temperature, or the ground: two bodies in contact, the heat between them flowing
+  // as e1 e2 / (e1 + e2) / sqrt(pi t) a square metre and kelvin for the time t they have touched (since it was let go:
+  // the skins either side warm and cool, so it falls off), into its surface layer. A steel pan gives chocolate nearly
+  // its own heat, a wooden board little; molten iron poured on concrete chills some 80 K in its first second
+  if (cd.x > 0.0 && (U.ccnt.x > 0.5 || U.gr.w > 0.5)) {
     let t = touching(pos);
     if (t.z > 0.5) {
-      let share = t.y / max(cd.w + t.y, 1.0e-6);
-      T += (t.x - T) * (1.0 - exp(-2.0 * cd.x * share * dt));
+      let jk = max(U.jk[slot / 4u][slot % 4u], 1.0e-12);
+      let skin = pow(U.rad.z, 1.0 / 3.0);
+      let per_k = U.lv.z * skin * skin / jk;                 // K/s for a W/m^2 into its surface (at the heat speed)
+      let since = max((U.lv.w - p.c1.w) * U.lv.z, 0.5);     // s of heat it has touched for
+      let g = cd.w * t.y / max(cd.w + t.y, 1.0e-6) / sqrt(3.14159265 * since);
+      let dT = (t.x - T) * (1.0 - exp(-g * per_k * dt));
+      T += dT;
+      if (t.w >= 0.0 && U.rad.w > 0.5) {
+        atomicAdd(&OJ[u32(t.w)], i32(round(clamp(dT * jk * FX_OJ, -2.0e9, 2.0e9))));
+      }
     }
   }
   // past its melting point it melts; below it, it sets (a degree either side, so it does not flicker)

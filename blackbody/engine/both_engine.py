@@ -126,6 +126,8 @@ class BothEngine:
             changed = True
         if self._prepare_strands(scene):
             changed = True
+        if self._prepare_heat(scene):
+            changed = True
         self.solver.cloth_hook = self._solver_hook()
         lava_on = scene.has_lava()
         if lava_on:
@@ -230,6 +232,12 @@ class BothEngine:
             u = V._grid(dt).v4(V.capacity, rest_l, quench, rest_w)
             b.run_indirect(k['quench'], [V.parts, V.DENS, L.DENS], u, V.args, 0)
 
+    def _lava_radiates(self, scene, frame):
+        """The lava's glowing surface into the shared radiant sources for the next frame (objheat_engine.py)."""
+        V = self.lava
+        if V is not None and V.dims is not None:
+            self._liquid_radiates(V, float(scene.lava_look(frame).glow_temp), float(scene.look(frame).ambient_k))
+
     def _water_on_fire(self, b, scene, prm, ems, dt):
         """Record, for one substep before the fire steps: the water field the fire reads (with the fuel
         beds soaking, heating and boiling off, and the steam off the lava), and the liquids dragging the
@@ -284,6 +292,7 @@ class BothEngine:
         lprm.rain, lprm.rain_drop = self._rain(scene, frame)
         L = self.liquid
         L._prm = lprm
+        L.force_hook = self.cloth.liquid_hook if self.cloth.active else None   # (cloth pushes the water back)
         V = self.lava if self._lava_on else None
         vprm = None
         lava_k = 1300.0
@@ -310,8 +319,14 @@ class BothEngine:
             poses = solids.advance(scene, frame, fdt, n, couple=self._matter_couple(scene, frame, fdt, self.solver.meshes))
             self._shots_kick(fdt)                # (and what they did to them)
             self._cloth_takes_objects(fdt)
+        # the objects warm and cool (objheat_engine.py); the water and the weather meet them at their own temperatures
+        self._step_heat(scene, frame, fdt, gas=self.solver, liquid=L,
+                        lava=getattr(self, '_lava_field', None) if V is not None else None, water_thermal=bool(lprm.thermal))
+        lprm.collider_temps = self._object_temps_c(scene, lprm.collider_temps)
         moving = scene.colliders_animated() or bool(solids)
         wprm = scene.weather_params(frame) if (self._wx_on and self.weather is not None) else None
+        if wprm is not None:
+            wprm.collider_temps = self._object_temps_c(scene, wprm.collider_temps)
         filled = getattr(self, '_filled', None)
         if filled is None:
             filled = self._filled = set()
@@ -338,6 +353,7 @@ class BothEngine:
         if shot:
             dust = [a + b for a, b in zip(dust or [[]] * n, shot)]
         with self.gpu.batch() as b:
+            self._build_radiant(b, scene, frame, gas=self.solver)   # (what radiates heat this frame: radiant.py)
             self._footage_solid(b, scene, frame)
             if burning:
                 self.piece_fire.splat(b, self.solver)
@@ -347,6 +363,8 @@ class BothEngine:
             regions = solids.regions(scene) if solids else []
             if regions:
                 L.clear_float(b)
+                if V is not None:
+                    V.clear_float(b)
             for i in range(n):
                 fs = frame - 1 + (i + 0.5) / n
                 dt = fdt / n
@@ -355,7 +373,10 @@ class BothEngine:
                 srcs = scene.sources_gpu(fs, filled)
                 if V is not None:
                     vprm.clock = lprm.clock
+                    # (the lava meets broken objects' pieces and the sand, snow and mud as the water does)
+                    V.pieces_step = self._solids_step(self.body_field_for('liquid') if lpieces else None, lmsolid, i)
                     V.step(b, dt, vprm, scene.sources_gpu(fs, self._lava_filled, emits='lava'), cols)
+                    V.pieces_step = None
                     # water the lava has flowed into is displaced (both_displace.wgsl), then the water's solid
                     # ground: its colliders, with the lava over them
                     if self.LAVA_SOLID:
@@ -375,6 +396,8 @@ class BothEngine:
                     L.pieces_step = None
                 if regions:
                     L.float_forces(b, regions, i, dt)
+                    if V is not None:
+                        V.float_forces(b, regions, i, dt)
                 if wprm is not None:
                     self._step_weather(b, scene, frame, wprm, fs, dt, moving)
                 carried = poses[i] if poses else None   # (things attached to falling objects go with them)
@@ -411,16 +434,21 @@ class BothEngine:
         L.lava_heat = self._lava_field if V is not None else None   # (for the liquid's thermal model)
         self.solver.measure()
         L.measure()
+        self._water_heat_back(L)        # (what the water took from each object: objheat_engine.py)
         if wprm is not None:
             self.weather.measure()
             self._weather_surface_ready()
         if V is not None:
             V.measure()
         if regions:
-            solids.liquid_measures(L.read_float(len(regions), n), fdt, n, L.h, lprm.rho)
+            lava = (V.read_float(len(regions), n), vprm.rho) if V is not None else None
+            solids.liquid_measures(L.read_float(len(regions), n), fdt, n, L.h, lprm.rho, lava=lava)
+        if V is not None:
+            self._lava_radiates(scene, frame)
         self._step_matter(scene, frame, fdt, poses, n, self.solver.meshes)
         self._melt_matter(scene, frame, fdt, self.solver, L)
-        self._heat_matter(scene, frame, fdt, self.solver, L)
+        self._heat_matter(scene, frame, fdt, self.solver, L, lava=self._lava_field if V is not None else None)
+        self._heat_back()
         self._wet_matter(fdt, L)
         self.sim_frame = frame
         self.last_substeps = n
@@ -680,6 +708,7 @@ class BothEngine:
                     light.env_strength = float(wlook.env_strength) * 2.0 ** float(wlook.exposure)
                     light.env_image = wlook.sky_image if not wlook.environment else None
                 ssize = r.plate_size if footage else (W, H)
+                self.stage.heat = self._stage_heat(frame, surfaces.colliders)   # (hot objects glow: objheat_engine.py)
                 stage = ptex = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, ssize,
                                                plate_fit=plate_fit, samples=samples, shutter=lshutter, footage=footage,
                                                vol=vol, ground_y=vol.origin[1], frame=frame, objects=objects,

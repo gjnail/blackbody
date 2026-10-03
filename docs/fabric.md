@@ -42,7 +42,7 @@ Sand, snow, mud, jelly and clay cannot pass through cloth, from either side. A s
 
 ## In water
 
-In water (liquid and fire-and-liquid scenes) it is carried by the water's flow and drag, and soaks. Dry cloth floats on the air in its weave; cotton and linen soak through in a second or so, wool and synthetics shed water for a few seconds first; soaked, it sinks slowly by what its fibres weigh more than water. It is seen in front of the water, floating on it, and through it under the surface. *Wet at start* hangs it wet in any scene (1 is dripping wet, a towel just out of the water).
+In water (liquid and fire-and-liquid scenes) it is carried by the water's flow and drag, and pushes the water back as much as the water pushes it: a sheet swept through a tank shoves the water ahead of it and leaves a wake, and a net held across a stream slows the flow through it. It soaks. Dry cloth floats on the air in its weave; cotton and linen soak through in a second or so, wool and synthetics shed water for a few seconds first; soaked, it sinks slowly by what its fibres weigh more than water. It is seen in front of the water, floating on it, and through it under the surface. *Wet at start* hangs it wet in any scene (1 is dripping wet, a towel just out of the water).
 
 ## Wet cloth
 

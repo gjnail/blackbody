@@ -123,8 +123,12 @@ class Body:
     throw: np.ndarray = field(default_factory=lambda: np.zeros(3))   # Thrown at (m/s), given when it is let go
     spin: np.ndarray = field(default_factory=lambda: np.zeros(3))    # Spinning at (rad/s, world axes)
     pivot: np.ndarray = None    # the fixed point a hinge or a ball joint turns it about (world), if any: it spins about that
+    rho_l: float = 0.0          # the density of the liquid it was last in (kg/m^3; 0: the scene's), water or lava
+    liquid_drag: float = 1.0    # times the drag of water the liquid it is in has on it (lava: LAVA_DRAG)
 
 
+LAVA_DRAG = 12.0        # lava's drag on what sits in it, times water's (a thousand times as viscous: things in it move
+                        # with it, and sink or rise slowly)
 CLOTH_HZ = 12.0         # a thing lying on cloth springs on it at about this rate (contact stiffness from its mass):
                         # it sinks g / (2 pi f)^2 = 1.7 mm into its margin
 CLOTH_DAMPING = 0.7     # and damped this much of critically, for a thing that does not bounce (by its own bounce, less)
@@ -2750,11 +2754,12 @@ class Solids:
                 fb = bd.fb
                 fb.pos = d.xipos[bid].copy()
                 fb.quat = xyzw(d.xquat[bid])
-                f_hyd, t_hyd = fb.buoyancy(wl, self.rho)
-                m_tot = mass + 0.5 * self.rho * bd.volume * sub
-                kk = self.rho * self.gravity * fb.area if 0.0 < sub < 1.0 else 0.0
+                rho = bd.rho_l or self.rho
+                f_hyd, t_hyd = fb.buoyancy(wl, rho)
+                m_tot = mass + 0.5 * rho * bd.volume * sub
+                kk = rho * self.gravity * fb.area if 0.0 < sub < 1.0 else 0.0
                 c = 2.0 * 0.35 * math.sqrt(kk * m_tot) if kk > 0 else 0.0
-                drag = 1.5 * sub + 0.05
+                drag = (1.5 * sub + 0.05) * bd.liquid_drag
                 grav = np.array([0.0, -mass * self.gravity, 0.0])
                 F = f_hyd + f_dyn + grav
                 F[1] -= c * v[1]
@@ -3091,13 +3096,22 @@ class Solids:
                 out.append((enabled.index(bd.index), r))
         return out
 
-    def liquid_measures(self, measures, frame_dt, substeps, h, rho):
-        """Take in the liquid's push on every body over the last frame (LiquidSolver.read_float), for the next."""
+    def liquid_measures(self, measures, frame_dt, substeps, h, rho, lava=None):
+        """Take in the liquid's push on every body over the last frame (LiquidSolver.read_float), for the next. lava:
+        the lava's measures and density as well (a fire-and-liquid box with lava): a body takes the push of the one it
+        sits deeper in, so a log floats high on lava, a rock sinks slowly through it and a steel weight goes down."""
         self.rho = float(rho)
         dt_sub = frame_dt / max(1, substeps)
-        for bd, m in zip(self.bodies, measures):
+        lava_m, lava_rho = lava if lava is not None else ((), rho)
+        for k, (bd, m) in enumerate(zip(self.bodies, measures)):
             if bd.fb is None:
                 continue
+            bd.rho_l, bd.liquid_drag = self.rho, 1.0
+            lm = lava_m[k] if k < len(lava_m) else None
+            if lm is not None and lm['wet'] and (not m['wet'] or lm['cells'] >= m['cells']):
+                m = lm
+                bd.rho_l, bd.liquid_drag = float(lava_rho), LAVA_DRAG
+            rho = bd.rho_l
             if not m['wet']:
                 bd.hydro = None
                 continue

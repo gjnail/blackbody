@@ -31,7 +31,8 @@ from .solver import MAX_COLLIDERS, MAX_EMITTERS, pack_colliders, pack_emitters
 
 MAX_BODIES = 8192          # matches liq_therm_common.wgsl
 BODY_WORDS = 36
-STATS = 12
+STATS = 28                 # 12, then the heat (J) each of 16 colliders gave the liquid
+FX_E = 4096.0              # liq_therm_common.wgsl
 LF = 333.55                # kJ/kg
 CW = 4.18
 CI = 2.05
@@ -384,7 +385,7 @@ class Thermal:
         cells = int(raw[0])
         st = {'liquid_cells': cells, 'ice_cells': int(raw[1]), 'boiling_cells': int(raw[4]),
               'vapour_g': float(raw[7]) / 4194304.0, 'boiled': int(raw[8]), 'evaporated': int(raw[9]),
-              'boil_heat_j': float(raw[10]) / 256.0}
+              'boil_heat_j': float(raw[10]) / 256.0, 'object_heat_j': raw[12:28].astype(float) / FX_E}
         if cells:
             st['mean_temp'] = float(raw[2]) / 2.0 / cells
             st['max_temp'] = float(raw[5]) / 100.0 - 1000.0

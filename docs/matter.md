@@ -47,6 +47,7 @@ Right-click one in the viewer for *Made of*, *Let go at this frame*, *Pour it fr
 - **Objects.** It piles against objects that stay put, and keyframed ones plough through it (a crate dragged through mud pushes up a bow wave). Things that fall land on it and it holds them up as its strength and their weight say: a wooden crate rests on top of sand where a steel ball of the same size sinks into it, and jelly throws a dropped ball back up. Broken objects' pieces are the same: bricks from a wall knocked onto a heap of sand land on it brick by brick, dent it and are held up by it. Snow, mud, clay and wet sand stick to the objects they touch, each as hard as it really does: packing snow thrown at a wall stays on it (powder snow slides off), mud clings to a crate dragged through it, and dry sand does not stick at all. Matter and the falling objects push each other every few of its steps (a fraction of a millisecond apart), which makes a scene with both slower than either alone: a heap of sand with a crate on it, some half a second a frame.
 - **Cloth.** Fabric is a sheet it cannot get through, from either side. Sand poured onto a sling (a sheet held at its corners) lands on it, heaps in the dip it makes and weighs it down: the cloth sags and settles under the sand as one heavy thing, without bouncing. A sheet dropped onto a heap drapes over it and leaves it standing, since a cloth's weight is nothing to a heap of sand. Where the cloth is pinned it pushes what it moves into.
 - **Blasts.** An explosion (an emitter's *Blast*) throws it away from where it goes off, the surface hardest: a heap of sand near a charge is blown flat.
+- **The wind.** Dry sand, fresh snow, dry leaves, sawdust and ash blow in the wind (Motion › *Wind*, or the fire's own air inside the box) once its friction over them passes the speed that starts their grains moving, as Bagnold measured it (sand at about a 4 to 5 m/s breeze). Their top layer creeps downwind carrying what a wind of that strength really moves (the saltation flux: a few grams a metre a second in a stiff breeze, a few hundred in a gale), so a heap's windward side wears down and its crest moves downwind. Grains thrown into the air (by a blast, a wheel, a fall) are carried by the wind at the speed they settle through still air, so the spray of a blast drifts off on it. The fine part of what the wind moves rises off it as dust, carried by the air as smoke is (a haze of blowing sand off a crest, spindrift streaming off a snow ridge, a cloud round a blast's spray of sand: set Shading › *Smoke colour* to the dust's colour). Damp, wet or soaked sand, packing snow, mud, clay and the melts do not blow.
 - **Water.** In a liquid or fire-and-liquid box the water and the matter push each other. A wave shoves jelly, and jelly floats by the water it puts aside; grains in the water are lighter by it; and water running over sand drags its top along, so a pour digs a crater where it lands and a gully where it runs off.
 
 ![Sand into a sling](media/gif/sand_sling.gif "Sand into a sling: sand poured onto a cotton sheet tied to four posts heaps in the dip it makes, the sheet sagging under its weight.")
@@ -63,7 +64,7 @@ Snow melts where hot gas touches it: in flames a snowball's surface melts away i
 
 ## Things that melt
 
-Wax, chocolate, aluminium and iron have a temperature (Matter › *Temperature*, how hot each body starts). They warm in the fire, from the hot gas next to them and from the fire's radiant heat on the side that faces it, so a bar of chocolate beside a fire softens on that side first. They cool in the air, and much faster in water, and give off their own heat as they glow. Objects at their own temperature (an object's *Temperature*, under Heat) warm or chill what touches them, as fast as the two conduct heat: chocolate on a 150 °C steel plate melts where it sits in moments, and on a wooden board as hot more slowly, while molten iron poured into a cold steel mould chills against its walls and in an earth mould hardly at all. Heat evens out through them, quickly through metal and slowly through wax and chocolate. Past its melting point each melts into a liquid of the same stuff (runny wax and metal, thick melted chocolate) that runs and puddles, and it sets again where it cools below that point. A melt's puddle stays about as deep as its surface tension keeps it.
+Wax, chocolate, aluminium and iron have a temperature (Matter › *Temperature*, how hot each body starts). They warm in the fire, from the hot gas next to them and from the radiant heat on the side that faces it (the fire's, lava's, a hot object's), so a bar of chocolate beside a fire softens on that side first. They cool in the air, and much faster in water, and give off their own heat as they glow, which warms what is round them in turn. Objects warm or chill what touches them, as fast as the two conduct heat, and are warmed or chilled by it ([objects' heat](physics.md#heat)): chocolate on a 150 °C steel plate melts where it sits in moments, and on a wooden board as hot more slowly, while molten iron poured into a cold steel mould chills against its walls (warming them) and in an earth mould hardly at all. The ground takes heat too, as a large body of the floor's material: molten iron poured on concrete chills some 80 °C in its first second where it lies, its top staying bright. In a fire-and-liquid box lava heats what it touches. Heat evens out through them, quickly through metal and slowly through wax and chocolate. Past its melting point each melts into a liquid of the same stuff (runny wax and metal, thick melted chocolate) that runs and puddles, and it sets again where it cools below that point. A melt's puddle stays about as deep as its surface tension keeps it.
 
 Hot metal glows as a blackbody at its temperature: dull red from about 600 °C, orange by 1000 °C, yellow-white over 1300 °C. It glows as bright as a flame that hot (the Look's *Flame temperature*, *Intensity*, *Exposure* and *Dynamic range* set both), and it lights what is round it. Aluminium melts before it glows much, as the real metal does.
 
@@ -95,8 +96,10 @@ Presets: *Sand from a hopper*, *Snowballs at a wall*, *Ball dropped on jelly*, *
 
 ## Limits
 
-- The smoke goes round it but does not move it. The water does not flow through it: it seeps into sand only to soak it,
-  so a sand dam holds the water back until the water soaks through it or goes over it.
+- The smoke goes round it. The dust it gives the air is the gas's smoke, in the scene's one smoke colour, and only
+  inside a fire box (in a liquid scene the wind moves the grains but makes no dust). The water does not flow through
+  it: it seeps into sand only to soak it, so a sand dam holds the water back until the water soaks through it or goes
+  over it.
 - Cloth and matter meet once a frame: the matter meets the cloth where it was at the start of the frame (moving on as
   it was moving), and the cloth feels the matter's push in the next frame. Matter thrown hard at a hanging curtain is
   stopped by it, but the curtain gives way a little late. Matter lying on a cloth stays half a node clear of it.
@@ -108,9 +111,9 @@ Presets: *Sand from a hopper*, *Snowballs at a wall*, *Ball dropped on jelly*, *
 - Up to 15 materials (or colours of them) in a scene at once.
 - Matter sticks to objects but not to the ground. A snowball sticks where it hits, whole: it squashes a little but
   does not splat flat.
-- Objects keep their temperature: a hot pan melts the chocolate in it without cooling down, and molten iron does not
-  warm its mould. The ground takes no heat and gives none. Hot matter's glow lights the stage (the floor, the objects,
-  the footage) but not the smoke or the water.
+- Hot matter in water cools without boiling it: molten iron poured into a pool sets with no steam. Lava pushes the
+  matter in its way aside only as a solid does, not with its weight. Hot matter's glow lights the stage (the floor, the
+  objects, the footage) but not the smoke or the water.
 - A glowing heap glows evenly: coal's lumps and the brighter gaps between them are not drawn.
 - An object's opening that stops flush with the inside of its wall can leave a film there that matter catches on: make
   it a little deeper than the wall.

@@ -34,6 +34,8 @@ The blades are spread evenly over the patch, in tufts a little taller or shorter
 - **Objects.** The ground and every object keep the blades out, and things that move push them aside: a ball rolling through long grass parts it, a crate dropped on a lawn flattens what is under it, and the blades spring back up after them. Grass does not push back: it never slows what moves through it.
 - **Its own spring.** Each blade bends back toward its shape at rest, from the root up, and keeps its length. It sways a little after the wind drops and settles.
 
+It slows the wind in turn, inside the simulation box: the drag on its blades (the area they show the wind, by how they stand and bend) takes speed out of the air within it, so a breeze blows across the top of a field and stalls inside it; a long meadow slows the wind through it by a third or more.
+
 ## Fire
 
 In a fire scene (or fire and liquid) grass catches where the gas is hot enough for long enough, the drier the sooner, and burns down to stubble, its char climbing from the foot as it goes, its tip glowing. As it burns it gives its fuel, heat and smoke to the gas, so the flames it makes light the grass next to it: a fire runs through a dry field by itself, faster downwind and slower to the sides, as a head fire does, and leaves a black, smouldering strip behind. Fresh grass smokes more, and takes a hotter flame for longer to light. Only the grass inside the simulation box can burn.
@@ -51,7 +53,7 @@ Cloth and grass are drawn together, so each hides what is behind it of the other
 ## Limits
 
 - Up to 8 patches and 400,000 blades in a scene (a thick, wide patch is thinned to fit).
-- The blades do not touch each other, sand, snow or cloth; grass does not push back on what moves through it, and does not slow the wind. (Things that fall, broken objects' pieces and people's and cars' parts push it aside; pressed flat by a wheel or a foot it lies down, a track that stands up again over about 40 s.)
+- The blades do not touch each other, sand, snow or cloth, and grass does not push back on what moves through it. It slows the wind only inside the simulation box. (Things that fall, broken objects' pieces and people's and cars' parts push it aside; pressed flat by a wheel or a foot it lies down, a track that stands up again over about 40 s.)
 - Under water grass is not dragged by the current yet (no kelp), and it does not get wet.
 - It grows only on objects that stay put when it is set out, and does not ride on things that move.
 - A cached frame keeps each blade to a 127th of its height.

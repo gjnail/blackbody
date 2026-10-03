@@ -157,6 +157,20 @@ The *Machines* blocks (Create › *Machines*) are a motor cart (four rubber whee
 
 ![Cart off a ramp](media/gif/cart_jump.gif "Cart off a ramp: a burning motor cart races up a 15° ramp, jumps, crashes through a tower of blocks and brakes into a barrier.")
 
+## Heat
+
+Every object has a temperature (Properties › *Heat › Temperature*: how hot it is as it starts) and warms and cools as the real thing would, by what it is made of and how big it is. A steel bar held in a fire's plume heats through in minutes and glows; a log's skin scorches in seconds while its heart stays cold; a red-hot steel ball dropped in water boils the water round it, held off by a film of its own steam at first, and cools to black. An object takes heat from:
+
+- **the air**, or the fire's gas next to it, faster where the gas moves past it;
+- **radiation**: the fire's, glowing matter's, lava's and other hot objects', absorbed as well as its surface radiates (oxidised steel well, bare aluminium hardly). One list of what radiates serves objects, cloth and matter alike;
+- **what it touches**: the ground (as the floor's material takes heat: concrete faster than wooden boards), other objects (a pan on a hot plate), water (with Liquid › *Heat and phase changes* on, through the boiling curve), lava, and wax, chocolate, metal, sand and snow;
+
+and gives it back the same ways: it radiates, heats the air next to it (a shimmering plume rises off a hot bar and lights what burns above it), and warms or chills what touches it. Its surface and its inside each have a temperature: steel's even out within seconds, a log's or a brick's slowly.
+
+*Keeps its temperature* holds an object at its Temperature, as something the shot does not show would: a hot plate on its element, a stove, ground frozen hard. It still heats and chills what meets it. Scenes saved before objects warmed and cooled open with it on for every object whose Temperature is not 20 °C, so they behave as they did.
+
+Hot, an object glows as a blackbody at its surface's temperature, dull red at about 500 °C, orange by 1000 °C, as bright as its emissivity lets it, and its glow lights what is round it. Heat runs as fast as it really does, times Domain › *Heat speed* (as for sand, snow and the things that melt): 4 unless set. Preset: *Red-hot steel quenched* (Ice and steam).
+
 ## How they look
 
 Without footage, objects are drawn in CG in their materials (wood, stone, brick and so on), lit in the same light as the smoke: the key light with soft shadows, the sky (darker in corners and under things), the fire's own light with shadows, and the lights in the set. Glass and ice are clear: you see the fire and the set through them, bent, and the sky in them. *Own colour* draws one in a colour of its own. What fire does to a burnable object shows: it browns as it heats, blackens as it burns, with embers glowing in its char, then greys with ash and dies down to a dull red smoulder. The floor where it has burnt (Spreading fire, *Ground*) blackens the same way.
@@ -172,6 +186,9 @@ CG objects go over the footage lit by the shot's light, and their shadows darken
 ![CG objects in the footage](media/img/cg-in-footage.jpg "A CG crate and ball (they fall, so they are CG) beside a fire in a shot: lit by the fire and the key light, with their shadows on the real ground.")
 
 ## Limits
+
+- An object's heat is two temperatures, its surface's and its inside's, each one all over: a bar held in a fire by one end warms along its whole length, and glows evenly.
+- Objects meet the ground and each other where their surfaces come within 6 mm; a mesh meets them, and the air and the radiation, by its bounding box.
 
 - A scene holds up to 16 objects in all, falling or not (a broken one's pieces do not count: there can be hundreds).
 - A broken mesh's pieces are convex, so a hollow or a dent in one is filled in (whole, it is drawn as itself).

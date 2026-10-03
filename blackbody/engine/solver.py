@@ -419,6 +419,7 @@ class Solver:
     def _release(self):
         for t in self._tex + self._opt + self._fine:
             t.destroy()
+        self.svel = None            # (made in _tex: gone with it)
         self._tex = []
         self._opt = []
         self._fine = []

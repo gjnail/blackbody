@@ -271,9 +271,37 @@ Notable changes to Blackbody. The format follows
 - Contributor guide, code of conduct, security policy, issue and pull request
   templates, and CI that checks Windows, macOS and Linux.
 - Ko-fi links in the README and on the website.
+- Objects have heat. Every object warms and cools as the real thing would, by what it is made of (its heat
+  capacity and emissivity, new in the materials) and its size, a temperature for its surface and one for its inside:
+  steel evens out in seconds, a log's skin scorches while its heart stays cold. It takes heat from the air or the
+  fire's gas moving past it, from what radiates (the fire, glowing matter, lava, other hot objects), from the ground
+  (as fast as the floor's material takes heat), from what it touches (other objects, water with Heat and phase changes
+  on, lava, sand, snow, wax and chocolate), and gives it back the same ways: it radiates, a plume of hot air rises off
+  it, and it warms or chills what it touches. Hot, it glows as a blackbody (dull red at about 500 C, orange by 1000 C)
+  and lights what is round it. Heat › Keeps its temperature holds one where it is (a hot plate, frozen ground);
+  Domain › Heat speed runs it faster. Preset: Red-hot steel quenched (a glowing steel ball dropped into water).
+- One list of what radiates heat, shared by objects, cloth and matter: the fire's gas at its physical temperature,
+  glowing matter and lava, and hot objects' faces.
+- Wind moves sand, snow, leaves, sawdust and ash: past its threshold the wind lifts the top layer and drives it along
+  (saltation, Kawamura's flux, within twice what is measured), airborne grains are dragged by it and settle at their
+  own speed, and dusty matter throws dust into the smoke (fire scenes).
+- Grass slows the wind blowing through it, by its blades' frontal area.
+- Lava (fire-and-liquid scenes) meets broken pieces and sand, snow and mud, floats or sinks objects by its density,
+  heats matter and objects, and radiates its heat.
+- Cloth pushes water: the drag a sheet feels from water goes back into the water.
+
+### Changed
+
+- Matter's heat from radiation is now the physical one (it was about 15 times too strong), so things melt by the fire
+  as slowly as they really do; Chocolate by the fire is retuned to match. Matter conducts to objects and the ground as
+  two bodies in contact do (fast at first, slowing), and the ground conducts.
+- Objects now warm and cool by default; presets with heaters, frozen ground or dry ice keep their temperature, and
+  scenes saved before open with Keeps its temperature on for every object whose temperature is not 20 C.
 
 ### Fixed
 
+- Running scenes one after another: a scene the size of the last drew on the last one's solid velocity, destroyed
+  with it (an error), and a frame cut short so left the sand holding the last scene's fabric (the next one failed).
 - Broken joints were marked whole again every step, so things breaking threw up twice the dust.
 - An object's outline in the fire render is its own silhouette: rays that only passed within a third of a fire-grid
   cell of a ball, box or cylinder counted as hitting it, so the cloth behind it was hidden in a band round it (a

@@ -41,6 +41,9 @@ struct Params {
 @group(0) @binding(12) var LTYPE: texture_3d<f32>;   // its cells: 0 air, 1 liquid, 2 solid
 @group(0) @binding(13) var<storage, read> MP: array<vec4<f32>>;   // the matter's push on each vertex (N: cloth_matter.wgsl),
                                                                    // the mass riding on it (kg)
+@group(0) @binding(15) var<storage, read_write> LIMP: array<vec4<f32>>;   // momentum it took from the liquid (kg m/s),
+                                                                         // gathered until the liquid takes it back
+                                                                         // (cloth_liquid.wgsl)
 @group(0) @binding(14) var<storage, read> OP: array<vec4<f32>>;   // the push of things lying on it or hitting it this frame
                                                                    // (N: solids.py), the mass riding on it (kg)
 @group(1) @binding(0) var<uniform> U: Params;
@@ -164,8 +167,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let kt = 0.5 * rho * mat.b.y * length(vt) * area / mass;
     let dv = n * (vn * (1.0 - exp(-kn * dt))) + vt * (1.0 - exp(-kt * dt));
     v += dv;
-    // what the cloth gains from the air, the air loses (cloth_air.wgsl gives it back to the gas)
+    // what the cloth gains from the air, the air loses (cloth_air.wgsl gives it back to the gas), and the water what
+    // it gains from the water (cloth_liquid.wgsl)
     IMP[i] = vec4<f32>(IMP[i].xyz - dv * mass * (1.0 - sub), IMP[i].w);
+    if (sub > 0.0) { LIMP[i] = vec4<f32>(LIMP[i].xyz + dv * mass * sub, 0.0); }
   }
   v *= exp(-mat.a.y * dt);
   // and where it carries matter, the grains' friction takes the swing out of it (a sling of sand does not bounce)

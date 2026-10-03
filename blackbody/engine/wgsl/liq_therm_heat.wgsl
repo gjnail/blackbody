@@ -14,6 +14,9 @@
 //   cells are a hot surface.
 // - Steam bubbles that collapsed in cooler liquid last step give their latent heat back.
 //
+// What each collider gives the liquid (or takes from it) is added up for its own heat (objheat.py): a red-hot
+// bar dropped in boils the water round it and cools as it does.
+//
 // Linear exchanges (conduction to walls and air, radiation) are capped at bringing the cell to the
 // temperature they pull it toward, so no step overshoots; conduction between cells is limited to a
 // stable share per step. Everything but the collapse of bubbles runs at the heat speed-up.
@@ -51,16 +54,17 @@ struct Params {
 
 fn collider_temp(k: u32) -> f32 { return U.ctemp[k / 4u][k % 4u]; }
 
-// Temperature (C) of the solid at world point w: the nearest collider's, or the ground's.
-fn solid_temp(w: vec3<f32>) -> f32 {
+// Temperature (C) of the solid at world point w: the nearest collider's, or the ground's; and which collider (-1 the
+// ground).
+fn solid_temp(w: vec3<f32>) -> vec2<f32> {
   var best = U.g.n.w;
-  var T = U.th.b.z;
+  var T = vec2<f32>(U.th.b.z, -1.0);
   let cnt = u32(U.ccnt.x);
   for (var k = 0u; k < cnt; k++) {
     let d = col_sdf(U.col[k], w);
     if (d < best) {
       best = d;
-      T = collider_temp(k);
+      T = vec2<f32>(collider_temp(k), f32(k));
     }
   }
   return T;
@@ -235,16 +239,24 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // each (every surface counted once, however the cells straddle it)
   let sd_c = textureLoad(sdf, c, 0).x;
   if (sd_c >= 0.0 && sd_c < 1.0) {
-    let Tw = solid_temp(wp);
+    let st = solid_temp(wp);
+    let Tw = st.x;
     let hn = select(220.0 * pow(abs(Tw - T), 1.0 / 3.0), 2.0 * K_ICE / h, F > 0.5);
     let bf = boil_flux(Tw - Tb, Tw, Tb);
+    var q_col = 0.0;     // W from the collider
     if (F <= 0.5 && bf.x > hn * max(Tw - T, 0.0)) {
       Qx += bf.x * A1;
       q_boil += bf.x * A1;
+      q_col = bf.x * A1;
       if (bf.y > 1.5) { film = 1.0; } else { superheat = max(superheat, Tw - Tb); }
     } else {
       G += hn * A1;
       GT += hn * A1 * Tw;
+      q_col = hn * A1 * (Tw - T);
+    }
+    if (st.y >= 0.0) {
+      let oi = 3u * u32(U.r.x) + 2u * u32(U.r.y) + 12u + u32(st.y);
+      atomicAdd(&gacc[oi], i32(round(clamp(q_col * dts * FX_E, -2.0e9, 2.0e9))));
     }
   }
 

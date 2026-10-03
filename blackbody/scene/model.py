@@ -1444,6 +1444,8 @@ class Scene:
                 for k, v in c.items():
                     if k in x:
                         x[k] = _from_json_value(param('collider', k), v)
+                if 'keeps_temperature' not in c and float(c.get('temperature', 20.0)) != 20.0:
+                    x['keeps_temperature'] = True   # (saved before objects warmed and cooled: they held their heat)
                 s.colliders.append(x)
         s.lights = []
         for l in d.get('lights', []):

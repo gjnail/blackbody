@@ -65,11 +65,13 @@ const F_SHOTS: bool = ${F_SHOTS};   // (what bullets leave: marks and bores, mar
 const F_WOOD: bool = ${F_WOOD};     // (wood, by its species: wood.wgsl)
 const F_WATER: bool = ${F_WATER};   // (Lume traces the water: lume_water.wgsl)
 const F_CHAR: bool = ${F_CHAR};     // (something burns: char, its cracks and their glow, burnt_at)
+const F_HEAT: bool = ${F_HEAT};     // (hot objects glow: hot_glow, objheat.py)
 
 struct Mat {
   c: vec4<f32>,   // albedo (linear rgb), roughness
   d: vec4<f32>,   // metal (0..1), clear (share of light through it), pattern, drawn (0 not in the shot, 1 in the footage, 2 CG)
   e: vec4<f32>,   // colour of broken faces (linear rgb), index of refraction
+  f: vec4<f32>,   // an object's heat (objheat.py): its surface temperature (K), its emissivity; 0: cold
 };
 
 struct Lamp { p: vec4<f32>, c: vec4<f32>, d: vec4<f32>, e: vec4<f32> };
@@ -200,6 +202,19 @@ fn obj(i: i32) -> Collider {
 }
 
 // ---- the matter -----------------------------------------------------------------------------------------
+
+// A hot object (or a piece of one) glows as a blackbody at its surface temperature, as bright as its emissivity lets it
+// (a material row's f: objheat.py). Its light on what is round it is among the hot-matter lights (ML, stage.py).
+fn hot_glow(s: Surf, row: i32) -> Surf {
+  var o = s;
+  if (row < 0 || row >= ROPE_ROW) { return o; }
+  let mf = U.mat[row].f;
+  if (mf.x > U.mg.z) {
+    o.em += mf.y * matter_glow(mf.x);
+    o.self_glow = 1.0;
+  }
+  return o;
+}
 
 // The light of matter at T (K): a blackbody, from the table (U.mgb), in the stage's units (U.mg.y at 1300 K).
 fn matter_glow(T: f32) -> vec3<f32> {
@@ -1346,6 +1361,7 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
       }
       s = burnt_at(s, bb, q);
     }
+    if (F_HEAT) { s = hot_glow(s, row); }
     return s;
   }
   let k = obj(h.id);
@@ -1375,6 +1391,7 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
     let slot = slots[i32(k.m2.w)];
     s = burnt(s, obj_burn_at(k, slot, s.p + s.n * (0.75 * slot.dims.w)));
   }
+  if (F_HEAT) { s = hot_glow(s, h.id); }
   return s;
 }
 

@@ -185,6 +185,14 @@ class Strands:
         self.k_sclear = g.kernel('strand_splat.wgsl', ['rbuf', 'rbuf', 'rbuf', 'rbuf', 'buf'], entry='clear', workgroup=(64, 1, 1))
         self.k_splat = g.kernel('strand_splat.wgsl', ['rbuf', 'rbuf', 'rbuf', 'rbuf', 'buf'], entry='splat', workgroup=(64, 1, 1))
         self.k_feed = g.kernel('cloth_feed.wgsl', ['utex3d', 'rbuf', 'st3d:rgba16float:w'], workgroup=(4, 4, 4))
+        cres = ['rbuf', 'rbuf', 'rbuf', 'buf']
+        self.k_cclear = g.kernel('strand_canopy.wgsl', cres, entry='clear', workgroup=(64, 1, 1))
+        self.k_canopy = g.kernel('strand_canopy.wgsl', cres, entry='splat', workgroup=(64, 1, 1))
+        vf = g.vel_format
+        self.k_drag = g.kernel('strand_drag.wgsl', ['utex3d', 'rbuf', f'st3d:{vf}:w'], defines={'VELFMT': vf}, workgroup=(4, 4, 4))
+        self.CA = None              # the canopy: blade area per coupling cell (strand_canopy.wgsl), for the wind's drag
+        self.canopy_dims = None
+        self._canopy_filled = False
         mres = ['rbuf', 'rbuf', 'rbuf', 'buf', 'st2d:rgba16float:w']
         self.k_mclear = g.kernel('strand_map.wgsl', mres, entry='clear', workgroup=(64, 1, 1))
         self.k_msplat = g.kernel('strand_map.wgsl', mres, entry='splat', workgroup=(64, 1, 1))
@@ -250,6 +258,7 @@ class Strands:
 
     def reset(self):
         """Grow again (place()) at the next step."""
+        self._canopy_filled = False
         self.placed = False
         self.time = 0.0
 
@@ -302,10 +311,18 @@ class Strands:
     # -- the fire it feeds ------------------------------------------------------------------------------
 
     def prepare_frame(self, solver):
-        """Size the coupling grid for the solver's grid (before a frame's commands are recorded)."""
-        if not self.active or not self.burns or solver is None or solver.dims is None:
+        """Size the coupling grids for the solver's grid (before a frame's commands are recorded)."""
+        if not self.active or solver is None or solver.dims is None:
             return
         cd = tuple(int(math.ceil(d / 2)) for d in solver.dims)
+        if cd != self.canopy_dims or self.CA is None:
+            if self.CA is not None:
+                self.CA.destroy()
+            self.CA = self.gpu.buffer(int(np.prod(cd)) * 4, 'strands-canopy')
+            self.canopy_dims = cd
+            self._canopy_filled = False
+        if not self.burns:
+            return
         if cd != self.couple_dims or self.G is None:
             if self.G is not None:
                 self.G.destroy()
@@ -332,8 +349,30 @@ class Strands:
         b.run(self.k_splat, res, u, (self.n, 1, 1))
         self._couple_filled = True
 
+    def canopy(self, b, solver):
+        """The blades' area onto the canopy grid as they stand now (strand_canopy.wgsl), for the wind's drag on them."""
+        if not self.active or not self.placed or self.CA is None or solver is None or solver.dims is None:
+            return
+        cd = self.canopy_dims
+        if cd != tuple(int(math.ceil(d / 2)) for d in solver.dims):
+            return
+        cells = int(np.prod(cd))
+        u = Uniforms().v4(self.n, cells).v4(*cd, 2.0 * solver.h).v4(*solver.origin)
+        k = self.bufs
+        res = [k['BL'], k['RT'], k['X'], self.CA]
+        b.run(self.k_cclear, res, u, groups=groups_1d(cells))
+        b.run(self.k_canopy, res, u, groups=groups_1d(self.n))
+        self._canopy_filled = True
+
     def hook(self, b, solver, dt, stage):
-        """Solver.cloth_hook: the burning grass feeds the gas."""
+        """Solver.cloth_hook: the burning grass feeds the gas; the canopy slows the wind through it."""
+        if stage == 'velocity':
+            if self.active and self._canopy_filled and self.canopy_dims == tuple(int(math.ceil(d / 2)) for d in solver.dims):
+                vd = tuple(d + 1 for d in solver.dims)
+                u = Uniforms().v4(*solver.dims, solver.h).v4(*self.canopy_dims, 2.0 * solver.h).v4(dt)
+                b.run(self.k_drag, [solver.vel[0], self.CA, solver.vel[1]], u, vd)
+                solver.vel.reverse()
+            return
         if not self.active or not self._couple_filled or not self._couple_ok(solver):
             return
         cd = self.couple_dims

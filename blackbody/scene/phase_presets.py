@@ -7,7 +7,8 @@ is the air, which carries the vapour off and shows it as steam where it condense
 """
 from __future__ import annotations
 
-PHASE_ORDER = ['ice_cubes', 'ice_melt', 'pond_freeze', 'frozen_pour', 'boiling_pot', 'hot_plate', 'steaming_pool', 'boiling_throw']
+PHASE_ORDER = ['ice_cubes', 'ice_melt', 'pond_freeze', 'frozen_pour', 'boiling_pot', 'hot_plate', 'quench', 'steaming_pool',
+               'boiling_throw']
 
 
 def phase_presets(K):
@@ -94,9 +95,9 @@ def phase_presets(K):
             # just below it. They hold and seed the ice; the night air freezes the pond.)
             'colliders': [
                 dict(name='Banks', shape='mesh', mesh='builtin:pond_basin.png', size=(3.2, 0.4, 2.4),
-                     position=(0.0, -0.03, 0.0), temperature=0.0),
-                dict(name='Rock', shape='sphere', size=(0.14, 0.14, 0.14), position=(-0.35, 0.08, 0.2), temperature=-1.0),
-                dict(name='Stone', shape='sphere', size=(0.08, 0.08, 0.08), position=(0.4, 0.15, -0.25), temperature=-1.0),
+                     position=(0.0, -0.03, 0.0), temperature=0.0, keeps_temperature=True),
+                dict(name='Rock', shape='sphere', size=(0.14, 0.14, 0.14), position=(-0.35, 0.08, 0.2), temperature=-1.0, keeps_temperature=True),
+                dict(name='Stone', shape='sphere', size=(0.08, 0.08, 0.08), position=(0.4, 0.15, -0.25), temperature=-1.0, keeps_temperature=True),
             ],
             'emitters': [
                 dict(name='Pond', shape='box', position=(0.0, 0.1, 0.0), size=(0.8, 0.1, 0.6), start=-1.0, **volume),
@@ -119,7 +120,7 @@ def phase_presets(K):
             # cell's centre leaves a sliver of the cell over it where water is solid to the solver, and
             # water poured into that sliver piles up and freezes there)
             'colliders': [
-                dict(name='Dry ice', shape='box', size=(0.15, 0.03125, 0.12), position=(0.0, 0.03125, 0.0), temperature=-78.0),
+                dict(name='Dry ice', shape='box', size=(0.15, 0.03125, 0.12), position=(0.0, 0.03125, 0.0), temperature=-78.0, keeps_temperature=True),
             ],
             'emitters': [
                 dict(name='Pour', shape='cylinder', position=(-0.07, 0.34, 0.0), size=(0.015, 0.01, 0.015),
@@ -146,9 +147,9 @@ def phase_presets(K):
                 # walls, heated only by the water, at the water's temperature
                 # (walls thicker than a real pot's so the grid holds them: a wall thinner than two cells leaks)
                 dict(name='Pot', shape='cylinder', size=(0.108, 0.065, 0.108), position=(0.0, 0.065, 0.0), hollow=0.012,
-                     opening=(0.12, 0.02, 0.12), opening_at=(0.0, 0.065, 0.0), temperature=100.0),
+                     opening=(0.12, 0.02, 0.12), opening_at=(0.0, 0.065, 0.0), temperature=100.0, keeps_temperature=True),
                 dict(name='Pot base', shape='cylinder', size=(0.094, 0.004, 0.094), position=(0.0, 0.016, 0.0),
-                     temperature=110.0),
+                     temperature=110.0, keeps_temperature=True),
             ],
             'emitters': [
                 dict(name='Water', shape='cylinder', position=(0.0, 0.058, 0.0), size=(0.094, 0.038, 0.094), start=-1.0,
@@ -172,14 +173,44 @@ def phase_presets(K):
             'lighting': dict(indoor),
             'camera': {'distance': 1.0, 'target_y': 0.03, 'pitch': 28, 'yaw': 0, 'anchor_x': 0.5, 'anchor_y': 0.62, 'focal_mm': 40},
             'colliders': [
-                dict(name='Plate 150 C', shape='box', size=(0.2, 0.01, 0.2), position=(-0.22, 0.01, 0.0), temperature=150.0),
-                dict(name='Plate 300 C', shape='box', size=(0.2, 0.01, 0.2), position=(0.22, 0.01, 0.0), temperature=300.0),
+                dict(name='Plate 150 C', shape='box', size=(0.2, 0.01, 0.2), position=(-0.22, 0.01, 0.0), temperature=150.0, keeps_temperature=True),
+                dict(name='Plate 300 C', shape='box', size=(0.2, 0.01, 0.2), position=(0.22, 0.01, 0.0), temperature=300.0, keeps_temperature=True),
             ],
             'emitters': [
                 dict(name='Splash left', shape='sphere', position=(-0.3, 0.13, 0.0), size=(0.028, 0.028, 0.028),
                      velocity=(0.9, -0.6, 0.0), radial=0.4, start=0.1, emits='liquid', **volume),
                 dict(name='Splash right', shape='sphere', position=(0.14, 0.13, 0.0), size=(0.028, 0.028, 0.028),
                      velocity=(0.9, -0.6, 0.0), radial=0.4, start=0.1, emits='liquid', **volume),
+            ],
+        },
+        'quench': {
+            'name': 'Red-hot steel quenched', 'category': 'Ice and steam', 'size': '7 cm steel ball at 1100 C, 36 cm tank',
+            'blurb': 'A ball of white-hot steel (1100 C) dropped into a tank of cold water in a dim workshop. The water flashes to steam round it '
+                     'and a film of vapour holds it off the steel (film boiling); as the steel cools the film breaks and the '
+                     'water boils hard against it, and steam pours off the surface. Its glow fades from orange to dull red '
+                     'to nothing as the water takes its heat (Heat speed 12: about twelve times quicker than for real).',
+            'domain': {'kind': 'both', 'size_x': 0.5, 'size_y': 0.5, 'size_z': 0.36, 'resolution': 128, 'preroll': 0.5,
+                       'substeps_max': 14, 'cfl': 1.5, 'matter_heat_speed': 12.0},
+            'combustion': dict(air_box, vapour_dissipation=1.0),
+            'motion': {'buoyancy': 2.0, 'turbulence': 0.6, 'turb_freq': 12.0, 'vorticity': 1.0},
+            'shading': {'ambient_k': 294.0, 'humidity': 60.0, 'steam_density': 0.45, 'detail': 0.3, 'detail_freq': 30.0},
+            'liquid': {'thermal': True, 'liquid_temp': 18.0, 'ground_temp': 20.0, 'heat_speed': 12.0, 'ww_min_speed': 0.6,
+                       'bubble_size': 3.0},
+            'water': {'backdrop': 1.5, 'clarity': 4.0, 'color': (0.82, 0.94, 0.95), 'bubbles': 1.2, 'ripple': 0.15,
+                      'ripple_freq': 80.0, 'colliders_look': 'holdout'},
+            # (drawn on the stage: the tank in glass and the steel in CG, glowing as hot as it is: objheat.py)
+            'composite': {'backdrop': 'stage', 'floor': 'concrete'},
+            'lighting': {**indoor, 'sun_intensity': 0.35, 'ambient_intensity': 0.35},   # (a dim workshop: the glow shows)
+            'camera': {'distance': 0.85, 'target_y': 0.1, 'pitch': 48, 'yaw': 15, 'anchor_x': 0.5, 'anchor_y': 0.55, 'focal_mm': 35},
+            'colliders': [
+                dict(name='Tank', shape='box', size=(0.18, 0.1, 0.13), position=(0.0, 0.1, 0.0), hollow=0.014,
+                     opening=(0.17, 0.02, 0.12), opening_at=(0.0, 0.1, 0.0), material='glass'),
+                dict(name='Steel ball', shape='sphere', size=(0.035, 0.035, 0.035), position=(0.02, 0.36, 0.0),
+                     material='steel', temperature=1100.0, dynamic=True, release=0.6),
+            ],
+            'emitters': [
+                dict(name='Water', shape='box', position=(0.0, 0.078, 0.0), size=(0.164, 0.064, 0.114), start=-0.5,
+                     emits='liquid', **volume),
             ],
         },
         'steaming_pool': {

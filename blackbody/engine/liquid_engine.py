@@ -76,6 +76,8 @@ class LiquidEngine:
             changed = True
         if self._prepare_strands(scene):
             changed = True
+        if self._prepare_heat(scene):
+            changed = True
         if self.kind != 'liquid':
             self.kind = 'liquid'
             changed = True
@@ -242,6 +244,7 @@ class LiquidEngine:
             prm.damping = 0.0   # a sea is never still: settling would only calm its waves in the box
         prm.rain, prm.rain_drop = self._rain(scene, frame)
         L._prm = prm
+        L.force_hook = self.cloth.liquid_hook if self.cloth.active else None   # (cloth pushes the water back)
         # surface tension can demand more substeps than the domain allows: stability comes first
         hi = min(40, max(d['substeps_max'], L.capillary_substeps(fdt)))
         n = L.substeps_for(fdt, cfl=d['cfl'], lo=d['substeps_min'], hi=hi)
@@ -259,12 +262,20 @@ class LiquidEngine:
             self._shots_kick(fdt)                # (and what they did to them)
         if solids:
             self._cloth_takes_objects(fdt)
+        # the objects warm and cool (objheat_engine.py); the water and the weather meet them at their own temperatures
+        lava_k = float(scene.water_look(frame).glow_temp) if prm.cooling > 0.0 else 0.0
+        if self._heat_on():
+            self._objheat.liquid_lava_k = lava_k
+        self._step_heat(scene, frame, fdt, liquid=L, water_thermal=bool(prm.thermal))
+        prm.collider_temps = self._object_temps_c(scene, prm.collider_temps)
         moving = scene.colliders_animated() or bool(solids)
         filled = getattr(self, '_filled', None)
         if filled is None:
             filled = self._filled = set()
         shift = self._follow_shift(scene, frame - 1, solids)
         wprm = scene.weather_params(frame) if (self._wx_on and self.weather is not None) else None
+        if wprm is not None:
+            wprm.collider_temps = self._object_temps_c(scene, wprm.collider_temps)
         cloth = self.cloth.active
         if cloth:
             # fabric in the liquid (cloth.py): its drag and buoyancy, and it soaks
@@ -281,6 +292,7 @@ class LiquidEngine:
             gwind = tuple(scene.liquid_wind(frame))
             ggust = float(scene.data['weather'].get('gust', 0.3)) if 'weather' in scene.data else 0.3
         with self.gpu.batch() as b:
+            self._build_radiant(b, scene, frame, box=L)   # (what radiates heat this frame: radiant.py)
             msolid = self._matter_solid(b, L, 'liquid')   # (sand, snow and mud: solid to the water)
             if shift != (0, 0):
                 L.shift(b, *shift, prm)
@@ -315,6 +327,9 @@ class LiquidEngine:
                 self.weather.pack(b)
             self._step_ocean_layer(b, scene, frame, prm, fdt)
         L.measure()
+        self._water_heat_back(L)        # (what the water took from each object: objheat_engine.py)
+        if lava_k > 0.0:
+            self._liquid_radiates(L, lava_k, float(scene.look(frame).ambient_k))   # (the scene's own lava glows)
         if wprm is not None:
             self.weather.measure()
             self._weather_surface_ready()
@@ -323,6 +338,7 @@ class LiquidEngine:
         self._step_matter(scene, frame, fdt, poses, n, self.solver.meshes)
         self._melt_matter(scene, frame, fdt, None, L)
         self._heat_matter(scene, frame, fdt, None, L)
+        self._heat_back()
         self._wet_matter(fdt, L)
         self.sim_frame = frame
         self.last_substeps = n
@@ -652,6 +668,7 @@ class LiquidEngine:
                     light.env_strength = float(look.env_strength) * 2.0 ** float(look.exposure)
                     light.env_image = look.sky_image if not look.environment else None
                 size = r.plate_size if footage else (W, H)
+                self.stage.heat = self._stage_heat(frame, vol.colliders)   # (hot objects glow: objheat_engine.py)
                 stage = ptex = self.stage.draw(b, r, scene, cs, fire, vol.colliders, vol.meshes, light, comp, size,
                                                plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage,
                                                ground_y=vol.origin[1], frame=frame, objects=objects,

@@ -45,9 +45,11 @@ MAX_PIECES = 4096         # broken objects' pieces the matter can tell apart (wh
 HEAT_SPEED = 4.0          # matter takes on and gives off heat this many times faster than for real, unless the scene
                           # says (Domain > Heat speed): melting in seconds
 HEAT_CONVECTION = 50.0    # W/m^2/K: the air (or the fire's gas) flowing past its surface
-HEAT_BLOCK = 4            # the gas's cells to a heat source (a block of them), for the fire's radiant heat
-HEAT_LIGHTS = 512         # the most heat sources
-FLAME_ABSORPTION = 1.0    # 1/m: how strongly the fire's hot gas absorbs, and so radiates (a sooty flame)
+HEAT_BLOCK = 4            # (unused: the fire's radiant heat is the shared radiant sources', radiant.py)
+HEAT_LIGHTS = 512
+FLAME_ABSORPTION = 1.0
+OBJECT_J = 256.0          # mpm_heat.wgsl FX_OJ: the heat each object gives the matter it touches, fixed point (J)
+LAVA_EFFUSIVITY = 2200.0  # W s^0.5/m^2/K: basalt melt's (k 1.5, rho 2600, c 1200), for the heat it gives what it touches
 SURF_SMOOTH = 2           # passes smoothing the surface
 
 # The heap sand poured onto the ground makes (its angle of repose: atan of its height over its radius) for the friction
@@ -103,6 +105,14 @@ class MatterMaterial:
     burns_to: str = ''          # what is left (nothing: it is gone)
     flames: float = 0.0         # how much fuel it gives the fire as it burns (1: as grass does)
     ash_share: float = 0.0      # the share of it left as ash once it has burnt (the rest is gone: a heap burns down)
+    blows_at: float = 0.0       # m/s: the friction speed of the wind over it that starts moving its grains (Bagnold's
+                                # threshold: dry sand 0.23, fresh snow 0.2); 0: the wind does not move it (damp, sticky,
+                                # solid)
+    settles_at: float = 0.0     # m/s: how fast its grains fall through still air (sand 2, snow 0.6, ash 0.3): how readily
+                                # the air carries them once they are off the ground; 0: the air does not slow them
+    grain: float = 0.0          # m: the size of its grains (the wind's roughness over it is a thirtieth of it)
+    dusty: float = 0.0          # the share of what the wind moves that is fine enough to hang in the air as dust (sand a
+                                # few hundredths, snow's spindrift a good part, ash all of it)
 
     @property
     def mu(self):
@@ -124,14 +134,14 @@ class MatterMaterial:
 
 MATTERS = {m.key: m for m in (
     MatterMaterial('sand', 'Sand', 'sand', 3.5e5, 0.3, 1600.0, friction=0.5, angle=34.0, colour=(0.55, 0.42, 0.25),
-                   roughness=0.95, sparkle=0.6, variation=0.3),
+                   roughness=0.95, sparkle=0.6, variation=0.3, blows_at=0.23, settles_at=2.0, grain=0.00025, dusty=0.03),
     MatterMaterial('wet_sand', 'Wet sand', 'sand', 3.5e5, 0.3, 1900.0, friction=0.7, angle=38.0, cohesion=0.004,
                    colour=(0.23, 0.17, 0.1), roughness=0.55, sparkle=0.2, variation=0.25, sticks=300.0),
     # (sand the water has soaked through: its grains let go of each other. What wet sand under the water becomes)
     MatterMaterial('soaked_sand', 'Soaked sand', 'sand', 3.5e5, 0.3, 2000.0, friction=0.45, angle=30.0,
                    colour=(0.2, 0.145, 0.085), roughness=0.3, sparkle=0.1, variation=0.25),
     MatterMaterial('snow', 'Snow', 'snow', 1.4e5, 0.2, 400.0, friction=0.3, theta_c=0.025, theta_s=0.0075, xi=10.0, h_max=3.0,
-                   colour=(0.85, 0.88, 0.92), roughness=0.8, sparkle=1.0, wrap=0.6, variation=0.04, sticks=200.0),
+                   colour=(0.85, 0.88, 0.92), roughness=0.8, sparkle=1.0, wrap=0.6, variation=0.04, sticks=200.0, blows_at=0.2, settles_at=0.6, grain=0.001, dusty=0.4),
     MatterMaterial('packing_snow', 'Packing snow', 'snow', 2.5e5, 0.2, 600.0, friction=0.4, theta_c=0.019, theta_s=0.0075,
                    xi=10.0, h_max=3.0, colour=(0.8, 0.83, 0.87), roughness=0.7, sparkle=0.6, wrap=0.5, variation=0.04,
                    sticks=700.0),
@@ -154,15 +164,15 @@ MATTERS = {m.key: m for m in (
     MatterMaterial('leaves', 'Dry leaves', 'sand', 2.0e4, 0.3, 80.0, friction=0.8, angle=45.0, cohesion=0.002,
                    colour=(0.42, 0.24, 0.08), roughness=0.85, variation=0.45, heat_capacity=1500.0, absorbs=0.8,
                    diffusivity=1.0e-7, burns_at=530.0, burn_rate=0.6, burn_temp=1050.0, burns_to='ash', flames=0.6,
-                   ash_share=0.1),
+                   ash_share=0.1, blows_at=0.15, settles_at=1.5, grain=0.02, dusty=0.02),
     MatterMaterial('sawdust', 'Sawdust', 'sand', 1.0e5, 0.3, 250.0, friction=0.6, angle=40.0, colour=(0.72, 0.56, 0.34),
                    roughness=0.9, variation=0.15, heat_capacity=1700.0, absorbs=0.8, diffusivity=1.0e-7, burns_at=560.0,
-                   burn_rate=0.15, burn_temp=950.0, burns_to='ash', flames=0.5, ash_share=0.2),
+                   burn_rate=0.15, burn_temp=950.0, burns_to='ash', flames=0.5, ash_share=0.2, blows_at=0.18, settles_at=0.8, grain=0.001, dusty=0.3),
     MatterMaterial('coal', 'Coal', 'sand', 3.0e5, 0.3, 800.0, friction=0.6, angle=38.0, colour=(0.035, 0.033, 0.035),
                    roughness=0.55, sparkle=0.35, variation=0.15, heat_capacity=1300.0, absorbs=0.95, diffusivity=2.0e-7,
                    burns_at=720.0, burn_rate=0.02, burn_temp=1300.0, burns_to='ash', flames=0.15, ash_share=0.3),
     MatterMaterial('ash', 'Ash', 'sand', 2.0e4, 0.3, 120.0, friction=0.6, angle=42.0, colour=(0.42, 0.41, 0.39),
-                   roughness=0.95, variation=0.2, heat_capacity=800.0, absorbs=0.9, diffusivity=1.0e-7),
+                   roughness=0.95, variation=0.2, heat_capacity=800.0, absorbs=0.9, diffusivity=1.0e-7, blows_at=0.12, settles_at=0.3, grain=0.0001, dusty=1.0),
     MatterMaterial('wax', 'Wax', 'clay', 4.0e5, 0.35, 900.0, friction=0.5, yield_stress=1.5e4, tension=True,
                    colour=(0.78, 0.74, 0.63), roughness=0.45, wrap=0.4, variation=0.02, melts_at=333.0,
                    melt='molten_wax', heat_capacity=2900.0, absorbs=0.85, diffusivity=1.4e-7),
@@ -433,6 +443,7 @@ class Matter:
                     self._colours.append((k[1], k[2]))
         # (its surface is a particle deep, half a node spacing: the rates follow from that and the material's constants,
         # heat_speed times as fast as for real)
+        self.heat_speed = float(heat_speed)
         self._heat = [[0.0, -1.0, -1.0, 0.0] for _ in range(MAX_MATS)]
         self._cond = [[0.0, 1.0, 0.0, 0.0] for _ in range(MAX_MATS)]
         self._burn = [[0.0, 0.0, 0.0, -1.0] for _ in range(MAX_MATS)]
@@ -541,9 +552,10 @@ class Matter:
                     b = (m.yield_stress, m.relax, 1.0 if m.tension else 0.0, 0.0)
                 u.v4(model, mu, la, m.density).v4(*b).v4(m.friction, m.h_max, m.metal, m.sticks) \
                  .v4(*(colour or m.colour), m.roughness) \
-                 .v4(m.clear, m.sparkle, m.wrap, m.variation)
+                 .v4(m.clear, m.sparkle, m.wrap, m.variation) \
+                 .v4(m.blows_at, m.settles_at, m.grain / 30.0, m.dusty)
             else:
-                u.v4(0.0, 1.0, 1.0, 1000.0).v4().v4().v4().v4()
+                u.v4(0.0, 1.0, 1.0, 1000.0).v4().v4().v4().v4().v4()
         return u.data
 
     def _allocate(self):
@@ -556,8 +568,7 @@ class Matter:
         self._buf['CT'] = g.buffer(self.capacity * 4, 'matter-temperatures')
         self._buf['CTV'] = g.buffer(self.capacity * 4, 'matter-temperatures-view')
         self._buf['HG'] = g.buffer(nodes * 2 * 4, 'matter-heat-grid')
-        self._buf['HL'] = g.buffer(HEAT_LIGHTS * 32, 'matter-heat-sources')
-        self._buf['HLC'] = g.buffer(16, 'matter-heat-source-count')
+        self._buf['OJ'] = g.buffer(16 * 4, 'matter-heat-from-objects')
         self._buf['G'] = g.buffer(nodes * 5 * 4, 'matter-grid')    # (mpm_common.wgsl NODE)
         self._buf['S'] = g.buffer(nodes * 13 * 4, 'matter-surface-sums')
         self._buf['react_i'] = g.buffer((16 + MAX_PIECES) * 6 * 4, 'matter-react-step')   # (objects', then pieces')
@@ -583,6 +594,7 @@ class Matter:
         self.capacity = 0
         self.count = 0
         self.surface_ready = False
+        self._cloth = None          # (a frame cut short leaves it: its cloth field went with the buffers)
 
     def _compile(self):
         g = self.gpu
@@ -596,14 +608,14 @@ class Matter:
         self._k['pieces_clear'] = g.kernel('mpm_pieces.wgsl', ['st3d:r32float:w'], 'clear')
         self._k['push'] = g.kernel('mpm_liquid.wgsl', ['utex3d', 'utex3d', 'utex3d', 'st3d:rgba32float:w',
                                                        'st3d:rgba32float:w'])
-        self._k['g2p'] = g.kernel('mpm_g2p.wgsl', ['buf', 'utex3d', 'buf', 'rbuf', 'buf'], workgroup=P)
+        self._k['g2p'] = g.kernel('mpm_g2p.wgsl', ['buf', 'utex3d', 'buf', 'rbuf', 'buf', 'utex3d', 'buf'], workgroup=P)
+        self._k['air'] = g.kernel('mpm_air.wgsl', ['tex3d', 'smp', 'utex3d', 'st3d:rgba32float:w'])
         self._k['react'] = g.kernel('mpm_react.wgsl', ['buf', 'buf'], workgroup=P)
         self._k['compact'] = g.kernel('mpm_compact.wgsl', ['rbuf', 'buf', 'buf'], workgroup=P)
         self._k['blast'] = g.kernel('mpm_blast.wgsl', ['buf', 'utex3d'], workgroup=P)
         self._k['melt'] = g.kernel('mpm_melt.wgsl', ['buf', 'tex3d', 'smp', 'buf', 'buf', 'rbuf', 'utex3d'], workgroup=P)
         self._k['wet'] = g.kernel('mpm_wet.wgsl', ['buf', 'utex3d', 'utex3d'], workgroup=P)
-        heat = ['buf', 'buf', 'tex3d', 'smp', 'utex3d', 'utex3d', 'buf', 'buf', 'utex3d']
-        self._k['heat_lights'] = g.kernel('mpm_heat.wgsl', heat, 'lights', workgroup=(4, 4, 4))
+        heat = ['buf', 'buf', 'tex3d', 'smp', 'utex3d', 'utex3d', 'rbuf', 'rbuf', 'utex3d', 'buf', 'buf', 'utex3d']
         self._k['heat_splat'] = g.kernel('mpm_heat.wgsl', heat, 'splat', workgroup=P)
         self._k['heat'] = g.kernel('mpm_heat.wgsl', heat, 'main', workgroup=P)
         self._k['wd_init'] = g.kernel('mpm_wetdist.wgsl', ['utex3d', 'utex3d', 'st3d:r32float:w'], 'init')
@@ -634,6 +646,7 @@ class Matter:
         self.gpu.write_buffer(self._buf['react_i'], np.zeros(96, np.int32))
         self.surface_ready = False
         self._view = None            # what the surface is drawn from: None the live particles, else a cached frame's
+        self._cloth = None
         self._compact(None)
 
     # -- stepping -------------------------------------------------------------------------------
@@ -691,7 +704,89 @@ class Matter:
         self.count += len(P)
 
     def _particle_u(self, dt, t_end):
-        return Uniforms().v4(*self.dims, self.count).v4(dt, self.dx, self._fabric(), t_end).raw(self._mat_bytes)
+        return Uniforms().v4(*self.dims, self.count).v4(dt, self.dx, self._fabric(), t_end).raw(self._mat_bytes) \
+            .v4(*self._air_u).v4(*self._dust_u[:4]).v4(*self._dust_u[4:])
+
+    _air_u = (0.0, 0.05, 1.2, 0.0)     # the wind (air()): on (1/0), how far off the surface it is taken (m), air density
+    _dust_u = (0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0)   # its dust grid (air()): corner, cell size; dims, on
+    DUST_SMOKE = 500.0     # the gas's smoke a kilogram of dust a cubic metre makes (a gram: half a thick smoke's)
+
+    def can_blow(self):
+        """Whether any of its materials blows in the wind (whatever there is of it yet)."""
+        return self.active and any(m.blows_at > 0.0 or m.settles_at > 0.0 for m in getattr(self, '_mats', []))
+
+    def blows(self):
+        """Whether the wind moves any of the matter (dry sand, fresh snow, leaves, sawdust, ash)."""
+        return self.active and bool(self.count) and any(m.blows_at > 0.0 or m.settles_at > 0.0 for m in self._mats)
+
+    def air(self, gas=None, liquid=None, wind=(0.0, 0.0, 0.0), gusts=0.0, time=0.0):
+        """The air round the matter for the frame's steps (mpm_air.wgsl): the gas's velocity in a fire box (`gas`, a
+        Solver), else the scene's wind with its gusts; none under the water of `liquid`. The grains feel it in g2p."""
+        if not self.blows():
+            self._air_u = (0.0, 0.05, 1.2, 0.0)
+            return
+        g = self.gpu
+        if 'air' not in self._tex:
+            self._tex['air'] = g.texture3d(self.dims, 'rgba32float', 'matter-air')
+        gas_on = gas is not None and getattr(gas, 'dims', None) is not None
+        live = liquid is not None and getattr(liquid, 'dims', None) is not None
+        u = Uniforms().v4(*self.origin, self.dx).v4(*self.dims)
+        u.v4(*(gas.origin if gas_on else (0.0, 0.0, 0.0)), gas.h if gas_on else 1.0)
+        u.v4(*(gas.dims if gas_on else (1, 1, 1)), 1.0 if gas_on else 0.0)
+        u.v4(*(liquid.origin if live else (0.0, 0.0, 0.0)), liquid.h if live else 1.0)
+        u.v4(*(liquid.dims if live else (1, 1, 1)), 1.0 if live else 0.0)
+        u.v4(*wind, gusts).v4(time)
+        if getattr(self, '_air_dummy', None) is None:
+            t = g.texture3d((1, 1, 1), 'rgba16float', 'matter-air-no-gas')
+            g.upload(t, np.zeros((1, 1, 1, 4), np.float16))
+            self._air_dummy = (t, g.texture3d((1, 1, 1), 'r32float', 'matter-air-no-liquid'))
+        tg, tl = self._air_dummy
+        with g.batch() as b:
+            b.run(self._k['air'], [gas.vel[0] if gas_on else tg, g.linear, liquid.TYPE[0] if live else tl, self._tex['air']],
+                  u, self.dims)
+        # (the wind's speed is taken a gas cell and a half off the surface, at least 2 cm: the log layer over it)
+        z = max(1.5 * (gas.h if gas_on else self.dx), 0.02)
+        ground = (self.box[0][1] - self.origin[1]) / self.dx if self.ground else -1.0e9
+        self._air_u = (1.0, z, 1.2, ground)
+        # (the dust it sheds, onto a grid of the gas's cells two to a side, for the gas: dust_hook)
+        if gas_on and any(m.dusty > 0.0 for m in self._mats):
+            dd = tuple(int(math.ceil(d / 2)) for d in gas.dims)
+            if getattr(self, '_dust_dims', None) != dd or 'DU' not in self._buf or 'DUF' not in self._buf:
+                for k in ('DU', 'DUF'):
+                    if k in self._buf:
+                        self._buf[k].destroy()
+                    self._buf[k] = g.buffer(int(np.prod(dd)) * 4, f'matter-dust-{k}')
+                self._dust_dims = dd
+                with g.batch() as b:
+                    b.clear_buffer(self._buf['DU'])
+                    b.clear_buffer(self._buf['DUF'])
+            self._dust_u = (*(np.asarray(gas.origin, float) - np.asarray(self.origin, float)), 2.0 * gas.h, *dd, 1.0)
+        else:
+            self._dust_u = (0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0)
+
+    def dust_frame(self, fdt):
+        """After the matter's frame: the dust it shed in it becomes what the gas takes in over the next (dust_hook)."""
+        if self._dust_u[7] < 0.5 or 'DU' not in self._buf:
+            return
+        with self.gpu.batch() as b:
+            # (the two swap: what was shed is fed, and shedding starts afresh)
+            self._buf['DU'], self._buf['DUF'] = self._buf['DUF'], self._buf['DU']
+            b.clear_buffer(self._buf['DU'])
+        self._dust_fdt = float(fdt)
+        self._dust_ready = True
+
+    def dust_hook(self, b, solver, dt, stage):
+        """Solver.cloth_hook: at the sources, the matter's dust from its last frame into the gas as smoke (mpm_dust.wgsl)."""
+        if stage != 'sources' or not getattr(self, '_dust_ready', False) or self._dust_u[7] < 0.5 or 'DUF' not in self._buf:
+            return
+        dd = self._dust_dims
+        if tuple(int(math.ceil(d / 2)) for d in solver.dims) != dd:
+            return
+        if 'dust' not in self._k:
+            self._k['dust'] = self.gpu.kernel('mpm_dust.wgsl', ['utex3d', 'rbuf', 'st3d:rgba16float:w'], workgroup=(4, 4, 4))
+        u = Uniforms().v4(*solver.dims, solver.h).v4(*dd, 2.0 * solver.h).v4(dt / max(self._dust_fdt, 1e-6), self.DUST_SMOKE)
+        b.run(self._k['dust'], [solver.scal[0], self._buf['DUF'], solver.scal[1]], u, solver.dims)
+        solver.scal.reverse()
 
     def _fabric(self):
         """The kernels' "fabric": 0 for none, else 1 + how long since its sheet was laid (s; mpm_common.wgsl SHEET_N)."""
@@ -806,11 +901,16 @@ class Matter:
         """Whether any of the matter takes on heat, gives it off or melts (wax, chocolate, metal)."""
         return self.active and bool(self.count) and getattr(self, 'thermal', False)
 
-    def heat(self, b, dt, gas=None, liquid=None, ambient_k=293.0, flame_k=1650.0, colliders=(), touch=(), meshes=None):
+    def heat(self, b, dt, gas=None, liquid=None, ambient_k=293.0, flame_k=1650.0, colliders=(), touch=(), meshes=None,
+             radiant=None, ground=None, objects=False, lava=None):
         """Heat through dt seconds (mpm_heat.wgsl), in batch b: its heat evening out through it, its surface taking on
         the temperature of the gas of `gas` (a Solver; None: the ambient air), the water of `liquid` (a Liquid, or
-        None) and the objects it touches (colliders: ColliderGPU, the solver's order; touch: each one's (temperature K,
-        effusivity), Scene.collider_heat), and melting and setting at the melting point."""
+        None), the objects it touches (colliders: ColliderGPU, the solver's order; touch: each one's (temperature K,
+        effusivity), Scene.collider_heat or objheat.ObjectHeat.collider_heat) and the ground it lies on (ground: (height
+        m, temperature K, effusivity), or None), the radiant heat of the frame's shared sources (radiant: a
+        radiant.Radiant, or None), lava where it touches (lava: both_engine's lava field on the gas's grid, or None),
+        and melting and setting at the melting point. What glows adds to the shared sources; with `objects`, the heat
+        each object gives the matter is added up for object_heat()."""
         if not self.heats():
             return
         g = self.gpu
@@ -825,24 +925,47 @@ class Matter:
         u.raw([x for h in self._heat for x in h]).raw([x for c in self._cond for x in c]).raw([x for r in self._burn for x in r])
         u.raw(self._ash)
         cols = self._pack_touch(u, colliders, touch, meshes)
+        rad_on = radiant is not None and radiant.built
+        if radiant is not None:
+            radiant.uniform_block(u)
+        else:
+            u.v4(0.0, 0.0, 0.0, 1.0).v4(1.0, 1.0, 1.0, 0.0)
+        air_h = gas.h if gas_on else (liquid.h if live else self.dx)
+        u.v4(1.0 if rad_on else 0.0, air_h, (self.dx / PER_AXIS) ** 3, 1.0 if objects else 0.0)
+        u.v4(*(ground if ground is not None else (0.0, ambient_k, 1500.0)), 1.0 if ground is not None else 0.0)
+        vp = (self.dx / PER_AXIS) ** 3
+        jk = [m.density * m.heat_capacity * vp for m in self._mats] + [0.0] * MAX_MATS
+        ab = [m.absorbs for m in self._mats] + [0.0] * MAX_MATS
+        u.raw([float(x) for x in jk[:16]]).raw([float(x) for x in ab[:16]])
+        lava_on = lava is not None and gas_on
+        u.v4(1.0 if lava_on else 0.0, LAVA_EFFUSIVITY, self.heat_speed, self.time)
         if getattr(self, '_heat_dummy', None) is None:
             t = g.texture3d((1, 1, 1), 'rgba16float', 'matter-heat-no-gas')
             g.upload(t, np.zeros((1, 1, 1, 4), np.float16))
-            self._heat_dummy = (t, g.texture3d((1, 1, 1), 'r32float', 'matter-heat-none'))
-        tg, tn = self._heat_dummy
+            self._heat_dummy = (t, g.texture3d((1, 1, 1), 'r32float', 'matter-heat-none'), g.buffer(48, 'matter-no-sources'),
+                                g.buffer(16, 'matter-no-source-count'), g.buffer(28, 'matter-no-radiant-sums'))
+        tg, tn, nrl, nrc, nra = self._heat_dummy
+        if not rad_on:
+            b.clear_buffer(nrc)
         res = [self._buf['P'], self._buf['HG'], gas.scal[0] if gas_on else tg, g.linear,
-               gas.sdf if gas_on else tn, liquid.TYPE[0] if live else tn, self._buf['HL'], self._buf['HLC'],
-               meshes.atlas if (meshes is not None and cols) else self._empty_atlas()]
-        b.clear_buffer(self._buf['HLC'])
-        if gas_on:
-            # (the fire as heat sources, for its radiant heat)
-            b.run(self._k['heat_lights'], res, u, groups=tuple(-(-int(d) // (4 * HEAT_BLOCK)) for d in gas.dims))
+               gas.sdf if gas_on else tn, liquid.TYPE[0] if live else tn,
+               radiant.RL if rad_on else nrl, radiant.RLC if rad_on else nrc,
+               meshes.atlas if (meshes is not None and cols) else self._empty_atlas(),
+               radiant.RA if radiant is not None else nra, self._buf['OJ'], lava if lava_on else tn]
+        if objects:
+            b.clear_buffer(self._buf['OJ'])
         if any(c[0] > 0.0 for c in self._cond):
             b.clear_buffer(self._buf['HG'])
             b.run(self._k['heat_splat'], res, u, groups=groups_1d(self.count))
         b.run(self._k['heat'], res, u, groups=groups_1d(self.count))
         self._compact(b)            # (drawn as it is now: its glow, what has melted)
         self.surface_ready = False
+
+    def object_heat(self):
+        """The heat (J) each object gave the matter it touches in the last heat() with `objects` (negative: it took
+        heat from it), in the colliders' order; reads back."""
+        raw = np.frombuffer(self.gpu.read_buffer(self._buf['OJ'], 16 * 4), np.int32)
+        return raw.astype(float) / OBJECT_J
 
     WET_TIME = 0.5         # s: how long a grain of dry sand next to liquid takes to get damp
     SOAK_TIME = 1.0        # s: how long the water takes to soak damp sand a cell in from it (n cells in: n + 1 times)
@@ -1041,8 +1164,14 @@ class Matter:
         if fold:
             b.run(k['react'], [self._buf['react_i'], self._buf['react']], Uniforms().v4(96, 1.0 / FX_R), groups=(2, 1, 1))
         # (held or let go as at the start of the step in both passes: p2g's momentum is what g2p picks up)
-        b.run(k['g2p'], [self._buf['P'], self._tex['vel'], self._buf['stats'], cf, ct], self._particle_u(dt, self.time),
-              groups=groups)
+        if 'air' not in self._tex:
+            self._air_u = (0.0, 0.05, 1.2, 0.0)     # (rebuilt since the wind was last set: none until air() again)
+        air = self._tex['air'] if self._air_u[0] > 0.5 else self._no_push()
+        du = self._buf['DU'] if (self._dust_u[7] > 0.5 and 'DU' in self._buf) else self._buf['stats']
+        if du is self._buf['stats']:
+            self._dust_u = (0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0)
+        b.run(k['g2p'], [self._buf['P'], self._tex['vel'], self._buf['stats'], cf, ct, air, du],
+              self._particle_u(dt, self.time), groups=groups)
         self.time = t_end
 
     def _compact(self, b):

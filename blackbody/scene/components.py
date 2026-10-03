@@ -262,7 +262,7 @@ COMPONENTS = [
               'metal on it melt, snow on it melts from below, and water on it boils (with Heat and phase changes on).',
               'cube', room=(0.15, 0.02, 0.15),
               objects=[_C(name='Hot plate', shape='box', position=(0.0, 0.01, 0.0), size=(0.15, 0.01, 0.15), material='steel',
-                          temperature=200.0)]),
+                          temperature=200.0, keeps_temperature=True)]),
     Component('text', 'Text', 'Objects', 'Solid letters in any font on this computer. Set them on fire (they catch all '
               'over, flare up and burn out), float them, pour water over them.', 'text', pick='text',
               objects=[_C(name='Text', shape='mesh', position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0))]),
@@ -485,10 +485,11 @@ COMPONENTS = [
                  _M(name='Sand', material='sand', pours=True, position=(0.0, 0.95, 0.0), size=(0.03, 0.03, 0.03),
                     velocity=(0.0, -0.5, 0.0), rate=1.0, pour_start=0.0, pour_stop=3.0)]),
     Component('chocolate_pan', 'Chocolate in a hot pan', 'Sand, snow & mud', 'Squares of chocolate in a 24 cm steel pan at '
-              '180 °C: they melt where they touch it and run into glossy pools (Heat speed 60: some sixty times '
+              '180 °C on the hob: they melt where they touch it and run into glossy pools (Heat speed 60: some sixty times '
               'quicker than for real).', 'matter', room=(0.3, 0.05, 0.13), scene={'domain': {'matter_heat_speed': 60.0}},
               objects=[_C(name='Pan', shape='cylinder', position=(0.0, 0.02, 0.0), size=(0.12, 0.02, 0.12), hollow=0.004,
-                          opening=(0.13, 0.01, 0.13), opening_at=(0.0, 0.02, 0.0), material='steel', temperature=180.0),
+                          opening=(0.13, 0.01, 0.13), opening_at=(0.0, 0.02, 0.0), material='steel', temperature=180.0,
+                          keeps_temperature=True),
                        _C(name='Handle', shape='box', position=(0.21, 0.03, 0.0), size=(0.09, 0.006, 0.013), material='steel')]
               + [_M(name=f'Square {k + 1}', material='chocolate', shape='box', position=(x, y, z), size=(0.02, 0.004, 0.02),
                     yaw=a) for k, (x, y, z, a) in enumerate(((-0.05, 0.010, 0.03, 10.0), (0.03, 0.010, 0.04, -20.0),

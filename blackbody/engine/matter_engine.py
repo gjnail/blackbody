@@ -53,6 +53,7 @@ class MatterEngine:
         if not self.solids.bodies and not self._pieces_near(fdt):
             return None
         self._blast_matter(scene, frame)
+        self._air_matter(scene, frame)
         dt, _n = m.begin(fdt)
         enabled = [i for i, c in enumerate(scene.colliders) if c['enabled']]
         atlas = meshes.atlas if meshes is not None else None
@@ -143,8 +144,10 @@ class MatterEngine:
         if self._coupled:
             self._coupled = False
             m.end()
+            m.dust_frame(fdt)          # (the dust it shed this frame, into the gas over the next: Matter.dust_hook)
             return
         self._blast_matter(scene, frame)
+        self._air_matter(scene, frame)
         cache = {}
 
         def cols_at(f):
@@ -154,6 +157,21 @@ class MatterEngine:
             return cache[i]
 
         m.advance(fdt, cols_at, meshes.atlas if meshes is not None else None, lambda u, c: pack_colliders(u, c, meshes))
+        m.dust_frame(fdt)
+
+    def _air_matter(self, scene, frame):
+        """The air the matter meets this frame (Matter.air): the gas in a fire box, the scene's wind past it (or in a
+        liquid scene); the wind blows dry sand, fresh snow, leaves, sawdust and ash."""
+        m = self._matter
+        if m is None or not m.active or not m.blows():
+            return
+        gas = self.solver if (self.kind in ('fire', 'both') and self.solver.dims) else None
+        liquid = getattr(self, 'liquid', None) if self.kind in ('liquid', 'both') else None
+        if self.kind == 'liquid':
+            wind, gusts = scene.liquid_wind(frame), 0.3
+        else:
+            wind, gusts = scene.wind(frame, scene.v('camera', 'fire_yaw', frame)), 0.0   # (its gusts in it)
+        m.air(gas, liquid, tuple(float(x) for x in wind), gusts, scene.seconds(frame))
 
     _mfields = None
 
@@ -187,7 +205,7 @@ class MatterEngine:
         look = scene.look(frame)
         cols = scene.colliders_gpu(frame, self.solids.overrides() if self.solids.active else None)
         with self.gpu.batch() as b:
-            m.melt(b, fdt, gas, liquid, look.ambient_k, look.flame_k, cols, scene.collider_heat(),
+            m.melt(b, fdt, gas, liquid, look.ambient_k, look.flame_k, cols, self._object_heat_for(scene),
                    getattr(self.solver, 'meshes', None))
 
     _mfire = None
@@ -209,18 +227,23 @@ class MatterEngine:
             look = scene.look(scene.start)
             self.matter_fire.splat(b, solver, self._matter, scene.data['spread'], look.ambient_k, look.flame_k)
 
-    def _heat_matter(self, scene, frame, fdt, gas=None, liquid=None):
+    def _heat_matter(self, scene, frame, fdt, gas=None, liquid=None, lava=None):
         """Wax, chocolate and metal through frame `frame` (fdt seconds): warming in the gas's heat, cooling in the air and
         the water, warming or cooling where they touch objects at their own temperature, melting and setting."""
         m = self._matter
         if m is None or not m.heats():
             return
         look = scene.look(frame)
-        # (the objects where they are at the frame's end, falling ones where the rigid bodies have them)
+        # (the objects where they are at the frame's end, falling ones where the rigid bodies have them, at their own
+        # temperatures; the ground under the box; the frame's radiant sources: objheat_engine.py)
         cols = scene.colliders_gpu(frame, self.solids.overrides() if self.solids.active else None)
+        box = gas if (gas is not None and getattr(gas, 'dims', None)) else liquid
+        ground = self._ground_for(scene, box.origin[1]) if (box is not None and getattr(box, 'dims', None)) else None
+        objects = self._heat_on() and bool(cols)
         with self.gpu.batch() as b:
-            m.heat(b, fdt, gas, liquid, look.ambient_k, look.flame_k, cols, scene.collider_heat(),
-                   getattr(self.solver, 'meshes', None))
+            m.heat(b, fdt, gas, liquid, look.ambient_k, look.flame_k, cols, self._object_heat_for(scene),
+                   getattr(self.solver, 'meshes', None), radiant=self.radiant, ground=ground, objects=objects, lava=lava)
+        m._objects_heat_on = objects
 
     def _wet_matter(self, fdt, liquid):
         """Sand the liquid touches soaking through the frame (fdt seconds): wet sand."""

@@ -43,12 +43,17 @@ class StrandsEngine:
         hooks = []
         if self.cloth.active:
             hooks.append(self.cloth.hook)
-        if self.strands_on and self._strands.burns:
+        if self.strands_on:              # (its fire, if it burns; its canopy slowing the wind)
             hooks.append(self._strands.hook)
         if self.solids.active and self.solids.burning:   # (things that break and burn: engine._burn_pieces)
             hooks.append(self.piece_fire.hook)
         if getattr(self, '_matter_burns', None) is not None and self._matter_burns():   # (matter_engine)
             hooks.append(self.matter_fire.hook)
+        if getattr(self, '_heat_on', None) is not None and self._heat_on():   # (hot objects heat the air: objheat_engine)
+            hooks.append(self._heat_hook)
+        m = getattr(self, '_matter', None)
+        if m is not None and m.can_blow():   # (the dust the wind lifts off sand and snow: matter.py)
+            hooks.append(m.dust_hook)
         if not hooks:
             return None
         if len(hooks) == 1:
@@ -85,6 +90,7 @@ class StrandsEngine:
         s.step(b, dt, solver, colliders, meshes, wind, gust, look, ground, ground_y)
         if solver is not None:
             s.splat(b, solver, look)
+            s.canopy(b, solver)
 
     def _snapshot_strands(self, entry):
         s = self._strands

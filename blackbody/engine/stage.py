@@ -159,7 +159,8 @@ def matter_glow_scale(look):
 
 WOOD_FLOOR = 2              # (the floor's pattern of wooden boards, stage.wgsl floor_look)
 WOOD_PATTERNS = {1} | set(range(11, 25))   # (the woods' patterns, wood.wgsl wood_kind)
-ALL_FEATURES = {'F_PIECES': 'true', 'F_MARCH': 'true', 'F_SHOTS': 'true', 'F_WOOD': 'true', 'F_WATER': 'false', 'F_CHAR': 'true'}
+ALL_FEATURES = {'F_PIECES': 'true', 'F_MARCH': 'true', 'F_SHOTS': 'true', 'F_WOOD': 'true', 'F_WATER': 'false', 'F_CHAR': 'true',
+                'F_HEAT': 'true'}
 WATER_FLOATS = 48   # (stage.wgsl Params wat: the water Lume traces, liquid_render.LumeWater)   # (stage.wgsl: the classic kernel has everything)
 
 
@@ -423,7 +424,35 @@ class Stage:
         centre = 0.5 * (lo + hi)
         return tuple(centre), float(np.linalg.norm(hi - lo) * 0.5)
 
-    def lume_kernel(self, pieces=True, march=True, shots=True, wood=True, water=False, char=True):
+    heat = None    # hot objects to draw glowing this frame (objheat_engine.py _stage_heat), set by the engine
+
+    def _object_lights(self, heat, table, scale):
+        """Hot objects' faces as the first of the hot-matter lights (ML, matter_glow.wgsl's form: (position, softening),
+        (intensity rgb: radiance times the area facing a point, half the face's)), written before the frame's commands;
+        the matter's lights follow them (its count starts after them). Returns how many."""
+        faces = heat['faces'][:MATTER_LIGHTS // 2] if heat else []
+        if not faces:
+            return 0
+        a = np.zeros((1 + 2 * len(faces), 4), np.float32)
+        a[0, 0] = len(faces)
+        for i, (c, nrm, area, ext, T, eps) in enumerate(faces):
+            f = (T - GLOW_T0) / GLOW_DT
+            if f <= 0.0:
+                rgb = np.zeros(3)
+            else:
+                j = min(int(f), 14)
+                t = min(f, 15.0) - j
+                lo, hi = np.asarray(table[j]), np.asarray(table[j + 1])
+                lg = lo[3] + (hi[3] - lo[3]) * t + max(f - 15.0, 0.0) * (hi[3] - lo[3])
+                rgb = (lo[:3] + (hi[:3] - lo[:3]) * t) * 10.0 ** lg * scale
+            a[1 + 2 * i, :3] = np.asarray(c, float) + 0.01 * np.asarray(nrm, float)   # (just off it: Lume's shadow rays reach it)
+            a[1 + 2 * i, 3] = 0.5 * ext
+            a[2 + 2 * i, :3] = rgb * eps * area * 0.5
+        self.gpu.write_buffer(self._ml, a)
+        self.gpu.write_buffer(self._mlc, np.array([len(faces), 0, 0, 0], np.uint32))
+        return len(faces)
+
+    def lume_kernel(self, pieces=True, march=True, shots=True, wood=True, water=False, char=True, heat=False):
         """Lume's camera kernel (lume.wgsl lume_main), compiled the first time a set wants it: the classic stage's main
         without the classic shading in it (and the classic one without Lume's), and without the code for what the set
         does not have (broken pieces, ropes and lightning; anything marched; what bullets leave: stage.wgsl F_PIECES,
@@ -433,7 +462,8 @@ class Stage:
             return self.k_lume
         defines = {'F_PIECES': 'true' if pieces else 'false', 'F_MARCH': 'true' if march else 'false',
                    'F_SHOTS': 'true' if shots else 'false', 'F_WOOD': 'true' if wood else 'false',
-                   'F_WATER': 'true' if water else 'false', 'F_CHAR': 'true' if char else 'false'}
+                   'F_WATER': 'true' if water else 'false', 'F_CHAR': 'true' if char else 'false',
+                   'F_HEAT': 'true' if heat else 'false'}
         return self.gpu.kernel('stage.wgsl', self.k.bindings, 'lume_main', defines=defines, workgroup=(8, 8, 1))
 
     def draw(self, b, r, scene, camstate, fire, colliders, meshes, light: StageLight, comp, size, plate_fit=(1.0, 1.0),
@@ -587,15 +617,19 @@ class Stage:
         # hot matter's glow: a blackbody, shown as the fire shows one (renderer.pack_look): as bright as a thick flame
         # at the same temperature (liquid_render.lava_table: 700 K on in 100 K steps)
         glow = surf is not None and getattr(matter, 'thermal', False)
-        scale, dr = matter_glow_scale(scene.look(frame)) if glow else (0.0, 1.0)
+        heat = self.heat                  # hot objects (objheat_engine.py _stage_heat), or None
+        scale, dr = matter_glow_scale(scene.look(frame)) if (glow or heat) else (0.0, 1.0)
         table = [(r_, g_, b_, w_ * dr) for r_, g_, b_, w_ in lava_table(GLOW_T0, GLOW_DT, 16)]
         u.v4(1.0 if glow else 0.0, scale, GLOW_T0, 1.0 / GLOW_DT)
         for row in table:
             u.v4(*row)
-        # (and the light it casts round it: its glowing surface as point lights)
-        b.clear_buffer(self._ml, 0, 16)
+        # (and the light it casts round it: its glowing surface as point lights, after the hot objects' faces')
+        n_hot = self._object_lights(heat, table, scale)
+        if not n_hot:
+            b.clear_buffer(self._ml, 0, 16)
         if glow:
-            b.clear_buffer(self._mlc)
+            if not n_hot:
+                b.clear_buffer(self._mlc)
             gu = (Uniforms().v4(*matter.dims, GLOW_BLOCK).v4(*matter.origin, matter.dx)
                   .v4(1.0, scale, GLOW_T0, 1.0 / GLOW_DT).v4(MATTER_LIGHTS))
             for row in table:
@@ -605,21 +639,24 @@ class Stage:
             b.run(self.k_mglow_finish, res, gu, groups=(1, 1, 1))
         self.has_matter = surf is not None
         pack_colliders(u, cols, meshes)
+        hot = heat['rows'] if heat else []
         for i in range(MAX_COLLIDERS):
+            # (each object's row: its look, then its temperature and emissivity for its glow, stage.wgsl hot_glow)
+            th = hot[i] if i < len(hot) else (0.0, 0.0)
             if i < len(rows):
                 dr, colour, rough, metal, clear, pattern, inside, ior = rows[i]
-                u.v4(*colour, rough).v4(metal, clear, pattern, dr).v4(*inside, ior)
+                u.v4(*colour, rough).v4(metal, clear, pattern, dr).v4(*inside, ior).v4(*th)
             else:
-                u.v4().v4().v4()
+                u.v4().v4().v4().v4()
         for colour, rough, metal in ROPE_LOOKS:
-            u.v4(*colour, rough).v4(metal, 0.0, 0.0, float(CG)).v4(*colour, 1.5)
-        u.v4(0.0, 0.0, 0.0, 1.0).v4(0.0, 1.0, 0.0, float(CG)).v4(0.0, 0.0, 0.0, 1.0)   # (lightning: lets the light by)
+            u.v4(*colour, rough).v4(metal, 0.0, 0.0, float(CG)).v4(*colour, 1.5).v4()
+        u.v4(0.0, 0.0, 0.0, 1.0).v4(0.0, 1.0, 0.0, float(CG)).v4(0.0, 0.0, 0.0, 1.0).v4()   # (lightning: lets the light by)
         for _row, colour, rough, metal, pattern in PART_LOOKS.values():
-            u.v4(*colour, rough).v4(metal, 0.0, pattern, float(CG)).v4(*colour, 1.5)
+            u.v4(*colour, rough).v4(metal, 0.0, pattern, float(CG)).v4(*colour, 1.5).v4()
         for colour, rough, metal in (SD.BULLET_LOOK, SD.LEAD_LOOK):
-            u.v4(*colour, rough).v4(metal, 0.0, 0.0, float(CG)).v4(*colour, 1.5)
+            u.v4(*colour, rough).v4(metal, 0.0, 0.0, float(CG)).v4(*colour, 1.5).v4()
         gc = np.asarray(fl.colour, float) * tint          # (the ground's chips: the floor's colour, broken a little lighter)
-        u.v4(*gc, fl.roughness).v4(0.0, 0.0, 0.0, float(CG)).v4(*np.minimum(gc * 1.25, 1.0), 1.5)
+        u.v4(*gc, fl.roughness).v4(0.0, 0.0, 0.0, float(CG)).v4(*np.minimum(gc * 1.25, 1.0), 1.5).v4()
         black = r._black
         lume_bufs = self._lume_off
         if lume.on:
@@ -669,7 +706,8 @@ class Stage:
                                   wood=fl.pattern == WOOD_FLOOR or any(r[5] in WOOD_PATTERNS for r in rows),
                                   water=water is not None,
                                   char=floor_burn is not None or obj_burn is not None or any(
-                                      isinstance(v, dict) and v.get('burn') is not None for v in (pieces or {}).values()))
+                                      isinstance(v, dict) and v.get('burn') is not None for v in (pieces or {}).values()),
+                                  heat=bool(heat))
         # (anything clear in the set: glass, ice, jelly; shadow rays then pass through them by their Fresnel and tint)
         clear_on = 1.0 if (any(row[4] > 0.0 and row[0] != NOT_DRAWN for row in rows) or surf is not None) else 0.0
         # (Clamp bright paths: a bounce's light capped at that many times the sky's brightness; 0: none)

@@ -67,7 +67,7 @@ Each fire is measured against real ones: its flame height, its gas speed, and th
 
 <img src="docs/media/gif/fabric_curtain.gif" width="49%" alt="A cotton curtain catching at the hem and burning through"> <img src="docs/media/gif/wet_towels.gif" width="49%" alt="A dry towel burning while a soaked one steams">
 
-Curtains, flags and towels are made from real fabrics with their measured weight, stretch and stiffness. They blow in the fire's own air and catch at their ignition temperature. They then burn the way cloth does: toasting, a glowing line, char, and holes that spread. Wet cloth holds at 100 °C and steams until it dries. [The fabric guide](docs/fabric.md)
+Curtains, flags and towels are made from real fabrics with their measured weight, stretch and stiffness. They blow in the fire's own air and catch at their ignition temperature. They then burn the way cloth does: toasting, a glowing line, char, and holes that spread. Wet cloth holds at 100 °C and steams until it dries, and a sheet drawn through water drags the water along with it. [The fabric guide](docs/fabric.md)
 
 <img src="docs/media/gif/sheet_rip.gif" width="49%" alt="A crate resting in a sheet laced into a frame; a steel ball dropped beside it rips a ragged hole and both fall through"> <img src="docs/media/gif/sand_sling.gif" width="49%" alt="Sand poured onto a cotton sheet tied to four posts, heaping in the dip it makes">
 
@@ -113,13 +113,13 @@ Sand pours and piles at its angle of repose, wet sand holds a cut edge, mud slum
 
 <img src="docs/media/gif/snowballs.gif" width="49%" alt="Snowballs of packing snow thrown at a brick wall, squashing where they hit and sticking to it"> <img src="docs/media/gif/chocolate_pan.gif" width="49%" alt="Squares of chocolate in a hot steel pan melting into glossy pools that run together">
 
-Snow, mud, clay and wet sand stick to what they touch, each as hard as it really does: a snowball of packing snow thrown at a brick wall squashes where it hits and stays there, powder snow slides off, mud clings to a crate dragged through it, and dry sand does not stick at all. Heat passes where things touch, as fast as the two materials pass it on: squares of chocolate in a 180 °C steel pan melt from the bottom, slump into glossy pools and run together, more slowly on a wooden board as hot, and snow melts from below where it lies on anything warmer than freezing, as well as wherever flames touch it. Wax, chocolate and metal melt in the fire too and set again as they cool, and molten iron glows and lights the floor round it. Dry leaves, sawdust and coal catch fire, feed it, and burn down to ash. [Things that melt](docs/matter.md#things-that-melt)
+Snow, mud, clay and wet sand stick to what they touch, each as hard as it really does: a snowball of packing snow thrown at a brick wall squashes where it hits and stays there, powder snow slides off, mud clings to a crate dragged through it, and dry sand does not stick at all. Heat passes where things touch, as fast as the two materials pass it on: squares of chocolate in a 180 °C steel pan melt from the bottom, slump into glossy pools and run together, more slowly on a wooden board as hot, and snow melts from below where it lies on anything warmer than freezing, as well as wherever flames touch it. Wax, chocolate and metal melt in the fire too and set again as they cool, and molten iron glows and lights the floor round it. Dry leaves, sawdust and coal catch fire, feed it, and burn down to ash. Wind lifts dry sand, snow, leaves and sawdust off the top of a heap once it blows hard enough and drives them along the ground, as much as is really carried, and dusty stuff throws dust into the smoke. [Things that melt](docs/matter.md#things-that-melt)
 
 ### Grass and plants
 
 <img src="docs/media/gif/meadow_fire.gif" width="49%" alt="A fire driven by the wind through a field of dry long grass, leaving a black strip">
 
-Lawns, long grass, wheat and reeds, every blade simulated: they bend in the wind in rolling waves and lean into a fire's draught, part round what moves through them and spring back, and grow on the ground or up a hillside. A dry field lit at one edge carries the fire across by itself, faster downwind, feeding the flames and leaving black stubble. [The guide](docs/grass.md)
+Lawns, long grass, wheat and reeds, every blade simulated: they bend in the wind in rolling waves and lean into a fire's draught, slow the wind blowing through them, part round what moves through them and spring back, and grow on the ground or up a hillside. A dry field lit at one edge carries the fire across by itself, faster downwind, feeding the flames and leaving black stubble. [The guide](docs/grass.md)
 
 ### Text and logos
 
@@ -143,13 +143,17 @@ A real ocean spectrum of waves runs on to the horizon. Whitecaps and foam streak
 
 <img src="docs/media/gif/lava_sea.gif" width="49%" alt="Lava running into the sea in a plume of steam"> <img src="docs/media/gif/hose_on_fire.gif" width="49%" alt="A hose putting out a campfire">
 
-Lava glows as a blackbody, crusts over as it cools and lights everything around it. Fire, water and lava can share one box: water soaks the fuel and boils off in a plume of steam, and lava boils the sea while its skin chills black. [The lava guide](docs/lava.md)
+Lava glows as a blackbody, crusts over as it cools and lights everything around it. Fire, water and lava can share one box: water soaks the fuel and boils off in a plume of steam, and lava boils the sea while its skin chills black. Things dropped on lava float or sink by its density, and it heats what it touches. [The lava guide](docs/lava.md)
 
 ### Ice, boiling and steam
 
 <img src="docs/media/gif/ice_cubes.gif" width="49%" alt="Ice cubes dropped into water"> <img src="docs/media/gif/boiling_pot.gif" width="49%" alt="A pot at a rolling boil">
 
 Liquids carry a temperature, with water's real heat capacities and latent heats. Water freezes into ice that floats a tenth out of the water, boils in streams of bubbles, skates on its own vapour on a hot plate, and evaporates into steam. [The ice and steam guide](docs/heat.md)
+
+<img src="docs/media/gif/quench.gif" width="49%" alt="A white-hot steel ball dropped into a glass tank of water: the water flashes to steam round it and its glow fades">
+
+Objects have heat too, warming and cooling by what they are made of and how big they are: a steel bar in a fire heats through and glows, lighting what is round it, a log's skin scorches while its heart stays cold, and a red-hot steel ball dropped in water boils it, held off by a film of its own steam at first, and cools to black. [Heat](docs/physics.md#heat)
 
 ### Weather and clouds
 

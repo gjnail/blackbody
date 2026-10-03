@@ -27,6 +27,8 @@ struct MMat {
                   // sticks to the objects it touches (Pa)
   d: vec4<f32>,   // look: albedo (linear rgb), roughness
   e: vec4<f32>,   // look: clear (jelly: light through it), sparkle, wrap (light into it: snow), colour variation
+  f: vec4<f32>,   // the wind: the friction speed that starts its grains moving (m/s; 0: never), how fast they settle
+                  // through still air (m/s; 0: the air does not slow them), its roughness to the wind (m)
 };
 
 const MAX_MATS: u32 = 16u;

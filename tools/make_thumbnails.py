@@ -25,7 +25,7 @@ FRAMES = {'campfire': 60, 'bonfire': 72, 'torch': 48, 'candle': 48, 'gas_ring': 
           'sea_swell': 60, 'ink_tank': 48, 'oil_water': 72, 'river_post': 60, 'rain_pond': 30, 'pond_below': 40,
           'open_ocean': 60, 'storm_sea': 72, 'calm_lake': 48, 'harbour_chop': 60, 'beach_break': 96, 'shore_break': 96, 'reef_barrel': 40,
           'big_wave': 80, 'tsunami': 216, 'tidal_bore': 72, 'river_rocks': 72,
-          'ice_cubes': 110, 'ice_melt': 60, 'pond_freeze': 72, 'frozen_pour': 96, 'boiling_pot': 48, 'hot_plate': 36, 'steaming_pool': 72,
+          'ice_cubes': 110, 'ice_melt': 60, 'pond_freeze': 72, 'frozen_pour': 96, 'boiling_pot': 48, 'hot_plate': 36, 'quench': 27, 'steaming_pool': 72,
           'boiling_throw': 36, 'snow_pond': 36, 'hail_pond': 240, 'cumulus_day': 300, 'thunderstorm': 600, 'lava_sea': 84, 'lava_quench': 56, 'lava_grass': 96,
           'tower_knockdown': 15, 'crates_in_fire': 110, 'wall_smash': 22, 'wrecking_ball': 44, 'yard_blast': 16, 'lightning_strike': 7, 'window_smash': 14, 'vase_drop': 24,
           'sand_hopper': 100, 'snowballs': 16, 'jelly_ball': 20, 'mud_drag': 44, 'sand_castle': 34, 'sand_sling': 66, 'iron_pour': 66, 'chocolate_fire': 140, 'chocolate_pan': 240, 'sheet_rip': 58,
@@ -240,7 +240,7 @@ def main():
         t0 = time.perf_counter()
         sc = presets.make(name)
         sc.data['render']['width'], sc.data['render']['height'] = W, H
-        if sc.kind in ('liquid', 'both') and sc.colliders:
+        if sc.kind in ('liquid', 'both') and sc.colliders and sc.data['composite'].get('backdrop') != 'stage':
             sc.data['water']['colliders_look'] = 'shaded'   # the plate has no wall or rock: show stand-ins
         f = sc.start + (args.frame or FRAMES.get(name, 60)) - 1
         eng.prepare(sc, final=not args.draft)
@@ -252,6 +252,8 @@ def main():
             cs = cam.compute(spec, W / H, fire)
             if plate is not None:
                 pass
+            elif sc.data['composite'].get('backdrop') == 'stage':
+                plate = None   # (on the stage: its floor and its objects in CG, as the scene draws them)
             elif name in FIELD_PLATES:   # lava on an old lava field, lit as the scene is (so not lit from it)
                 sc.set(('lighting', 'ambient_from_footage'), False)
                 L = sc.data['lighting']

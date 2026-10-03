@@ -221,6 +221,7 @@ class LiquidSolver:
         self._strips = []
         self.WET2 = None
         self.thermal = None         # liquid_thermal.Thermal, once a scene turns heat on
+        self.force_hook = None      # fn(b, liquid, dt) after the forces each substep (cloth.py liquid_hook)
         self.gas = None             # the fire Solver sharing the box ('both'): the air the liquid meets
         self.lava_heat = None       # lava sharing the box: gas-grid texture, x = temperature (K), y = share
 
@@ -287,6 +288,7 @@ class LiquidSolver:
         for b in self._buf:
             b.destroy()
         self._tex, self._buf = [], []
+        self.svel = None            # (made in _tex: gone with it)
 
     def _t3(self, size, fmt, label):
         t = self.gpu.texture3d(size, fmt, label)
@@ -929,6 +931,8 @@ class LiquidSolver:
         pack_colliders(u, self.colliders, self.meshes, pieces=pieces_on)
         b.run(k['forces'], [self.VOLD, self.SDF, atlas, self.VA, self.DENS, self.OCN,
                             buoy if buoy is not None else self._zero3, self.svel if pieces_on else self._zero3], u, m)
+        if self.force_hook is not None:
+            self.force_hook(b, self, dt)     # (cloth in it gives back what its drag took: cloth.py liquid_hook)
 
         # 3. a little extrapolation so every face of a liquid cell has a value
         b.run(k['extrap'], [self.VA, self.VB], gb, m)

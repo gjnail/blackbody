@@ -45,7 +45,7 @@ COUPLE_REF_FUEL = 2.0         # fuel density (F/s) at which burning cloth's heat
 COUPLE_CHANNELS = 13          # values per coupling cell (cloth_splat.wgsl)
 DROPS = 16384                 # drops of water dripping off wet cloth in flight at once (cloth_drops.wgsl)
 RADIANT = True                # the fire's radiation heats the cloth (cloth_rad_src, cloth_rad, cloth_radiant)
-RAD_KAPPA = 0.2               # 1/m: absorption coefficient of the flames (a campfire with 1.2 m flames, some 190 kW,
+RAD_KAPPA = 0.2               # (radiant.KAPPA, FLAME_K, MAX_K now) 1/m: absorption coefficient of the flames (a campfire with 1.2 m flames, some 190 kW,
                               # radiates about 40 kW: a fifth to a third, as real fires do)
 RAD_FLAME_K = 1250.0          # K: the flames' real temperature, for their radiation (wood and hydrocarbon flames
 RAD_MAX_K = 1450.0            # average 1100-1300 K; the look's flame temperature is a colour, often well above it)
@@ -537,7 +537,12 @@ class Cloth:
         g = gpu
         vf = g.vel_format
         self.k_predict = g.kernel('cloth_predict.wgsl', ['buf', 'buf', 'buf', 'rbuf', 'rbuf', 'rbuf', 'rbuf', 'tex3d', 'tex3d', 'smp',
-                                                         'buf', 'utex3d', 'utex3d', 'rbuf', 'rbuf'], workgroup=(64, 1, 1))
+                                                         'buf', 'utex3d', 'utex3d', 'rbuf', 'rbuf', 'buf'], workgroup=(64, 1, 1))
+        lres = ['rbuf', 'rbuf', 'buf', 'utex3d', 'utex3d', 'st3d:rgba32float:w']
+        self.k_lsplat = g.kernel('cloth_liquid.wgsl', lres, 'splat', workgroup=(64, 1, 1))
+        self.k_lapply = g.kernel('cloth_liquid.wgsl', lres, 'apply')
+        self._lm = None             # the liquid's cells: the momentum the cloth gives back to them (cloth_liquid.wgsl)
+        self._liquid_took = False
         self.k_stretch = g.kernel('cloth_stretch.wgsl', ['buf', 'rbuf', 'rbuf', 'rbuf', 'rbuf', 'buf', 'rbuf'], workgroup=(64, 1, 1))
         self.k_bend = g.kernel('cloth_bend.wgsl', ['buf', 'rbuf', 'rbuf', 'buf', 'rbuf', 'rbuf', 'rbuf'], workgroup=(64, 1, 1))
         # water in the cloth: wicking and draining (cloth_wick), dripping and steam (cloth_drip), the drops
@@ -550,8 +555,7 @@ class Cloth:
                                 workgroup=(4, 4, 4))
         self._steam_time = 0.0   # s of cloth substeps since the steam was last gathered (splat)
         # the fire's radiation: gathered on a coarse grid, falling on each vertex, heating the cloth
-        self.k_radsrc = g.kernel('cloth_rad_src.wgsl', ['utex3d', 'buf'], workgroup=(64, 1, 1))
-        self.k_rad = g.kernel('cloth_rad.wgsl', ['rbuf'] * 4 + ['buf'], workgroup=(64, 1, 1))
+        self.k_rad = g.kernel('cloth_rad.wgsl', ['rbuf'] * 5 + ['buf'], workgroup=(64, 1, 1))
         self.k_radiant = g.kernel('cloth_radiant.wgsl', ['buf', 'buf', 'rbuf', 'rbuf', 'rbuf', 'tex3d', 'smp'], workgroup=(64, 1, 1))
         self.k_tether = g.kernel('cloth_tether.wgsl', ['buf', 'rbuf', 'rbuf', 'rbuf', 'buf'], workgroup=(64, 1, 1))
         self.k_hclear = g.kernel('cloth_hash.wgsl', ['rbuf', 'rbuf', 'buf'], entry='clear', workgroup=(64, 1, 1))
@@ -619,7 +623,7 @@ class Cloth:
         g = self.gpu
         n = B.n
         mk = lambda name, arr: self._upload(name, np.ascontiguousarray(arr))
-        for name in ('X', 'P', 'V', 'S', 'S2', 'N', 'D', 'IMP', 'MP'):
+        for name in ('X', 'P', 'V', 'S', 'S2', 'N', 'D', 'IMP', 'MP', 'LIMP'):
             self.bufs[name] = g.buffer(max(16, n * 16), f'cloth-{name}')
         self.bufs['TR'] = g.buffer(max(16, n * 16), 'cloth-tear')
         self.bufs['OP'] = g.buffer(max(16, n * 16), 'cloth-objects-push')   # (cloth_predict.wgsl: object_push)
@@ -641,7 +645,6 @@ class Cloth:
         self.bufs['W'] = g.buffer(max(32, n * 32), 'cloth-water')          # cloth_wick.wgsl
         self.bufs['DR'] = g.buffer(16 + DROPS * 32, 'cloth-drops')         # cloth_drip.wgsl
         self.bufs['QR'] = g.buffer(max(16, n * 16), 'cloth-radiation')     # cloth_rad.wgsl
-        self.bufs['RS'] = g.buffer(RAD_CELLS * 16, 'cloth-radiation-src')  # cloth_rad_src.wgsl
         self._build_mg(specs)
         self.bufs['LS'] = g.buffer(max(16, len(B.stretch) * 4), 'cloth-lambda-stretch')
         self.bufs['LB'] = g.buffer(max(16, len(B.hinge_v) * 16), 'cloth-lambda-bend')
@@ -744,6 +747,7 @@ class Cloth:
         g.write_buffer(self.bufs['N'], nrm)
         g.write_buffer(self.bufs['D'], np.zeros((B.n, 4), np.float32))
         g.write_buffer(self.bufs['IMP'], np.zeros((B.n, 4), np.float32))
+        g.write_buffer(self.bufs['LIMP'], np.zeros((B.n, 4), np.float32))
         g.write_buffer(self.bufs['MP'], np.zeros((B.n, 4), np.float32))
         g.write_buffer(self.bufs['OP'], np.zeros((B.n, 4), np.float32))
         self._op_on = False
@@ -814,8 +818,9 @@ class Cloth:
             u.v4(*wind, amb).v4(flame, maxk)
             self._fab_uniforms(u, places)
             u.raw(lq.data)
+            self._liquid_took = self._liquid_took or liquid is not None
             b.run(self.k_predict, [k['X'], k['P'], k['V'], k['R'], k['S'], k['N'], k['M'], vel, scal, lin, k['IMP'],
-                                   lvel, ltype, k['MP'], k['OP']], u, (n, 1, 1))
+                                   lvel, ltype, k['MP'], k['OP'], k['LIMP']], u, (n, 1, 1))
             mg_on = self.mg is not None
             if mg_on:
                 # the panels' bending, solved (cloth_mg.py; its buffer swaps come back round within a cycle)
@@ -934,20 +939,46 @@ class Cloth:
         b.run(self.k_drops, [k['DR'], atlas, ltype], du, (DROPS, 1, 1))
         self._steam_time += h
 
-    def _radiation(self, b, solver, amb, flame, maxk):
-        """Record the fire's radiation falling on the cloth (W/m^2 per vertex, into QR) from the gas as it is now:
-        gathered on a coarse grid of at most RAD_CELLS cells, then summed at every vertex. True if recorded."""
-        dims = tuple(int(d) for d in solver.dims)
-        bs = 1
-        while int(np.prod([math.ceil(d / bs) for d in dims])) > RAD_CELLS:
-            bs += 1
-        cd = tuple(int(math.ceil(d / bs)) for d in dims)
-        cells = int(np.prod(cd))
+    radiant = None      # the engine's shared radiant sources (radiant.Radiant, built each frame), set by it
+
+    def liquid_hook(self, b, liquid, dt):
+        """LiquidSolver.force_hook, after its forces each substep: the momentum the water's drag gave the cloth since the
+        last one, the water loses (cloth_liquid.wgsl), so cloth moving through water pushes it and cloth held in a flow
+        slows it."""
+        if not self.active or self.built is None or not self._liquid_took or liquid.dims is None:
+            return
+        g = self.gpu
+        cells = int(np.prod(liquid.dims))
+        if self._lm is None or self._lm[0] != cells:
+            if self._lm is not None:
+                self._lm[1].destroy()
+            self._lm = (cells, g.buffer(cells * 3 * 4, 'cloth-liquid-momentum'))
+        lm = self._lm[1]
         k = self.bufs
-        u = (Uniforms().v4(*dims, solver.h).v4(*solver.origin, RAD_KAPPA).v4(amb, RAD_FLAME_K, RAD_MAX_K, bs).v4(*cd, cells))
-        b.run(self.k_radsrc, [solver.scal[0], k['RS']], u, (cells, 1, 1))
-        soft = (0.5 * bs * solver.h) ** 2
-        b.run(self.k_rad, [k['X'], k['N'], k['S'], k['RS'], k['QR']], Uniforms().v4(self.built.n, cells, soft), (self.built.n, 1, 1))
+        prm = liquid._prm
+        u = liquid._grid(dt, prm).v4(self.built.n, float(prm.rho), float(prm.ppc))
+        res = [k['X'], k['LIMP'], lm, liquid.VA, liquid.DENS, liquid.VB]
+        b.clear_buffer(lm)
+        b.run(self.k_lsplat, res, u, (self.built.n, 1, 1))
+        b.run(self.k_lapply, res, u, tuple(int(d) + 1 for d in liquid.dims))
+        b.copy_texture(liquid.VB, liquid.VA)
+        b.clear_buffer(k['LIMP'])
+        self._liquid_took = False
+
+    def _radiation(self, b, solver, amb, flame, maxk):
+        """Record the radiation falling on the cloth (W/m^2 per vertex, into QR) from the frame's shared radiant sources
+        (radiant.py: the fire's gas, glowing matter, lava, hot objects); without the engine's, from the gas as it is now.
+        True if recorded."""
+        r = self.radiant
+        if r is None or not r.built:
+            from .radiant import Radiant
+            if getattr(self, '_own_radiant', None) is None:
+                self._own_radiant = Radiant(self.gpu)
+            r = self._own_radiant
+            r.layout(solver.origin, solver.dims, solver.h, gas=True)
+            r.build(b, solver.scal[0], solver.dims, amb)
+        k = self.bufs
+        b.run(self.k_rad, [k['X'], k['N'], k['S'], r.RL, r.RLC, k['QR']], Uniforms().v4(self.built.n), (self.built.n, 1, 1))
         return True
 
     def _steam(self, b, solver, dt, fine):

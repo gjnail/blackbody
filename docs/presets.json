@@ -389,7 +389,7 @@
   "name": "Chocolate by a fire",
   "category": "Sand, snow and mud",
   "size": "20 cm flames",
-  "blurb": "Three pieces of chocolate on a slab beside a small fire: its radiant heat softens the side of each that faces it, the nearest first, and they slump and run into glossy puddles. Matter in Chocolate, with Heat speed 30 (it melts some thirty times quicker than for real)."
+  "blurb": "Three pieces of chocolate on a slab beside a small fire: its radiant heat softens the side of each that faces it, the nearest first, and they slump and run into glossy puddles. Matter in Chocolate, with Heat speed 50 (it melts some fifty times quicker than for real)."
  },
  {
   "key": "chocolate_pan",
@@ -656,6 +656,13 @@
   "category": "Ice and steam",
   "size": "2 plates, 150 C and 300 C",
   "blurb": "A glass of water splashed across two steel plates. On the left one (150 C) it boils where it lands, sizzling, spitting and steaming away in a few seconds. The right one (300 C) is past the Leidenfrost point: the water rides on its own vapour, never quite touching the steel, so it glides and skates across it in beads and puddles and boils off far more slowly."
+ },
+ {
+  "key": "quench",
+  "name": "Red-hot steel quenched",
+  "category": "Ice and steam",
+  "size": "7 cm steel ball at 1100 C, 36 cm tank",
+  "blurb": "A ball of white-hot steel (1100 C) dropped into a tank of cold water in a dim workshop. The water flashes to steam round it and a film of vapour holds it off the steel (film boiling); as the steel cools the film breaks and the water boils hard against it, and steam pours off the surface. Its glow fades from orange to dull red to nothing as the water takes its heat (Heat speed 12: about twelve times quicker than for real)."
  },
  {
   "key": "steaming_pool",

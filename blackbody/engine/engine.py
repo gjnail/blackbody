@@ -26,6 +26,7 @@ from .both_engine import BothEngine
 from .cloud_engine import CloudEngine
 from .liquid_engine import LiquidEngine
 from .matter_engine import MatterEngine
+from .objheat_engine import HeatEngine
 from .strands_engine import StrandsEngine
 from .renderer import Renderer, SurfaceInputs
 from . import stage as stage_mod
@@ -126,7 +127,7 @@ def halton(i, b):
     return r
 
 
-class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine, BallisticsEngine):
+class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine, BallisticsEngine, HeatEngine):
     def __init__(self, gpu: GPU | None = None, cache_bytes=4 << 30):
         self.gpu = gpu or GPU()
         self.solver = Solver(self.gpu)
@@ -228,6 +229,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
             changed = True
         if self._prepare_strands(scene):
             changed = True
+        if self._prepare_heat(scene):
+            changed = True
         self.solver.cloth_hook = self._solver_hook()
         if changed or final != self.final or self.sig is None:
             self.sig = sig
@@ -246,6 +249,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
 
     def reset(self):
         self.solids.reset()
+        self._reset_heat()
         if self._matter is not None:
             self._matter.reset()
         if self._strands is not None:
@@ -309,6 +313,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
             poses = self.solids.advance(scene, frame, fdt, n, couple=self._matter_couple(scene, frame, fdt, self.solver.meshes))
             self._shots_kick(fdt)                    # (and what they did to it)
             self._cloth_takes_objects(fdt)
+        self._step_heat(scene, frame, fdt, gas=self.solver)   # (the objects warm and cool: objheat_engine.py)
         moving = scene.colliders_animated() or poses is not None
         # deforming meshes: the frames either side of this step in the atlas
         self.solver.set_meshes(scene.mesh_items(frame - 1), d['mesh_resolution'])
@@ -330,6 +335,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
         if shot:
             dust = [a + b for a, b in zip(dust or [[]] * n, shot)]
         with self.gpu.batch() as b:
+            self._build_radiant(b, scene, frame, gas=self.solver)   # (what radiates heat this frame: radiant.py)
             if burning:
                 self.piece_fire.splat(b, self.solver)
             self._splat_matter_fire(b, scene, self.solver)   # (dry leaves, sawdust, coal: their flames)
@@ -362,6 +368,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
         self._step_matter(scene, frame, fdt, poses, n, self.solver.meshes)
         self._melt_matter(scene, frame, fdt, self.solver)
         self._heat_matter(scene, frame, fdt, self.solver)
+        self._heat_back()
         if d.get('grow'):
             self._grow(scene, prm)
         self.sim_frame = frame
@@ -438,6 +445,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
             entry = self._snapshot_fire(scene)
         self._snapshot_matter(entry)
         self._snapshot_strands(entry)
+        self._snapshot_heat(entry)
         return entry
 
     def _snapshot_fire(self, scene=None):
@@ -807,6 +815,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
                 light.lamps = r._lamps_on
                 self._stage_env(scene, light, frame)
                 size = r.plate_size if footage else (W, H)
+                self.stage.heat = self._stage_heat(frame, surfaces.colliders)   # (hot objects glow: objheat_engine.py)
                 stage = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, size,
                                         plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage, vol=vol,
                                         ground_y=vol.origin[1], frame=frame, pieces=pieces, ropes=ropes, matter=matter, bolts=bolts,
