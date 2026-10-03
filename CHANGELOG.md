@@ -49,6 +49,10 @@ Notable changes to Blackbody. The format follows
   colour and its murk scattering, foam a white lace, spray and bubbles scattering, the floor under it lit by the caustics
   its surface makes, in the water's colour, and Snell's window from underwater. (The wave sea, lava, ice, dye, fire and
   water in one box, and liquid scenes with fabric or grass are still drawn by the classic water renderer.)
+- Lights as real lights: an area light is a panel of its own width and height that Lume samples over the solid angle it
+  covers (the classic engine lights by a disc as big); a light can take a measured profile from an IES file (and its
+  brightness from it), and its output can be given in lumens. USD rect lights come in with their size and their IES
+  profile; old projects' area lights become squares of the same area.
 - A physical sky (Lighting › Sky: Physical): the sky, the sun's colour and the light the air throws on the set from
   a physically based atmosphere (Hillaire 2020): blue overhead, paler toward the horizon, reddening at sunset, with
   Haze, Ground brightness and Altitude. It lights the stage and Lume, and the water reflects it.

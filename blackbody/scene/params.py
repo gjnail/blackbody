@@ -836,13 +836,29 @@ LIGHT_PARAMS = [
     B('enabled', 'Enabled', True),
     E('kind', 'Kind', 'point', (('point', 'Point (a bulb, a lamp)'), ('spot', 'Spot'), ('area', 'Area (a window, a panel)'),
                                ('lightning', 'Lightning (a bolt or an arc)')),
-      tip='A point light shines every way; a spot in a cone along its aim; an area light from a flat panel facing its aim, brightest straight in front. Lightning is a bolt from Position to where it Strikes: a branching channel that flashes, lighting the set.', group='Light'),
+      tip='A point light shines every way; a spot in a cone along its aim; an area light from a flat panel facing its aim (Panel width and height), brightest straight in front, its shadows as soft as the panel is big. Lightning is a bolt from Position to where it Strikes: a branching channel that flashes, lighting the set.', group='Light'),
     V('position', 'Position', (1.5, 2.0, 1.0), -100.0, 100.0, 'm', anim=True, decimals=3, group='Light'),
     V('direction', 'Aim', (0.0, -1.0, 0.0), -1.0, 1.0, '', anim=True, decimals=3, tip='The direction a spot or area light shines (any length).', group='Light'),
     C('colour', 'Colour', (1.0, 0.86, 0.68), group='Light'),
     F('temperature', 'Colour temperature', 0.0, 0.0, 12000.0, 'K', 0, tip='0 uses the colour as it is; otherwise the colour of a light at this temperature (tungsten 2700–3200 K, daylight 5600–6500 K), times the colour.', group='Light'),
     F('intensity', 'Intensity at 1 m', 2000.0, 0.0, 200000.0, 'lx', 0, anim=True, log=True, tip='How bright the light is, as the illuminance one metre in front of it: a 100 W bulb is about 130, a car headlight 20 000, a stage spot 50 000 and up. The key light at intensity 3 is bright daylight, about 50 000.', group='Light', hard_lo=0.0),
     F('radius', 'Size', 0.1, 0.0, 5.0, 'm', 3, tip='Radius of the light: it softens the falloff close to it.', group='Light'),
+    F('width', 'Panel width', 1.0, 0.01, 20.0, 'm', 2, tip='Area: how wide the panel is (a window, a softbox, an LED panel), '
+      'level across its aim. Lume traces the panel itself (its soft shadows, its shape in reflections); the classic engine '
+      'lights by it as by a disc as big.', group='Light'),
+    F('height', 'Panel height', 1.0, 0.01, 20.0, 'm', 2, tip='Area: how tall the panel is.', group='Light'),
+    F('spin', 'Turn', 0.0, -180.0, 180.0, '°', 1, tip='Turns an area light\'s panel, or a light profile\'s pattern, about '
+      'its aim.', group='Light'),
+    Param('profile', 'Light profile (IES)', 'file', '', tip='A photometric file (.ies) from the maker of a real light: how '
+          'bright it is in each direction (a downlight\'s beam, a street light\'s spread, a wall washer\'s throw), in '
+          'candela. Its aim is the light\'s Aim (straight down in the file). It takes the place of a point light\'s even '
+          'spread or a spot\'s cone; area lights do not use it.', group='Light'),
+    B('profile_brightness', 'Brightness from the profile', True, tip='Takes the light\'s brightness from its profile (the '
+      'real light\'s candela) instead of Intensity, unless Output is set.', group='Light'),
+    F('lumens', 'Output', 0.0, 0.0, 1.0e6, 'lm', 0, anim=True, log=True, tip='The light\'s whole output in lumens, as on '
+      'the box (an LED bulb like a 60 W one 800, a car headlight 1 500, a stage spot 10 000, a stadium light 100 000): '
+      'sets its brightness for its kind, cone, panel or profile, in place of Intensity. 0: Intensity sets it.',
+      group='Light', hard_lo=0.0),
     F('cone', 'Cone angle', 30.0, 1.0, 90.0, '°', 1, tip='Spot: half-angle of the beam.', group='Light'),
     F('softness', 'Cone edge', 0.25, 0.0, 1.0, '', 2, tip='Spot: how soft the edge of the beam is.', group='Light'),
     B('shadows', 'Smoke shadows', True, tip='Smoke and steam between the light and a point shade it (beams through smoke).', group='Light'),

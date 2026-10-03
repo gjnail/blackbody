@@ -369,9 +369,9 @@ fn lu_shadow(p: vec3<f32>, d: vec3<f32>, tmax: f32, eps: f32, want: f32, caustic
       if (h.id >= 0) {
         return select(0.0, 1.0, glow_r > 0.0 && h.id == MATTER && h.t > tmax - 2.0 * glow_r - 4.0 * eps);
       }
-      // a lamp is a solid bulb: it shades what is behind it (but not the light picked on its own surface, at tmax)
+      // a lamp is a solid bulb or panel: it shades what is behind it (but not the light picked on its own surface, at tmax)
       for (var k = 0; k < i32(U.ln.w); k++) {
-        let t = lu_sphere_t(p, d, lamps[k].p.xyz, max(lamps[k].p.w, 1e-3));
+        let t = lu_lamp_t(p, d, k);
         if (t > 2.0 * eps && t < tmax * (1.0 - 1e-3) - eps) { return 0.0; }
       }
       if (water_on() && glow_r <= 0.0) {
@@ -437,16 +437,107 @@ fn lu_sphere_t(p: vec3<f32>, l: vec3<f32>, c: vec3<f32>, r: f32) -> f32 {
   return -1.0;
 }
 
-// The radiance of a lamp seen along l (toward it): its intensity spread over its disc, through its spot's cone or as
-// an area light faces.
-fn lu_lamp_radiance(lm: Lamp, l: vec3<f32>) -> vec3<f32> {
+// The radiance of lamp k seen along l (toward it): a bulb's intensity spread over its disc, through a spot's cone or by its
+// light profile (lamp_shape.wgsl); an area light's over its panel, as bright from every way in front (its intensity
+// falling with the cosine as the panel is seen edge on), dark behind.
+fn lu_lamp_radiance(k: i32, l: vec3<f32>) -> vec3<f32> {
+  let lm = lamps[k];
+  if (lu_panel(k)) {
+    let ax = lamps[LAMP_MAX + k];
+    return lm.c.rgb * (U.depth.w / max(4.0 * ax.p.w * ax.c.w, 1e-8)) * select(0.0, 1.0, dot(l, lm.d.xyz) < 0.0);
+  }
   let r = max(lm.p.w, 1e-3);
-  var L = lm.c.rgb * (U.depth.w / (PI * r * r));
-  let kind = i32(lm.c.w + 0.5);
-  let facing = dot(-l, lm.d.xyz);
-  if (kind == 1) { L *= smoothstep(lm.d.w, lm.e.x, facing); }
-  if (kind == 2) { L *= max(facing, 0.0); }
-  return L;
+  return lm.c.rgb * (U.depth.w / (PI * r * r)) * lamp_shape(k, -l);
+}
+
+// Lamp k is a panel (an area light with a size: renderer.lamp_rows).
+fn lu_panel(k: i32) -> bool {
+  return i32(lamps[k].c.w + 0.5) == 2 && lamps[LAMP_MAX + k].p.w > 0.0;
+}
+
+// How far along d from p lamp k is (its bulb, or its panel from either side), or -1.
+fn lu_lamp_t(p: vec3<f32>, d: vec3<f32>, k: i32) -> f32 {
+  let lm = lamps[k];
+  if (!lu_panel(k)) { return lu_sphere_t(p, d, lm.p.xyz, max(lm.p.w, 1e-3)); }
+  let ax = lamps[LAMP_MAX + k];
+  let dn = dot(d, lm.d.xyz);
+  if (abs(dn) < 1e-9) { return -1.0; }
+  let t = dot(lm.p.xyz - p, lm.d.xyz) / dn;
+  let q = p + d * t - lm.p.xyz;
+  if (t <= 0.0 || abs(dot(q, ax.p.xyz)) > ax.p.w || abs(dot(q, ax.c.xyz)) > ax.c.w) { return -1.0; }
+  return t;
+}
+
+// A panel seen from p, as the spherical rectangle it covers (Urena, Fajardo and King 2013, "An Area-Preserving
+// Parametrization for Spherical Rectangles"): its corner's coordinates in the panel's frame from p, and the solid angle S.
+struct LuRect { o: vec3<f32>, x: vec3<f32>, y: vec3<f32>, z: vec3<f32>, x0: f32, x1: f32, y0: f32, y1: f32, z0: f32,
+                b0: f32, b1: f32, k: f32, s: f32 };
+
+const LU_RECT_MIN: f32 = 2e-3;   // (smaller (far off, edge on): the panel is sampled by area, the rectangle's sums lose digits)
+
+fn lu_rect(p: vec3<f32>, k: i32) -> LuRect {
+  let lm = lamps[k];
+  let ax = lamps[LAMP_MAX + k];
+  var r: LuRect;
+  r.o = p;
+  r.x = ax.p.xyz;
+  r.y = ax.c.xyz;
+  r.z = cross(r.x, r.y);
+  let d = lm.p.xyz - r.x * ax.p.w - r.y * ax.c.w - p;
+  r.x0 = dot(d, r.x);
+  r.y0 = dot(d, r.y);
+  r.z0 = dot(d, r.z);
+  if (r.z0 > 0.0) {
+    r.z0 = -r.z0;
+    r.z = -r.z;
+  }
+  r.x1 = r.x0 + 2.0 * ax.p.w;
+  r.y1 = r.y0 + 2.0 * ax.c.w;
+  let v00 = vec3<f32>(r.x0, r.y0, r.z0);
+  let v01 = vec3<f32>(r.x0, r.y1, r.z0);
+  let v10 = vec3<f32>(r.x1, r.y0, r.z0);
+  let v11 = vec3<f32>(r.x1, r.y1, r.z0);
+  let n0 = normalize(cross(v00, v10));
+  let n1 = normalize(cross(v10, v11));
+  let n2 = normalize(cross(v11, v01));
+  let n3 = normalize(cross(v01, v00));
+  let g0 = acos(clamp(-dot(n0, n1), -1.0, 1.0));
+  let g1 = acos(clamp(-dot(n1, n2), -1.0, 1.0));
+  let g2 = acos(clamp(-dot(n2, n3), -1.0, 1.0));
+  let g3 = acos(clamp(-dot(n3, n0), -1.0, 1.0));
+  r.b0 = n0.z;
+  r.b1 = n2.z;
+  r.k = 2.0 * PI - g2 - g3;
+  r.s = g0 + g1 - r.k;
+  return r;
+}
+
+// The point on the panel along a direction picked evenly over the solid angle it covers (u in the unit square).
+fn lu_rect_point(r: LuRect, u: vec2<f32>) -> vec3<f32> {
+  let au = u.x * r.s + r.k;
+  let fu = (cos(au) * r.b0 - r.b1) / sin(au);
+  let cu = clamp(select(-1.0, 1.0, fu > 0.0) / sqrt(fu * fu + r.b0 * r.b0), -1.0, 1.0);
+  let xu = clamp(-(cu * r.z0) / max(sqrt(1.0 - cu * cu), 1e-7), r.x0, r.x1);
+  let dd = sqrt(xu * xu + r.z0 * r.z0);
+  let h0 = r.y0 / sqrt(dd * dd + r.y0 * r.y0);
+  let h1 = r.y1 / sqrt(dd * dd + r.y1 * r.y1);
+  let hv = h0 + u.y * (h1 - h0);
+  let hv2 = hv * hv;
+  let yv = select(r.y1, hv * dd / sqrt(max(1.0 - hv2, 1e-12)), hv2 < 1.0 - 1e-6);
+  return r.o + r.x * xu + r.y * yv + r.z * r.z0;
+}
+
+// The pdf (over solid angle) of lu_ls_lamp picking direction d from p, toward lamp k, where it meets it t away.
+fn lu_lamp_pdf(p: vec3<f32>, d: vec3<f32>, t: f32, k: i32) -> f32 {
+  let lm = lamps[k];
+  if (!lu_panel(k)) {
+    let cone = lu_cone_of(p, lm.p.xyz, max(lm.p.w, 1e-3));
+    return select(0.0, 1.0 / max(cone.y, 1e-12), cone.x > -1.5);
+  }
+  let r = lu_rect(p, k);
+  if (r.s > LU_RECT_MIN) { return 1.0 / r.s; }
+  let ax = lamps[LAMP_MAX + k];
+  return t * t / max(4.0 * ax.p.w * ax.c.w * abs(dot(d, lm.d.xyz)), 1e-12);
 }
 
 // The HDRI as a picture to pick directions from: (its pdf over the picture, which pixel), and back.
@@ -614,20 +705,42 @@ fn lu_ls_lamp(k: i32, s: Surf, po: vec3<f32>, sel: f32, u: vec2<f32>) -> LuLs {
   ls.kind = 3;
   ls.k = k;
   let lm = lamps[k];
+  if (lu_panel(k)) {
+    // a panel: a point on it along a direction picked evenly over the solid angle it covers (its soft shadow with
+    // little noise however near), or by its area when it is small to the eye; none from behind it
+    if (dot(s.p - lm.p.xyz, lm.d.xyz) <= 0.0) { return ls; }
+    let rc = lu_rect(po, k);
+    var q: vec3<f32>;
+    if (rc.s > LU_RECT_MIN) {
+      q = lu_rect_point(rc, u);
+    } else {
+      let ax = lamps[LAMP_MAX + k];
+      q = lm.p.xyz + ax.p.xyz * ((2.0 * u.x - 1.0) * ax.p.w) + ax.c.xyz * ((2.0 * u.y - 1.0) * ax.c.w);
+    }
+    let dv = q - po;
+    let dist = length(dv);
+    if (dist <= 1e-6) { return ls; }
+    ls.l = dv / dist;
+    ls.pdf = sel * select(dist * dist / max(4.0 * lamps[LAMP_MAX + k].p.w * lamps[LAMP_MAX + k].c.w * abs(dot(ls.l, lm.d.xyz)),
+                                            1e-12), 1.0 / rc.s, rc.s > LU_RECT_MIN);
+    ls.c = lu_lamp_radiance(k, ls.l) / max(ls.pdf, 1e-12);
+    ls.tmax = dist;
+    return ls;
+  }
   let r = max(lm.p.w, 1e-3);
   let cone = lu_cone_of(s.p, lm.p.xyz, r);   // (the solid angle as the surface itself sees it)
   if (cone.x < -1.5) {
     // inside the lamp: its light all round, as if from its middle
     let dc = lm.p.xyz - s.p;
     ls.l = normalize(dc + vec3<f32>(0.0, 1e-6, 0.0));
-    ls.c = lu_lamp_radiance(lm, ls.l) * (PI * r * r / (dot(dc, dc) + r * r)) / sel;
+    ls.c = lu_lamp_radiance(k, ls.l) * (PI * r * r / (dot(dc, dc) + r * r)) / sel;
     return ls;
   }
   let lf = lu_frame(normalize(lm.p.xyz - s.p));
   let lc = lu_cone(u, cone.x);
   ls.l = lf[0] * lc.x + lf[1] * lc.y + lf[2] * lc.z;
   ls.pdf = sel / max(cone.y, 1e-12);
-  ls.c = lu_lamp_radiance(lm, ls.l) / ls.pdf;
+  ls.c = lu_lamp_radiance(k, ls.l) / ls.pdf;
   ls.tmax = max(lu_sphere_t(po, ls.l, lm.p.xyz, r), 0.0);
   return ls;
 }
@@ -682,9 +795,9 @@ fn lu_wt(j: i32, p: vec3<f32>, n: vec3<f32>, self_glow: f32) -> f32 {
     let d = lm.p.xyz - p;
     let d2 = dot(d, d);
     let r = max(lm.p.w, 1e-3);
-    var w = max(luma(lm.c.rgb) * U.depth.w, 1e-9) / max(d2, r * r) * (max(dot(n, d) / sqrt(max(d2, 1e-12)), 0.0) + 0.05);
-    if (i32(lm.c.w + 0.5) == 2) { w *= max(dot(-d, lm.d.xyz) / sqrt(max(d2, 1e-12)), 0.0) + 0.05; }   // (an area light faces one way)
-    return w;
+    if (lu_panel(j - 3) && dot(d, lm.d.xyz) >= 0.0) { return 0.0; }   // (behind a panel)
+    let w = max(luma(lm.c.rgb) * U.depth.w, 1e-9) / max(d2, r * r) * (max(dot(n, d) / sqrt(max(d2, 1e-12)), 0.0) + 0.05);
+    return w * (lamp_shape(j - 3, -d / sqrt(max(d2, 1e-12))) + 0.05);   // (a spot's cone, an area light's facing, a profile)
   }
   if (!lu_env_on()) { return 0.0; }
   return max(U.lume2.w, 1e-9);   // (the HDRI's light on an upward surface: stage.py)
@@ -1217,7 +1330,7 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
       var tl = 1.0e9;
       var kl = -1;
       for (var k = 0; k < i32(U.ln.w); k++) {
-        let t = lu_sphere_t(ro, rd, lamps[k].p.xyz, max(lamps[k].p.w, 1e-3));
+        let t = lu_lamp_t(ro, rd, k);
         if (t > 0.0 && t < tl) {
           tl = t;
           kl = k;
@@ -1227,11 +1340,8 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
         // (through glass after a bounce off a surface: in that surface's shadow rays, or the caustics')
         if (!(depth > 0 && (glass_s || glass_x)) && !(cov_d && xs > 0)) {
           var w = 1.0;
-          if (pdf_last > 0.0) {
-            let cone = lu_cone_of(ro, lamps[kl].p.xyz, max(lamps[kl].p.w, 1e-3));
-            if (cone.x > -1.5) { w = lu_power(pdf_last, lu_sel(3 + kl) / max(cone.y, 1e-12)); }
-          }
-          var add = thr * lu_lamp_radiance(lamps[kl], rd) * w;
+          if (pdf_last > 0.0) { w = lu_power(pdf_last, lu_sel(3 + kl) * lu_lamp_pdf(ro, rd, tl, kl)); }
+          var add = thr * lu_lamp_radiance(kl, rd) * w;
           if (cap > 0.0) {
             let y = luma(add);
             if (y > cap) { add *= cap / y; }
@@ -1544,9 +1654,17 @@ fn lu_emit() -> LuEmit {
     let cmin = -sa;                                                     // (the cap: out to 90 degrees and that angle more)
     let lf = lu_frame(toward / max(dist, 1e-6));
     let nc = lu_cone(lu_rand2(), cmin);                                // (a point on the cap, uniformly by area)
-    let nx = lf[0] * nc.x + lf[1] * nc.y + lf[2] * nc.z;
-    let x = c + nx * r;
-    let cap = 2.0 * PI * r * r * (1.0 - cmin);
+    var nx = lf[0] * nc.x + lf[1] * nc.y + lf[2] * nc.z;
+    var x = c + nx * r;
+    var cap = 2.0 * PI * r * r * (1.0 - cmin);
+    if (lu_panel(pick)) {
+      // a panel: a point on its face, evenly
+      let ax = lamps[LAMP_MAX + pick];
+      let up = lu_rand2();
+      nx = lm.d.xyz;
+      x = c + ax.p.xyz * ((2.0 * up.x - 1.0) * ax.p.w) + ax.c.xyz * ((2.0 * up.y - 1.0) * ax.c.w);
+      cap = 4.0 * ax.p.w * ax.c.w;
+    }
     let cone = lu_cone_of(x, tg.xyz, tg.w);
     var l = vec3<f32>(0.0, -1.0, 0.0);
     var omega = 4.0 * PI;
@@ -1562,7 +1680,7 @@ fn lu_emit() -> LuEmit {
     if (cosx <= 0.0) { return e; }
     e.ro = x + nx * 1.0e-4;
     e.rd = l;
-    e.beta = lu_lamp_radiance(lm, -l) * (cosx * cap * omega * sel);
+    e.beta = lu_lamp_radiance(pick, -l) * (cosx * cap * omega * sel);
     return e;
   }
   // the key light or the HDRI: parallel light over a disc as wide as the target, from far off

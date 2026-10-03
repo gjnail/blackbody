@@ -33,6 +33,7 @@ It renders every scene in `scenes.py` with Lume (`lume_side.py`) and with Mitsub
 | glass | A glass ball beside a block under a lamp: refraction, its shadow, the light it focuses |
 | glass_sky | The glass ball under the sky alone: the sky's caustic |
 | glass_above | A glass ball seen from above under a lamp straight over it: through the ball, the light it focuses onto the floor below it (a caustic seen through its glass). A centimetre off the floor: where a ball touches the ground the reference loses its rays |
+| panel | A softbox: a tilted panel light 1.2 m by 0.6 m over a block and a glossy ball (an area light traced as the panel it is, against Mitsuba's emitting rectangle): soft shadows, its oblong highlight |
 
 ## The measures
 
@@ -60,6 +61,7 @@ The reference is Mitsuba with 262,144 multi-jittered samples per pixel. Its grou
 | glass | 0.9997 | 0.000028 | 0.035x | 0.036x (stratified) |
 | glass_sky | 0.9994 | 0.000014 | 0.30x | 0.86x (multijitter) |
 | glass_above | 0.9991 | 0.0012 | 0.18x | 0.18x (independent) |
+| panel (run 13, alone) | 0.9996 | 0.000005 | 0.046x | 0.34x (stratified) |
 
 Below 1x Lume is closer to the truth than Mitsuba after the same time. Against Mitsuba's best sampler for each scene, Lume is closer on nine of the ten: from a little closer under the sky (a glass ball, 0.86x; a room, 0.76x) to nine to twelve times closer on the glossy rooms and thirty times on the glass ball under a lamp. On the simplest (a white ball under an even sky: a few milliseconds a frame, so the time is mostly each renderer's own overhead) Mitsuba is a little ahead (1.2x). Since the last run, the glossy rooms' error at 1024 samples fell four to five times (the glossy coat split by lobe, the sparkles' caustic cache); the other ratios moved by a tenth or two, as timings do between runs. Where it is furthest ahead, it traces the light a lamp focuses through glass or throws off smooth metal from the lamp itself (a camera's path finds it rarely, in fireflies), and takes the caustic it sees through glass or in a mirror from a cache of where that light landed; its random numbers (Owen-scrambled Sobol) spread its paths as evenly as Mitsuba's stratified samplers do. Timings vary from run to run (the GPU's clocks, other programs), so these ratios move by a tenth or two between runs; each run here was started on an idle GPU.
 

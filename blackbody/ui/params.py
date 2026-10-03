@@ -425,6 +425,16 @@ def pick_mesh_file(parent, current=''):
     return path
 
 
+def pick_ies_file(parent, current=''):
+    """Ask for a light profile (an IES photometric file). Returns its path or ''."""
+    from pathlib import Path
+    start = current or QSettings().value('ui/ies_dir', '', type=str)
+    path, _ = QFileDialog.getOpenFileName(parent, 'Choose a light profile', start, 'Light profiles (*.ies *.IES);;All files (*)')
+    if path:
+        QSettings().setValue('ui/ies_dir', str(Path(path).parent))
+    return path or ''
+
+
 def pick_volume_file(parent, current=''):
     """Ask for a volume: an OpenVDB file (or a numbered sequence of them) or a Volume prim in a USD file.
     Returns the source or ''."""
@@ -694,6 +704,8 @@ class ParamRow(QWidget):
             path = pick_ocio_config(self, self.line.text())
         elif key == 'volume':
             path = pick_volume_file(self, self.line.text())
+        elif key == 'profile':
+            path = pick_ies_file(self, self.line.text())
         else:
             path = pick_mesh_file(self, self.line.text())
         if path:

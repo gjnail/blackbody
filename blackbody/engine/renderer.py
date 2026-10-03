@@ -36,6 +36,8 @@ EMBER_DEEP_MIN_T = 0.02      # an ember behind deep samples letting less than th
 MAX_LAMPS = 8               # lights in the set the smoke is lit by
 LAMP_SCALE = 3.0 / 50000.0  # lux at 1 m -> key-light units (Key intensity 3 is about 50 000 lux of daylight)
 LAMP_KINDS = {'point': 0, 'spot': 1, 'area': 2}
+LAMP_PROF_V, LAMP_PROF_H = 64, 16  # a light profile's table in the lamp buffer (io/ies.py PROF_V, PROF_H; lamp_shape.wgsl)
+LAMP_ROWS = 2 * MAX_LAMPS + MAX_LAMPS * LAMP_PROF_V   # the lamps, their axes, their profiles' tables (16 floats a row)
 
 
 @dataclass
@@ -178,6 +180,31 @@ def vapour_saturation(tk):
     return es / (461.5 * max(tk, 1.0)) * 1000.0
 
 
+def lamp_rows(lamps):
+    """The lamp buffer (lamp_shape.wgsl): row k lamp k; row MAX_LAMPS + k its axes across its aim and an area light's
+    half sizes; from row 2 MAX_LAMPS + k LAMP_PROF_V its light profile's table."""
+    from ..io.ies import frame
+    data = np.zeros((LAMP_ROWS, 16), np.float32)
+    for i, L in enumerate(list(lamps)[:MAX_LAMPS]):
+        aim = np.asarray(L['direction'], float)
+        aim = aim / max(float(np.linalg.norm(aim)), 1e-12)
+        kind = LAMP_KINDS.get(L['kind'], 0)
+        hw, hh = 0.5 * float(L.get('width', 0.0)), 0.5 * float(L.get('height', 0.0))
+        area = kind == 2 and hw > 0.0 and hh > 0.0
+        r = math.sqrt(4.0 * hw * hh / math.pi) if area else float(L['radius'])   # (a panel: the disc as big, elsewhere)
+        prof = L.get('profile')
+        data[i] = (*L['position'], max(r, 1e-3),
+                   *(np.asarray(L['power'], float) * LAMP_SCALE), kind,
+                   *aim, hw if area else L['cos_outer'], hh if area else L['cos_inner'], 1.0 if L.get('shadows', True) else 0.0,
+                   1.0 if L.get('in_footage', True) else 0.0, 1.0 if prof is not None else 0.0)
+        t0, t1 = frame(aim, float(L.get('spin', 0.0)))
+        data[MAX_LAMPS + i, :8] = (*t0, hw, *t1, hh)
+        if prof is not None:
+            s = 2 * MAX_LAMPS + i * LAMP_PROF_V
+            data[s:s + LAMP_PROF_V] = np.asarray(prof.table, np.float32).reshape(LAMP_PROF_V, LAMP_PROF_H)
+    return data
+
+
 class Renderer:
     BLOOM_LEVELS = 7
     _shaper_lo = -12.0   # io/ocio.py SHAPER_LO / SHAPER_HI: the log shaper the OCIO view LUT is baked over
@@ -211,7 +238,7 @@ class Renderer:
                                 defines=BB_DEFINES, workgroup=(8, 8, 1))
         self.k_lights = g.kernel('lights.wgsl', ['utex3d', 'buf', 'buf'], workgroup=(4, 4, 4))
         self.k_lamps = g.kernel('lamps.wgsl', ['tex3d', 'smp', 'rbuf', 'st3d:rgba16float:w'])
-        self._lamp_buf = g.buffer(MAX_LAMPS * 64, 'lamps')
+        self._lamp_buf = g.buffer(LAMP_ROWS * 64, 'lamps')
         self._no_soot_slots = g.buffer(64, 'no-soot-slots')
         self._lamps_on = 0          # lights in the set this frame (the march reads their buffer)
         self.LT = None              # their transmittance through the smoke: light volume x (1 or 2) deep
@@ -580,15 +607,7 @@ class Renderer:
         how many there are."""
         lamps = list(lamps or [])[:MAX_LAMPS]
         if lamps:
-            data = np.zeros((MAX_LAMPS, 16), np.float32)
-            for i, L in enumerate(lamps):
-                aim = np.asarray(L['direction'], float)
-                aim = aim / max(float(np.linalg.norm(aim)), 1e-12)
-                data[i] = (*L['position'], max(float(L['radius']), 1e-3),
-                           *(np.asarray(L['power'], float) * LAMP_SCALE), LAMP_KINDS.get(L['kind'], 0),
-                           *aim, L['cos_outer'], L['cos_inner'], 1.0 if L.get('shadows', True) else 0.0,
-                           1.0 if L.get('in_footage', True) else 0.0, 0.0)
-            self.gpu.write_buffer(self._lamp_buf, data)
+            self.gpu.write_buffer(self._lamp_buf, lamp_rows(lamps))
         return len(lamps)
 
     def march(self, b, solver, camstate: cam.CameraState, fire: cam.FireXform, look: LookParams, size,

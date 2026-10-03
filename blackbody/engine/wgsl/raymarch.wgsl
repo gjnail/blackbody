@@ -71,6 +71,7 @@
 struct Lamp { p: vec4<f32>, c: vec4<f32>, d: vec4<f32>, e: vec4<f32> };  // see lamps.wgsl
 
 //!include shade.wgsl
+//!include lamp_shape.wgsl
 
 struct Params {
   inv_vp: mat4x4<f32>,   // clip -> world
@@ -228,16 +229,12 @@ struct LampAt { dir: vec3<f32>, f: f32 };
 // Lamp L seen from fire-local point p: the unit direction toward it, and how much of its power arrives
 // (per square metre, before shadows): the inverse square softened by its size, within a spot's cone
 // (exactly, so a narrow beam is as sharp as the march) or in front of an area light.
-fn lamp_at(L: Lamp, p: vec3<f32>) -> LampAt {
+fn lamp_at(k: i32, p: vec3<f32>) -> LampAt {
+  let L = lamps[k];
   let v = L.p.xyz - p;
   let d2 = dot(v, v);
   let dir = v * inverseSqrt(max(d2, 1e-12));
-  var f = 1.0 / (d2 + L.p.w * L.p.w);
-  let kind = i32(L.c.w + 0.5);
-  let facing = dot(-dir, L.d.xyz);
-  if (kind == 1) { f *= smoothstep(L.d.w, L.e.x, facing); }
-  if (kind == 2) { f *= max(facing, 0.0); }
-  return LampAt(dir, f);
+  return LampAt(dir, lamp_shape(k, -dir) / (d2 + L.p.w * L.p.w));
 }
 
 // The lamps' transmittance at light-grid point pl, for lamps 4 * block .. 4 * block + 3.
@@ -308,7 +305,7 @@ fn lamp_surface(p: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   var real = vec3<f32>(0.0);
   for (var i = 0; i < count; i++) {
     let Lm = lamps[i];
-    let a = lamp_at(Lm, p);
+    let a = lamp_at(i, p);
     let e = Lm.c.rgb * (a.f * max(dot(nrm, a.dir), 0.0));
     if (max(e.x, max(e.y, e.z)) <= 0.0) { continue; }
     let dist = length(Lm.p.xyz - p);
@@ -693,7 +690,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (n_lamps > 4) { t1 = lamp_tr4(pl, 1.0); }
       for (var li = 0; li < n_lamps; li++) {
         let Lm = lamps[li];
-        let la = lamp_at(Lm, pm);
+        let la = lamp_at(li, pm);
         if (la.f <= 0.0) { continue; }
         let ltr = pick4(select(t0, t1, li >= 4), li & 3);
         let pw = Lm.c.rgb * la.f;

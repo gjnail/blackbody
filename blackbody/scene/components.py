@@ -575,7 +575,7 @@ COMPONENTS = [
                           strike_at=0.5, strokes=3, branching=0.6, thickness=0.03, colour=(0.8, 0.85, 1.0))]),
     Component('window', 'Window light', 'Lights', 'Soft light from a window to one side (an area light).', 'bulb',
               scales=True, objects=[_L(name='Window', kind='area', position=(-2.0, 1.6, 0.5), direction=(1.0, -0.2, 0.0), intensity=3000.0,
-                          radius=0.6, colour=(0.85, 0.9, 1.0))]),
+                          radius=0.6, width=1.0, height=1.2, colour=(0.85, 0.9, 1.0))]),
     Component('wind', 'Wind', 'Forces', 'A steady breeze blowing to screen right. Turn it in Motion › Wind (or Liquid › Wind).', 'wind',
               scene={'motion': {'wind_speed': 1.5}, 'liquid': {'wind_speed': 4.0}, 'atmosphere': {'wind': 8.0}}),
     Component('vortex', 'Vortex', 'Forces', 'Air spinning around a vertical axis: it twists smoke and flame into a column.', 'wind',
@@ -983,6 +983,9 @@ def add(scene: Scene, key, at=None, mesh=None):
             if kind == 'light':
                 d['intensity'] = d.get('intensity', 2000.0) * f * f   # as bright at the effect from f times as far
                 d['radius'] = d.get('radius', 0.1) * f
+                for k in ('width', 'height'):
+                    if k in d:
+                        d[k] = d[k] * f
         if kind == 'emitter' and scene.kind == 'both' and not comp.origin:   # your blocks keep what each source emits
             d['emits'] = {'fire': 'fire', 'liquid': 'liquid', 'lava': 'lava'}.get(comp.need, 'fire')
         if kind == 'emitter' and (comp.need in ('liquid', 'lava') or d.get('vapour')) and 'size' in d and d.get('shape') != 'mesh' \

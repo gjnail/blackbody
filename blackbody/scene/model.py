@@ -476,11 +476,35 @@ class Scene:
             if d['kind'] == 'lightning':
                 out += self._lightning_lamps(i, d, frame, col, g)
                 continue
-            out.append(dict(kind=d['kind'], position=tuple(float(x) for x in g('position')), direction=tuple(float(x) for x in aim),
-                            power=tuple(float(x) for x in col * max(float(g('intensity')), 0.0)),
-                            radius=float(d['radius']), cos_outer=math.cos(half), cos_inner=math.cos(half * (1.0 - soft)),
-                            shadows=bool(d['shadows']), in_footage=bool(d.get('in_footage', True))))
+            kind = d['kind']
+            co, ci = math.cos(half), math.cos(half * (1.0 - soft))
+            prof = self.light_profile(d) if kind in ('point', 'spot') else None
+            peak = max(float(g('intensity')), 0.0)
+            lumens = max(float(g('lumens')), 0.0) if 'lumens' in d else 0.0
+            if prof is not None:
+                kind = 'point'                          # (the profile is its shape: no cone as well)
+            if lumens > 0.0 or (prof is not None and d.get('profile_brightness', True)):
+                # in photometric units: the colour carries no brightness of its own (its luminance 1)
+                from ..io.ies import flux_per_peak
+                col = col / max(float(col @ np.array([0.2126, 0.7152, 0.0722])), 1e-9)
+                peak = lumens / flux_per_peak(kind, co, ci, prof) if lumens > 0.0 else prof.peak
+            out.append(dict(kind=kind, position=tuple(float(x) for x in g('position')), direction=tuple(float(x) for x in aim),
+                            power=tuple(float(x) for x in col * peak),
+                            radius=float(d['radius']), cos_outer=co, cos_inner=ci,
+                            shadows=bool(d['shadows']), in_footage=bool(d.get('in_footage', True)),
+                            width=float(d.get('width', 1.0)), height=float(d.get('height', 1.0)), spin=float(d.get('spin', 0.0)),
+                            profile=prof))
         return out
+
+    def light_profile(self, d):
+        """A light's profile (io/ies.py Profile) from its IES file, or None (none, or it will not read)."""
+        if not d.get('profile'):
+            return None
+        from ..io import ies
+        try:
+            return ies.load(self.mesh_path(d['profile']))
+        except (OSError, ValueError, IndexError):
+            return None
 
     LIGHTNING_LAMPS = 4
 
@@ -1427,6 +1451,8 @@ class Scene:
             for k, v in l.items():
                 if k in x:
                     x[k] = _from_json_value(param('light', k), v)
+            if x['kind'] == 'area' and 'width' not in l:
+                x['width'] = x['height'] = round(max(float(x['radius']), 0.01) * math.sqrt(math.pi), 3)
             s.lights.append(x)
         s.fabrics = []
         for f in d.get('fabrics', []):

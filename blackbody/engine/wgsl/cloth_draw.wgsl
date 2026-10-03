@@ -22,6 +22,7 @@
 //!include shade.wgsl
 //!include cloth_common.wgsl
 //!include lume_light.wgsl
+//!include lamp_shape.wgsl
 
 struct DrawMat {
   c0: vec4<f32>,   // colour (linear), sheen strength
@@ -501,11 +502,7 @@ fn fs_drop(i: DropOut) -> FOut {
     let d = lm.p.xyz - i.p;
     let d2 = dot(d, d);
     l = d * inverseSqrt(max(d2, 1e-12));
-    var f = 1.0 / (d2 + lm.p.w * lm.p.w);
-    let kind = i32(lm.c.w + 0.5);
-    let facing = dot(-l, lm.d.xyz);
-    if (kind == 1) { f *= smoothstep(lm.d.w, lm.e.x, facing); }
-    if (kind == 2) { f *= max(facing, 0.0); }
+    let f = lamp_shape(k, -l) / (d2 + lm.p.w * lm.p.w);
     if (f <= 0.0) { continue; }
     c += lm.c.rgb * f * (0.5 * aniso_spec(n, t, l, v, 0.03, 0.03) * max(dot(n, l), 0.0) + 0.6 * pow(max(dot(-v, l), 0.0), 40.0));
   }
@@ -642,11 +639,7 @@ fn fs(i: VOut) -> FOut {
     let d = lm.p.xyz - i.p;
     let d2 = dot(d, d);
     let dir = d * inverseSqrt(max(d2, 1e-12));
-    var f = 1.0 / (d2 + lm.p.w * lm.p.w);
-    let kind = i32(lm.c.w + 0.5);
-    let facing = dot(-dir, lm.d.xyz);
-    if (kind == 1) { f *= smoothstep(lm.d.w, lm.e.x, facing); }
-    if (kind == 2) { f *= max(facing, 0.0); }
+    let f = lamp_shape(k, -dir) / (d2 + lm.p.w * lm.p.w);
     if (f <= 0.0) { continue; }
     var tr = 1.0;
     let pq = off_sheet(pl, n, dir);

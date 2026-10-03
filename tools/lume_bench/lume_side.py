@@ -77,8 +77,13 @@ def build(spec, sky_path):
     for L in spec['lamps']:
         p = np.asarray(L['power'], float)
         peak = float(p.max())
+        if 'panel' in L:
+            sc.add_light(kind='area', position=tuple(L['pos']), direction=tuple(L['aim']), width=float(L['panel'][0]),
+                         height=float(L['panel'][1]), spin=float(L.get('spin', 0.0)), colour=tuple(p / peak),
+                         intensity=peak / LAMP_SCALE, shadows=False, temperature=0.0)
+            continue
         sc.add_light(kind='point', position=tuple(L['pos']), radius=float(L['radius']), colour=tuple(p / peak),
-                     intensity=peak / LAMP_SCALE, shadows=False)
+                     intensity=peak / LAMP_SCALE, shadows=False, temperature=0.0)
     return sc, rows
 
 

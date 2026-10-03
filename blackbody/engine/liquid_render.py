@@ -197,8 +197,12 @@ def pack_lamps(u: Uniforms, lamps, gain=1.0, fire_gain=None):
     for i in range(MAX_LAMPS):
         if i < len(lamps):
             L = lamps[i]
-            u.v4(*L['position'], max(float(L['radius']), 1e-3))
-            u.v4(*(np.asarray(L['power'], float) * LAMP_SCALE * gain), kinds.get(L['kind'], 0.0))
+            panel = L['kind'] == 'area' and float(L.get('width', 0.0)) > 0.0 and float(L.get('height', 0.0)) > 0.0
+            r = math.sqrt(float(L['width']) * float(L['height']) / math.pi) if panel else float(L['radius'])
+            prof = L.get('profile')
+            along = float(prof.table[0].mean()) if prof is not None else 1.0   # (a profile: its light along its aim)
+            u.v4(*L['position'], max(r, 1e-3))
+            u.v4(*(np.asarray(L['power'], float) * (LAMP_SCALE * gain * along)), kinds.get(L['kind'], 0.0))
             u.v4(*L['direction'], L['cos_outer'])
             u.v4(L['cos_inner'], 0.0, 0.0, 0.0)
         else:

@@ -155,6 +155,24 @@ def build(spec, spp, sampler='independent'):
         else:
             d[f'o{i}'] = {'type': 'cube', 'to_world': T().translate(list(o['pos'])).scale(list(o['size'])), 'bsdf': material(o)}
     for i, L in enumerate(spec['lamps']):
+        if 'panel' in L:
+            # a panel: a rectangle lit on its front (its normal along the aim), its width along Blackbody's axes round
+            # the aim (io/ies.py frame), radiance its intensity over its area
+            a = np.asarray(L['aim'], float)
+            a /= np.linalg.norm(a)
+            ref = np.array([0.0, 0.0, 1.0]) if abs(a[1]) > 0.9 else np.array([0.0, 1.0, 0.0])
+            t0 = np.cross(ref, a)
+            t0 /= np.linalg.norm(t0)
+            t1 = np.cross(a, t0)
+            s = math.radians(float(L.get('spin', 0.0)))
+            t0, t1 = t0 * math.cos(s) + t1 * math.sin(s), -t0 * math.sin(s) + t1 * math.cos(s)
+            w, h = (float(x) for x in L['panel'])
+            M = np.eye(4)
+            M[:3, 0], M[:3, 1], M[:3, 2], M[:3, 3] = t0 * (w / 2), t1 * (h / 2), a, L['pos']
+            rad = np.asarray(L['power'], float) / (w * h)
+            d[f'lamp{i}'] = {'type': 'rectangle', 'to_world': T(M.tolist()),
+                             'emitter': {'type': 'area', 'radiance': {'type': 'rgb', 'value': [float(x) for x in rad]}}}
+            continue
         r = float(L['radius'])
         rad = np.asarray(L['power'], float) / (math.pi * r * r)      # a sphere of radiance L: intensity L pi r^2
         d[f'lamp{i}'] = {'type': 'sphere', 'center': list(L['pos']), 'radius': r,

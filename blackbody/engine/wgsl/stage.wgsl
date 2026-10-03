@@ -41,6 +41,7 @@
 //!include colliders.wgsl
 //!include burn_common.wgsl
 //!include burnobj.wgsl
+//!include lamp_shape.wgsl
 //!include lume.wgsl
 //!include lume_water.wgsl
 //!include marks.wgsl
@@ -997,11 +998,7 @@ fn shade(s: Surf, v: vec3<f32>) -> vec3<f32> {
     let d = lm.p.xyz - s.p;
     let d2 = dot(d, d);
     let dir = d * inverseSqrt(max(d2, 1e-12));
-    var f = 1.0 / (d2 + lm.p.w * lm.p.w);
-    let kind = i32(lm.c.w + 0.5);
-    let facing = dot(-dir, lm.d.xyz);
-    if (kind == 1) { f *= smoothstep(lm.d.w, lm.e.x, facing); }
-    if (kind == 2) { f *= max(facing, 0.0); }
+    let f = lamp_shape(k, -dir) / (d2 + lm.p.w * lm.p.w);
     let nl = dot(n, dir);
     if (f <= 0.0 || nl <= 0.0) { continue; }
     let dist = sqrt(d2);

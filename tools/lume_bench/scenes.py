@@ -58,6 +58,14 @@ for _n, _b in (('cornell_direct', 1), ('cornell_2', 2)):
 # The metal and plastic balls with direct light only, and with two bounces (their reflections of each other and the floor)
 for _n, _b in (('glossy_direct', 1), ('glossy_2', 2)):
     SCENES[_n] = dict(SCENES['glossy'], bounces=_b)
+# A softbox: a panel 1.2 m by 0.6 m, tilted, over a block and a glossy ball on the floor, a faint sky: the soft shadows a
+# big panel casts (sharp at the block's foot, wide where they fall far), its oblong shape in the ball's highlight.
+SCENES['panel'] = dict(
+    size=(320, 240), camera=dict(eye=(0.0, 1.0, 3.2), target=(0.0, 0.3, 0.0), hfov=40.0),
+    sky=0.02, floor=dict(alb=(0.6, 0.6, 0.6), rough=0.8), bounces=4,
+    objects=[dict(shape='box', pos=(-0.45, 0.25, -0.1), size=(0.2, 0.25, 0.2), alb=(0.7, 0.7, 0.7), rough=0.8),
+             dict(shape='sphere', pos=(0.45, 0.3, 0.1), size=(0.3, 0.3, 0.3), alb=(0.6, 0.15, 0.1), rough=0.2)],
+    lamps=[dict(pos=(0.3, 1.9, 0.4), panel=(1.2, 0.6), aim=(-0.3, -1.0, -0.2), spin=20.0, power=(3.0, 2.9, 2.7))])
 # The glass ball under the sky alone: the sky's light through it (its caustic) without the lamp's.
 SCENES['glass_sky'] = dict(SCENES['glass'], sky=1.0, lamps=[])
 # A glass ball seen from above, under a lamp straight over it: through the ball, the floor below it, where it focuses the

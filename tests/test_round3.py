@@ -1030,6 +1030,7 @@ def test_usd_curves_points_volumes_nested_instancers_and_lights(tmp_path):
     report = U.import_usd(sc, path)
     lights = {l['name']: l for l in sc.lights}
     assert lights['Window']['kind'] == 'area' and lights['Window']['intensity'] == pytest.approx(500.0 * 2.0)
+    assert (lights['Window']['width'], lights['Window']['height']) == pytest.approx((2.0, 1.0))   # its panel
     assert lights['Spot']['kind'] == 'spot' and lights['Spot']['cone'] == pytest.approx(20.0)
     assert lights['Spot']['direction'] == pytest.approx((0.0, -1.0, 0.0), abs=1e-6)
     assert any('PortalLight' in r for r in report)

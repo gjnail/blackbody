@@ -1107,32 +1107,46 @@ def _import_local_lights(scene, path, lights, frames):
         radiance = float(api.GetIntensityAttr().Get(tc) or 1.0) * 2.0 ** float(api.GetExposureAttr().Get(tc) or 0.0)
         colour = _light_colour(api, tc)
         kind = 'point'
+        pw = ph = None
         if l.prim_type == 'SphereLight':
             r = float(api.GetRadiusAttr().Get(tc) or 0.5) * mpu
             area, size = math.pi * r * r, r
         elif l.prim_type == 'DiskLight':
             r = float(api.GetRadiusAttr().Get(tc) or 0.5) * mpu
             area, size, kind = math.pi * r * r, r, 'area'
+            pw = ph = r * math.sqrt(math.pi)
         elif l.prim_type == 'RectLight':
             w = float(api.GetWidthAttr().Get(tc) or 1.0) * mpu
             h = float(api.GetHeightAttr().Get(tc) or 1.0) * mpu
             area, size, kind = w * h, 0.5 * math.hypot(w, h), 'area'
+            pw, ph = w, h
         else:
             r = float(api.GetRadiusAttr().Get(tc) or 0.5) * mpu
             ln = float(api.GetLengthAttr().Get(tc) or 1.0) * mpu
             area, size = 2.0 * r * ln, 0.5 * ln
-        cone, softness = 90.0, 0.0
+        cone, softness, ies_file = 90.0, 0.0, ''
         if prim.HasAPI(UsdLux.ShapingAPI):
             sh = UsdLux.ShapingAPI(prim)
             cone = float(sh.GetShapingConeAngleAttr().Get(tc) or 90.0)
             softness = float(sh.GetShapingConeSoftnessAttr().Get(tc) or 0.0)
-            if cone < 89.0:
+            if cone < 89.0 and l.prim_type != 'RectLight':   # (a disc or bulb with a cone: a spot)
                 kind = 'spot'
+            f = sh.GetShapingIesFileAttr().Get(tc)
+            if f:
+                p = getattr(f, 'resolvedPath', '') or getattr(f, 'path', '') or str(f)
+                ies_file = str((Path(path).parent / p).resolve()) if p and not Path(p).is_absolute() else str(p)
         keys_p, keys_d = [], []
+        spin = 0.0
         for f in (frames if (frames and l.motion == 'animated') else [f0]):
             m = _world(prim, time_code(stage, f))
             pos = ax[:3, :3] @ m[:3, 3]
             aim = turn @ m[:3, :3] @ np.array([0.0, 0.0, -1.0])   # lights shine down their own -z
+            if f in (f0, None) and pw is not None:
+                # the panel's width along the light's own x: the Turn from the axes Blackbody takes round its aim
+                from .ies import frame as lamp_frame
+                xw = R.T @ (turn @ m[:3, :3] @ np.array([1.0, 0.0, 0.0]))
+                t0, t1 = lamp_frame(R.T @ (aim / max(np.linalg.norm(aim), 1e-12)))
+                spin = math.degrees(math.atan2(float(xw @ t1), float(xw @ t0)))
             aim = aim / max(np.linalg.norm(aim), 1e-12)
             keys_p.append([1 if f is None else f, tuple(float(x) for x in R.T @ (pos - fp)), 'linear'])
             keys_d.append([1 if f is None else f, tuple(float(x) for x in R.T @ aim), 'linear'])
@@ -1140,6 +1154,11 @@ def _import_local_lights(scene, path, lights, frames):
                         intensity=radiance * area * float(colour.max()), radius=max(size, 0.01),
                         cone=min(max(cone, 1.0), 90.0), softness=min(max(softness, 0.0), 1.0))
         d = scene.lights[-1]
+        if pw is not None:
+            d['width'], d['height'], d['spin'] = max(pw, 0.01), max(ph, 0.01), round(spin, 2)
+        if ies_file and kind != 'area':
+            # (its profile as the shape only: the light's own intensity stays, as USD scales the file's by it)
+            d['profile'], d['profile_brightness'] = _relative(scene, ies_file), False
         d['position'] = Curve(keys_p) if len(keys_p) > 1 else keys_p[0][1]
         d['direction'] = Curve(keys_d) if len(keys_d) > 1 else keys_d[0][1]
         report.append(f'light {l.path} ({kind})')

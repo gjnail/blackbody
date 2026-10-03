@@ -18,6 +18,7 @@
 //!include shade.wgsl
 //!include strand_common.wgsl
 //!include lume_light.wgsl
+//!include lamp_shape.wgsl
 
 struct Lamp { p: vec4<f32>, c: vec4<f32>, d: vec4<f32>, e: vec4<f32> };
 
@@ -301,11 +302,7 @@ fn fs(i: VOut) -> FOut {
     let d = lm.p.xyz - i.p;
     let d2 = dot(d, d);
     let dir = d * inverseSqrt(max(d2, 1e-12));
-    var f = 1.0 / (d2 + lm.p.w * lm.p.w);
-    let kind = i32(lm.c.w + 0.5);
-    let facing = dot(-dir, lm.d.xyz);
-    if (kind == 1) { f *= smoothstep(lm.d.w, lm.e.x, facing); }
-    if (kind == 2) { f *= max(facing, 0.0); }
+    let f = lamp_shape(k, -dir) / (d2 + lm.p.w * lm.p.w);
     if (f <= 0.0) { continue; }
     var tl = 1.0;
     let pq = pl + dir * 0.75;
