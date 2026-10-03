@@ -114,6 +114,8 @@ a:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 .media { position: relative; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); background: #000; }
 .media video, .media img { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; }
+.stills { display: grid; gap: 18px; margin-top: 14px; }
+.stills .media img { aspect-ratio: auto; height: auto; object-fit: contain; }   /* (stills at their own shape) */
 .media .label { position: absolute; left: 10px; bottom: 10px; background: rgba(10, 10, 12, .78); border: 1px solid rgba(255, 255, 255, .08);
   font: 700 12px/1 var(--head); letter-spacing: .12em; text-transform: uppercase; padding: 7px 9px; border-radius: 6px; color: var(--text); }
 
