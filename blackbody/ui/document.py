@@ -488,7 +488,16 @@ class Document(QObject):
                     else:
                         link['end_offset'] = [float(v) - float(q) for v, q in zip(value, pp)]
             s.set(path, value, self.frame)
+            if lume_sky:
+                s.data['composite']['view'] = 'agx'
+        # (Lume lights a sky's clouds as bright as they are, nearly twice as bright as the classic estimate: the
+        # Standard view, which leaves all under 0.8 alone, flattens them to white. Turning Lume on in a sky scene still
+        # on Standard takes the AgX filmic view with it, in the same undo step)
+        lume_sky = (tuple(path) == ('lume', 'engine') and value == 'lume' and getattr(self.scene, 'kind', '') == 'cloud'
+                    and self.scene.data['composite'].get('view', 'standard') == 'standard')
         self.edit(f'Change {label}', fn, merge_key=key, path=path)
+        if lume_sky:
+            self.paramChanged.emit(('composite', 'view'))
 
     def toggle_key(self, path):
         label = Scene.spec(path).label

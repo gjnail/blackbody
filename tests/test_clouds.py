@@ -157,3 +157,24 @@ def test_lume_lights_the_clouds(engine):
     assert 0.2 < sky.mean() < 1.0                                    # the sky drawn alike, the cloud not
     lvk, k = cr.lv_dims
     assert max(lvk) <= CR.LUME_MAX and k >= 1
+
+
+def test_turning_lume_on_in_a_sky_takes_the_filmic_view_with_it():
+    # Lume lights clouds about twice as bright as the classic estimate, which the Standard view flattens to white: the
+    # switch to Lume in a sky scene still on Standard takes AgX with it, in one undo step; other scenes keep their view
+    import os
+    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+    QtWidgets = pytest.importorskip('PySide6.QtWidgets')
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from blackbody.scene import presets
+    from blackbody.ui.document import Document
+    d = Document()
+    d.scene = presets.make('cumulus_day')
+    d.set(('lume', 'engine'), 'lume')
+    assert (d.scene.data['lume']['engine'], d.scene.data['composite']['view']) == ('lume', 'agx')
+    d.undo.undo()
+    assert (d.scene.data['lume']['engine'], d.scene.data['composite']['view']) == ('classic', 'standard')
+    d.scene = presets.make('campfire')
+    d.set(('lume', 'engine'), 'lume')
+    assert d.scene.data['composite']['view'] == 'standard'
+    del app
