@@ -189,6 +189,19 @@ SECTIONS = {
     'lighting': [
         C('ambient', 'Ambient light', (0.10, 0.11, 0.13), anim=True, tip='Light reaching the smoke from the surroundings (sky, room). Match it to your footage.', group='Ambient'),
         F('ambient_intensity', 'Ambient intensity', 1.0, 0.0, 10.0, '×', 2, anim=True, group='Ambient'),
+        E('sky', 'Sky', 'colour', (('colour', 'Ambient colour'), ('physical', 'Physical (sun and air)')),
+          tip='Physical: the sky and the sun\'s light worked out from the air itself for where the key light is: a deep blue '
+          'sky over a high sun, a pale haze at the horizon, the sun yellowing and reddening as it sets and the sky glowing '
+          'round it, all in step. The key light becomes the sun (its colour from the air; Key intensity is its strength '
+          'above the air) and the sky lights everything, seen behind the set too. An Environment (HDRI) file overrides it.',
+          group='Sky'),
+        F('haze', 'Haze', 0.1, 0.01, 1.0, '', 3, log=True, tip='How much haze (dust, smoke, water droplets) the air holds: '
+          'its optical depth straight up. 0.02 clear mountain air, 0.1 a clear day, 0.3 hazy, 0.6 a thick summer haze. '
+          'Haze whitens the sky, brightens it round the sun and dims and yellows the sun.', group='Sky'),
+        F('ground_albedo', 'Ground brightness', 0.3, 0.0, 1.0, '', 2, tip='How much light the land round about sends back '
+          'up into the sky: 0.1 forest, 0.3 fields, 0.8 fresh snow.', group='Sky'),
+        F('altitude', 'Altitude', 0.0, 0.0, 6000.0, 'm', 0, tip='The height above the sea: higher up, the sky is a deeper '
+          'blue and the sun whiter.', group='Sky'),
         B('ambient_from_footage', 'Match ambient to footage', True, tip='Light the smoke with the average colour and brightness of the footage, so it sits in the scene. Ambient intensity scales it.', group='Ambient'),
         B('sun_on', 'Key light', False, tip='A directional light (sun, moon, lamp) that lights and shadows the smoke.', group='Key light'),
         F('sun_azimuth', 'Key azimuth', 35.0, -180.0, 180.0, '°', 0, anim=True, group='Key light'),

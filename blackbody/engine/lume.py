@@ -228,6 +228,19 @@ class Lume:
             self._env_key = key
         return self._env
 
+    def environment_image(self, key, img):
+        """The brightness map of an HDRI given as an image (the physical sky), kept while its key is the same."""
+        if key != self._env_key:
+            table, w, h = env_table(np.asarray(img, np.float32))
+            self.env_traced = env_peaked(table, w, h)
+            if self._env is not None:
+                self._env.destroy()
+            self._env = self.gpu.buffer(table.nbytes, 'lume-env')
+            self.gpu.write_buffer(self._env, table)
+            self.env_dims = (w, h)
+            self._env_key = key
+        return self._env
+
     def env_buffer(self):
         return self._env if (self._env is not None and self.env_dims[0] > 0) else self._none
 

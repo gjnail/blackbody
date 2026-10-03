@@ -98,7 +98,7 @@ The surface is ray traced as a dielectric (index of refraction 1.333 for water).
 
 ### Environment
 
-*Lighting › Environment (HDRI)* takes a panoramic HDR of the set (latitude-longitude .hdr or .exr): the liquid reflects and refracts it, and with *Key light from environment* the key light's direction and colour are taken from its brightest spot. *Rotation* turns it to line up with your footage.
+*Lighting › Environment (HDRI)* takes a panoramic HDR of the set (latitude-longitude .hdr or .exr): the liquid reflects and refracts it, and with *Key light from environment* the key light's direction and colour are taken from its brightest spot. *Rotation* turns it to line up with your footage. With no HDRI, *Lighting › Sky: Physical* gives the liquid a sky worked out from the air for where the key light is (see [Lume › A physical sky](lume.md#a-physical-sky)): it reflects and refracts that, lit by the sun through the air.
 
 ### Calm water
 

@@ -675,9 +675,10 @@ class BothEngine:
             if stage_on:
                 light = stage_mod.water_light(wlook, comp, look)
                 light.lamps = r._lamps_on
-                if LR.env_tex is not None and wlook.environment:
+                if LR.env_tex is not None and (wlook.environment or wlook.sky_image is not None):
                     light.env, light.env_rotation = LR.env_tex, float(wlook.env_rotation)
                     light.env_strength = float(wlook.env_strength) * 2.0 ** float(wlook.exposure)
+                    light.env_image = wlook.sky_image if not wlook.environment else None
                 ssize = r.plate_size if footage else (W, H)
                 stage = ptex = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, ssize,
                                                plate_fit=plate_fit, samples=samples, shutter=lshutter, footage=footage,

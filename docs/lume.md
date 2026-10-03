@@ -35,6 +35,19 @@ Lume is Blackbody's path-traced lighting engine. It lights the set drawn in CG (
 
 While you drag or play, Lume shows one light path per pixel (denoised). Once you stop, it keeps adding paths, two at a time, until *Samples (viewer)* is reached. The stats overlay shows how far it has got (*Lume · 24/64 light paths per pixel · sharpening*). Any edit starts it afresh.
 
+## A physical sky
+
+*Lighting › Sky: Physical (sun and air)* works the sky and the sun's light out from the air itself, for wherever the key light is: a deep blue sky over a high sun, paling to a haze at the horizon and darkest opposite the sun; the sun yellowing and reddening as it sets, the sky round it glowing and the light on the set fading and warming with it, all in step. The key light becomes the sun (its colour comes from the air; *Key intensity* is its strength above the air) and the sky lights everything and is seen behind the set. It works with both engines: the classic engine takes the sky's light as its ambient, Lume traces it as an HDRI (aiming paths at its bright glow round the sun), and the liquids reflect and refract it.
+
+| Setting | What it does |
+|---|---|
+| Sky | *Ambient colour*: the sky is the *Ambient* colour, as before. *Physical*: the sky worked out from the air. An *Environment (HDRI)* file overrides it. |
+| Haze | How much haze (dust, smoke, droplets) the air holds, as its optical depth straight up: 0.02 clear mountain air, 0.1 a clear day, 0.3 hazy, 0.6 a thick summer haze. Haze whitens the sky, brightens it round the sun and dims and yellows the sun. |
+| Ground brightness | How much light the land round about sends back up into the sky: 0.1 forest, 0.3 fields, 0.8 fresh snow. |
+| Altitude | Higher up, the sky is a deeper blue and the sun whiter. |
+
+The air is modelled as Hillaire's (2020) is, as production renderers have it: its molecules scatter blue far more than red, its haze scatters forward and absorbs a little, its ozone absorbs, each thinning with height, over a round earth; the light scattered once is followed exactly, the light scattered more than once by Hillaire's sum over all orders. Against the CIE's standard clear sky (the shape measured skies are fitted to), its brightness over the sky follows the CIE's with correlations of 0.92 to 0.98; its zenith is about 4,300 cd/m² with the sun 60° up (clear skies measure 3,000 to 6,000), and the sky gives about a sixth of the light on the ground at noon, rising to most of it as the sun reaches the horizon, as measured (`tests/test_sky.py`).
+
 ## Smoke looks as its colour says
 
 Classic lighting brightens smoke well beyond what the light round it could make it (its estimate of the light scattered more than once is two to five times too much inside thick smoke), so presets made with it give smoke a dark *Smoke colour* and it still looks grey. Lume lights smoke as it is lit, so the same smoke can look darker and sootier: set *Smoke colour* to what the smoke is, pale for wood, grass and paper smoke (0.6–0.9), near black for oil, rubber and plastic (0.05–0.2). Steam is near white (0.92–0.95) either way.
@@ -75,6 +88,6 @@ The engine is in `blackbody/engine/lume.py`, `blackbody/engine/lume_volume.py`, 
 
 ## Coming next
 
-Lume grows in stages. Next: the sea's waves, lava, ice and dyed water traced by Lume too, and fire and water in one scene; clouds lit by Lume; a physical sky and sun, area lights and light-profile (IES) files in physical units; per-light passes for compositing and matching the light in your footage; and a spectral mode that traces each wavelength, as a blackbody emits it.
+Lume grows in stages. Next: the sea's waves, lava, ice and dyed water traced by Lume too, and fire and water in one scene; clouds lit by Lume; area lights and light-profile (IES) files in physical units; per-light passes for compositing and matching the light in your footage; and a spectral mode that traces each wavelength, as a blackbody emits it.
 
 Liquids Lume does not trace yet (the sea's waves, lava, ice, dye, fire and water in one scene, and liquid scenes with fabric or grass, which the liquid's renderer sets in the liquid) are drawn by the liquid's own renderer over the set Lume lit, as with the classic engine.

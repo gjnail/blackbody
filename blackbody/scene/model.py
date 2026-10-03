@@ -1140,6 +1140,14 @@ class Scene:
         w, l = self.data['water'], self.data['lighting']
         sky = np.asarray(self.v('lighting', 'ambient', frame)) * self.v('lighting', 'ambient_intensity', frame)
         sun = np.asarray(l['sun_color']) * (self.v('lighting', 'sun_intensity', frame) if l['sun_on'] else 0.0)
+        from ..engine import sky as sky_mod
+        phys = sky_mod.of_scene(self, frame)
+        sky_image, env_strength = None, l['env_strength']
+        if phys is not None:
+            # the physical sky (engine/sky.py): its light, the sun through the air, its HDRI to reflect
+            sky = phys[1] * phys[4] * self.v('lighting', 'ambient_intensity', frame)
+            sun = np.asarray(phys[2]) * (phys[4] if l['sun_on'] else 0.0)
+            sky_image, env_strength = (phys[0], phys[3]), phys[4]
         return WaterLook(
             ior=w['ior'], color=tuple(w['color']), clarity=w['clarity'], murk=w['murk'], murk_color=tuple(w['murk_color']),
             roughness=w['roughness'], reflection=w['reflection'], reflect_footage=w['reflect_footage'],
@@ -1153,7 +1161,8 @@ class Scene:
             foam_scale=w['foam_scale'], foam_lace=w['foam_lace'], droplets=w['droplets'], droplet_size=w['droplet_size'],
             sheets=w['sheets'], caustics=w['caustics'], colliders_look=w['colliders_look'],
             environment=self.mesh_path(l['environment']) if l['environment'] else '', env_rotation=l['env_rotation'],
-            env_strength=l['env_strength'], env_sun=bool(l['env_sun']), wind=self.liquid_wind(frame),
+            env_strength=env_strength, env_sun=bool(l['env_sun']) and sky_image is None, wind=self.liquid_wind(frame),
+            sky_image=sky_image,
             glow=w.get('glow', 0.0), glow_temp=w.get('glow_temp', 1300.0), crust=w.get('crust', 0.7),
             crust_scale=w.get('crust_scale', 0.08), whitecaps=w.get('whitecaps', 1.0),
             sea_foam=w.get('sea_foam', 1.0), sea_foam_life=w.get('sea_foam_life', 12.0), foam_streaks=w.get('foam_streaks', 0.7),
@@ -1180,6 +1189,13 @@ class Scene:
     def look(self, frame, final=False):
         s, l = self.data['shading'], self.data['lighting']
         amb = np.asarray(self.v('lighting', 'ambient', frame)) * self.v('lighting', 'ambient_intensity', frame)
+        sun_color = tuple(l['sun_color'])
+        from ..engine import sky as sky_mod
+        phys = sky_mod.of_scene(self, frame)
+        if phys is not None:
+            # the physical sky (engine/sky.py): its light on an upward surface for the ambient, the sun through the air
+            amb = phys[1] * phys[4] * self.v('lighting', 'ambient_intensity', frame)
+            sun_color = tuple(float(x) for x in phys[2])
         return LookParams(
             ambient_k=s['ambient_k'], flame_k=self.v('shading', 'flame_k', frame), max_k=s['max_k'],
             dynamic_range=s['dynamic_range'], intensity=s['intensity'],
@@ -1188,7 +1204,7 @@ class Scene:
             soot_glow=s['soot_glow'], flame_absorption=s['flame_absorption'], flame_occlusion=s['flame_occlusion'], blue=s['blue'], blue_color=tuple(s['blue_color']),
             ignition=self.data['combustion']['ignition'], smoke_albedo=tuple(s['smoke_albedo']),
             smoke_density=self.v('shading', 'smoke_density', frame), ambient=tuple(amb), anisotropy=s['anisotropy'],
-            sun_color=tuple(l['sun_color']), sun_intensity=self.v('lighting', 'sun_intensity', frame) if l['sun_on'] else 0.0,
+            sun_color=sun_color, sun_intensity=self.v('lighting', 'sun_intensity', frame) if l['sun_on'] else 0.0,
             sun_azimuth=self.v('lighting', 'sun_azimuth', frame), sun_elevation=self.v('lighting', 'sun_elevation', frame),
             fire_scatter=l['fire_scatter'], light_spread=l['light_spread'], shadow=l['shadow'],
             detail=s['detail'], detail_freq=s['detail_freq'], detail_disp=s['detail_disp'], detail_rise=s['detail_rise'],

@@ -93,6 +93,7 @@ class WaterLook:
     env_rotation: float = 0.0           # degrees
     env_strength: float = 1.0
     env_sun: bool = False
+    sky_image: object = None            # the physical sky (engine/sky.py): (key, HDRI), in place of an environment file
     wind: tuple = (0.0, 0.0, 0.0)       # m/s, fire-local
     whitecaps: float = 1.0              # foam where the sea's crests fold over
     sea_foam: float = 1.0               # how much of the sea's foam shows
@@ -645,18 +646,23 @@ class LiquidRenderer:
         """Load (or reuse) the HDRI. Returns None, or (sky ambient colour, sun azimuth, elevation,
         colour) measured from it, rotation included."""
         path = look.environment
-        if not path:
+        img = None
+        if not path and look.sky_image is not None:
+            key, img = look.sky_image
+        elif not path:
             self.env_info = None
             return None
-        import os
-        try:
-            key = (path, os.path.getmtime(path))
-        except OSError:
-            self.env_info = None
-            return None
+        else:
+            import os
+            try:
+                key = (path, os.path.getmtime(path))
+            except OSError:
+                self.env_info = None
+                return None
         if key != self._env_key:
             from ..io.hdri import brightest, load_hdri, sky_average
-            img = load_hdri(path)
+            if img is None:
+                img = load_hdri(path)
             if self.env_tex is not None:
                 self.env_tex.destroy()
             h, w = img.shape[:2]

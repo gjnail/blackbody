@@ -647,9 +647,10 @@ class LiquidEngine:
             if stage_on:
                 light = stage_mod.water_light(look, comp)
                 light.lamps = r.pack_lamps(lamps)
-                if LR.env_tex is not None and look.environment:
+                if LR.env_tex is not None and (look.environment or look.sky_image is not None):
                     light.env, light.env_rotation = LR.env_tex, float(look.env_rotation)
                     light.env_strength = float(look.env_strength) * 2.0 ** float(look.exposure)
+                    light.env_image = look.sky_image if not look.environment else None
                 size = r.plate_size if footage else (W, H)
                 stage = ptex = self.stage.draw(b, r, scene, cs, fire, vol.colliders, vol.meshes, light, comp, size,
                                                plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage,

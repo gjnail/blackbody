@@ -115,6 +115,7 @@ class StageLight:
     env: object = None                  # an environment HDRI (texture), its rotation (degrees), strength
     env_rotation: float = 0.0
     env_strength: float = 1.0
+    env_image: object = None            # (key, image) when it is not a file: the physical sky (engine/sky.py)
 
 
 def fire_light(scene, frame, look, comp):
@@ -349,6 +350,21 @@ class Stage:
         starts = np.concatenate([[0], np.cumsum(counts)[:-1]]).astype(np.uint32)
         flat = np.array([k for L in lists for k in L], np.uint32)
         return P, PL, lo, cell, dims, np.stack([starts, counts], 1), flat
+
+    def environment_image(self, key, img):
+        """An HDRI from an image (the physical sky, engine/sky.py), kept while its key is the same."""
+        if key != self._env_key:
+            from ..io.hdri import sky_average
+            img = np.asarray(img, np.float32)
+            if self._env is not None:
+                self._env.destroy()
+            h, w = img.shape[:2]
+            self._env = self.gpu.texture2d(w, h, 'rgba16float', 'stage-sky')
+            rgba = np.concatenate([img, np.ones((h, w, 1), np.float32)], -1)
+            self.gpu.upload(self._env, np.minimum(rgba, 6.0e4).astype(np.float16))
+            self.env_sky = tuple(float(x) for x in sky_average(img))
+            self._env_key = key
+        return self._env
 
     def environment(self, path):
         """Load (or reuse) an HDRI for the sky (fire scenes; the liquid renderer has its own)."""
@@ -604,7 +620,10 @@ class Stage:
                 self.lume = LU.Lume(g)
             L = self.lume
             L.ensure(pw, ph)
-            L.environment(scene.data['lighting'].get('environment', '') if env is not None else '')
+            if env is not None and light.env_image is not None:
+                L.environment_image(*light.env_image)
+            else:
+                L.environment(scene.data['lighting'].get('environment', '') if env is not None else '')
             lume_bufs = [L.acc, L.aov, L.env_buffer(), L.cau]
             # (the picture the passes so far are of: an edit is drawn live first, which starts them afresh)
             key = (int(frame), pw, ph, bytes(np.asarray(camstate.inv_view_proj, np.float32).tobytes()), bool(footage),

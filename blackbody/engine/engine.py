@@ -804,7 +804,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
             if stage_on:
                 light = stage_mod.fire_light(scene, frame, look, comp)
                 light.lamps = r._lamps_on
-                self._stage_env(scene, light)
+                self._stage_env(scene, light, frame)
                 size = r.plate_size if footage else (W, H)
                 stage = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, size,
                                         plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage, vol=vol,
@@ -909,9 +909,17 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
             self._stage = stage_mod.Stage(self.gpu)
         return self._stage
 
-    def _stage_env(self, scene, light):
-        """The environment HDRI (Lighting) behind the stage, and its light as the sky's."""
+    def _stage_env(self, scene, light, frame=None):
+        """The environment HDRI (Lighting) behind the stage, and its light as the sky's; or the physical sky's."""
         lt = scene.data['lighting']
+        from . import sky as sky_mod
+        phys = sky_mod.of_scene(scene, frame if frame is not None else scene.start)
+        if phys is not None:
+            key, _amb, _sun, img, k = phys
+            light.env, light.env_rotation, light.env_strength = self.stage.environment_image(key, img), 0.0, k
+            light.env_image = (key, img)
+            light.sky = tuple(c * k for c in self.stage.env_sky)
+            return
         tex = self.stage.environment(lt.get('environment', ''))
         if tex is None:
             return
