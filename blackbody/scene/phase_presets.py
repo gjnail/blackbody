@@ -193,7 +193,10 @@ def phase_presets(K):
                        'substeps_max': 14, 'cfl': 1.5, 'matter_heat_speed': 12.0},
             'combustion': dict(air_box, vapour_dissipation=1.0),
             'motion': {'buoyancy': 2.0, 'turbulence': 0.6, 'turb_freq': 12.0, 'vorticity': 1.0},
-            'shading': {'ambient_k': 294.0, 'humidity': 60.0, 'steam_density': 0.45, 'detail': 0.3, 'detail_freq': 30.0},
+            # (the steel glows as bright as a flame that hot would in the Look: with no fire in the shot, Exposure is set for
+            # the dim room, so 1100 C steel reads bright orange as it does to the eye, not a dull red)
+            'shading': {'ambient_k': 294.0, 'humidity': 60.0, 'steam_density': 0.45, 'detail': 0.3, 'detail_freq': 30.0,
+                        'exposure': 3.5},
             'liquid': {'thermal': True, 'liquid_temp': 18.0, 'ground_temp': 20.0, 'heat_speed': 12.0, 'ww_min_speed': 0.6,
                        'bubble_size': 3.0},
             'water': {'backdrop': 1.5, 'clarity': 4.0, 'color': (0.82, 0.94, 0.95), 'bubbles': 1.2, 'ripple': 0.15,
