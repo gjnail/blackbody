@@ -4,7 +4,7 @@ Lume is Blackbody's path-traced lighting engine. It lights the set drawn in CG (
 
 <img src="media/img/lume-classic.jpg" width="49%" alt="A wooden shed with a fire inside, lit by the classic engine" title="Classic: direct light and soft shadows; the shed's inner walls flat brown"> <img src="media/img/lume-path.jpg" width="49%" alt="The same shed path traced with Lume" title="Lume: the fire's light on the inner walls and the floor, bounced round inside the shed">
 
-*Shed on fire* at 6 s: the classic engine (left) and Lume (right), the fire's light bouncing round inside the shed.
+*Shed on fire* at 4 s: the classic engine (left) and Lume (right), the fire's light bouncing round inside the shed and its smoke lit as it is.
 
 ## What it adds
 
