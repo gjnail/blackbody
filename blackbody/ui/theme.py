@@ -31,7 +31,7 @@ VIEWER = '#0c0c0d'    # viewport surround, neutral for colour judgement
 
 # what each kind of object in the scene is drawn with, in the viewer and the lists
 OBJECT_COLOURS = {'emitter': '#ff9a4a', 'collider': '#78beff', 'light': '#ffdc78', 'fabric': '#96d2ff', 'matter': '#e3c08a',
-                  'strands': '#9fd36a'}
+                  'strands': '#9fd36a', 'shot': '#e8b25a'}
 
 
 def _asset_dir():

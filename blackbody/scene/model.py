@@ -19,7 +19,7 @@ from ..engine.mesh import is_numbered, mesh_deforms, sequence_files, split_sourc
 from .anim import Curve
 from .params import (COLLIDER_PARAMS, EMITTER_PARAMS, LOOK_KEYS, SECTIONS, SIM_SECTIONS, coerce, collider_defaults, defaults,
                      emitter_defaults, fabric_defaults, light_defaults,
-                     matter_defaults, param, strand_defaults)
+                     matter_defaults, param, shot_defaults, strand_defaults)
 
 FILE_VERSION = 1
 # settings that only say where frames are kept: they do not change the simulation itself
@@ -140,6 +140,7 @@ class Scene:
         self.fabrics = []       # cloth: curtains, flags, sheets (engine/cloth.py)
         self.matter = []        # sand, snow, mud, jelly and clay (engine/matter.py)
         self.strands = []       # grass and plants (engine/strands.py)
+        self.shots = []         # guns firing: bullets and what they hit (engine/ballistics.py)
         self.footage = None     # {'path', 'fps', 'offset'}
         self.track = None       # {'points': {frame: [x, y]}}
         self.roto = []          # roto shapes over the footage (scene/roto.py): a holdout drawn in the app
@@ -177,6 +178,8 @@ class Scene:
             return self.matter[path[1]], path[2]
         if path[0] == 'strands':
             return self.strands[path[1]], path[2]
+        if path[0] == 'shot':
+            return self.shots[path[1]], path[2]
         return self.data[path[0]], path[1]
 
     @staticmethod
@@ -243,7 +246,7 @@ class Scene:
                 if isinstance(v, Curve):
                     out.update(v.frames())
         for group in (self.emitters, self.colliders, self.lights, self.fabrics, getattr(self, 'matter', []),
-                      getattr(self, 'strands', [])):
+                      getattr(self, 'strands', []), getattr(self, 'shots', [])):
             for d in group:
                 for v in d.values():
                     if isinstance(v, Curve):
@@ -332,6 +335,19 @@ class Scene:
             d['name'] = label if label not in names else next(f'{label} {n}' for n in range(2, 10000) if f'{label} {n}' not in names)
         self.strands.append(d)
         return len(self.strands) - 1
+
+    def add_shot(self, **kw):
+        """Add a gun firing (engine/ballistics.py): from its muzzle (Position) toward what it is aimed at (Aim)."""
+        from .params import SHOT_ROUNDS
+        d = shot_defaults()
+        for k, v in kw.items():
+            d[k] = coerce(param('shot', k), v)
+        if 'name' not in kw:
+            label = dict(SHOT_ROUNDS).get(d['round'], 'Shot').split(' (')[0]
+            names = {m['name'] for m in self.shots}
+            d['name'] = label if label not in names else next(f'{label} {n}' for n in range(2, 10000) if f'{label} {n}' not in names)
+        self.shots.append(d)
+        return len(self.shots) - 1
 
     def strand_specs(self):
         """The enabled patches of grass, as engine/strands.py builds them (at the first frame)."""
@@ -1303,6 +1319,8 @@ class Scene:
             'matter': [{k: _to_json_value(v) for k, v in m.items() if k != 'name'} for m in getattr(self, 'matter', None) or []],
             'strands': [{k: _to_json_value(v) for k, v in m.items() if k not in ('name', 'own_colour', 'colour')}
                         for m in getattr(self, 'strands', None) or []],
+            'shots': [{k: _to_json_value(v) for k, v in m.items() if k != 'name'}
+                      for m in getattr(self, 'shots', None) or []],
             'fps': self.fps, 'start': self.start, 'layout': [list(x) if isinstance(x, tuple) else x for x in self.sim_layout(final)],
             'embers': {k: _to_json_value(v) for k, v in self.data['embers'].items()},
             'fire_yaw': _to_json_value(self.data['camera']['fire_yaw']),
@@ -1342,6 +1360,7 @@ class Scene:
             'fabrics': [{k: _to_json_value(v) for k, v in f.items()} for f in self.fabrics],
             'matter': [{k: _to_json_value(v) for k, v in m.items()} for m in getattr(self, 'matter', None) or []],
             'strands': [{k: _to_json_value(v) for k, v in m.items()} for m in getattr(self, 'strands', None) or []],
+            'shots': [{k: _to_json_value(v) for k, v in m.items()} for m in getattr(self, 'shots', None) or []],
             'footage': self.footage,
             'track': ({'points': {str(k): list(v) for k, v in self.track.get('points', {}).items()},
                        'offset': list(self.track.get('offset', (0, 0)))} if self.track else None),
@@ -1414,6 +1433,13 @@ class Scene:
                 if k in x:
                     x[k] = _from_json_value(param('strands', k), v)
             s.strands.append(x)
+        s.shots = []
+        for m in d.get('shots', []):
+            x = shot_defaults()
+            for k, v in m.items():
+                if k in x:
+                    x[k] = _from_json_value(param('shot', k), v)
+            s.shots.append(x)
         s.footage = d.get('footage')
         tr = d.get('track')
         if tr and tr.get('points'):
@@ -1441,7 +1467,8 @@ class Scene:
     def find_object(self, kind, name):
         """(index, dict) of the object of a kind with a name, or (None, None)."""
         items = {'emitter': self.emitters, 'collider': self.colliders, 'light': self.lights, 'fabric': self.fabrics,
-                 'matter': getattr(self, 'matter', []), 'strands': getattr(self, 'strands', [])}.get(kind, [])
+                 'matter': getattr(self, 'matter', []), 'strands': getattr(self, 'strands', []),
+                 'shot': getattr(self, 'shots', [])}.get(kind, [])
         for i, d in enumerate(items):
             if d.get('name') == name:
                 return i, d

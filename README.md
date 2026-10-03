@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Fire, water, cloth, destruction, sand and weather, simulated on your GPU and put into your footage.</b><br>
-  Build an effect from nothing or start from one of 103 presets, line it up with your shot, and render a finished composite or the passes your compositor wants.
+  Build an effect from nothing or start from one of 111 presets, line it up with your shot, and render a finished composite or the passes your compositor wants.
 </p>
 
 <p align="center">
@@ -177,7 +177,7 @@ Blackbody opens in **Build**: an empty stage with a camera of your own. Put in o
 
 - **Animate it.** Click the ◆ next to a setting to keyframe it. The animation editor lists every animated setting with its keys, and the timeline shows each source's start and stop, each cloth's let-go time and each pour as bars you drag.
 - **Layers and roto.** Layers put several effects in one shot, such as a campfire in front and a waterfall behind, each its own simulation, composited back to front. Roto shapes drawn round what is in front of the effect, and keyed over the shot, put the effect behind them.
-- **Start from an effect.** The Effects tab has 103 presets, from a candle to a thunderstorm, sorted into fire, liquids, fabric, the sea, smoke, blasts, ice, weather, falling and breaking, and sand, snow and mud. Click one and it simulates live.
+- **Start from an effect.** The Effects tab has 111 presets, from a candle to a thunderstorm, sorted into fire, liquids, fabric, the sea, smoke, blasts, ice, weather, falling and breaking, sand, snow and mud, and bullets and wood. Click one and it simulates live.
 
 <img src="docs/media/gif/ui-effects.gif" width="100%" alt="The Effects tab: the Falling and breaking chip and the wrecking ball, the Sand chip and the hopper, the Fire chip and the campfire">
 
@@ -232,18 +232,20 @@ The [tutorial](docs/tutorial.md) takes a shot from footage to final render in ab
 |---|---|
 | [Install and first steps](docs/getting-started.md) | Requirements, install, the window, building anything, putting an effect in your shot, text and logos, layers, animation |
 | [Tutorial: your first shot](docs/tutorial.md) | Footage, placing, matching, tracking, keyframes, rendering |
-| [Presets](docs/presets.md) | All 99 built-in effects |
+| [Presets](docs/presets.md) | All 111 built-in effects |
 | [Fire, smoke and sparks](docs/fire.md) | Puffing, swirl, sparks, colour, steam, spreading fire, rooms, flame fronts, meshes |
 | [Fabric and burning cloth](docs/fabric.md) | Real fabrics, burning through, soaking, dripping and steaming |
 | [Things that fall](docs/physics.md) | Rigid bodies, materials, breaking, ropes, springs and hinges, explosions, lightning, tilted objects, motors, the CG stage, CG objects in footage |
 | [Sand, snow and mud](docs/matter.md) | Sand, wet sand, snow, mud, jelly and clay: bodies and pours, what moves them, how they look |
 | [Grass and plants](docs/grass.md) | Lawns, long grass, wheat and reeds: what moves them, fire running through them, how they look |
+| [Bullets](docs/bullets.md) | Guns and cartridges, and what bullets do to glass, wood, steel, concrete, water and gel |
+| [Wood](docs/wood.md) | Fifteen woods, their grain drawn through them, and how wood splits and breaks |
 | [Liquids](docs/liquids.md) | Sources, floating objects, viscosity, dye, whitewater, the look, rain, underwater |
 | [The sea, surf and rivers](docs/ocean.md) | The FFT ocean, whitecaps, beaches and surf, tsunamis, bores, currents |
 | [Lava, and fire with water](docs/lava.md) | Molten liquids and crust, and fire, water and lava together |
 | [Ice, boiling and steam](docs/heat.md) | Freezing, melting, boiling, evaporating |
 | [Weather and clouds](docs/weather.md) | Snow, sleet, freezing rain and hail, and clouds and storms |
-| [Lume lighting](docs/lume.md) | The path-traced lighting engine for the CG set: light that bounces, shadows as soft as each light is big, an HDRI's sun, glass that bends light, the denoiser |
+| [Lume lighting](docs/lume.md) | The path-traced lighting engine for the whole frame (the set, the smoke, cloth and grass): light that bounces, shadows as soft as each light is big, an HDRI's sun, glass that bends light, the denoiser |
 | [Fitting it into your footage](docs/compositing.md) | Lining up the ground, tracking, surfaces, holdouts and roto, fire light, lens, haze, noise, lights in the set, OCIO |
 | [Moving shots and scene import](docs/scene-import.md) | Camera tracking, camera solves, USD scenes, VDB volumes |
 | [Outputs](docs/outputs.md) | EXR layers, deep EXR, ProRes, PNG, composites, OpenVDB, meshes |

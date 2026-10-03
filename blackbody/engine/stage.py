@@ -39,6 +39,8 @@ LIGHTNING_ROW = ROPE_ROW + 2   # after them: lightning (its glow is per segment)
 # then the looks of parts with their own (engine/assemblies.py): a car's tyres, its cabin's tinted glass
 PART_LOOKS = {'rubber': (LIGHTNING_ROW + 1, (0.03, 0.03, 0.03), 0.8, 0.0, 0.0),
               'glass': (LIGHTNING_ROW + 2, (0.035, 0.045, 0.05), 0.04, 0.0, -2.0)}   # (row, colour, roughness, metal, pattern)
+SHOT_ROW = LIGHTNING_ROW + 1 + len(PART_LOOKS)   # then what bullets leave (shot_draw.py): their copper, splashed lead, the
+                                                 # ground's chips
 BOLT_GLOW = 0.02          # how much of lightning's core radiance it scatters into the air round it
 GLOW_T0, GLOW_DT = 700.0, 100.0   # K: hot matter's blackbody table's first temperature and step (16 entries)
 GLOW_BLOCK = 8            # matter grid nodes to a block of hot surface lighting what is round it (matter_glow.wgsl)
@@ -154,7 +156,9 @@ def matter_glow_scale(look):
     return float(look.intensity) * 2.0 ** float(look.exposure) * 10.0 ** (-_LUM[fk] * dr), dr
 
 
-ALL_FEATURES = {'F_PIECES': 'true', 'F_MARCH': 'true'}   # (stage.wgsl: the classic kernel has everything)
+WOOD_FLOOR = 2              # (the floor's pattern of wooden boards, stage.wgsl floor_look)
+WOOD_PATTERNS = {1} | set(range(11, 25))   # (the woods' patterns, wood.wgsl wood_kind)
+ALL_FEATURES = {'F_PIECES': 'true', 'F_MARCH': 'true', 'F_SHOTS': 'true', 'F_WOOD': 'true'}   # (stage.wgsl: the classic kernel has everything)
 
 
 def plain_shape(c):
@@ -170,7 +174,7 @@ class Stage:
         self.k = gpu.kernel('stage.wgsl', ['utex3d', 'tex3d', 'tex3d', 'tex3d', 'tex3d', 'smp', 'smp', 'rbuf', 'rbuf',
                                            'rbuf', 'tex2d', 'tex2d', 'tex2d', 'tex3d', 'st2d:rgba16float:w',
                                            'rbuf', 'rbuf', 'rbuf', 'rbuf', 'st2d:rgba16float:w', 'tex3d', 'tex3d', 'tex2d',
-                                           'utex3d', 'utex3d', 'rbuf', 'tex3d', 'rbuf', 'buf', 'buf', 'rbuf', 'buf'],
+                                           'utex3d', 'utex3d', 'rbuf', 'tex3d', 'rbuf', 'buf', 'buf', 'rbuf', 'buf', 'rbuf'],
                             defines=ALL_FEATURES, workgroup=(8, 8, 1))
         # Lume's caustics: light traced from the lights through curved glass (lume.wgsl caustics), same bindings
         self.k_caustics = gpu.kernel('stage.wgsl', self.k.bindings, 'caustics', defines=ALL_FEATURES, workgroup=(64, 1, 1))
@@ -222,11 +226,12 @@ class Stage:
         return b
 
     @staticmethod
-    def piece_arrays(scene, pieces, shutter=0.0, ropes=None, ground_y=None, bolts=None):
+    def piece_arrays(scene, pieces, shutter=0.0, ropes=None, ground_y=None, bolts=None, shots=None):
         """The pieces of broken objects and the segments of ropes and springs, for the shader: (pieces (n, 5, 4),
         planes (p, 4), grid corner, cell size, grid dims, cells (g, 2) uint32, list uint32), or None.
         pieces: {collider index: Solids.piece_poses entry}; ropes: {collider index: Solids.rope_poses entry};
-        ground_y: the ground's height (a snapped rope hangs down to it); bolts: lightning (Scene.bolts)."""
+        ground_y: the ground's height (a snapped rope hangs down to it); bolts: lightning (Scene.bolts);
+        shots: what bullets do (ballistics.Ballistics.view): debris, bullets in flight, sparks, tracers, flashes."""
         from .ropes import CHAIN, chain_links, num, prism_planes, rope_points, segments
         from .solids import fractured
         enabled = [i for i, c in enumerate(scene.colliders) if c['enabled']][:MAX_COLLIDERS]
@@ -287,6 +292,18 @@ class Stage:
                 first += len(pl)
                 centres.append(centre)
                 radii.append(bound + float(np.linalg.norm(v)) * 0.5 * shutter)
+        # what bullets do: debris and bullets as pieces (shot_draw.py)
+        from . import shot_draw as SD
+        if shots:
+            for row, pl, c, rad in (SD.debris_rows(shots, row_of, SHOT_ROW + 2, SHOT_ROW + 1, shutter)
+                                    + SD.bullet_rows(shots, SHOT_ROW, shutter)):
+                row = np.array(row, np.float32)
+                row[2, 3] = first
+                P.append(row)
+                PL.append(pl)
+                first += len(pl)
+                centres.append(c)
+                radii.append(rad)
         # lightning: glowing segments along its channels (their r: the glow, linear rgb)
         for pts, core, glow in (bolts or []):
             rad = max(float(core), 1e-4)
@@ -298,9 +315,18 @@ class Stage:
                 first += len(pl)
                 centres.append(centre)
                 radii.append(bound)
+        # (and sparks, tracers and muzzle flashes, glowing as lightning does: last, with it)
+        for row, pl, c, rad in (SD.glow_rows(shots, LIGHTNING_ROW, shutter) if shots else []):
+            row = np.array(row, np.float32)
+            row[2, 3] = first
+            P.append(row)
+            PL.append(pl)
+            first += len(pl)
+            centres.append(c)
+            radii.append(rad)
         if not P:
             return None
-        P = np.asarray(P, np.float32)
+        P = np.asarray([np.asarray(x, np.float32) for x in P], np.float32)
         PL = np.concatenate(PL).astype(np.float32)
         c = np.asarray(centres)
         r = np.asarray(radii)[:, None]
@@ -374,19 +400,21 @@ class Stage:
         centre = 0.5 * (lo + hi)
         return tuple(centre), float(np.linalg.norm(hi - lo) * 0.5)
 
-    def lume_kernel(self, pieces=True, march=True):
+    def lume_kernel(self, pieces=True, march=True, shots=True, wood=True):
         """Lume's camera kernel (lume.wgsl lume_main), compiled the first time a set wants it: the classic stage's main
         without the classic shading in it (and the classic one without Lume's), and without the code for what the set
-        does not have (broken pieces, ropes and lightning; anything marched: stage.wgsl F_PIECES, F_MARCH). Every copy
-        of code slows every path: a set of plain shapes runs a fifth faster without the rest."""
+        does not have (broken pieces, ropes and lightning; anything marched; what bullets leave: stage.wgsl F_PIECES,
+        F_MARCH, F_SHOTS; wood: F_WOOD). Every copy of code slows every path: a set of plain shapes runs a fifth faster
+        without the rest, and a set without bullets half again faster without their marks and bores."""
         if self.k_lume is not None:
             return self.k_lume
-        defines = {'F_PIECES': 'true' if pieces else 'false', 'F_MARCH': 'true' if march else 'false'}
+        defines = {'F_PIECES': 'true' if pieces else 'false', 'F_MARCH': 'true' if march else 'false',
+                   'F_SHOTS': 'true' if shots else 'false', 'F_WOOD': 'true' if wood else 'false'}
         return self.gpu.kernel('stage.wgsl', self.k.bindings, 'lume_main', defines=defines, workgroup=(8, 8, 1))
 
     def draw(self, b, r, scene, camstate, fire, colliders, meshes, light: StageLight, comp, size, plate_fit=(1.0, 1.0),
              samples=1, shutter=0.0, footage=False, vol=None, ground_y=0.0, frame=0, objects=True, floor=True,
-             pieces=None, ropes=None, matter=None, bolts=None, grass=None, burns=None, final=False):
+             pieces=None, ropes=None, matter=None, bolts=None, grass=None, burns=None, final=False, shots=None):
         """Draw the stage into self.tex (size: the plate's, footage or output) and return it.
         r: the Renderer (its footage plate and holdouts, light volume, fire lights and lamp buffer);
         colliders: the objects as the solver has them (ColliderGPU, moving ones where they are this frame);
@@ -397,6 +425,7 @@ class Stage:
         pieces: the pieces of broken objects, {collider index: Solids.piece_poses entry};
         ropes: the ropes and springs, {collider index: Solids.rope_poses entry};
         matter: the sand, snow, mud, jelly and clay (matter.Matter), or None; bolts: lightning (Scene.bolts);
+        shots: what bullets do (ballistics.Ballistics.view): debris, bullets, sparks, tracers, flashes, marks;
         final: a final render (with Lume: all its passes now; else the viewer's, a few at a time)."""
         g = self.gpu
         pw, ph = int(size[0]), int(size[1])
@@ -480,7 +509,10 @@ class Stage:
              .v4(1.0 if env is not None else 0.0, math.radians(light.env_rotation), light.env_strength, 0.0)
              .v4(r._shaper_lo, r._shaper_hi, 1.0 if r.lut_plate_log else 0.0, r.lut_size)
              .v4(*centre, radius))
-        pa = self.piece_arrays(scene, pieces, shutter, ropes, ground_y, bolts) if (pieces or ropes or bolts) else None
+        from . import shot_draw as SD
+        drawn_shots = bool(shots) and any(k in shots for k in ('debris', 'bullets', 'tracers', 'flashes'))
+        pa = (self.piece_arrays(scene, pieces, shutter, ropes, ground_y, bolts, shots)
+              if (pieces or ropes or bolts or drawn_shots) else None)
         self.has_pieces = pa is not None
         if pa is not None:
             P, PL, glo, gcell, gdims, GC, GL = pa
@@ -502,7 +534,8 @@ class Stage:
             mtex = [self._no_matter, self._no_matter]
             look2 = self._no_matter
         # lightning's glow: reaching about ten times its core's radius (at least 5 cm)
-        reach = max(10.0 * max((float(c) for _p, c, _g in (bolts or [])), default=0.0), 0.05)
+        reach = max(10.0 * max((float(c) for _p, c, _g in (bolts or [])), default=0.0), 0.05) if bolts else 0.0025
+        # (without lightning, only sparks, tracers and flashes glow: a halo of a few millimetres)
         u.v4(len(P) - nb if pa is not None else 0, nb, reach, BOLT_GLOW)
         # the grass on the ground (strands.py ground_map): (texture, corner, size)
         if grass is not None:
@@ -549,6 +582,10 @@ class Stage:
         u.v4(0.0, 0.0, 0.0, 1.0).v4(0.0, 1.0, 0.0, float(CG)).v4(0.0, 0.0, 0.0, 1.0)   # (lightning: lets the light by)
         for _row, colour, rough, metal, pattern in PART_LOOKS.values():
             u.v4(*colour, rough).v4(metal, 0.0, pattern, float(CG)).v4(*colour, 1.5)
+        for colour, rough, metal in (SD.BULLET_LOOK, SD.LEAD_LOOK):
+            u.v4(*colour, rough).v4(metal, 0.0, 0.0, float(CG)).v4(*colour, 1.5)
+        gc = np.asarray(fl.colour, float) * tint          # (the ground's chips: the floor's colour, broken a little lighter)
+        u.v4(*gc, fl.roughness).v4(0.0, 0.0, 0.0, float(CG)).v4(*np.minimum(gc * 1.25, 1.0), 1.5)
         black = r._black
         lume_bufs = self._lume_off
         if lume.on:
@@ -580,15 +617,17 @@ class Stage:
                r.lut_plate if (footage and r.lut_plate is not None) else r._lut_none,
                self.tex, *bufs, self.hold, *mtex, grass[0] if grass is not None else black,
                floor_burn if floor_burn is not None else r._empty, obj_burn if obj_burn is not None else r._empty,
-               burns.slots if obj_burn is not None else r._no_slots, look2, self._ml, *lume_bufs]
+               burns.slots if obj_burn is not None else r._no_slots, look2, self._ml, *lume_bufs,
+               self._buffer('marks', SD.marks_buffer(shots))]
         if not lume.on:
             b.run(self.k, res, u.raw([0.0] * LU.TAIL_FLOATS), (pw, ph, 1))
             return self.tex
         # Lume: its passes, each a new path per pixel added to the ones before (lume.wgsl), then the denoiser
         base = list(u.data)
         # (its kernel for what the set has: anything marched, broken pieces, ropes, lightning)
-        k_lume = self.lume_kernel(pieces=bool(pieces or ropes or bolts),
-                                  march=surf is not None or any(not plain_shape(c) for c in cols))
+        k_lume = self.lume_kernel(pieces=bool(pieces or ropes or bolts or drawn_shots),
+                                  march=surf is not None or any(not plain_shape(c) for c in cols), shots=bool(shots),
+                                  wood=fl.pattern == WOOD_FLOOR or any(r[5] in WOOD_PATTERNS for r in rows))
         # (anything clear in the set: glass, ice, jelly; shadow rays then pass through them by their Fresnel and tint)
         clear_on = 1.0 if (any(row[4] > 0.0 and row[0] != NOT_DRAWN for row in rows) or surf is not None) else 0.0
         # (Clamp bright paths: a bounce's light capped at that many times the sky's brightness; 0: none)

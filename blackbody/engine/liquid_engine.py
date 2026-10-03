@@ -252,8 +252,11 @@ class LiquidEngine:
         self._cloth_meets_matter()      # (fabric and sand, snow, mud: each the other's surface this frame)
         if solids:
             self._objects_meet_cloth(fdt)
+            self._shots_ahead(scene, fdt)     # (bullets: where their ways cross the water, the sand, snow and mud)
         poses = (solids.advance(scene, frame, fdt, n, couple=self._matter_couple(scene, frame, fdt, self.solver.meshes))
                  if solids else None)
+        if solids:
+            self._shots_kick(fdt)                # (and what they did to them)
         if solids:
             self._cloth_takes_objects(fdt)
         moving = scene.colliders_animated() or bool(solids)
@@ -575,8 +578,9 @@ class LiquidEngine:
         ropes = self.rope_poses(frame)
         matter = self.matter_for(frame) if mode == 'composite' else None
         bolts = scene.bolts(frame) if mode == 'composite' and scene.lights else None   # (lightning)
+        shots = self.shot_view(frame) if mode == 'composite' else None    # (bullets: debris, sparks, holes)
         stage_on = (stage_mod.wanted(scene, footage, mode, objects=objects) or bool(pieces) or bool(ropes)
-                    or matter is not None or bool(bolts))
+                    or matter is not None or bool(bolts) or bool(shots))
         r.hold_stage = None
         p_transform, p_gain = INPUT_TRANSFORMS.get(comp.plate_transform, 0), comp.plate_gain
         standins = stage_mod.standin_colours(scene)
@@ -628,7 +632,7 @@ class LiquidEngine:
                                                plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage,
                                                ground_y=vol.origin[1], frame=frame, objects=objects,
                                                floor=not look.bottomless, pieces=pieces, ropes=ropes, matter=matter, bolts=bolts,
-                                               grass=self._strands.ground_map(b) if grass else None, final=final)
+                                               grass=self._strands.ground_map(b) if grass else None, final=final, shots=shots)
                 if self.stage.has_pieces or self.stage.has_matter:   # the liquid is hidden behind the pieces and the matter
                     r.hold_stage = self.stage.hold
                     r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])

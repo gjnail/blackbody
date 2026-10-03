@@ -1394,6 +1394,27 @@ class Viewport(QWidget):
             lines = strand_lines(sc, i, self.doc.frame)
             self._lines(p, cs, fire, lines[:1], QPen(col, 1.6 if is_sel else 1.0))
             self._lines(p, cs, fire, lines[1:], QPen(col, 1.0, Qt.DashLine if not is_sel else Qt.SolidLine))
+        for i, sh in enumerate(K.items(sc, 'shot')):   # guns: from the muzzle to where they are aimed, and on past it
+            if not sh['enabled']:
+                continue
+            is_sel = ('shot', i) in chosen
+            col = QColor(theme.OBJECT_COLOURS['shot'])
+            col.setAlpha(235 if is_sel else 130)
+            mz = np.asarray(sc.get(('shot', i, 'position'), self.doc.frame), float)
+            at = np.asarray(sc.get(('shot', i, 'aim'), self.doc.frame), float)
+            way = at - mz
+            far = at + way * (0.25 if float(np.linalg.norm(way)) > 1e-6 else 0.0)
+            self._lines(p, cs, fire, [np.stack([mz, at])], QPen(col, 1.6 if is_sel else 1.0))
+            self._lines(p, cs, fire, [np.stack([at, far])], QPen(col, 1.0, Qt.DashLine))
+            px, ok = self._project_local(cs, fire, [mz, at])
+            p.setPen(QPen(col, 1.4))
+            p.setBrush(Qt.NoBrush)
+            if ok[0]:
+                p.drawEllipse(self.to_widget(px[0]), 4.0, 4.0)   # the muzzle
+            if ok[1] and not is_sel:   # where it is aimed (selected: the gizmo's diamond)
+                q = self.to_widget(px[1])
+                p.drawLine(q + QPointF(-5, 0), q + QPointF(5, 0))
+                p.drawLine(q + QPointF(0, -5), q + QPointF(0, 5))
         self._paint_blasts(p, cs, fire, sc)
         floats = self.stats.get('floats') if self.stats.get('frame') == self.doc.frame else None
         for i, c in enumerate(sc.colliders):
@@ -1611,13 +1632,14 @@ class Viewport(QWidget):
             p.setBrush(QColor(theme.ACCENT) if hot else QColor(16, 16, 20, 220))
             p.drawEllipse(q, 5.5, 5.5)
         q = hs.get('end')
-        if q is not None:   # where a bolt strikes: drag it over the ground
+        if q is not None:   # where a bolt strikes, where a gun is aimed: drag it about at its height
             hot = 'end' in (drag, hover)
-            p.setPen(QPen(QColor(190, 210, 255), 1.6))
-            p.setBrush(QColor(190, 210, 255) if hot else QColor(16, 16, 20, 220))
+            ec = QColor(theme.OBJECT_COLOURS['shot']) if gz.kind == 'shot' else QColor(190, 210, 255)
+            p.setPen(QPen(ec, 1.6))
+            p.setBrush(ec if hot else QColor(16, 16, 20, 220))
             p.drawPolygon(QPolygonF([q + QPointF(0, -7), q + QPointF(7, 0), q + QPointF(0, 7), q + QPointF(-7, 0)]))
             if hot:
-                p.drawText(q + QPointF(10, -8), 'strikes here')
+                p.drawText(q + QPointF(10, -8), 'aimed here' if gz.kind == 'shot' else 'strikes here')
         q = hs.get('centre')
         if q is not None:
             hot = 'centre' in (drag, hover)
@@ -1673,8 +1695,9 @@ class Viewport(QWidget):
         g = gz.g
         if gz.capsule:
             d['end0'] = np.asarray(g('end'), float)
-        if key == 'end':   # a bolt's strike point slides over the ground at its height
-            d['end0'] = np.asarray(g('end'), float)
+        if key == 'end':   # a bolt's strike point, a gun's aim: slides about at its height
+            d['end_key'] = gz.end_key
+            d['end0'] = np.asarray(g(gz.end_key), float)
             d['w0'] = self._ground_point(pos, float(d['end0'][1]))
             if d['w0'] is None:
                 return
@@ -1718,8 +1741,8 @@ class Viewport(QWidget):
                 new = d['end0'] + (np.asarray(w, float) - np.asarray(d['w0'], float))
                 if snap:
                     new[0], new[2] = round(new[0] / snap) * snap, round(new[2] / snap) * snap
-                self.doc.set((what, i, 'end'), tuple(float(x) for x in new))
-                self._readout = (f'strikes at  {new[0]:.2f}, {new[2]:.2f} m', pos)
+                self.doc.set((what, i, d.get('end_key', 'end')), tuple(float(x) for x in new))
+                self._readout = (f'{"aimed at" if what == "shot" else "strikes at"}  {new[0]:.2f}, {new[2]:.2f} m', pos)
             return
         if key.startswith('move_'):
             t = self._axis_param(pos, d['pos0'], d['axis'])

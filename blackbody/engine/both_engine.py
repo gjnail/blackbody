@@ -306,7 +306,9 @@ class BothEngine:
         if solids:
             self._air_for_solids()
             self._objects_meet_cloth(fdt)
+            self._shots_ahead(scene, fdt)     # (bullets: where their ways cross the water, the sand, snow and mud)
             poses = solids.advance(scene, frame, fdt, n, couple=self._matter_couple(scene, frame, fdt, self.solver.meshes))
+            self._shots_kick(fdt)                # (and what they did to them)
             self._cloth_takes_objects(fdt)
         moving = scene.colliders_animated() or bool(solids)
         wprm = scene.weather_params(frame) if (self._wx_on and self.weather is not None) else None
@@ -332,6 +334,9 @@ class BothEngine:
         lpieces = poses is not None and self._pieces_for(scene, L, 'liquid')
         burning = poses is not None and self._burn_pieces(scene, fdt)   # (things that break and burn)
         dust = self.solids.dust(scene, fdt, n) if (poses is not None and self.solids.sets) else None
+        shot = self._shot_puffs(scene, fdt, n) if self.shooting else None   # (bullets' dust and gun smoke)
+        if shot:
+            dust = [a + b for a, b in zip(dust or [[]] * n, shot)]
         with self.gpu.batch() as b:
             self._footage_solid(b, scene, frame)
             if burning:
@@ -577,8 +582,9 @@ class BothEngine:
         ropes = self.rope_poses(frame)
         matter = self.matter_for(frame) if mode == 'composite' else None
         bolts = scene.bolts(frame) if mode == 'composite' and scene.lights else None   # (lightning)
+        shots = self.shot_view(frame) if mode == 'composite' else None    # (bullets: debris, sparks, holes)
         stage_on = (stage_mod.wanted(scene, footage, mode, objects=objects) or bool(pieces) or bool(ropes)
-                    or matter is not None or bool(bolts))
+                    or matter is not None or bool(bolts) or bool(shots))
         r.hold_stage = None
         p_transform, p_gain = INPUT_TRANSFORMS.get(comp.plate_transform, 0), comp.plate_gain
         if stage_on:
@@ -677,7 +683,8 @@ class BothEngine:
                                                plate_fit=plate_fit, samples=samples, shutter=lshutter, footage=footage,
                                                vol=vol, ground_y=vol.origin[1], frame=frame, objects=objects,
                                                floor=not wlook.bottomless, pieces=pieces, ropes=ropes, matter=matter, bolts=bolts,
-                                               grass=self._strands.ground_map(b) if grass else None, burns=surfaces, final=final)
+                                               grass=self._strands.ground_map(b) if grass else None, burns=surfaces, final=final,
+                                               shots=shots)
                 if self.stage.has_pieces or self.stage.has_matter:   # the fire and the liquids stop at the pieces and the matter
                     r.hold_stage = self.stage.hold
                     r.hold_stage_matte = bool(footage and r.hold is not None and r.hold_on[0])

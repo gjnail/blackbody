@@ -21,6 +21,7 @@ from . import camera as cam
 from .cloth import STEPS_PER_SECOND, Cloth
 from .embers import Embers
 from .gpu import GPU, TU, Uniforms, groups_1d
+from .ballistics_engine import BallisticsEngine
 from .both_engine import BothEngine
 from .cloud_engine import CloudEngine
 from .liquid_engine import LiquidEngine
@@ -125,7 +126,7 @@ def halton(i, b):
     return r
 
 
-class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine):
+class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine, BallisticsEngine):
     def __init__(self, gpu: GPU | None = None, cache_bytes=4 << 30):
         self.gpu = gpu or GPU()
         self.solver = Solver(self.gpu)
@@ -304,7 +305,9 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine)
         if self.solids.active:
             self._air_for_solids()
             self._objects_meet_cloth(fdt)
+            self._shots_ahead(scene, fdt)         # (bullets: where their ways cross the sand, snow, mud and jelly)
             poses = self.solids.advance(scene, frame, fdt, n, couple=self._matter_couple(scene, frame, fdt, self.solver.meshes))
+            self._shots_kick(fdt)                    # (and what they did to it)
             self._cloth_takes_objects(fdt)
         moving = scene.colliders_animated() or poses is not None
         # deforming meshes: the frames either side of this step in the atlas
@@ -323,6 +326,9 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine)
         burning = poses is not None and self._burn_pieces(scene, fdt)   # (things that break and burn)
         pieces = poses is not None and self._pieces_for(scene, self.solver)
         dust = self.solids.dust(scene, fdt, n) if (poses is not None and self.solids.sets) else None
+        shot = self._shot_puffs(scene, fdt, n) if self.shooting else None   # (bullets' dust and gun smoke)
+        if shot:
+            dust = [a + b for a, b in zip(dust or [[]] * n, shot)]
         with self.gpu.batch() as b:
             if burning:
                 self.piece_fire.splat(b, self.solver)
@@ -785,7 +791,9 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine)
         ropes = self.rope_poses(frame)
         matter = self.matter_for(frame) if mode == 'composite' else None
         bolts = scene.bolts(frame) if mode == 'composite' and scene.lights else None   # (lightning)
-        stage_on = stage_mod.wanted(scene, footage, mode) or bool(pieces) or bool(ropes) or matter is not None or bool(bolts)
+        shots = self.shot_view(frame) if mode == 'composite' else None    # (bullets: debris, sparks, holes)
+        stage_on = (stage_mod.wanted(scene, footage, mode) or bool(pieces) or bool(ropes) or matter is not None or bool(bolts)
+                    or bool(shots))
         r.hold_stage = None
 
         with self.gpu.batch() as b:
@@ -801,6 +809,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine)
                 stage = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, size,
                                         plate_fit=plate_fit, samples=samples, shutter=shutter, footage=footage, vol=vol,
                                         ground_y=vol.origin[1], frame=frame, pieces=pieces, ropes=ropes, matter=matter, bolts=bolts,
+                                        shots=shots,
                                         grass=self._strands.ground_map(b) if grass else None, burns=surfaces, final=final)
                 if self.stage.has_pieces or self.stage.has_matter:   # the march stops at the pieces and the matter too
                     r.hold_stage = self.stage.hold

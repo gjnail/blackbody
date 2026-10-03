@@ -69,6 +69,13 @@ def _apply(scene: Scene, spec: dict):
         scene.strands = []
         for g in spec['strands']:
             scene.add_strands(**g)
+    if 'shots' in spec:
+        scene.shots = []
+        for g in spec['shots']:
+            i = scene.add_shot(**{k: v for k, v in g.items() if not isinstance(v, K)})
+            for k, v in g.items():
+                if isinstance(v, K):
+                    scene.shots[i][k] = v.curve(param('shot', k), scene.fps, scene.start)
 
 
 PRESETS = {
@@ -1341,6 +1348,7 @@ def apply_to(scene: Scene, name: str, keep_camera=True, keep_render=True):
     scene.fabrics = fresh.fabrics
     scene.matter = fresh.matter
     scene.strands = fresh.strands
+    scene.shots = fresh.shots
     scene.links = fresh.links       # (what is attached to what among the effect's objects, which have all changed)
     # the shot's own lights stay (they are its set); a preset's lightning is part of its effect
     scene.lights = [l for l in scene.lights if l.get('kind') != 'lightning'] + [l for l in fresh.lights if l.get('kind') == 'lightning']
@@ -1384,3 +1392,15 @@ from .both_presets import BOTH_ORDER, both_presets  # noqa: E402
 
 PRESETS.update(both_presets(K))
 ORDER.extend(n for n in BOTH_ORDER if n not in ORDER)
+
+# Guns firing: bullets and what they hit (engine/ballistics.py).
+from .shot_presets import SHOT_ORDER, shot_presets  # noqa: E402
+
+PRESETS.update(shot_presets(K))
+ORDER.extend(SHOT_ORDER)
+
+# Wood: breaking along and across its grain, its species (engine/wood.py).
+from .wood_presets import WOOD_ORDER, wood_presets  # noqa: E402
+
+PRESETS.update(wood_presets(K))
+ORDER.extend(WOOD_ORDER)

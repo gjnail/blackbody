@@ -78,10 +78,40 @@ MATERIALS = {m.key: m for m in (
     Material('person', 'Person (crash-test figure)', 1010.0, 0.8, 0.15, 2.0e+06, (0.78, 0.6, 0.16), 0.55, effusivity=1300.0),
 )}
 
-OPTIONS = tuple((k, m.label) for k, m in MATERIALS.items())
+def _woods():
+    """The woods other than pine ('wood'), from their species (engine/wood.py): their density; their strength, the
+    speed of a hit that breaks them and how readily they give off heat in proportion to pine's; their look (the stage
+    draws their grain: wood.wgsl)."""
+    from ..engine.wood import SPECIES
+    pine = SPECIES['pine']
+    base = MATERIALS['wood']
+    out = []
+    for k, sp in SPECIES.items():
+        if k == 'pine':
+            continue
+        r = sp.mor / pine.mor
+        label = sp.label if k in ('plywood', 'mdf') else f'Wood ({sp.label if k == "fir" else sp.label.lower()})'
+        out.append(Material(k, label, sp.density,
+                            base.friction, base.bounce, base.strength * r,
+                            tuple(round(0.5 * (a + b), 3) for a, b in zip(sp.early, sp.late)), sp.roughness,
+                            pattern=f'wood_{k}', inside=tuple(min(1.0, round(1.15 * c, 3)) for c in sp.early),
+                            dust=base.dust * (2.0 if k == 'mdf' else 1.0), effusivity=base.effusivity * (sp.density / pine.density) ** 0.5,
+                            impact=base.impact * r ** 0.5, brittle=base.brittle))
+    return out
+
+
+MATERIALS.update({m.key: m for m in _woods()})
+
+# (for the pickers: the woods together, pine first)
+_WOODS = [k for k, m in MATERIALS.items() if m.pattern == 'wood' or m.pattern.startswith('wood_')]
+OPTIONS = tuple((k, MATERIALS[k].label) for k in _WOODS + [k for k in MATERIALS if k not in _WOODS])
 
 # the shader's pattern numbers (stage.wgsl)
 PATTERNS = {'plain': 0, 'wood': 1, 'stone': 2, 'concrete': 3, 'brick': 4, 'metal': 5, 'glass': 0}
+# (the woods' own grain, wood.wgsl: wood_<species> from 11 on, in engine/wood.py SPECIES' order)
+PATTERNS.update({'wood_spruce': 11, 'wood_fir': 12, 'wood_oak': 13, 'wood_ash': 14, 'wood_maple': 15, 'wood_birch': 16,
+                 'wood_walnut': 17, 'wood_cherry': 18, 'wood_mahogany': 19, 'wood_teak': 20, 'wood_cedar': 21,
+                 'wood_balsa': 22, 'wood_plywood': 23, 'wood_mdf': 24})
 
 
 @dataclass(frozen=True)

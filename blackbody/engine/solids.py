@@ -484,12 +484,13 @@ class Solids:
         self._pushed = {}          # collider index -> (force, torque) the matter (matter.py) put on it over the last frame
         self._cloth = None         # the fabric through this frame (meet_cloth): its vertices, the ones near each thing
         self._cloth_took = None    # what each vertex of it took from the things it held off through the frame (N s)
+        self.shots = None          # the scene's bullets (ballistics.py), flown with the bodies
 
     # -- set up --------------------------------------------------------------------------------
 
     @property
     def active(self):
-        return bool(self.bodies or self.sets or self.asms)
+        return bool(self.bodies or self.sets or self.asms or self.shots)
 
     @staticmethod
     def wanted(scene):
@@ -506,8 +507,9 @@ class Solids:
     def configure(self, scene, layout):
         """Match the bodies to the scene. Returns True when the model has to be built again (and the
         simulation restarted). layout: (dims, h, origin) of the simulation grid, for the box's walls."""
+        from .ballistics import Ballistics
         idx = self.wanted(scene)
-        if not idx:
+        if not idx and not Ballistics.wanted(scene):
             return self.clear()
         key = self._key(scene, idx, layout)
         if key == self.key and self.model is not None:
@@ -524,6 +526,7 @@ class Solids:
         self.sets, self.breaks, self._w, self._imp = [], [], None, None
         self.asms = []
         self.joints, self.snaps, self._tendon0 = [], [], None
+        self.shots = None
         self.started = False
         self._last = {}
         return changed
@@ -536,7 +539,9 @@ class Solids:
         d = scene.data['domain']
         blob = dict(idx=idx, cols=cols, ground=bool(d['ground']), sides=bool(d['open_sides']), kind=scene.kind,
                     layout=[list(map(float, x)) if hasattr(x, '__len__') else float(x) for x in layout],
-                    g=float(scene.data['liquid']['gravity']) if scene.kind in ('liquid', 'both') else G)
+                    g=float(scene.data['liquid']['gravity']) if scene.kind in ('liquid', 'both') else G,
+                    shots=[{k: (list(v) if isinstance(v, tuple) else str(v)) for k, v in sh.items() if k != 'name'}
+                           for sh in getattr(scene, 'shots', None) or []])
         return json.dumps(blob, sort_keys=True, default=str)
 
     def _mesh_points(self, scene, c):
@@ -627,7 +632,9 @@ class Solids:
                 data = np.array(e.data, float)
                 data[0:3] = np.asarray(bond.centre, float) - frac.pieces[bond.j].centroid
                 e.data = data
-                ps.welds.append((e.name, bond.i, np.asarray(bond.normal, float), float(bond.area), strength, bond.j))
+                # (a bond can be stronger or weaker than the material's: wood's along its grain and across it, wood.py)
+                ps.welds.append((e.name, bond.i, np.asarray(bond.normal, float), float(bond.area),
+                                 strength * float(getattr(bond, 'k', 1.0)), bond.j))
             # standing where it is: glued to the world along its base (or its base and sides)
             held = c.get('held', 'base')
             if not dynamic and held != 'free':
@@ -1638,6 +1645,25 @@ class Solids:
             self._go_limp(a, LIMP if want else STAND)
             a['limp'] = want
 
+    def break_off(self, si, pieces):
+        """Every weld holding these pieces of breakable si goes, as if each were hit too hard to hold (a bullet's hole:
+        ballistics.py). Returns the welds broken."""
+        W = self._w
+        if W is None or not len(pieces):
+            return np.zeros(0, np.int64)
+        pieces = np.asarray(pieces, np.int64)
+        rows = np.nonzero((W['set'] == si) & (W['over'] >= 0)
+                          & (np.isin(W['first'], pieces) | ((W['other'] >= 0) & np.isin(W['other'], pieces))))[0]
+        if len(rows):
+            self.data.eq_active[W['eq'][rows]] = 0
+            W['over'][rows] = -(1 << 40)
+            for r in rows:
+                self.breaks.append((self.time, self.data.xpos[W['body'][r]].copy(), float(W['area'][r]), int(W['collider'][r])))
+            I = self._imp
+            if I is not None:      # (a piece no weld holds is no longer checked for being knocked off)
+                I['on'][:] = [bool((W['over'][h] >= 0).any()) if len(h) else False for h in I['holds']]
+        return rows
+
     def _unbend(self):
         """Every weld back to its rest pose as built, nothing bent."""
         W = self._w
@@ -2194,6 +2220,8 @@ class Solids:
         self.sets = sets
         self.breaks = []
         self._index_welds()
+        from .ballistics import Ballistics
+        self.shots = Ballistics(scene, self) if Ballistics.wanted(scene) else None
         self._index_assemblies(asms)
         # starting motion
         d = self.data
@@ -2383,6 +2411,8 @@ class Solids:
         self._restance()
         for ps in self.sets:
             ps.held = False
+        if self.shots is not None:
+            self.shots.reset()
         mujoco.mj_forward(self.model, self.data)
         for bd in self.bodies:
             bd.hydro = None
@@ -2757,6 +2787,8 @@ class Solids:
             for fb, where, kg in blasts:
                 if frame - 1 + t / fdt <= fb < frame - 1 + (t + h) / fdt:
                     self._blast(np.asarray(where, float), kg)
+            if self.shots is not None:     # (bullets fired and flown through this step: what they hit takes it now)
+                self.shots.step(self, frame - 1 + t / fdt, frame - 1 + (t + h) / fdt, self.time, h)
             self._forces()
             v0 = self._piece_v()
             mujoco.mj_step(m, d)
@@ -2775,6 +2807,8 @@ class Solids:
             out.append(self._poses())
             self.substep_pieces.append(self.piece_poses() if (self.sets or self.asms) else None)
             mi += 1
+        if self.shots is not None:
+            self.shots.frame_end(self, fdt)       # (the debris they threw up flies on)
         m.opt.timestep = dt
         self.started = True
         self._last = self._poses()
@@ -2883,6 +2917,8 @@ class Solids:
                     joints=[bool(jt.broken) for jt in self.joints],
                     ropes={int(k): {kk: np.asarray(vv, np.float32) for kk, vv in v.items()} for k, v in self.rope_poses().items()},
                     fire=[None if not ps.burnable else (ps.fire.copy(), ps.gone.copy()) for ps in self.sets],
+                    shots=None if self.shots is None else self.shots.state(),
+                    shots_view=None if self.shots is None else self.shots.view(self),
                     limp=[bool(a['limp']) for a in self.asms])
 
     def load_state(self, st):
@@ -2928,6 +2964,8 @@ class Solids:
         self._restance(st.get('limp'))
         self._impact_sync()
         self._weaken()
+        if self.shots is not None:
+            self.shots.load_state(st.get('shots'))
         self.snaps = []
         self.started = True
         self._last = self._poses()

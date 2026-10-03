@@ -719,5 +719,61 @@
   "category": "Fire and liquid",
   "size": "4 m flow",
   "blurb": "A lava flow creeping into dry grass. The air over the lava is hot enough to light the grass just ahead of the front, so a line of flame and smoke runs ahead of it and the lava rolls on over the burnt ground. Spreading fire is on: the ground is the grass."
+ },
+ {
+  "key": "shooting_range",
+  "name": "Shooting range",
+  "category": "Bullets",
+  "size": "9 mm pistol at 6 m",
+  "blurb": "A pistol works along a row of targets: a window pane takes a hole with its web of cracks and stays standing, a steel plate rings and swings with a grey star of splashed lead on it and sparks off it, a can is knocked off its post, a pine board is holed with splinters torn out of its back, and a concrete block loses a crater in a puff of dust. Shot settings: Cartridge, Rounds, Rate of fire."
+ },
+ {
+  "key": "glass_slowmo",
+  "name": "Bullet through glass",
+  "category": "Bullets",
+  "size": "9 mm, slowed 400 times",
+  "blurb": "A 9 mm bullet through a window pane, slowed down 400 times: the bullet flies in, a white cone of crushed glass bursts out of the back of the pane, cracks run out from the hole and splinters spray after the bullet, which flies on a little slower. Domain › Time scale sets the slow motion."
+ },
+ {
+  "key": "bottle_shoot",
+  "name": "Bottles on a fence",
+  "category": "Bullets",
+  "size": ".22 rifle at 10 m",
+  "blurb": "A .22 rifle picks off five glass bottles standing on a fence rail, one a second: each one bursts, its pieces spraying off the rail and tumbling to the ground, where they lie."
+ },
+ {
+  "key": "steel_gong",
+  "name": "Steel gong",
+  "category": "Bullets",
+  "size": "9 mm at 7 m",
+  "blurb": "A hanging steel plate shot six times: each bullet flattens on it in a flash, splashes its lead in a grey star across the plate and throws sparks; the plate swings back on its hinge with every hit."
+ },
+ {
+  "key": "machine_gun",
+  "name": "Machine gun at dusk",
+  "category": "Bullets",
+  "size": "5.56 mm, 900 rounds a minute",
+  "blurb": "A burst of 25 rounds with tracers at dusk, walked across a concrete wall and the dirt in front of it: red streaks, sparks and chips off the concrete, bullets skipping off the ground, dust rising."
+ },
+ {
+  "key": "board_break",
+  "name": "Breaking a board",
+  "category": "Wood",
+  "size": "20 mm pine, 10 kg from 1 m",
+  "blurb": "A 10 kg weight dropped from a metre onto a pine board across two blocks, slowed down four times: the board bends, its fibres give way at staggered places on its underside and it snaps in a jagged, splintered break, the two halves folding into the gap. Wood breaks along its grain into bundles of fibres (Breaks into: Splinters); try oak, balsa or a heavier weight."
+ },
+ {
+  "key": "boards_shot",
+  "name": "Bullets through boards",
+  "category": "Wood",
+  "size": "six 19 mm pine boards",
+  "blurb": "The classic penetration test: six pine boards stood 2.5 cm apart, a 9 mm pistol and a .308 rifle fired into them. The pistol bullet slows through each and stops in the last; the rifle bullet goes through all six. Each board is holed going in and torn out along its grain going out, splinters flying from its back."
+ },
+ {
+  "key": "wood_lineup",
+  "name": "Woods",
+  "category": "Wood",
+  "size": "15 species",
+  "blurb": "Every wood side by side, as boards and as logs sawn through: pine, spruce, Douglas fir, oak, ash, maple, birch, walnut, cherry, mahogany, teak, cedar, balsa, plywood and MDF. Their grain, rings, knots, pores and rays are their own, right through them (a cut or a break shows the same wood)."
  }
 ]

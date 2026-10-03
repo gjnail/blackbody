@@ -61,6 +61,21 @@ Notable changes to Blackbody. The format follows
   wrecking ball folds over. Meshes can break, a vase breaks into curved shards of mixed sizes, and things are drawn
   whole until their first crack opens. Joints are ten times stiffer (a wall no longer sways like jelly), and mortar
   holds 0.6 MPa.
+- Bullets (Create › Guns & bullets: a pistol shot, a rifle shot, a shotgun blast, a machine-gun burst): a shot fires
+  a real cartridge's bullets, from an air-rifle pellet to .50 BMG, from its muzzle toward where it is aimed (both
+  keyframable), with Rounds, Rate of fire, Scatter, Muzzle speed, Tracer and Muzzle flash. They fly their real paths and
+  do what real bullets do to what they meet: through glass, wood, drywall and car doors and on, slower; flattened on
+  steel in a splash of lead and sparks; craters chipped out of concrete, brick and stone in a puff of dust; skipping off
+  water, concrete and steel when they come in flatter than its critical angle. Glass cracks in its web round the hole,
+  bottles burst, a steel gong swings, and what they hit is moved by what they carry. In the interface: a gun's muzzle
+  and aim drawn in the viewer, with a handle to aim it. Presets: Shooting range, Bullet through glass, Bottles on a
+  fence, Steel gong, Machine gun at dusk. (From the bullets session.)
+- Wood: fifteen woods (pine, spruce, Douglas fir, oak, ash, maple, birch, walnut, cherry, mahogany, teak, cedar, balsa,
+  plywood and MDF), each with its density, stiffness and strength along and across its grain from the USDA Wood
+  Handbook, and drawn solid through: rings, grain, knots, pores, rays and heartwood, so a cut, a break or a bullet's
+  hole shows the wood inside. It splits along its grain far more easily than it breaks across it: a board snaps in a
+  jagged break with splinters standing out of both halves, a log splits along its rays. Presets: Breaking a board,
+  Bullets through boards, Woods.
 - People and cars (Properties › Physics › Build): an object built of many parts on joints. A person is a crash-test
   figure, 1.8 m and about 80 kg, its head, chest, pelvis, arms and legs turning within a body's reach (a knee bends
   only back). It stands braced until something hits it faster than 1.5 m/s, then goes limp and falls as a body does,

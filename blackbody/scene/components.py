@@ -27,7 +27,7 @@ class Component:
     tip: str
     glyph: str
     need: str = 'any'          # 'fire', 'liquid', 'lava' or 'any': what the scene must simulate
-    objects: list = field(default_factory=list)   # [(kind, dict)]: kind emitter / collider / light / fabric
+    objects: list = field(default_factory=list)   # [(kind, dict)]: kind emitter / collider / light / fabric / shot
     scene: dict = field(default_factory=dict)     # {section: {key: value}} set when added
     scales: bool = False       # sized for a 2 m box: scaled to the scene's box
     room: tuple = (0.0, 0.0, 0.0)   # space it needs around its base: half width, height, half depth (m)
@@ -60,6 +60,10 @@ def _M(**kw):
 
 def _S(**kw):
     return ('strands', kw)
+
+
+def _G(**kw):
+    return ('shot', kw)
 
 
 SPARKS = {'embers': {'enabled': True, 'rate': 1500.0, 'count': 32768, 'lifetime': 0.9, 'life_jitter': 0.7, 'launch': 14.0,
@@ -580,6 +584,41 @@ COMPONENTS = [
                           swirl=2.5, swirl_width=6.0, noise=0.0, embers=False)]),
 ]
 
+# Guns (engine/ballistics.py): each fires at the spot it is put on, from where a shooter would stand; its muzzle is out
+# of the box (only what the bullets hit needs to be in it)
+COMPONENTS += [
+    Component('pistol', 'Pistol shot', 'Guns & bullets', 'A 9 mm pistol fired once from 5 m at what is on this spot, at '
+              'chest height. Its bullet holes glass, wood and thin metal and goes on, splashes on steel, chips concrete '
+              'and brick, and knocks over what it hits.', 'pistol', origin=True, room=(0.3, 1.3, 0.3),
+              objects=[_G(name='Pistol', round='9mm', position=(0.4, 1.3, 5.0), aim=(0.0, 1.1, 0.0), start=0.5,
+                          scatter=0.1)]),
+    Component('rifle', 'Rifle shot', 'Guns & bullets', 'A .308 rifle fired once from 25 m: over twice the pistol’s speed, '
+              'through a brick, a car door or a tree trunk.', 'rifle', origin=True,
+              room=(0.3, 1.3, 0.3),
+              objects=[_G(name='Rifle', round='308', position=(1.0, 1.5, 25.0), aim=(0.0, 1.1, 0.0), start=0.5, scatter=0.02,
+                          flash=False)]),
+    Component('shotgun', 'Shotgun blast', 'Guns & bullets', 'Nine 00 buckshot pellets from 6 m, in a fist-sized cone.', 'shotgun',
+              origin=True, room=(0.3, 1.3, 0.3),
+              objects=[_G(name='Shotgun', round='buck', position=(0.3, 1.2, 6.0), aim=(0.0, 1.0, 0.0), start=0.5)]),
+    Component('burst', 'Machine-gun burst', 'Guns & bullets', 'Twelve 5.56 mm rounds at 750 a minute, with tracers, from '
+              '15 m, scattering over a metre.', 'mgburst', origin=True, room=(0.6, 1.3, 0.6),
+              objects=[_G(name='Machine gun', round='556', position=(1.5, 1.4, 15.0), aim=(0.0, 0.8, 0.0), start=0.5,
+                          count=12, rate=750.0, scatter=0.6, tracer=True)]),
+    Component('bottle', 'Glass bottle', 'Guns & bullets', 'A glass bottle standing on the ground, in one piece until it is '
+              'hit: then it bursts.', 'pillar', room=(0.1, 0.3, 0.1),
+              objects=[_C(name='Bottle', shape='cylinder', position=(0.0, 0.12, 0.0), size=(0.037, 0.12, 0.037), hollow=0.003,
+                          opening=(0.045, 0.01, 0.045), opening_at=(0.0, 0.12, 0.0), material='glass', own_colour=True,
+                          colour=(0.18, 0.42, 0.2), dynamic=True, breakable=True, pieces=40, density=900.0)]),
+    Component('steel_target', 'Steel target', 'Guns & bullets', 'A steel plate hung from a bar on a post: it swings back '
+              'when hit and wears a grey star of splashed lead for each bullet, which flashes and throws sparks.', 'wall',
+              room=(0.4, 1.4, 0.3),
+              objects=[_C(name='Steel target', shape='box', position=(0.0, 0.95, 0.0), size=(0.2, 0.2, 0.008), material='steel',
+                          own_colour=True, colour=(0.82, 0.8, 0.74), joint='hinge', joint_to='Target bar',
+                          joint_at=(0.0, 0.22, 0.0), joint_axis=(1.0, 0.0, 0.0), joint_friction=0.05),
+                       _C(name='Target bar', shape='box', position=(0.0, 1.19, 0.0), size=(0.3, 0.015, 0.015), material='steel'),
+                       _C(name='Target post', shape='box', position=(0.0, 0.6, -0.05), size=(0.02, 0.6, 0.02), material='steel')]),
+]
+
 # the tile pictures (ui/icons.GLYPHS); blocks not listed keep the one they were made with
 GLYPHS = {'campfire': 'logs', 'pool': 'pool', 'line': 'line', 'torch': 'torch', 'gas': 'ring', 'fireball': 'burst', 'jet': 'jet',
           'whirl': 'spiral', 'burnable': 'crate', 'steam': 'steam', 'kettle': 'steam', 'pour': 'pour', 'hose': 'jet',
@@ -609,7 +648,8 @@ def _values(v):
     from .anim import Curve
     return [k[1] for k in v.keys] if isinstance(v, Curve) else [v]
 GROUPS = ['Fire', 'Smoke, steam & sparks', 'Liquids', 'Fabric', 'Weather', 'Forces', 'Objects', 'Things that fall',
-          'Ropes and hinges', 'Machines', 'Sand, snow & mud', 'Grass & plants', 'Lights']
+          'Ropes and hinges', 'Machines', 'Sand, snow & mud', 'Grass & plants', 'Guns & bullets', 'Lights']
+
 
 # Making a scene from scratch: (label, box width in metres)
 SCALES = {'small': ('Tabletop', 0.6), 'person': ('Person-sized', 2.0), 'large': ('Car or room', 6.0), 'huge': ('Building', 20.0)}
@@ -797,6 +837,10 @@ def _extent(kind, d):
         if d.get('yaw') and d.get('shape') != 'disc':   # turned: round its turned corners
             r[0] = r[2] = math.hypot(r[0], r[2])
         return p - r, p + r + np.array([0.0, s[1], 0.0])
+    if kind == 'shot':
+        # (the gun is outside the box, where a shooter stands: only where it is aimed needs to be inside)
+        a = np.asarray(d.get('aim', (0.0, 0.0, 0.0)), float)
+        return a, a
     if kind == 'matter':
         s = np.abs(np.asarray(d.get('size', (0.25, 0.25, 0.25)), float))
         if d.get('shape') == 'mesh':   # a mesh it fills: Size scales it, as a collider's mesh
@@ -905,11 +949,11 @@ def add(scene: Scene, key, at=None, mesh=None):
         anchor = (0.0, 0.0)
     added = []
     lists = {'emitter': scene.emitters, 'collider': scene.colliders, 'light': scene.lights, 'fabric': scene.fabrics,
-             'matter': scene.matter, 'strands': scene.strands}
+             'matter': scene.matter, 'strands': scene.strands, 'shot': scene.shots}
     renamed = {}
     for kind, d in objs:
         d = dict(d)
-        for k in ('position', 'end', 'joint_anchor'):
+        for k in ('position', 'end', 'joint_anchor', 'aim'):
             if k in d:
                 v = d[k]
                 if isinstance(v, Curve):
@@ -960,7 +1004,7 @@ def add(scene: Scene, key, at=None, mesh=None):
         curves = {k: v for k, v in d.items() if isinstance(v, Curve)}   # animated settings go in as they are
         i = {'emitter': scene.add_emitter, 'collider': scene.add_collider, 'light': scene.add_light,
              'fabric': scene.add_fabric, 'matter': scene.add_matter,
-             'strands': scene.add_strands}[kind](**{k: v for k, v in d.items() if k not in curves})
+             'strands': scene.add_strands, 'shot': scene.add_shot}[kind](**{k: v for k, v in d.items() if k not in curves})
         lists[kind][i].update(curves)
         added.append((kind, i))
     for kind, i in added:   # its joints, to its objects as they are named here
@@ -1151,7 +1195,7 @@ def make_breakable(scene: Scene, i, on=True, pieces=None, fracture=None):
             fracture = 'bricks'
         elif material(m).clear > 0.5:
             fracture = 'shards'
-        elif m == 'wood':
+        elif m == 'wood' or getattr(material(m), 'pattern', '').startswith('wood'):
             fracture = 'splinters'
         elif material(m).yields > 0.0:
             fracture = 'bends'

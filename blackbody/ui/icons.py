@@ -600,6 +600,48 @@ def _g_person(p, s):
     p.drawLine(QPointF(s * 0.5, s * 0.58), QPointF(s * 0.64, s * 0.88))
 
 
+def _g_gun(p, s):
+    """A gun's sights: a ring and a cross."""
+    p.drawEllipse(QPointF(s * 0.5, s * 0.5), s * 0.28, s * 0.28)
+    for a, b in (((0.5, 0.08), (0.5, 0.34)), ((0.5, 0.66), (0.5, 0.92)), ((0.08, 0.5), (0.34, 0.5)), ((0.66, 0.5), (0.92, 0.5))):
+        p.drawLine(QPointF(s * a[0], s * a[1]), QPointF(s * b[0], s * b[1]))
+
+
+def _g_pistol(p, s):
+    """A pistol from the side: slide and barrel, grip, trigger guard."""
+    p.drawPolygon(QPolygonF([QPointF(s * 0.1, s * 0.3), QPointF(s * 0.9, s * 0.3), QPointF(s * 0.9, s * 0.44),
+                             QPointF(s * 0.44, s * 0.44), QPointF(s * 0.38, s * 0.82), QPointF(s * 0.16, s * 0.82),
+                             QPointF(s * 0.22, s * 0.44), QPointF(s * 0.1, s * 0.44)]))
+    p.drawArc(QRectF(s * 0.4, s * 0.38, s * 0.2, s * 0.2), 180 * 16, 180 * 16)
+
+
+def _g_rifle(p, s):
+    """A rifle: a long barrel, a stock and a scope."""
+    p.drawLine(QPointF(s * 0.32, s * 0.48), QPointF(s * 0.97, s * 0.48))
+    p.drawPolygon(QPolygonF([QPointF(s * 0.03, s * 0.5), QPointF(s * 0.34, s * 0.44), QPointF(s * 0.5, s * 0.44),
+                             QPointF(s * 0.5, s * 0.56), QPointF(s * 0.3, s * 0.6), QPointF(s * 0.03, s * 0.7)]))
+    p.drawRect(QRectF(s * 0.38, s * 0.3, s * 0.24, s * 0.08))
+
+
+def _g_shotgun(p, s):
+    """A shotgun: two barrels side by side, a stock, its pellets spreading."""
+    p.drawLine(QPointF(s * 0.3, s * 0.42), QPointF(s * 0.72, s * 0.42))
+    p.drawLine(QPointF(s * 0.3, s * 0.5), QPointF(s * 0.72, s * 0.5))
+    p.drawPolygon(QPolygonF([QPointF(s * 0.03, s * 0.5), QPointF(s * 0.3, s * 0.4), QPointF(s * 0.3, s * 0.54),
+                             QPointF(s * 0.03, s * 0.68)]))
+    for x, y in ((0.84, 0.3), (0.9, 0.46), (0.84, 0.62), (0.96, 0.38), (0.96, 0.56)):
+        _grain(p, s, x, y, 0.03)
+
+
+def _g_mgburst(p, s):
+    """A machine gun's burst: a short gun and three rounds streaking from it."""
+    p.drawPolygon(QPolygonF([QPointF(s * 0.04, s * 0.42), QPointF(s * 0.46, s * 0.42), QPointF(s * 0.46, s * 0.54),
+                             QPointF(s * 0.3, s * 0.54), QPointF(s * 0.26, s * 0.78), QPointF(s * 0.14, s * 0.78),
+                             QPointF(s * 0.16, s * 0.54), QPointF(s * 0.04, s * 0.54)]))
+    for y in (0.3, 0.48, 0.66):
+        p.drawLine(QPointF(s * 0.58, s * (0.48 + (y - 0.48) * 0.3)), QPointF(s * 0.96, s * y))
+
+
 def _g_hill(p, s):
     path = QPainterPath()
     path.moveTo(s * 0.04, s * 0.84)
@@ -844,6 +886,7 @@ GLYPHS = {
     'mesh': _g_mesh, 'crate': _g_crate, 'roto': _g_roto, 'text': _g_text, 'shape': _g_shape,
     'cart': _g_cart, 'turntable': _g_turntable, 'windmill': _g_windmill, 'ramp': _g_ramp,
     'grass': _g_grass, 'strands': _g_grass, 'wheat': _g_wheat, 'reeds': _g_reeds,
+    'shot': _g_gun, 'gun': _g_gun, 'pistol': _g_pistol, 'rifle': _g_rifle, 'shotgun': _g_shotgun, 'mgburst': _g_mgburst,
     'matter': _g_grains, 'grains': _g_grains, 'mud': _g_mud, 'jelly': _g_jelly, 'snowball': _g_snowball, 'clay': _g_clay,
     'play': lambda p, s: p.drawPolygon(QPolygonF([QPointF(s * 0.3, s * 0.2), QPointF(s * 0.8, s * 0.5), QPointF(s * 0.3, s * 0.8)])),
     'stop': lambda p, s: p.drawRect(QRectF(s * 0.25, s * 0.25, s * 0.5, s * 0.5)),

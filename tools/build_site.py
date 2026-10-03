@@ -32,6 +32,8 @@ GUIDES = [
     ('Things', 'physics', 'Things that fall'),
     ('Things', 'matter', 'Sand, snow and mud'),
     ('Things', 'grass', 'Grass and plants'),
+    ('Things', 'bullets', 'Bullets'),
+    ('Things', 'wood', 'Wood'),
     ('Water', 'liquids', 'Liquids'),
     ('Water', 'ocean', 'The sea, surf and rivers'),
     ('Water', 'lava', 'Lava, and fire with water'),
@@ -55,7 +57,7 @@ FILTERS = [('all', 'All'), ('fire', 'Fire and smoke'), ('things', 'Things that f
 CATEGORY_FILTER = {'Fires': 'fire', 'Small flames': 'fire', 'Explosions': 'fire', 'Smoke': 'fire', 'Sparks': 'fire',
                    'Steam': 'fire', 'Liquids': 'water', 'Fire and liquid': 'water', 'Sea': 'sea',
                    'Ice and steam': 'heat', 'Weather': 'weather', 'Sky and weather': 'weather', 'Things that fall': 'things',
-                   'Sand, snow and mud': 'matter'}
+                   'Sand, snow and mud': 'matter', 'Bullets': 'things', 'Wood': 'things'}
 
 NAV = [('tutorial', 'Tutorial', 'tutorial.html'), ('guides', 'Guides', 'guides.html'),
        ('presets', 'Presets', 'presets.html'), ('github', 'GitHub', REPO)]

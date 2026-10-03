@@ -42,12 +42,15 @@
 //!include burn_common.wgsl
 //!include burnobj.wgsl
 //!include lume.wgsl
+//!include marks.wgsl
+//!include wood.wgsl
 
 const PI: f32 = 3.14159265;
 const FLOOR: i32 = 100;
 const PIECE: i32 = 1000;   // a hit on piece k has id PIECE + k
 const ROPE_ROW: i32 = 16;  // = MAX_COLLIDERS: the material rows of ropes (then steel cables and springs) follow the objects'
-const MAT_ROWS: u32 = 21u;   // the objects', rope, steel, lightning, then parts' own looks (a tyre, tinted glass)
+const MAT_ROWS: u32 = 24u;   // the objects', rope, steel, lightning, parts' own looks (a tyre, tinted glass), then what
+                             // bullets leave (stage.py SHOT_ROW: a bullet's copper, splashed lead, the ground's chips)
 const LIGHTNING_ROW: i32 = 18;   // lightning: segments that glow (their r.xyz), casting no shadow
 const MATTER: i32 = 200;   // a hit on the matter (sand, snow, mud, jelly, clay: matter.py)
 
@@ -56,6 +59,8 @@ const MATTER: i32 = 200;   // a hit on the matter (sand, snow, mud, jelly, clay:
 // Without them their code is left out of the kernel, and every path runs faster (each copy of code slows every path).
 const F_PIECES: bool = ${F_PIECES};
 const F_MARCH: bool = ${F_MARCH};
+const F_SHOTS: bool = ${F_SHOTS};   // (what bullets leave: marks and bores, marks.wgsl)
+const F_WOOD: bool = ${F_WOOD};     // (wood, by its species: wood.wgsl)
 
 struct Mat {
   c: vec4<f32>,   // albedo (linear rgb), roughness
@@ -149,10 +154,14 @@ struct PieceG { a: vec4<f32>, q: vec4<f32>, v: vec4<f32>, o: vec4<f32>, r: vec4<
 @group(0) @binding(29) var<storage, read_write> AOV: array<vec4<f32>>;   // Lume: per pixel, albedo + distance, normal + _
 @group(0) @binding(30) var<storage, read> ENV: array<f32>;               // Lume: the HDRI's cumulative sums and pdf
 @group(0) @binding(31) var<storage, read_write> CAU: array<atomic<u32>>; // Lume: this pass's caustics, per pixel rgb (fixed point)
+@group(0) @binding(32) var<storage, read> MK: array<vec4<f32>>;          // bullet marks (marks.wgsl): [0].x how many, 4 each
 @group(1) @binding(0) var<uniform> U: Params;
 
 var<private> g_tau: f32;   // this sample's time in the shutter (s): objects are moved along their motion
 var<private> g_over: vec4<f32>;   // a colour a pattern puts in place of the material's (mortar), and how much
+var<private> g_wood: vec2<f32>;   // the object a pattern is drawn on: its own number, its shape (wood.wgsl)
+var<private> g_ao_reach: f32;     // how far ambient occlusion looks round the surface being shaded (0: the stage's own;
+                                  // a bullet's hole: about its size, marks.wgsl bore_surface)
 var<private> g_plane: i32;        // the plane a piece was hit on (trace)
 var<private> g_opaque: bool;      // only what stops light counts (shadows, the sky's occlusion)
 var<private> g_skip_plain: bool;  // the march leaves the plain shapes out (trace() finds them exactly)
@@ -244,11 +253,13 @@ fn scene_d(p: vec3<f32>, want: f32) -> vec2<f32> {
   if (U.mn.w > 0.5) {
     best = vec2<f32>(matter_d(p), f32(MATTER));
   }
+  var bored = 1.0e9;   // (the holes bullets made: carved out of every object)
+  if (bores_on()) { bored = bore_d(p); }
   for (var i = 0; i < i32(U.ccnt.x); i++) {
     if (U.mat[i].d.w < want) { continue; }
     if (g_opaque && U.mat[i].d.y > 0.5) { continue; }   // (glass lets the light through)
     if (g_skip_plain && plain(i)) { continue; }
-    let d = col_sdf(obj(i), p);
+    let d = max(col_sdf(obj(i), p), -bored);
     if (d < best.x) { best = vec2<f32>(d, f32(i)); }
   }
   return best;
@@ -357,7 +368,10 @@ fn trace_pieces(ro: vec3<f32>, rd: vec3<f32>, t0: f32, tmax: f32) -> vec3<f32> {
       let k = GL[j];
       if (g_opaque && U.mat[i32(PC[k].o.w + 0.5)].d.y > 0.5) { continue; }
       let h = piece_hit(k, ro, rd);
-      if (h.t0 <= h.t1 && h.t0 > t0 && h.t0 < best.x) { best = vec3<f32>(h.t0, f32(k), f32(h.k0)); }
+      if (h.t0 <= h.t1 && h.t0 > t0 && h.t0 < best.x) {
+        let tb = bore_pass(ro, rd, h.t0, h.t1);
+        if (tb > 0.0 && tb < best.x) { best = vec3<f32>(tb, f32(k), f32(h.k0)); }
+      }
     }
     let tn = min(tnext.x, min(tnext.y, tnext.z));
     if (tn > best.x || tn > tout) { break; }
@@ -481,8 +495,8 @@ fn trace(ro: vec3<f32>, rd: vec3<f32>, t0: f32, tmax: f32, want: f32, floor_on: 
   var h = Hit(1.0e9, -1);
   // (a ray from a hair under the floor going down, as from the underside of a ball resting on it, is in the ground)
   if (floor_on && U.stage.x > 0.5 && rd.y < -1e-6 && ro.y > U.stage.y - 0.02) {
-    let tf = max((U.stage.y - ro.y) / rd.y, t0 + 1e-6);
-    if (tf < tmax) { h = Hit(tf, FLOOR); }
+    let tf = bore_pass(ro, rd, max((U.stage.y - ro.y) / rd.y, t0 + 1e-6), 1.0e9);   // (into a crater: its floor)
+    if (tf > 0.0 && tf < tmax) { h = Hit(tf, FLOOR); }
   }
   if (F_PIECES) {
     let pc = trace_pieces(ro, rd, t0, min(tmax, h.t));
@@ -501,7 +515,10 @@ fn trace(ro: vec3<f32>, rd: vec3<f32>, t0: f32, tmax: f32, want: f32, floor_on: 
       rest = true;
       continue;
     }
-    let tp = plain_hit(obj(i), ro, rd, t0);
+    // (where it goes into a bullet's hole: the hole's wall, or through it)
+    let sp = plain_span(obj(i), ro, rd);
+    var tp = -1.0;
+    if (sp.y >= sp.x && sp.x > t0) { tp = bore_pass(ro, rd, sp.x, sp.y); }
     if (tp > 0.0 && tp < min(tmax, h.t)) { h = Hit(tp, i); }
   }
   if (!rest || !F_MARCH) { return h; }
@@ -597,7 +614,7 @@ fn ambient_occ(p: vec3<f32>, n: vec3<f32>, want: f32) -> f32 {
 
 fn ambient_occ_opaque(p: vec3<f32>, n: vec3<f32>, want: f32) -> f32 {
   if (!objects_on()) { return 1.0; }
-  let reach = U.sund.w;
+  let reach = select(U.sund.w, g_ao_reach, g_ao_reach > 0.0);
   if (length(p - U.bound.xyz) > U.bound.w + reach) { return 1.0; }
   var occ = 0.0;
   var w = 1.0;
@@ -691,22 +708,9 @@ fn grid_line(x: f32, w: f32, fw: f32) -> f32 {
 fn pattern(kind: i32, q: vec3<f32>, s: vec3<f32>, n: vec3<f32>, fw: f32) -> vec4<f32> {
   g_over = vec4<f32>(0.0);
   if (kind < 0) { return vec4<f32>(1.0, 1.0, 1.0, 0.0); }   // none at all, not even plain's unevenness (Lume's benchmark)
-  if (kind == 1) {
-    // wood: growth rings round the long axis, wavy, with fine fibres along it
-    var ax = 0;
-    if (s.y >= s.x && s.y >= s.z) { ax = 1; } else if (s.z >= s.x && s.z >= s.y) { ax = 2; }
-    var along = q.x;
-    var across = q.yz;
-    if (ax == 1) { along = q.y; across = q.xz; } else if (ax == 2) { along = q.z; across = q.xy; }
-    let warp = gnoise(vec3<f32>(across * 3.0, along * 0.6));
-    let r = length(across + vec2<f32>(0.37, -0.83) * max(s.x + s.y + s.z, 0.1)) * 160.0 + warp * 5.0;
-    let ring = smoothstep(0.0, 0.25, fract(r)) * (1.0 - smoothstep(0.55, 1.0, fract(r)));
-    let fade = smoothstep(0.002, 0.006, fw);
-    let rings = mix(mix(0.6, 1.0, ring), 0.85, fade);
-    let fib = fnoise(vec3<f32>(across * 400.0, along * 12.0), fw * 400.0);
-    let knot = smoothstep(0.55, 0.8, gnoise(vec3<f32>(across * 2.0, along * 1.3) + vec3<f32>(5.1)));
-    let m = rings * (1.0 + 0.12 * fib) * (1.0 - 0.45 * knot);
-    return vec4<f32>(vec3<f32>(m * 1.15, m * 1.12, m * 1.1), 0.08 * fib);
+  if (F_WOOD && wood_kind(kind)) {
+    // wood, by its species: rings, knots, pores, rays, end grain (wood.wgsl)
+    return wood_look(kind, q, s, n, fw, g_wood.x, i32(g_wood.y + 0.5));
   }
   if (kind == 2) {
     // stone (granite): mottled, with light and dark crystals
@@ -772,6 +776,7 @@ fn floor_look(xz: vec2<f32>, fw: f32) -> vec4<f32> {
     let hb = hash31(vec3<f32>(plank, row, 9.0));
     let gap = max(grid_line(xz.y / 0.14, 0.0015 / 0.14, fw / 0.14), grid_line((xz.x + sh) / lenb, 0.0015 / lenb, fw / lenb));
     let wq = vec3<f32>((xz.x + sh) - plank * lenb, row * 0.37 + hb * 3.0, fract(xz.y / 0.14) * 0.14);
+    g_wood = vec2<f32>(row * 13.0 + plank * 7.0 + 3.0, 1.0);
     m = pattern(1, vec3<f32>(wq.x, wq.y * 0.02, wq.z) , vec3<f32>(2.0, 0.01, 0.07), vec3<f32>(0.0, 1.0, 0.0), fw).rgb;
     m *= (0.8 + 0.4 * hb) * (1.0 - 0.75 * gap);
   } else if (kind == 3) {
@@ -1119,6 +1124,7 @@ fn burnt_at(s_in: Surf, b: vec4<f32>, q: vec3<f32>) -> Surf {
 // The surface at a hit: where, which way it faces, and its material there.
 fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
   var s: Surf;
+  g_ao_reach = 0.0;
   s.p = ro + rd * h.t;
   let fw = max(U.fit.w * h.t, 1e-5);
   s.eps = max(2.0 * fw, 5.0e-4);
@@ -1147,6 +1153,11 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
       }
     }
     s.f0 = vec3<f32>(0.04);
+    if (marks_on()) { s = bullet_marks(s, min(s.alb * 1.4 + vec3<f32>(0.02), vec3<f32>(0.9)), fw); }
+    if (s.p.y < U.stage.y - s.eps) {
+      let bw = bore_wall(s.p, s.eps);        // (a crater in the ground: its wall)
+      if (bw.w > 0.5) { s = bore_surface(s, bw, min(s.alb * 1.3, vec3<f32>(0.9)), fw); }
+    }
     return s;
   }
   if (F_MARCH && h.id == MATTER) {
@@ -1192,6 +1203,7 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
     let qi = vec4<f32>(-pose[1].xyz, pose[1].w);
     let q = quat_rotate(qi, s.p - pose[0].xyz) + P.r.xyz;
     let scale = select(vec3<f32>(1.0), col_scale(U.col[min(row, ROPE_ROW - 1)]), row < ROPE_ROW);
+    g_wood = vec2<f32>(f32(row) * 7.13 + 1.0, select(1.0, U.col[min(row, ROPE_ROW - 1)].a.w, row < ROPE_ROW));
     let pt = pattern(i32(floor(m.d.z + 0.5)), q, scale, normalize(pl.xyz), fw);
     let metal = clamp(m.d.x, 0.0, 1.0);
     var base = mix(max(m.c.rgb * pt.rgb, vec3<f32>(0.0)), g_over.rgb, g_over.a);
@@ -1199,6 +1211,20 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
     s.rough = clamp(select(m.c.w + pt.w, 0.9, cut), 0.02, 1.0);
     s.alb = min(base, vec3<f32>(0.95)) * ((1.0 - metal) * (1.0 - clamp(m.d.y, 0.0, 1.0)));
     s.f0 = mix(vec3<f32>(0.04), min(base, vec3<f32>(1.0)), metal);
+    if (marks_on()) { s = bullet_marks(s, m.e.rgb, fw); }
+    if (bores_on()) {
+      // (inside the piece, off its planes: on the wall of a hole a bullet made)
+      var inside = -1.0e9;
+      let nq = u32(P.a.w);
+      for (var j = 0u; j < nq; j++) {
+        let pj = PL[u32(P.v.w) + j];
+        inside = max(inside, dot(normalize(pj.xyz), q - P.r.xyz) - pj.w);
+      }
+      if (inside < -s.eps) {
+        let bw = bore_wall(s.p, s.eps);
+        if (bw.w > 0.5) { s = bore_surface(s, bw, m.e.rgb, fw); }
+      }
+    }
     if (P.b.z > 0.5) { s = burnt_at(s, P.b, q); }   // (a piece of something that burns: its own fire)
     return s;
   }
@@ -1212,12 +1238,18 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
   if (dot(s.n, rd) > 0.0 && m.d.y <= 0.0) { s.n = -s.n; }
   let q = col_to_local(k, s.p);
   let qn = normalize(col_to_local(k, s.p + s.n) - q);
+  g_wood = vec2<f32>(f32(h.id) * 7.13 + 1.0, k.a.w);
   let pt = pattern(i32(m.d.z + 0.5), q, col_scale(k), qn, fw);
   let metal = clamp(m.d.x, 0.0, 1.0);
   let base = mix(max(m.c.rgb * pt.rgb, vec3<f32>(0.0)), g_over.rgb, g_over.a);
   s.rough = clamp(m.c.w + pt.w, 0.02, 1.0);
   s.alb = min(base, vec3<f32>(0.95)) * ((1.0 - metal) * (1.0 - clamp(m.d.y, 0.0, 1.0)));
   s.f0 = mix(vec3<f32>(0.04), min(base, vec3<f32>(1.0)), metal);
+  if (marks_on()) { s = bullet_marks(s, m.e.rgb, fw); }
+  if (bores_on() && col_sdf(k, s.p) < -s.eps) {
+    let bw = bore_wall(s.p, s.eps);           // (inside the object: on the wall of a hole a bullet made)
+    if (bw.w > 0.5) { s = bore_surface(s, bw, m.e.rgb, fw); }
+  }
   if (U.bf2.z > 0.5 && i32(k.m2.w) >= 0) {
     // a burnable object: its spot just off the surface (its region of the object-burn atlas, in its own frame)
     let slot = slots[i32(k.m2.w)];

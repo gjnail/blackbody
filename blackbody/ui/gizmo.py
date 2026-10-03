@@ -54,6 +54,8 @@ class Gizmo:
         self.W, self.H = vp.out_size()
         self.capsule = kind == 'emitter' and self.item.get('shape') == 'capsule'
         self.bolt = kind == 'light' and self.item.get('kind') == 'lightning'   # a bolt: a handle where it strikes
+        # (the second point a handle drags: where a bolt strikes, where a gun is aimed)
+        self.end_key = 'end' if self.bolt else 'aim' if kind == 'shot' else None
         self.R = (sc.turn(i, vp.doc.frame) if kind == 'collider' and hasattr(sc, 'tilted') and sc.tilted(i) else None)
         self.L = self._length()
 
@@ -80,8 +82,8 @@ class Gizmo:
         tips = [c + a * self.L for a in AXES]
         s, ok = self.screen([c] + tips)
         out['centre'] = s[0] if ok[0] else None
-        if self.bolt:
-            q, okq = self.screen([np.asarray(self.g('end'), float)])
+        if self.end_key:
+            q, okq = self.screen([np.asarray(self.g(self.end_key), float)])
             if okq[0]:
                 out['end'] = q[0]
         for k, name in enumerate(AXIS_NAMES):

@@ -965,7 +965,7 @@ _FABRIC_INDEX = {p.key: p for p in FABRIC_PARAMS}
 
 # Matter: sand, snow, mud, jelly and clay (engine/matter.py), simulated as particles in every kind of scene.
 MATTER_MATERIALS = (('sand', 'Sand'), ('wet_sand', 'Wet sand'), ('snow', 'Snow'), ('packing_snow', 'Packing snow'), ('mud', 'Mud'),
-                    ('jelly', 'Jelly'), ('clay', 'Clay'), ('wax', 'Wax'), ('chocolate', 'Chocolate'),
+                    ('jelly', 'Jelly'), ('gel', 'Ballistic gel'), ('clay', 'Clay'), ('wax', 'Wax'), ('chocolate', 'Chocolate'),
                     ('aluminium', 'Aluminium'), ('iron', 'Iron'), ('molten_wax', 'Molten wax'),
                     ('molten_chocolate', 'Melted chocolate'), ('molten_aluminium', 'Molten aluminium'),
                     ('molten_iron', 'Molten iron'), ('leaves', 'Dry leaves'), ('sawdust', 'Sawdust'), ('coal', 'Coal'),
@@ -1048,6 +1048,38 @@ STRAND_PARAMS = [
 ]
 _STRAND_INDEX = {p.key: p for p in STRAND_PARAMS}
 
+# Shots: a gun's muzzle and what it is aimed at, the cartridge, and when and how often it fires (engine/ballistics.py)
+SHOT_ROUNDS = (('pellet', 'Air rifle pellet (.177)'), ('22lr', '.22 LR'), ('9mm', '9 mm pistol (FMJ)'),
+               ('9mm_hp', '9 mm pistol (hollow point)'), ('45acp', '.45 ACP (FMJ)'), ('556', '5.56 mm rifle (M193)'),
+               ('762x39', '7.62x39 mm rifle'), ('308', '.308 / 7.62x51 mm rifle'), ('slug', '12 gauge slug'),
+               ('buck', '12 gauge 00 buckshot (9 pellets)'), ('50bmg', '.50 BMG rifle'))
+SHOT_PARAMS = [
+    Param('name', 'Name', 'str', 'Shot'),
+    B('enabled', 'Enabled', True),
+    E('round', 'Cartridge', '9mm', SHOT_ROUNDS, tip='What it fires: its bullet’s weight, size, speed and build. A '
+      'hollow point opens up in anything wet and stops sooner; a rifle bullet turns sideways and breaks up in gel and '
+      'water; shot spreads in a cone.', group='Gun'),
+    V('position', 'Muzzle', (0.0, 1.0, 1.5), -50.0, 50.0, 'm', anim=True, decimals=3, tip='Where the bullets leave the '
+      'gun.', group='Gun'),
+    V('aim', 'Aimed at', (0.0, 1.0, 0.0), -50.0, 50.0, 'm', anim=True, decimals=3, tip='The point it is aimed at: the '
+      'bullets fly toward it (dropping a little over long distances) and on past it.', group='Gun'),
+    F('start', 'Fires at', 0.5, 0.0, 60.0, 's', 2, tip='When the first round goes off, from the start of the shot.',
+      group='Firing'),
+    I('count', 'Rounds', 1, 1, 100, tip='How many rounds it fires.', group='Firing', hard_lo=1, hard_hi=1000),
+    F('rate', 'Rate of fire', 600.0, 30.0, 1200.0, 'rounds/min', 0, tip='How fast it fires more than one: a pistol '
+      'fired as fast as it can be about 300 a minute, an assault rifle 600-900, a machine gun 1000 or more.',
+      group='Firing', log=True),
+    F('scatter', 'Scatter', 0.05, 0.0, 5.0, '°', 2, tip='How far each round strays from the aim (one standard '
+      'deviation): a rifle 0.02, a pistol at arm’s length 0.1, firing from the hip 1 or more.', group='Firing'),
+    F('speed', 'Muzzle speed', 0.0, 0.0, 1500.0, 'm/s', 0, tip='The bullet’s speed leaving the muzzle; 0 takes '
+      'the cartridge’s (a short barrel is slower, a long one faster).', group='Gun', advanced=True),
+    B('tracer', 'Tracer', False, tip='Tracer rounds: each burns bright red along its path.', group='Look'),
+    B('flash', 'Muzzle flash', True, tip='A flash of light at the muzzle as each round goes off.', group='Look'),
+    I('seed', 'Seed', 0, 0, 9999, tip='Another number scatters the rounds, and what flies off where they hit, '
+      'differently.', group='Firing', advanced=True),
+]
+_SHOT_INDEX = {p.key: p for p in SHOT_PARAMS}
+
 
 def param(section, key):
     if section == 'emitter':
@@ -1060,6 +1092,8 @@ def param(section, key):
         return _MATTER_INDEX[key]
     if section == 'strands':
         return _STRAND_INDEX[key]
+    if section == 'shot':
+        return _SHOT_INDEX[key]
     if section == 'collider':
         return _COLLIDER_INDEX[key]
     return _INDEX[(section, key)]
@@ -1083,6 +1117,10 @@ def matter_defaults():
 
 def strand_defaults():
     return {p.key: p.default for p in STRAND_PARAMS}
+
+
+def shot_defaults():
+    return {p.key: p.default for p in SHOT_PARAMS}
 
 
 def light_defaults():

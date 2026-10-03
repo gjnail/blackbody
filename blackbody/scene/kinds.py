@@ -1,14 +1,14 @@
-"""The kinds of object a scene holds (sources, objects, lights, fabric, matter, grass) and the list each lives in: one
+"""The kinds of object a scene holds (sources, objects, lights, fabric, matter, grass, guns) and the list each lives in: one
 table, so the interface handles a new kind of object once it is added here."""
 from __future__ import annotations
 
-KINDS = ('emitter', 'collider', 'light', 'fabric', 'matter', 'strands')
+KINDS = ('emitter', 'collider', 'light', 'fabric', 'matter', 'strands', 'shot')
 LISTS = {'emitter': 'emitters', 'collider': 'colliders', 'light': 'lights', 'fabric': 'fabrics', 'matter': 'matter',
-         'strands': 'strands'}
+         'strands': 'strands', 'shot': 'shots'}
 NOUNS = {'emitter': 'Source', 'collider': 'Object', 'light': 'Light', 'fabric': 'Fabric', 'matter': 'Matter',
-         'strands': 'Grass'}
+         'strands': 'Grass', 'shot': 'Gun'}
 TITLES = {'emitter': 'Sources', 'collider': 'Objects (colliders)', 'light': 'Lights', 'fabric': 'Fabric',
-          'matter': 'Sand, snow & mud', 'strands': 'Grass & plants'}
+          'matter': 'Sand, snow & mud', 'strands': 'Grass & plants', 'shot': 'Guns & bullets'}
 
 
 def items(scene, kind):

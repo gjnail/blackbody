@@ -366,6 +366,11 @@ def fracture(shape, size, pieces=24, pattern='voronoi', seed=0, impact=None, hol
     if pattern == 'bends':
         return bends(planes, n, rng, lo, hi)
     if pattern == 'splinters':
+        # wood, cut along its grain: bundles of fibres in staggered, slanted lengths; a log in wedges (wood.py)
+        from .wood import fibres
+        f = fibres(shape, s, n, seed, impact)
+        if f is not None:
+            return f
         long_ax = int(np.argmax(hi - lo))
         stretch = np.ones(3)
         stretch[long_ax] = 0.3      # distances along the grain count a third: long cells

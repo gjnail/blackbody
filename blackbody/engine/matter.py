@@ -139,6 +139,10 @@ MATTERS = {m.key: m for m in (
                    colour=(0.11, 0.075, 0.045), roughness=0.3, variation=0.15, sticks=1500.0),
     MatterMaterial('jelly', 'Jelly', 'jelly', 3.0e4, 0.42, 1050.0, friction=0.6, colour=(0.92, 0.22, 0.26), roughness=0.08,
                    clear=0.85, variation=0.0),
+    # (10% ordnance gelatin, as ballistics tests use: firmer than a jelly, nearly clear, pale amber; a bullet opens a
+    # cavity in it that swells and collapses, leaving its track)
+    MatterMaterial('gel', 'Ballistic gel', 'jelly', 2.0e5, 0.45, 1040.0, friction=0.6, colour=(0.95, 0.83, 0.55),
+                   roughness=0.05, clear=0.93, variation=0.0),
     MatterMaterial('clay', 'Clay', 'clay', 4.0e5, 0.35, 1800.0, friction=0.8, yield_stress=2.0e4, tension=True,
                    colour=(0.48, 0.22, 0.12), roughness=0.7, variation=0.08, sticks=6000.0),
     # things that melt: a solid (clay's model, firm) and its melt (mud's: runny, or thick as chocolate is), each turning

@@ -425,7 +425,7 @@ class Document(QObject):
             self.selection = ('section', 'domain')
         if self.selection[0] == 'light' and self.selection[1] >= len(self.scene.lights):
             self.selection = ('section', 'lighting')
-        if self.selection[0] in ('fabric', 'matter', 'strands') and self.selection[1] >= len(K.items(self.scene, self.selection[0])):
+        if self.selection[0] in ('fabric', 'matter', 'strands', 'shot') and self.selection[1] >= len(K.items(self.scene, self.selection[0])):
             self.selection = ('section', 'domain')
         if counts != self._counts():   # things came or went: only the main selection stays
             self.picked = []
@@ -673,9 +673,19 @@ class Document(QObject):
         self.edit('Delete ' + K.items(self.scene, 'strands')[i]['name'], lambda s: s.strands.pop(i), structure=True)
         self.select(('section', 'domain'))
 
+    def add_shot(self, **extra):
+        """A gun firing (Scene.add_shot names it after its cartridge)."""
+        self.edit('Add a gun', lambda s: s.add_shot(**extra), structure=True)
+        self.select(('shot', len(K.items(self.scene, 'shot')) - 1))
+
+    def remove_shot(self, i):
+        self.edit('Delete ' + K.items(self.scene, 'shot')[i]['name'], lambda s: s.shots.pop(i), structure=True)
+        self.select(('section', 'domain'))
+
     def remove_object(self, kind, i):
         {'emitter': self.remove_emitter, 'collider': self.remove_collider, 'light': self.remove_light,
-         'fabric': self.remove_fabric, 'matter': self.remove_matter, 'strands': self.remove_strands}[kind](i)
+         'fabric': self.remove_fabric, 'matter': self.remove_matter, 'strands': self.remove_strands,
+         'shot': self.remove_shot}[kind](i)
 
     def add_component(self, key, at=None, mesh=None):
         """Add a building block (scene/components.py) as one undoable step, select what it added and return
@@ -1053,6 +1063,7 @@ class Document(QObject):
             s.fabrics = other.fabrics
             s.matter = K.items(other, 'matter')
             s.strands = K.items(other, 'strands')
+            s.shots = K.items(other, 'shot')
             s.preset = other.preset
         self._begin_load(Path(path).stem)
         self.edit(f'Preset: {Path(path).stem}', fn, structure=True)
