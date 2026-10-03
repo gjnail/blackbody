@@ -33,7 +33,7 @@ fn dist(k: u32) -> f32 { return AOV[2u * k].w / U.dims.z; }
 fn sigma(k: u32) -> f32 {
   let n = U.dims.z;
   let mean = luma(ACC[k].rgb / n);
-  let m2 = AOV[2u * k + 1u].w / n;
+  let m2 = select(AOV[2u * k + 1u].w, ACC[k].w, U.dims.w < 0.0) / n;   // (dims.w < 0: a per-light pass, its own in w)
   return sqrt(max(m2 - mean * mean, 0.0) / max(n, 1.0));
 }
 
@@ -107,6 +107,14 @@ fn atrous(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   textureStore(dst, p, vec4<f32>(sum / max(wsum, 1e-8), c0.a));
   VOUT[k] = vsum / max(wsum * wsum, 1e-16);
+}
+
+// A per-light pass as it is (no denoiser): its average.
+@compute @workgroup_size(8, 8, 1)
+fn plain(@builtin(global_invocation_id) id: vec3<u32>) {
+  let p = vec2<i32>(id.xy);
+  if (f32(p.x) >= U.dims.x || f32(p.y) >= U.dims.y) { return; }
+  textureStore(dst, p, vec4<f32>(ACC[idx(p)].rgb / U.dims.z, 1.0));
 }
 
 @compute @workgroup_size(8, 8, 1)

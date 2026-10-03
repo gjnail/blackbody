@@ -214,6 +214,11 @@ SECTIONS = {
         F('env_rotation', 'Environment rotation', 0.0, -180.0, 180.0, '°', 1, tip='Turns the environment around the vertical axis to line it up with the set.', group='Environment'),
         F('env_strength', 'Environment strength', 1.0, 0.0, 10.0, '×', 2, tip='Brightness of the environment.', group='Environment', log=True),
         B('env_sun', 'Key light from environment', False, tip='Aim the key light at the brightest spot of the environment (the sun), with its colour.', group='Environment'),
+        B('env_from_footage', 'Environment from the footage', False, tip='With no HDRI file, light the CG set by the footage '
+          'itself: what the camera sees, as a panorama round the set (past the frame\'s edges, the footage\'s own light at '
+          'each height: its sky above, its ground below), so a CG object takes the colours and the light of the shot it is '
+          'put in and reflects it (Lume; the classic engine takes its average). Environment strength scales it.',
+          group='Environment'),
         F('light_spread', 'Fire light reach', 0.35, 0.05, 3.0, 'm', 2, tip='How far the fire light spreads through the smoke.', group='Fire light', log=True),
     ],
     'embers': [
@@ -642,6 +647,14 @@ SECTIONS = {
           'moving or editing, a few at a time.', group='Lume', hard_hi=65536),
         B('denoise', 'Denoise', True, tip='Smooth away the grain of the remaining noise, keeping edges, textures and '
           'shadow edges (guided by the surfaces\' colour, facing and distance).', group='Lume'),
+        F('dispersion', 'Dispersion', 0.0, 0.0, 10.0, '×', 1, tip='Glass, ice, jelly and water split light into its '
+          'colours, each bent by its own index of refraction: rainbow fringes through a prism or a cut crystal, coloured '
+          'caustics, the fire of a gem. 1 is as real glass and water do (subtle); more exaggerates it; 0 turns it off '
+          '(slightly less grain through glass).', group='Lume'),
+        B('light_passes', 'Light passes', False, tip='Also keep the set\'s light split by where it comes from, for '
+          'compositing: the key light, the sky (or HDRI), the fire and anything glowing, the lamps. Final renders write '
+          'them into the composite EXR as layers light_key, light_sky, light_fire and light_lamps, which add up to the '
+          'set\'s light, so each can be turned up, down or recoloured in the comp to match the footage.', group='Lume'),
         F('clamp', 'Clamp bright paths', 0.0, 0.0, 1000.0, '×', 1, tip='Bright single paths (fireflies: the sun glancing '
           'off a small shiny thing, seen in a mirror) are capped at this many times the sky\'s brightness. 0 keeps every path '
           'as it is (exact, but slower to clear).', group='Lume', advanced=True),

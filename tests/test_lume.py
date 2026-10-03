@@ -247,6 +247,24 @@ def test_a_glass_ball_focuses_the_lamp_into_a_caustic(engine, monkeypatch):
     assert at(on, cx, cy) > 3.0 * at(off, cx, cy)   # (without them: the light the glass lets straight through)
 
 
+def test_dispersion_splits_the_caustic_into_colours_and_keeps_its_light(engine, monkeypatch):
+    # a glass ball focusing a white lamp onto the floor (as above): with dispersion each wavelength focuses at its own
+    # depth, so the caustic's rim turns from white to coloured (its colour spread grows), and no light is made or lost
+    spec = dict(size=(160, 120), camera=dict(eye=(0.0, 0.8, 2.6), target=(0.0, 0.25, 0.0), hfov=40.0), sky=0.0,
+                floor=dict(alb=(0.6, 0.6, 0.6), rough=0.7), bounces=4,
+                objects=[dict(shape='sphere', pos=(-0.25, 0.25, 0.0), size=(0.25,) * 3, alb=(1.0, 1.0, 1.0), rough=0.03,
+                              clear=1.0, ior=1.5)],
+                lamps=[dict(pos=(-1.5, 2.5, 0.5), radius=0.1, power=(8.0, 8.0, 8.0))])
+    sc = _bench_scene(spec, monkeypatch)
+    white = _stage(engine, sc, spec, samples=512, bounces=4, dispersion=0.0)
+    split = _stage(engine, sc, spec, samples=512, bounces=4, dispersion=8.0)
+    assert np.isfinite(split).all() and (split >= 0).all()
+    assert split.mean() == pytest.approx(white.mean(), rel=0.01)                       # the same light, spread
+    lit = white.mean(-1) > 2.0 * np.median(white.mean(-1))                            # (the caustic and the highlights)
+    chroma = lambda im: (im.max(-1) - im.min(-1)) / np.maximum(im.mean(-1), 1e-4)
+    assert chroma(split)[lit].mean() > 1.5 * chroma(white)[lit].mean()
+
+
 def test_a_mirror_ball_throws_the_lamp_onto_the_floor(engine, monkeypatch):
     # a mirror ball (bare smooth metal) beside a lamp: the light it reflects onto the floor is traced from the lamp
     # (lume.wgsl caustics) and agrees with the camera's own paths finding it by bouncing (the caustics off): the same
@@ -293,3 +311,23 @@ def test_a_caustic_seen_through_its_glass_is_focused(engine, monkeypatch):
     bright_off = float(np.percentile(off[ball], 75))
     assert bright_on > 3.0 * open_floor
     assert bright_on > 2.0 * bright_off
+
+
+def test_coloured_glass_casts_a_coloured_shadow(engine, monkeypatch):
+    # a red glass block on a floor under a lamp off to one side (no sky): the light its shadow rays let through takes the glass's tint
+    # (lume.wgsl lu_shadow: its colour put back by lu_direct, g_wcol), not its grey; the shadow is red
+    spec = dict(size=(96, 64), camera=dict(eye=(0.0, 1.6, 1.6), target=(0.0, 0.0, 0.0), hfov=40.0), sky=0.0,
+                floor=dict(alb=(0.6, 0.6, 0.6), rough=0.9), bounces=1,
+                objects=[dict(shape='box', pos=(0.0, 0.3, 0.0), size=(0.25, 0.05, 0.25), alb=(0.9, 0.25, 0.2), rough=0.03,
+                              clear=1.0, ior=1.5)],
+                lamps=[dict(pos=(-1.0, 2.0, 0.0), radius=0.05, power=(3.0, 3.0, 3.0))])
+    sc = _bench_scene(spec, monkeypatch)
+    img = _stage(engine, sc, spec, samples=256, bounces=1)
+    from blackbody.engine import camera as cam
+    spec_c, fire = sc.camera(sc.start)
+    cs = cam.compute(spec_c, 96 / 64, fire)
+    # (the floor in its shadow, off to the side away from the lamp, seen past the block, not through it)
+    q, _ok = cam.project(cs, np.array([[0.176, 0.0, 0.0]]), 96, 64)
+    x, y = int(q[0][0]), int(q[0][1])
+    c = img[y - 2:y + 3, x - 2:x + 3].reshape(-1, 3).mean(0)
+    assert c[0] > 2.0 * c[2] and c[0] > 2.0 * c[1], c

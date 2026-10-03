@@ -263,8 +263,13 @@
         <p class="kicker">Lume lighting</p>
         <h3>A path-traced frame</h3>
         <p>Turn on Lume and the whole frame is path traced: the set drawn in CG, the smoke and steam, the cloth and the grass, and water, refracting what is under it and throwing its caustics on the floor. Light bounces from surface to surface, so a fire inside a shed lights its walls and the light they throw back fills it, and smoke is lit by the flames, the sun and the sky scattered through it. Every fire light, glowing patch of hot metal and lamp casts its own shadow, as soft as the light is big, through the objects and the smoke. An HDRI's sun, or a physical sky's, casts sharp shadows, and glass, ice and jelly bend and tint what is seen through them and focus the light into caustics. Measured against a research path tracer on ten test scenes, its mean brightness is within 0.1% on every one, and after the same time it has less error than that tracer's best sampler for each scene on nine of them (on the simplest, a furnace test that renders in a few milliseconds, 1.2 times as much). The viewer sharpens over a few seconds once you stop.</p>
+        <p>Lume also splits the set's light into passes for the comp (key, sky, fire, lamps), bends each colour by its own index through glass and water (dispersion), focuses the fire's own flickering light through glass, lights the set by the footage itself, and traces the light a cloud scatters hundreds of times: within 3% of a path-traced reference, where the classic estimate is 40% too dark.</p>
         <a class="more" href="lume.html">Lume lighting →</a>
       </div>
+    </div>
+    <div class="clips two">
+      <div class="clip"><figure><div class="media"><img src="media/img/lume-clouds.jpg" alt="A sky of cumulus clouds lit by the classic estimate, dull grey, and traced by Lume, bright and sunlit with relief" width="1920" height="540" loading="lazy"></div><figcaption>Clouds: classic, and traced by Lume</figcaption></figure></div>
+      <div class="clip"><figure><div class="media"><img src="media/img/lume-dispersion.jpg" alt="A glass ball under a lamp with dispersion off and on: colour fringes round its caustic and along its horizon" width="1600" height="520" loading="lazy"></div><figcaption>Dispersion off, and on (exaggerated 8×)</figcaption></figure></div>
     </div>
   </section>
 

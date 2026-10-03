@@ -36,6 +36,8 @@ struct Params {
   ground: vec4<f32>,     // ground colour (rgb), ground drawn (1/0)
   look: vec4<f32>,       // silver lining (forward scattering), multiple scattering, precipitation shafts, edge detail
   wind: vec4<f32>,       // the wind the detail drifts with (m/s, sky frame), time (s)
+  lume: vec4<f32>,       // Lume's light (cloud_lume.wgsl) on (1/0), the cloud's cells per cell of its grid, its cells (yz)
+  lume2: vec4<f32>,      // its cells (x), _, _, _
 };
 
 @group(0) @binding(0) var light: texture_3d<f32>;
@@ -45,6 +47,8 @@ struct Params {
 @group(0) @binding(4) var out_emit: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(5) var out_mask: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(6) var mat: texture_3d<f32>;
+@group(0) @binding(7) var lume_t: texture_3d<f32>;   // Lume: the light scattered more than once (cloud_lume.wgsl), its own grid
+@group(0) @binding(8) var lume_d: texture_3d<f32>;   // ... the way it flows: its first moment (luminance, xyz), its mean (w)
 @group(1) @binding(0) var<uniform> U: Params;
 
 const PI: f32 = 3.14159265;
@@ -63,6 +67,41 @@ fn phase(c: f32, ice: f32, k: f32) -> f32 {
 }
 
 fn light_at(p: vec3<f32>) -> vec4<f32> { return trilinear(light, p); }
+
+// Lume's light at p (cells of its own grid, nl of them) scattered toward the eye looking along d by a phase of mean cosine
+// g: its mean, and its flow (first moment m) weighed by the phase, L0 + 3 g (m . d), in the light's colour
+fn lume_toward(p: vec3<f32>, nl: vec3<i32>, d: vec3<f32>, g: f32) -> vec3<f32> {
+  let l0 = lume_at(p, nl);
+  let q = clamp(p - vec3<f32>(0.5), vec3<f32>(0.0), vec3<f32>(nl - vec3<i32>(1)));
+  let i = vec3<i32>(floor(q));
+  let f = q - vec3<f32>(i);
+  let i1 = min(i + vec3<i32>(1), nl - vec3<i32>(1));
+  let m00 = mix(textureLoad(lume_d, i, 0), textureLoad(lume_d, vec3<i32>(i1.x, i.y, i.z), 0), f.x);
+  let m10 = mix(textureLoad(lume_d, vec3<i32>(i.x, i1.y, i.z), 0), textureLoad(lume_d, vec3<i32>(i1.x, i1.y, i.z), 0), f.x);
+  let m01 = mix(textureLoad(lume_d, vec3<i32>(i.x, i.y, i1.z), 0), textureLoad(lume_d, vec3<i32>(i1.x, i.y, i1.z), 0), f.x);
+  let m11 = mix(textureLoad(lume_d, vec3<i32>(i.x, i1.y, i1.z), 0), textureLoad(lume_d, i1, 0), f.x);
+  let m = mix(mix(m00, m10, f.y), mix(m01, m11, f.y), f.z);
+  let k = 1.0 + 3.0 * g * dot(m.xyz, d) / max(m.w, 1e-6);
+  return l0 * clamp(k, 0.0, 4.0);
+}
+
+// Lume's light at p (cells of its own grid, nl of them)
+fn lume_at(p: vec3<f32>, nl: vec3<i32>) -> vec3<f32> {
+  let q = clamp(p - vec3<f32>(0.5), vec3<f32>(0.0), vec3<f32>(nl - vec3<i32>(1)));
+  let i = vec3<i32>(floor(q));
+  let f = q - vec3<f32>(i);
+  let i1 = min(i + vec3<i32>(1), nl - vec3<i32>(1));
+  let c000 = textureLoad(lume_t, i, 0).rgb;
+  let c100 = textureLoad(lume_t, vec3<i32>(i1.x, i.y, i.z), 0).rgb;
+  let c010 = textureLoad(lume_t, vec3<i32>(i.x, i1.y, i.z), 0).rgb;
+  let c110 = textureLoad(lume_t, vec3<i32>(i1.x, i1.y, i.z), 0).rgb;
+  let c001 = textureLoad(lume_t, vec3<i32>(i.x, i.y, i1.z), 0).rgb;
+  let c101 = textureLoad(lume_t, vec3<i32>(i1.x, i.y, i1.z), 0).rgb;
+  let c011 = textureLoad(lume_t, vec3<i32>(i.x, i1.y, i1.z), 0).rgb;
+  let c111 = textureLoad(lume_t, i1, 0).rgb;
+  return mix(mix(mix(c000, c100, f.x), mix(c010, c110, f.x), f.y),
+             mix(mix(c001, c101, f.x), mix(c011, c111, f.x), f.y), f.z);
+}
 fn mat_at(p: vec3<f32>) -> vec4<f32> { return trilinear(mat, p); }
 
 fn trilinear(tx: texture_3d<f32>, p: vec3<f32>) -> vec4<f32> {
@@ -274,18 +313,29 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       // (each octave: light that has scattered more, so less attenuated, less forward, and weaker; with
       // five of them a thick cloud's sunlit side reflects about as a white wall does)
       var sun = 0.0;
-      var a = 1.0;
-      var b = 1.0;
-      var k = 1.0;
-      for (var oc = 0; oc < 5; oc++) {
-        sun += b * exp(-tau_s * a) * phase(cos_sun, ice, k * U.look.x);
-        a *= 0.35;
-        b *= 0.65 * ms + 0.001;
-        k *= 0.45;
+      var skyl = vec3<f32>(0.0);
+      var bounce = vec3<f32>(0.0);
+      if (U.lume.x > 0.5) {
+        // Lume: the sun's light scattered here once, exactly (its phase, through the cloud toward the sun), and all the
+        // light that has scattered before, the sky's and the ground's, traced (cloud_lume.wgsl), scattered toward the eye
+        // by the phase's mean cosine (its flow: lume_toward)
+        sun = phase(cos_sun, ice, U.look.x) * exp(-tau_s);
+        let nl = vec3<i32>(i32(U.lume2.x), i32(U.lume.z), i32(U.lume.w));
+        skyl = lume_toward(pc / U.lume.y, nl, dir, mix(0.63, 0.475, ice) * U.look.x);
+      } else {
+        var a = 1.0;
+        var b = 1.0;
+        var k = 1.0;
+        for (var oc = 0; oc < 5; oc++) {
+          sun += b * exp(-tau_s * a) * phase(cos_sun, ice, k * U.look.x);
+          a *= 0.35;
+          b *= 0.65 * ms + 0.001;
+          k *= 0.45;
+        }
+        // (the sky seen from here, lv.y: mostly the blue overhead, some of the paler sky toward the horizon)
+        skyl = mix(U.sky.rgb, U.horizon.rgb, 0.4) * U.sky.w * lv.y * (0.6 + 0.4 * (1.0 - ms));
+        bounce = U.ground.rgb * U.sun_col.rgb * max(U.sun.y, 0.0) * 0.12 * exp(-0.3 * tau_s);
       }
-      // (the sky seen from here, lv.y: mostly the blue overhead, some of the paler sky toward the horizon)
-      let skyl = mix(U.sky.rgb, U.horizon.rgb, 0.4) * U.sky.w * lv.y * (0.6 + 0.4 * (1.0 - ms));
-      let bounce = U.ground.rgb * U.sun_col.rgb * max(U.sun.y, 0.0) * 0.12 * exp(-0.3 * tau_s);
       let src = (U.sun_col.rgb * sun * 4.0 * PI * 0.25 + skyl + bounce) * U.sun_col.w;
       // the air between the eye and here fades it toward the haze
       let air = exp(-t / vis);

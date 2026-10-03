@@ -813,7 +813,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
             if stage_on:
                 light = stage_mod.fire_light(scene, frame, look, comp)
                 light.lamps = r._lamps_on
-                self._stage_env(scene, light, frame)
+                self._stage_env(scene, light, frame, plate=plate, cs=cs, plate_fit=plate_fit)
                 size = r.plate_size if footage else (W, H)
                 self.stage.heat = self._stage_heat(frame, surfaces.colliders)   # (hot objects glow: objheat_engine.py)
                 stage = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, size,
@@ -919,9 +919,21 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
             self._stage = stage_mod.Stage(self.gpu)
         return self._stage
 
-    def _stage_env(self, scene, light, frame=None):
-        """The environment HDRI (Lighting) behind the stage, and its light as the sky's; or the physical sky's."""
+    def _stage_env(self, scene, light, frame=None, plate=None, cs=None, plate_fit=(1.0, 1.0)):
+        """The environment HDRI (Lighting) behind the stage, and its light as the sky's; or the physical sky's; or, with
+        Environment from the footage, the footage's (footage_env.py)."""
         lt = scene.data['lighting']
+        if lt.get('env_from_footage') and not lt.get('environment') and plate is not None and cs is not None:
+            from . import footage_env as FE
+            comp = scene.data['composite']
+            gain = 2.0 ** float(comp.get('plate_exposure', 0.0)) * float(lt.get('env_strength', 1.0))
+            key = ('footage-env', frame, np.asarray(plate).shape, float(np.asarray(plate)[::64, ::64].astype(np.float32).sum()),
+                   bytes(np.asarray(cs.view_proj, np.float32).tobytes()), gain)
+            img = FE.image(plate, comp.get('plate_transform', 'srgb'), cs.view_proj, exposure=gain, plate_fit=plate_fit)
+            light.env, light.env_rotation, light.env_strength = self.stage.environment_image(key, img), 0.0, 1.0
+            light.env_image = (key, img)
+            light.sky = tuple(self.stage.env_sky)
+            return
         from . import sky as sky_mod
         phys = sky_mod.of_scene(scene, frame if frame is not None else scene.start)
         if phys is not None:

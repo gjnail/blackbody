@@ -294,6 +294,13 @@ fn lu_caustics_on() -> bool { return U.lume3.x > 0.5; }
 // sky's is found well that way (a light path from it would be a waste: Mitsuba's paths found that light faster).
 fn lu_env_cau() -> bool { return (u32(U.lume3.w + 0.5) & 0x20000u) != 0u; }
 
+// Whether the fire's light is traced for caustics too (bit 18 of U.lume3.w: stage.py, when the fire lights the set and
+// its light is shadowed: without shadow rays, nothing would leave the light through the glass to the caustics).
+fn lu_fire_cau() -> bool {
+  return (u32(U.lume3.w + 0.5) & 0x40000u) != 0u && light_count[0] > 0u && max(U.fire.r, max(U.fire.g, U.fire.b)) > 0.0
+         && U.fire.w > 0.0;
+}
+
 // Whether h is on one of the things the caustics' light paths are aimed at (U.lume3.w: a bit for each object row, bit
 // 16 the matter; lume.py caustic_targets). Only those focus light as caustics: others the camera's paths find as before.
 fn lu_target(h: Hit) -> bool {
@@ -393,7 +400,11 @@ fn lu_shadow(p: vec3<f32>, d: vec3<f32>, tmax: f32, eps: f32, want: f32, caustic
     let ex = lu_exit(h, ph + d * eps, d, eps);
     let co = max(abs(dot(ex.xyz, d)), 1e-4);
     let fout = lu_fresnel(co, 1.0 / cl.ior);
-    tr *= cl.clear * (1.0 - fin) * (1.0 - fout) * luma(pow(max(cl.tint, vec3<f32>(1e-3)), vec3<f32>(ex.w / 0.1)));
+    // (its tint over the way through: the grey here, its colour into g_wcol, put back by lu_direct, as the water's)
+    let tc = pow(max(cl.tint, vec3<f32>(1e-3)), vec3<f32>(ex.w / 0.1));
+    let tg = max(luma(tc), 1e-8);
+    g_wcol *= tc / tg;
+    tr *= cl.clear * (1.0 - fin) * (1.0 - fout) * tg;
     if (tr < 1e-4) { return 0.0; }
     let adv = h.t + ex.w + 2.0 * eps;
     q = q + d * adv;
@@ -828,6 +839,19 @@ fn lu_sel(j: i32) -> f32 {
   return (1.0 - LU_SEL_EVEN) * w / lu_wtot + LU_SEL_EVEN / lu_wcnt;
 }
 
+// Per-light passes (F_LPASS): the light a camera path brings back, split by where it came from (0 the key light, 1 the sky,
+// 2 the fire, hot matter and anything glowing, 3 the lamps), and how much of it the pixel shows (lu_lp_k: what the floor's
+// fade, the haze, the footage and a background colour over it leave). lu_direct leaves its light's group (lu_dg) and the
+// share it took from the caustic cache (lu_dc: split by U.lp, as the caustics are).
+var<private> lu_lp: array<vec3<f32>, 4>;
+var<private> lu_lp_k: f32;
+var<private> lu_dg: i32;
+var<private> lu_dc: vec3<f32>;
+
+fn lu_lp_add(g: i32, c: vec3<f32>) {
+  if (F_LPASS) { lu_lp[g] += c; }
+}
+
 // Light arriving straight from the lights at surface s (seen from v), times its BSDF: one of the lights (the key light,
 // the fire, hot matter, a lamp, the HDRI) picked by how much light each brings here (lu_sel), a sample of it, and one
 // shadow ray (one copy of it in the kernel, see lu_shadow) for how much of it gets here. (One light a bounce, as Mitsuba
@@ -878,7 +902,11 @@ fn lu_direct(s: Surf, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>, cached: bool, de
   } else {
     ls = lu_ls_env(sel, u2);
   }
-  let traced = ls.kind == 0 || ls.kind == 3 || (ls.kind == 4 && lu_env_cau());   // (the caustics' lights)
+  let traced = ls.kind == 0 || ls.kind == 3 || (ls.kind == 4 && lu_env_cau()) || (ls.kind == 1 && lu_fire_cau());   // (the caustics' lights)
+  if (F_LPASS) {
+    lu_dg = select(select(select(2, 3, ls.kind == 3), 1, ls.kind == 4), 0, ls.kind == 0);
+    lu_dc = vec3<f32>(0.0);
+  }
   if (lu_cov && traced) { ls.c = vec3<f32>(0.0); }
   // the light's sample, then the caustic cache's light here (cached: lu_path), each through the material: one
   // evaluation of it in the kernel for both (each copy of it slows every path)
@@ -900,7 +928,9 @@ fn lu_direct(s: Surf, m: LuMat, fr: mat3x3<f32>, vl: vec3<f32>, cached: bool, de
     let e = lu_eval2(m, vl, ll);
     if (it == 1) {
       // (a coat's colour only: its highlight's caustic light, as a mirror's, is the camera's own)
-      out += select(e.fd + e.fs, e.fd, lu_coat_on) / max(ll.z, 1e-4) * ce;
+      let cc = select(e.fd + e.fs, e.fd, lu_coat_on) / max(ll.z, 1e-4) * ce;
+      out += cc;
+      if (F_LPASS) { lu_dc = cc; }
       continue;
     }
     var c: vec3<f32>;
@@ -963,6 +993,59 @@ fn lu_sky(p: vec3<f32>, d: vec3<f32>, pdf: f32, sel: f32) -> vec3<f32> {
 // ---- glass, ice and jelly ------------------------------------------------------------------------------------------------
 
 struct LuClear { clear: f32, ior: f32, tint: vec3<f32> };
+
+// ---- dispersion (Lume › Dispersion: U.lu4.x, how many times the materials' own) ------------------------------------------
+// A path takes one wavelength at its first refraction (lu_ior), picked in 10 nm bins by how much each adds to the picture
+// (LU_LAM_CDF: the bins' brightness in the working space, under daylight), and carries its colour over the chance of
+// picking it (LU_LAM_W: the bin's rgb over its pick's pdf; over the picks they average to white). Then every refraction
+// on the path bends it by the index at that wavelength.
+const LU_LAM_W = array<vec3<f32>, 35>(
+  vec3<f32>(0.0000, 0.1154, 2.8846), vec3<f32>(0.0341, 0.0004, 2.9655), vec3<f32>(0.3984, 0.0000, 2.6016),
+  vec3<f32>(0.4102, 0.0000, 2.5898), vec3<f32>(0.2826, 0.0000, 2.7174), vec3<f32>(0.2692, 0.0000, 2.7308),
+  vec3<f32>(0.2553, 0.0000, 2.7447), vec3<f32>(0.1042, 0.0000, 2.8958), vec3<f32>(0.0000, 0.0086, 2.9914),
+  vec3<f32>(0.0000, 0.2907, 2.7093), vec3<f32>(0.0000, 0.9636, 2.0364), vec3<f32>(0.0000, 1.8333, 1.1667),
+  vec3<f32>(0.0000, 2.5531, 0.4469), vec3<f32>(0.0000, 2.9570, 0.0430), vec3<f32>(0.0000, 3.0000, 0.0000),
+  vec3<f32>(0.0000, 3.0000, 0.0000), vec3<f32>(0.0000, 3.0000, 0.0000), vec3<f32>(0.2345, 2.7655, 0.0000),
+  vec3<f32>(0.9511, 2.0489, 0.0000), vec3<f32>(1.5757, 1.4243, 0.0000), vec3<f32>(2.1046, 0.8954, 0.0000),
+  vec3<f32>(2.5474, 0.4526, 0.0000), vec3<f32>(2.8999, 0.1001, 0.0000), vec3<f32>(3.0000, 0.0000, 0.0000),
+  vec3<f32>(3.0000, 0.0000, 0.0000), vec3<f32>(3.0000, 0.0000, 0.0000), vec3<f32>(3.0000, 0.0000, 0.0000),
+  vec3<f32>(3.0000, 0.0000, 0.0000), vec3<f32>(3.0000, 0.0000, 0.0000), vec3<f32>(3.0000, 0.0000, 0.0000),
+  vec3<f32>(2.9008, 0.0992, 0.0000), vec3<f32>(2.5578, 0.4422, 0.0000), vec3<f32>(2.0933, 0.9067, 0.0000),
+  vec3<f32>(1.4902, 1.5098, 0.0000), vec3<f32>(0.7421, 2.2579, 0.0000));
+const LU_LAM_CDF = array<f32, 36>(0.00000, 0.00040, 0.00157, 0.00589, 0.02065, 0.05718, 0.11506, 0.17827, 0.23693, 0.28567,
+  0.32243, 0.35031, 0.37545, 0.40294, 0.43637, 0.47744, 0.52145, 0.56434, 0.60635, 0.65359, 0.70496, 0.75823, 0.81065,
+  0.85928, 0.90284, 0.93851, 0.96446, 0.98130, 0.99106, 0.99610, 0.99842, 0.99939, 0.99979, 0.99993, 0.99998, 1.00000);
+
+var<private> lu_lam: f32 = 0.0;       // the path's wavelength (nm), once it has one (0: white still)
+var<private> lu_lam_w: vec3<f32> = vec3<f32>(1.0);   // its colour, for the path to take on (lu_lam_take)
+
+// The index of refraction n_d (at 587.6 nm) at the path's wavelength, picking one if it has none yet. Cauchy's formula
+// n = A + B / lambda^2 through n_d with the Abbe number of glass like it (water and ice 55, crown glass 59, flint glass
+// and gems 36), its spread times U.lu4.x.
+fn lu_ior(n_d: f32) -> f32 {
+  if (U.lu4.x <= 0.0 || n_d <= 1.0001) { return n_d; }
+  if (lu_lam <= 0.0) {
+    let u = lu_rand();
+    var i = 0;
+    for (; i < 34; i++) {
+      if (u < LU_LAM_CDF[i + 1]) { break; }
+    }
+    let f = clamp((u - LU_LAM_CDF[i]) / max(LU_LAM_CDF[i + 1] - LU_LAM_CDF[i], 1e-9), 0.0, 1.0);
+    lu_lam = 380.0 + 10.0 * (f32(i) + f);
+    lu_lam_w = LU_LAM_W[i];
+  }
+  let v = select(select(36.0, 59.0, n_d < 1.6), 55.0, n_d < 1.45);
+  let b = (n_d - 1.0) / v / (1.0 / (0.4861 * 0.4861) - 1.0 / (0.6563 * 0.6563)) * U.lu4.x;
+  let l = lu_lam * 1e-3;
+  return n_d + b * (1.0 / (l * l) - 1.0 / (0.5876 * 0.5876));
+}
+
+// The colour the path takes on with its wavelength, once (then white).
+fn lu_lam_take() -> vec3<f32> {
+  let w = lu_lam_w;
+  lu_lam_w = vec3<f32>(1.0);
+  return w;
+}
 
 fn lu_clear(h: Hit, p: vec3<f32>) -> LuClear {
   var c = LuClear(0.0, 1.0, vec3<f32>(1.0));
@@ -1086,13 +1169,22 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
     lu_surface(guard);
     var s = lu_surf(h, ro, rd);
     let v = -rd;
+    // (with a background colour behind the set, the floor is there only under the water: seen through the water past it,
+    // the camera sees the background, as the liquid's own renderer draws it)
+    if (F_WATER && scattered && depth == 0 && h.id == FLOOR && !in_water && U.stage.z < 0.5 && water_on()) {
+      L += thr * select(U.bg.rgb, vec3<f32>(0.21), U.bg.w > 0.5);
+      break;
+    }
     if (depth == 0) {
       lu_nrm = s.n;
       lu_alb = s.alb + s.f0;
       lu_dist = length(s.p - ro0);
     }
     // light given off: lightning always; hot matter only as seen (its glow already lights the rest as its patches)
-    if (depth == 0 || s.self_glow < 0.5) { L += thr * s.em; }
+    if (depth == 0 || s.self_glow < 0.5) {
+      L += thr * s.em;
+      lu_lp_add(2, thr * s.em);
+    }
     // glass, ice, jelly: reflected or refracted at random by Fresnel, tinted over its path through it
     lu_med = F_WATER && h.id == MEDIUM;
     lu_on_floor = h.id == FLOOR;
@@ -1122,7 +1214,9 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
           let hl = lu_vndf(lu_to_local(f0, v), max(s.rough * s.rough, 1e-4), lu_rand2());
           mn = normalize(f0[0] * hl.x + f0[1] * hl.y + f0[2] * hl.z);
         }
-        let eta = select(1.0 / w_ior(), w_ior(), into);   // (how many times denser the other side is)
+        let wn = lu_ior(w_ior());
+        thr *= lu_lam_take();
+        let eta = select(1.0 / wn, wn, into);   // (how many times denser the other side is)
         var refl = lu_rand() < lu_fresnel(max(dot(v, mn), 1e-4), eta);
         var rt = vec3<f32>(0.0);
         if (!refl) {
@@ -1151,6 +1245,8 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
     } else if (cl.clear > 0.0 && lu_rand() < cl.clear) {
       let n = s.n;
       let ci = max(dot(n, v), 1e-4);
+      cl.ior = lu_ior(cl.ior);
+      thr *= lu_lam_take();
       let fr = lu_fresnel(ci, cl.ior);
       var go_on = true;
       clean = false;
@@ -1245,17 +1341,30 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
       lu_coat_ex = coat && prev_cov;
       lu_cau_sh = select(cov_d, coat_cov, coat);
       var dl = lu_direct(sv, m, fr, vl, cached, depth);
+      var glint = vec3<f32>(0.0);
       if (s.glint > 0.0 && max(U.sun.r, max(U.sun.g, U.sun.b)) > 0.0) {
         // a grain turned just so flashes the sun at the camera
         let gl = s.glint * pow(max(dot(s.gn, normalize(U.sund.xyz + v)), 0.0), 600.0) * 40.0;
-        dl += U.sun.rgb * gl * max(dot(s.n, U.sund.xyz), 0.0);
+        glint = U.sun.rgb * gl * max(dot(s.n, U.sund.xyz), 0.0);
+        dl += glint;
       }
       var add = thr * dl;
+      var ksc = 1.0;
       if (depth > 0 && cap > 0.0) {
         let y = luma(add);
-        if (y > cap) { add *= cap / y; }
+        if (y > cap) {
+          ksc = cap / y;
+          add *= ksc;
+        }
       }
       L += add;
+      if (F_LPASS) {
+        let tk = thr * ksc;
+        lu_lp[lu_dg] += tk * (dl - glint - lu_dc);
+        lu_lp[0] += tk * (glint + lu_dc * U.lp.x);
+        lu_lp[1] += tk * lu_dc * U.lp.y;
+        lu_lp[3] += tk * lu_dc * U.lp.w;
+      }
       // the bounce: the highlight (by its visible normals) or diffuse (by the cosine). It is traced even after the
       // last bounce, for the sky it may reach: that is this surface's light too, the half of the sky that the light
       // picked from the HDRI above leaves to it (multiple importance sampling)
@@ -1321,7 +1430,7 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
       let tseg = select(60.0, hn.t, hn.id >= 0);
       lu_at(4u);
       let ev = w_event(ro, rd, tseg, in_water, lu_rand2(), lu_rand());
-      if (in_water) { thr *= exp(-w_sigma() * select(tseg, ev.x, ev.x >= 0.0)); }
+      if (in_water) { thr *= exp(-w_sigma() * select(tseg, ev.x, ev.x >= 0.0) - g_wdye); }   // (and the dye's: g_wdye)
       if (ev.x >= 0.0) {
         thr *= ev.yzw;
         hn = Hit(ev.x, MEDIUM);
@@ -1350,6 +1459,7 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
             if (y > cap) { add *= cap / y; }
           }
           L += add;
+          lu_lp_add(3, add);
         }
         break;
       }
@@ -1365,12 +1475,17 @@ fn lu_path(h0: Hit, ro0: vec3<f32>, rd0: vec3<f32>) -> vec3<f32> {
           sky = vec3<f32>(0.0);
         }
       }
+      // (with a background colour behind the set, what the camera sees straight through water and clear things is that
+      // colour, as it sees it past them; the sky still lights the set)
+      let backdrop = depth == 0 && U.stage.z < 0.5;
+      if (backdrop) { sky = select(U.bg.rgb, vec3<f32>(0.21), U.bg.w > 0.5); }
       var add = thr * sky;
       if (depth > 0 && cap > 0.0) {
         let y = luma(add);
         if (y > cap) { add *= cap / y; }
       }
       L += add;
+      if (!backdrop) { lu_lp_add(1, add); }
       break;
     }
     if (depth >= bounces) { break; }   // (past the last bounce: only the sky counted)
@@ -1391,6 +1506,12 @@ fn lume_see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w:
   lu_nrm = vec3<f32>(0.0);
   lu_alb = vec3<f32>(1.0);
   lu_dist = 1.0e4;
+  lu_lam = 0.0;
+  lu_lam_w = vec3<f32>(1.0);
+  if (F_LPASS) {
+    for (var g = 0; g < 4; g++) { lu_lp[g] = vec3<f32>(0.0); }
+    lu_lp_k = 1.0;
+  }
   var t_foot = 1.0e9;
   var matte = 0.0;
   if (footage) {
@@ -1413,6 +1534,7 @@ fn lume_see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w:
       h = Hit(ev.x, MEDIUM);
       lu_keep0 = ev.yzw;
     }
+    lu_keep0 *= exp(-g_wdye);   // (the dye in the water on the camera's first stretch)
   }
   // (with a background colour behind the set, the floor is seen only through the water, and where the liquid left it
   // wet: its film's sheen, over the colour)
@@ -1426,19 +1548,24 @@ fn lume_see(ro0: vec3<f32>, rd0: vec3<f32>, px: vec2<f32>, puv: vec2<f32>, rd_w:
   var col = lu_path(h, ro0, rd0);
   if (wet_seen < 1.0) { col = mix(background(rd0, px), col, wet_seen); }
   let dist = h.t;
+  var keep = wet_seen;   // (of the path's light, what the pixel shows: per-light passes)
   if (h.id == FLOOR && !cam_wet) {
     // far off, the floor fades into the sky at the horizon
     let fade = 1.0 - exp(-dist / max(U.floor_d.w, 1.0));
     // (into the sky; with a background colour behind the set, into that: the floor drawn under the water, Lume's)
     let far = select(background(rd0, px), sky_dir(vec3<f32>(rd0.x, 0.0, rd0.z)) * 0.9, U.stage.z > 0.5);
     col = mix(col, far, fade);
+    keep *= 1.0 - fade;
   }
   col = haze(col, dist);
+  if (U.atm.w > 0.0) { keep *= exp(-U.atm.w * dist); }
   var cg = 1.0;
   if (footage) {
     cg = 1.0 - matte;
     if (matte > 0.0) { col = mix(col, footage_at(puv), matte); }
+    keep *= 1.0 - matte;
   }
+  if (F_LPASS) { lu_lp_k = keep; }
   return Seen(col, cg, h.t);
 }
 
@@ -1637,7 +1764,8 @@ fn lu_emit() -> LuEmit {
   let nl = i32(U.ln.w);
   let sun_on = max(U.sun.r, max(U.sun.g, U.sun.b)) > 0.0;
   let env_on = lu_env_on() && lu_env_cau();
-  let kinds = nl + select(0, 1, sun_on) + select(0, 1, env_on);
+  let fire_on = lu_fire_cau();
+  let kinds = nl + select(0, 1, sun_on) + select(0, 1, env_on) + select(0, 1, fire_on);
   let nt = i32(U.lume3.y);
   if (kinds == 0 || nt == 0) { return e; }
   let pick = min(i32(lu_rand() * f32(kinds)), kinds - 1);
@@ -1686,6 +1814,36 @@ fn lu_emit() -> LuEmit {
     e.beta = lu_lamp_radiance(pick, -l) * (cosx * cap * omega * sel);
     return e;
   }
+  if (fire_on && pick == kinds - 1) {
+    // the fire: one of its lights, picked by its power, from a point in its ball (as its shadow rays go to), a direction
+    // within the cone the target fills; through the smoke on the way to the target
+    let nf = light_count[0];
+    var tot = 0.0;
+    for (var k = 0u; k < nf; k++) { tot += luma(lights[2u * k + 1u].rgb); }
+    if (tot <= 0.0) { return e; }
+    let pk = lu_rand() * tot;
+    var run = 0.0;
+    var k = 0u;
+    for (; k < nf - 1u; k++) {
+      run += luma(lights[2u * k + 1u].rgb);
+      if (run >= pk) { break; }
+    }
+    let a = lights[2u * k];
+    let pw = luma(lights[2u * k + 1u].rgb);
+    let x = a.xyz + lu_ball() * a.w;
+    let cone = lu_cone_of(x, tg.xyz, tg.w);
+    if (cone.x < -1.5 || pw <= 0.0) { return e; }
+    let fr = lu_frame(normalize(tg.xyz - x));
+    let lc = lu_cone(lu_rand2(), cone.x);
+    e.ro = x;
+    e.rd = fr[0] * lc.x + fr[1] * lc.y + fr[2] * lc.z;
+    e.beta = U.fire.rgb * lights[2u * k + 1u].rgb * (cone.y * sel * tot / pw);
+    // (the smoke from the edge of its ball, as its shadow rays see it: lu_ls_fire)
+    if (U.fire.w > 0.0) {
+      e.beta *= mix(1.0, smoke_tr(x + e.rd * a.w, e.rd, max(length(tg.xyz - x) - a.w - tg.w, 0.0)), U.fire.w);
+    }
+    return e;
+  }
   // the key light or the HDRI: parallel light over a disc as wide as the target, from far off
   var dir = vec3<f32>(0.0, 1.0, 0.0);   // toward the light
   var power = vec3<f32>(0.0);           // what crosses a unit area facing it
@@ -1722,6 +1880,8 @@ fn caustics(@builtin(global_invocation_id) id: vec3<u32>) {
   lu_base = 0u;   // (PCG: these paths are not a pixel's samples)
   lu_dim = 0u;
   lu_nq = 0u;
+  lu_lam = 0.0;
+  lu_lam_w = vec3<f32>(1.0);
   g_tau = U.res.w * (lu_rand() - 0.5);
   g_jit = lu_rand();
   let em = lu_emit();
@@ -1751,7 +1911,10 @@ fn caustics(@builtin(global_invocation_id) id: vec3<u32>) {
         ro = p + rd * (ex.w + 2.0 * eps);
         continue;
       }
-      let th = lu_through(h, p, rd, cl, eps);
+      var cd = cl;
+      cd.ior = lu_ior(cl.ior);
+      beta *= lu_lam_take();
+      let th = lu_through(h, p, rd, cd, eps);
       if (!th.ok) { return; }
       beta *= th.tint;
       ro = th.ro;

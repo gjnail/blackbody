@@ -48,6 +48,8 @@ With spreading fire, Composite › *Scorch* darkens the ground and objects where
 - *In the footage* (on) is for a real light on the set. The footage already shows its light on the real ground and objects, so Blackbody only takes away the light the simulated smoke shadows: the ground darkens under smoke that drifts in front of a street lamp.
 - Turn it off for a light added in CG. It then lights the ground, the colliders in the shot and (with a depth pass) the footage's own surfaces too, shadowed by colliders and smoke.
 
+*Lighting › Environment from the footage* lights the CG objects by the footage itself, as a panorama round the set seen through the camera (with Lume: each side of an object takes the light of the footage on that side, and shiny ones reflect it; see [Lume](lume.md)).
+
 Blackbody judges how much a light changes the footage against the light the footage already has there, the key light and sky from Lighting, so set those to match the shot. EXRs get a `lamps` layer (multiply the plate by 1 + lamps). Lights can be keyframed, and USD lights come in as lights (see [Scene import](scene-import.md#scene-import-usd)).
 
 ## Matching the camera

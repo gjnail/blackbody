@@ -120,3 +120,40 @@ def test_cloud_presets_run(engine, name):
     img = engine.aovs()['beauty'].astype(np.float32)
     assert np.isfinite(img).all() and img[..., :3].mean() > 0.01
     assert engine.stats()['sky_minutes'] > 1.0
+
+
+def test_lume_lights_the_clouds(engine):
+    # With Lighting engine: Lume the light a cloud scatters many times is traced (cloud_lume.wgsl: its mean and flow on a
+    # coarse grid), converging over its passes: finite, the cloud lit inside (the sky's and the sun's light carried in),
+    # dark where there is no light, and the frame's sky as the classic engine draws it
+    from blackbody.engine import cloud_render as CR
+    from blackbody.scene import presets
+    sc = presets.make('cumulus_day')
+    sc.data['domain']['resolution'] = 48
+    sc.data['domain']['preroll'] = 2.0
+    sc.data['render']['width'], sc.data['render']['height'] = 160, 90
+    engine.prepare(sc)
+    f = sc.start + 1
+    engine.simulate_to(sc, f, cache=False)
+    # (a cloud put in the sky by hand: a ball of cloud water 2 km across, 2 km up, in the camera's view)
+    C = engine.cloud
+    A = engine.gpu.read(C.A[0]).astype(np.float32)
+    zz, yy, xx = np.meshgrid(*(np.arange(d) for d in C.dims[::-1]), indexing='ij')
+    c = (np.array([C.dims[0] / 2, 2000.0 / C.h, C.dims[2] / 2]))
+    ball = ((xx - c[0]) ** 2 + (yy - c[1]) ** 2 + (zz - c[2]) ** 2) * C.h ** 2 < 1000.0 ** 2
+    A[ball, 2] = 1.0e-3
+    engine.gpu.upload(C.A[0], A)
+    sc.data['lume']['engine'] = 'classic'
+    engine.render(sc, f, (160, 90), final=True)
+    classic = engine.aovs()['beauty'].astype(np.float32)
+    sc.data['lume']['engine'] = 'lume'
+    engine.render(sc, f, (160, 90), final=True)
+    lume = engine.aovs()['beauty'].astype(np.float32)
+    cr = engine.cloud_r
+    lv = engine.gpu.read(cr.LV[0]).astype(np.float32)
+    assert np.isfinite(lume).all() and np.isfinite(lv).all() and (lv[..., :3] >= 0).all()
+    assert lv[..., :3].max() > 0.05                                 # light carried into the cloud
+    sky = np.abs(lume - classic).mean(-1) < 1e-3
+    assert 0.2 < sky.mean() < 1.0                                    # the sky drawn alike, the cloud not
+    lvk, k = cr.lv_dims
+    assert max(lvk) <= CR.LUME_MAX and k >= 1

@@ -214,9 +214,10 @@ class RenderJob:
                                           motion_blur=self.motion_blur, plate=self._plate(frame), plate_fit=self._plate_fit(),
                                           holdout=holdout)
                     comp_lin = front.linear_comp()
+                    lpass = _light_passes(front, self.scene, comp_lin.shape[:2])
                     for o in self.outputs:
                         if o.content == 'composite' and o.kind not in ('vdb', 'mesh'):
-                            self._write_comp(o, frame, comp_lin, writers, audio_src)
+                            self._write_comp(o, frame, comp_lin, writers, audio_src, lpass)
                 for o in need_vdb:
                     from ..io.vdb import write_liquid_vdb_frame, write_vdb_frame
                     p = frame_path(o.path, frame)
@@ -377,7 +378,7 @@ class RenderJob:
         if pipe is None:
             return ch
         out = dict(ch)
-        for pre in ('', 'emission.', 'glow.', 'light.'):
+        for pre in ('', 'emission.', 'glow.', 'light.', 'light_key.', 'light_sky.', 'light_fire.', 'light_lamps.'):
             keys = [pre + c for c in 'RGB']
             if all(k in ch for k in keys):
                 rgb = pipe.to_space(np.stack([ch[k].astype(np.float32) for k in keys], -1), space)
@@ -451,7 +452,7 @@ class RenderJob:
         write_deep_exr(p, samples, {'software': f'{blackbody.APP_NAME} {blackbody.__version__}'})
         self.written.append(p)
 
-    def _write_comp(self, o, frame, comp_lin, writers, audio_src):
+    def _write_comp(self, o, frame, comp_lin, writers, audio_src, lpass=None):
         view = self.scene.data['composite']
         pipe = self._pipe() if view['view'] == 'ocio' else None
         if pipe is not None:
@@ -461,6 +462,7 @@ class RenderJob:
         rgba = np.concatenate([rgb, np.ones(rgb.shape[:2] + (1,), np.float32)], -1)
         if o.kind == 'exr':
             ch = {'R': comp_lin[..., 0], 'G': comp_lin[..., 1], 'B': comp_lin[..., 2]}
+            ch.update(lpass or {})          # (Lume's per-light passes of the set)
             attrs = None
             space = self._exr_space()
             if space:
@@ -492,6 +494,19 @@ class RenderJob:
             (first.parent / f'{self.scene.name or "render"}_render.json').write_text(json.dumps(info, indent=1), encoding='utf-8')
         except Exception:
             pass
+
+
+def _light_passes(eng, scene, shape):
+    """Lume's per-light passes of the set (Lume › Light passes) as EXR layers at shape, or {}."""
+    from ..engine import lume as LU
+    if not LU.settings(scene).light_passes or not LU.settings(scene).on:
+        return {}
+    st = getattr(eng, '_stage', None)
+    ch = {}
+    for name, img in (st.light_passes() if st is not None else {}).items():
+        img = _resize_to(img, shape)
+        ch.update({f'{name}.R': img[..., 0], f'{name}.G': img[..., 1], f'{name}.B': img[..., 2]})
+    return ch
 
 
 def _resize_to(img, shape):

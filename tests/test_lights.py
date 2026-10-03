@@ -191,3 +191,64 @@ def test_a_profile_shapes_a_lamps_light_on_the_floor(engine, monkeypatch, tmp_pa
         sc.lights[0].update(profile=prof, profile_brightness=False, direction=(0.0, -1.0, 0.0))
         out.append(float(_render(engine, sc, spec, samples=256)[28:36, 44:52].mean()))
     assert out[1] / out[0] == pytest.approx(0.5, rel=0.03)
+
+
+# -- per-light passes ----------------------------------------------------------------------------------------------------------
+
+def test_the_light_passes_add_up_to_the_picture_and_each_holds_its_own_light(engine, monkeypatch):
+    # a glossy ball and a matte block on a floor, lit by the key light, the sky and a lamp (Lume › Light passes): the passes
+    # add up to the picture, and each light's pass is that light's alone (the lamp's goes when the lamp does)
+    spec = dict(size=(96, 64), camera=dict(eye=(0.0, 1.0, 2.6), target=(0.0, 0.3, 0.0), hfov=40.0), sky=0.4,
+                floor=dict(alb=(0.6, 0.6, 0.6), rough=0.8), bounces=3,
+                objects=[dict(shape='sphere', pos=(0.35, 0.3, 0.0), size=(0.3, 0.3, 0.3), alb=(0.7, 0.3, 0.2), rough=0.25),
+                         dict(shape='box', pos=(-0.4, 0.2, -0.1), size=(0.2, 0.2, 0.2), alb=(0.6, 0.6, 0.6), rough=0.9)],
+                lamps=[dict(pos=(-0.8, 1.2, 0.8), radius=0.05, power=(1.5, 1.4, 1.2))])
+    sc = _bench(monkeypatch, spec)
+    sc.data['lighting'].update(sun_on=True, sun_intensity=1.5, sun_elevation=35.0, sun_azimuth=40.0)
+    sc.data['lume']['light_passes'] = True
+    img = _render(engine, sc, spec, samples=256)
+    lp = engine.stage.light_passes()
+    assert sorted(lp) == ['light_fire', 'light_key', 'light_lamps', 'light_sky']
+    low = slice(28, 64)                                   # (the floor and the objects: no sky seen straight)
+    tot = sum(lp.values())
+    assert float(tot[low].mean()) == pytest.approx(float(img[low].mean()), rel=0.01)
+    for k in ('light_key', 'light_sky', 'light_lamps'):
+        assert float(lp[k][low].mean()) > 0.03 * float(img[low].mean()), k
+    assert float(lp['light_fire'].max()) == 0.0
+    key = float(lp['light_key'][low].mean())
+    sc.lights.clear()
+    img2 = _render(engine, sc, spec, samples=256)
+    lp2 = engine.stage.light_passes()
+    assert float(lp2['light_lamps'].max()) == 0.0
+    assert float(lp2['light_key'][low].mean()) == pytest.approx(key, rel=0.02)
+
+
+# -- the footage as the environment ----------------------------------------------------------------------------------------
+
+def test_the_footage_becomes_the_environment_seen_through_the_camera():
+    # a plate of sky over ground with a red patch, a camera looking along -z: ahead, the panorama is the plate where the
+    # camera saw it (the patch where it is); past the frame, the footage's light at each height carried on round the set
+    # (its sky above, behind the camera too; its ground below)
+    from blackbody.engine import camera as cam
+    from blackbody.engine import footage_env as FE
+    H, W = 360, 640
+    p = np.zeros((H, W, 3), np.float32)
+    p[:180] = (0.4, 0.6, 0.9)
+    p[180:] = (0.3, 0.2, 0.1)
+    p[150:210, 200:260] = (1.0, 0.0, 0.0)
+    view = cam.look_at((0, 1.5, 0), (0, 1.5, -10))
+    P = cam.perspective(math.radians(40), W / H, 0.1, 100)
+    img = FE.image(p, 'linear', P @ view, exposure=2.0, width=256)
+
+    def at(d):
+        d = np.asarray(d, float) / np.linalg.norm(d)
+        th, ph = math.acos(d[1]), math.atan2(d[0], -d[2])
+        return img[min(int(th / math.pi * 128), 127), min(int((ph / (2 * math.pi) + 0.5) * 256), 255)]
+
+    assert np.allclose(at((0, 0.2, -1)), 2.0 * np.array([0.4, 0.6, 0.9]), atol=1e-3)
+    assert np.allclose(at((0, -0.2, -1)), 2.0 * np.array([0.3, 0.2, 0.1]), atol=1e-3)
+    assert np.allclose(at((-0.18, 0.0, -1)), (2.0, 0.0, 0.0), atol=1e-3)                   # where the camera saw it
+    for d in ((0, 1, 0), (0, 0.4, 1), (1, 0.3, 0)):
+        assert np.allclose(at(d), 2.0 * np.array([0.4, 0.6, 0.9]), atol=0.05), d             # its sky, round the set
+    for d in ((0, -1, 0), (0, -0.4, 1)):
+        assert np.allclose(at(d), 2.0 * np.array([0.3, 0.2, 0.1]), atol=0.05), d             # its ground

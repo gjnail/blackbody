@@ -372,6 +372,10 @@ class Batch:
             self.submit(restart=True)
         return self.gpu.arena.push(data)
 
+    def copy_buffer(self, src: 'Buffer', dst: 'Buffer', src_offset=0, dst_offset=0, size=None):
+        self._end_pass()
+        self.enc.copy_buffer_to_buffer(src.buf, src_offset, dst.buf, dst_offset, size if size is not None else src.size)
+
     def copy_texture(self, src: Texture, dst: Texture, size=None, src_origin=(0, 0, 0), dst_origin=(0, 0, 0)):
         self._end_pass()
         self.enc.copy_texture_to_texture({'texture': src.tex, 'origin': src_origin, 'mip_level': 0},

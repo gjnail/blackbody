@@ -289,6 +289,24 @@ Notable changes to Blackbody. The format follows
 - Lava (fire-and-liquid scenes) meets broken pieces and sand, snow and mud, floats or sinks objects by its density,
   heats matter and objects, and radiates its heat.
 - Cloth pushes water: the drag a sheet feels from water goes back into the water.
+- Lume, round 9:
+  - Light passes (Lume › Light passes): a final render also writes the set's light split by where it comes from into
+    the composite EXR, as the layers light_key, light_sky, light_fire and light_lamps, to turn each light up or down
+    or recolour it in the comp. The export dialog gets Composite · EXR sequence.
+  - Caustics from the fire's light: a glass beside a campfire focuses its flickering light, soft as a flame is big (with the fire's
+    shadows on).
+  - Dispersion (Lume › Dispersion): glass, ice, jelly and water bend each colour by its own index (Cauchy's formula
+    from the material's Abbe number), for the rainbow fringe round a caustic and the fire of a gem; it makes nothing
+    brighter or darker.
+  - Clouds traced by Lume: the light a cloud scatters more than once is followed through up to 512 scatterings by the
+    droplets' own phase, and comes out within 3% of Mitsuba path tracing the same cumulus from its sunlit side and
+    from below, where the classic estimate is about 40% too dark (tools/lume_bench: cloud_blackbody.py,
+    cloud_mitsuba.py).
+  - Lighting › Environment from the footage: the shot itself lights the CG set, as a panorama round it, so an object
+    takes the footage's colours from each side and reflects them.
+  - Dyed water (ink, milk, blood, mud) traced by Lume, absorbing and scattering in the dye's colour.
+- A test that every source file compiles (tests/test_compiles.py, in CI): a syntax error in a module only a window
+  imports otherwise passes every other test.
 
 ### Changed
 
@@ -300,6 +318,9 @@ Notable changes to Blackbody. The format follows
 
 ### Fixed
 
+- Lume: coloured glass casts its shadow in its colour (its shadow rays carried the tint as grey); with a background
+  colour backdrop, what is seen through water is the backdrop; a clear tank of water no longer glows with light trapped
+  in it by total reflection (the least murk is for open water only).
 - Running scenes one after another: a scene the size of the last drew on the last one's solid velocity, destroyed
   with it (an error), and a frame cut short so left the sand holding the last scene's fabric (the next one failed).
 - Broken joints were marked whole again every step, so things breaking threw up twice the dust.

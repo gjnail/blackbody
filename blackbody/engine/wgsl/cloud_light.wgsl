@@ -19,7 +19,12 @@ struct LightParams {
 };
 
 // extinction (1/m) of the cloud and precipitation in a cell, as drawn
-fn sigma(c: vec3<i32>) -> f32 { return textureLoad(S, c, 0).z; }
+// (with Lume, the whole cloud as the march draws it, its ragged edge too, as the light is traced through it; else its solid
+// part and the precipitation: cloud_sig.wgsl)
+fn sigma(c: vec3<i32>) -> f32 {
+  let s = textureLoad(S, c, 0);
+  return select(s.z, min(s.x, 0.05) + s.y, U.ext2.z > 0.5);
+}
 
 fn sigma_at(p: vec3<f32>, n: vec3<i32>) -> f32 {
   let c = vec3<i32>(floor(p));

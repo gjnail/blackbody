@@ -63,7 +63,7 @@ def _water():
     return surf, data
 
 
-def _render(engine, sc, water=None):
+def _render(engine, sc, water=None, dye=None):
     from blackbody.engine.liquid_render import LumeWater
     f = sc.start + 1
     sc.data['lume'].update(engine='lume', samples=512, bounces=6, denoise=False)
@@ -76,7 +76,11 @@ def _render(engine, sc, water=None):
         t = g.texture3d((N, N, N), 'rgba16float', 'test-water')
         g.upload(t, surf.astype(np.float16))
         r = engine.renderer
-        lw = LumeWater(t, r._empty, r._black, r._black, data)
+        dt = None
+        if dye is not None:
+            dt = g.texture3d((N, N, N), 'rgba16float', 'test-dye')
+            g.upload(dt, dye.astype(np.float16))
+        lw = LumeWater(t, r._empty, r._black, r._black, data, dt)
         engine.stage.draw = lambda b, *a, **k: orig(b, *a, **{**k, 'water': lw})
     try:
         engine.render(sc, f, (160, 90), mode='composite', final=True, samples=4, motion_blur=False)
@@ -129,3 +133,27 @@ def test_a_liquid_scene_with_lume_has_lume_trace_its_water_and_leaves_lava_to_th
         assert np.isfinite(img).all()
         handed = bool(got) and got[-1] is not None   # (the stage drew it with the water to trace)
         assert handed == traced, name
+
+
+def test_dyed_water_absorbs_as_glass_tinted_alike_does(engine, monkeypatch):
+    # a ball of water carrying a dye that absorbs (1/m, rgb) and does not scatter, against the glass ball of water's index
+    # tinted to absorb the same (Lume's glass takes its colour as its tint over each 10 cm: lume.wgsl lu_clear), lit by the
+    # sky: the same light through it, colour by colour
+    sigma = np.array([6.0, 2.5, 0.8])
+    tint = tuple(float(x) for x in np.exp(-sigma * 0.1))
+    glass_row = (stage_mod.CG, tint, 0.03, 0.0, 1.0, -2, (1.0, 1.0, 1.0), IOR)
+    monkeypatch.setattr(stage_mod, 'looks', lambda scene, footage: [glass_row] * len(scene.colliders))
+    empty = _render(engine, _scene(False))
+    glass = _render(engine, _scene(True))
+    surf, data = _water()
+    data = list(data)
+    data[46] = 1.0                                       # (wat[11].z: the water carries a dye)
+    dye = np.zeros((N, N, N, 4), np.float32)
+    dye[..., :3] = sigma
+    water = _render(engine, _scene(False), water=(surf, data), dye=dye)
+    assert np.isfinite(water).all()
+    ball = np.abs(glass.mean(-1) - empty.mean(-1)) > 0.02 * empty.mean()
+    assert ball.mean() > 0.05
+    for c in range(3):
+        assert water[ball, c].mean() == pytest.approx(glass[ball, c].mean(), rel=0.03), c
+    assert glass[ball, 0].mean() < 0.8 * glass[ball, 2].mean()      # (and the dye does colour it: red absorbed most)

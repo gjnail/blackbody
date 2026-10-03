@@ -219,6 +219,7 @@ class LumeWater:
     caus: object
     wet: object
     data: list
+    dye: object = None          # the dye field (liq_dye_resolve.wgsl), when the liquid has one (wat[11].z)
 
 
 class LiquidRenderer:
@@ -729,11 +730,11 @@ class LiquidRenderer:
     # -- Lume ----------------------------------------------------------------------------------------
 
     def lume_ok(self, view: LiquidView, look: WaterLook):
-        """Whether Lume can trace this liquid itself (stage.wgsl lume_water.wgsl): clear or murky water, honey, oil. Not
-        yet: a molten one (its glow and crust), ice, dye, the sea's waves; those the march draws over the set Lume lit."""
+        """Whether Lume can trace this liquid itself (stage.wgsl lume_water.wgsl): clear, murky or dyed water, honey,
+        oil. Not yet: a molten one (its glow and crust), ice, the sea's waves; those the march draws over the set Lume lit."""
         return not (look.glow > 0.0 or (look.ice and view.ice is not None)
                     or (view.ocean is not None and getattr(view.ocean, 'on', False))
-                    or view.dye is not None or view.count <= 0)   # (the frame's own: build() makes its dye later)
+                    or view.count <= 0)
 
     def lume_water(self, view: LiquidView, look: WaterLook, time=0.0):
         """The water for Lume (the surface build() made, the caustic map caustics() traced): LumeWater."""
@@ -751,8 +752,9 @@ class LiquidRenderer:
         u.v4(*look.foam_color, look.foam_scale)
         u.v4(look.wet_darken, look.wet_gloss, view.current[0] if lvl_on else 0.0, view.current[2] if lvl_on else 0.0)
         u.v4(look.roughness, look.caustics, 1.0 if caus_on else 0.0, 1.0 if look.bottomless else 0.0)
-        u.v4(self._liquid_top(view, lvl_on), look.foam_lace, 0.0, 0.0)
-        return LumeWater(self.surf, self.ww_tex, self.caus_tex, view.wet, list(u.data))
+        dye_on = view.dye is not None and self.dye_tex is not self._no_dye
+        u.v4(self._liquid_top(view, lvl_on), look.foam_lace, 1.0 if dye_on else 0.0, 0.0)
+        return LumeWater(self.surf, self.ww_tex, self.caus_tex, view.wet, list(u.data), self.dye_tex if dye_on else None)
 
     def lume_clear(self, b, size):
         """The liquid's own element left empty (Lume drew the water into the stage's picture): for the drops, the rain

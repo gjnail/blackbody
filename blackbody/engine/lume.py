@@ -46,6 +46,8 @@ class LumeSettings:
     viewer_samples: int = 64
     denoise: bool = True
     clamp: float = 0.0
+    light_passes: bool = False   # the set's light split by where it comes from (LIGHT_PASSES), for compositing
+    dispersion: float = 0.0      # clear things split light into its colours: times their real dispersion (0: none)
 
 
 def settings(scene) -> LumeSettings:
@@ -53,7 +55,11 @@ def settings(scene) -> LumeSettings:
     d = scene.data.get('lume') or {}
     return LumeSettings(on=d.get('engine', 'classic') == 'lume', bounces=int(d.get('bounces', 4)),
                         samples=max(1, int(d.get('samples', 256))), viewer_samples=max(1, int(d.get('viewer_samples', 64))),
-                        denoise=bool(d.get('denoise', True)), clamp=float(d.get('clamp', 0.0)))
+                        denoise=bool(d.get('denoise', True)), clamp=float(d.get('clamp', 0.0)),
+                        light_passes=bool(d.get('light_passes', False)), dispersion=float(d.get('dispersion', 0.0)))
+
+
+LIGHT_PASSES = ('light_key', 'light_sky', 'light_fire', 'light_lamps')   # (lume.wgsl lu_lp: the groups, in order)
 
 
 def env_table(img, width=ENV_WIDTH):
@@ -184,20 +190,28 @@ class Lume:
         self._none = gpu.buffer(16, 'lume-no-env')
         self._tmp = [None, None]
         self._var = [None, None]   # the denoiser's variance, ping-ponged between its levels
+        self.passes_on = False     # ACC holds the per-light passes after the picture (LIGHT_PASSES), and ...
+        self.lp_tex = []           # ... their pictures, resolved by finish()
+        self._lp_acc = None        # (one of them at a time, for the denoiser)
         dn = ['rbuf', 'rbuf', 'tex2d', 'st2d:rgba16float:w', 'rbuf', 'buf']
         self.k_demod = gpu.kernel('lume_denoise.wgsl', dn, 'demod', workgroup=(8, 8, 1))
         self.k_atrous = gpu.kernel('lume_denoise.wgsl', dn, 'atrous', workgroup=(8, 8, 1))
         self.k_remod = gpu.kernel('lume_denoise.wgsl', dn, 'remod', workgroup=(8, 8, 1))
+        self.k_plain = gpu.kernel('lume_denoise.wgsl', dn, 'plain', workgroup=(8, 8, 1))
 
-    def ensure(self, w, h):
-        """The accumulation buffers for a w x h picture (afresh when the size changes)."""
-        if self.size == (w, h):
+    def ensure(self, w, h, passes=False):
+        """The accumulation buffers for a w x h picture (afresh when the size changes), with room for the per-light
+        passes after the picture's (ACC) when they are wanted."""
+        if self.size == (w, h) and self.passes_on == bool(passes):
             return
-        for b in (self.acc, self.aov, self.cau, *self._tmp, *self._var):
+        for b in (self.acc, self.aov, self.cau, *self._tmp, *self._var, *self.lp_tex, self._lp_acc):
             if b is not None:
                 b.destroy()
         n = w * h
-        self.acc = self.gpu.buffer(n * 16, 'lume-acc')
+        self.passes_on = bool(passes)
+        self.acc = self.gpu.buffer(n * 16 * (1 + (len(LIGHT_PASSES) if passes else 0)), 'lume-acc')
+        self.lp_tex = [self.gpu.texture2d(w, h, 'rgba16float', f'lume-{p}') for p in LIGHT_PASSES] if passes else []
+        self._lp_acc = self.gpu.buffer(n * 16, 'lume-lp-acc') if passes else None
         self.aov = self.gpu.buffer(n * 32, 'lume-aov')
         self.cau = self.gpu.buffer(n * 12 + CACHE_SLOTS * CACHE_WORDS * 4, 'lume-caustics')   # (splats, then the cache)
         self._tmp = [self.gpu.texture2d(w, h, 'rgba16float', f'lume-dn{i}') for i in range(2)]
@@ -277,3 +291,26 @@ class Lume:
             src, dst = dst, src
             va, vb = vb, va
         b.run(self.k_remod, [self.acc, self.aov, src, out_tex, va, vb], Uniforms().v4(w, h, passes, 1), (w, h, 1))
+
+    def finish_passes(self, b, passes, denoise):
+        """The per-light passes' pictures (lp_tex) from ACC: each its average, denoised as the picture is (by its
+        surfaces' colour, facing and distance, and its own spread over the passes)."""
+        if not self.passes_on or passes <= 0:
+            return
+        w, h = self.size
+        n = w * h
+        for g, out in enumerate(self.lp_tex):
+            b.copy_buffer(self.acc, self._lp_acc, n * 16 * (g + 1), 0, n * 16)
+            if not denoise:
+                b.run(self.k_plain, [self._lp_acc, self.aov, self._tmp[0], out, self._var[0], self._var[1]],
+                      Uniforms().v4(w, h, passes, 1), (w, h, 1))
+                continue
+            a, c = self._tmp
+            va, vb = self._var
+            b.run(self.k_demod, [self._lp_acc, self.aov, out, a, vb, va], Uniforms().v4(w, h, passes, -1), (w, h, 1))
+            src, dst = a, c
+            for step in ATROUS_STEPS:
+                b.run(self.k_atrous, [self._lp_acc, self.aov, src, dst, va, vb], Uniforms().v4(w, h, passes, step), (w, h, 1))
+                src, dst = dst, src
+                va, vb = vb, va
+            b.run(self.k_remod, [self._lp_acc, self.aov, src, out, va, vb], Uniforms().v4(w, h, passes, 1), (w, h, 1))

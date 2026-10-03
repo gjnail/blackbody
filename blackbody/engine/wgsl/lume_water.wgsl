@@ -14,6 +14,16 @@ const MEDIUM: i32 = 301;  // a point in the water's murk where a path scatters (
 
 var<private> g_wcol: vec3<f32> = vec3<f32>(1.0);   // the colour of the water a shadow ray went through, over its grey
                                                    // (lu_shadow returns grey: lu_direct puts the colour back)
+var<private> g_wdye: vec3<f32> = vec3<f32>(0.0);   // the dye's absorption (optical depth, rgb) over the stretch w_event
+                                                   // marched, up to where it scatters (its caller takes it off)
+
+// The dye in the water at p (fire-local): its absorption (1/m, rgb) and scattering (1/m) (wat[11].z: there is dye)
+fn w_dye_on() -> bool { return U.wat[11].z > 0.5; }
+fn w_dye_at(p: vec3<f32>) -> vec4<f32> {
+  let q = w_mir(w_grid(p));
+  if (any(q < vec3<f32>(0.0)) || any(q > w_n())) { return vec4<f32>(0.0); }
+  return textureSampleLevel(w_dye, lin, q / w_n(), 0.0);
+}
 
 fn water_on() -> bool { return F_WATER && U.wat[4].x > 0.5; }
 fn w_open() -> bool { return U.wat[4].y > 0.5; }
@@ -21,9 +31,11 @@ fn w_h() -> f32 { return U.wat[0].w; }
 fn w_n() -> vec3<f32> { return U.wat[1].xyz; }
 fn w_grid(p: vec3<f32>) -> vec3<f32> { return (p - U.wat[0].xyz) / U.wat[0].w; }
 fn w_sigma() -> vec3<f32> { return U.wat[2].xyz; }   // absorption (1/m)
-// scattering (1/m): the look's murk, and at least what clear water scatters (clear lakes 0.05 to 0.3 per metre, a pool's
-// a little less: what makes the depths under the surface hazy, not black)
-fn w_murk() -> f32 { return max(U.wat[2].w, W_MURK_MIN); }
+// scattering (1/m): the look's murk, and in open water at least what clear water scatters (clear lakes 0.05 to 0.3 per
+// metre: what makes the depths under the surface hazy, not black). A body of water in a box (a tank, a splash) as its
+// look has it: light trapped in a tank by its walls' total reflection crosses it many times, and a minimum there made a
+// clear tank glow
+fn w_murk() -> f32 { return max(U.wat[2].w, select(0.0, W_MURK_MIN, w_open())); }
 const W_MURK_MIN: f32 = 0.03;
 fn w_ior() -> f32 { return U.wat[3].w; }
 
@@ -241,7 +253,9 @@ fn w_ww_sigma(p: vec3<f32>, in_water: bool) -> f32 {
 // Where along a ray (0..tmax) the whitewater scatters it first, picked by its optical depth (u: a random number, jit: the
 // steps' jitter): -1 if it goes through. (Stepped a grid cell at a time, the field's own spacing.)
 fn w_ww_event(ro: vec3<f32>, rd: vec3<f32>, tmax: f32, in_water: bool, u: f32, jit: f32) -> f32 {
-  if (U.wat[7].w < 0.5 || select(U.wat[7].x, U.wat[7].z, in_water) <= 0.0) { return -1.0; }
+  g_wdye = vec3<f32>(0.0);
+  let dye = in_water && w_dye_on();   // (in dyed water: its scattering too, and its absorption on the way)
+  if (!dye && (U.wat[7].w < 0.5 || select(U.wat[7].x, U.wat[7].z, in_water) <= 0.0)) { return -1.0; }
   let sp = w_box_span(ro, rd, tmax);
   if (sp.x >= sp.y) { return -1.0; }
   let st = w_h();
@@ -250,9 +264,22 @@ fn w_ww_event(ro: vec3<f32>, rd: vec3<f32>, tmax: f32, in_water: bool, u: f32, j
   var t = sp.x + st * jit;
   for (var i = 0; i < 256; i++) {
     if (t > sp.y) { break; }
-    let d = w_ww_sigma(ro + rd * t, in_water) * st;
-    if (tau + d >= want) { return clamp(t - 0.5 * st + st * (want - tau) / max(d, 1e-9), sp.x, sp.y); }
+    let q = ro + rd * t;
+    var s = select(0.0, w_ww_sigma(q, in_water), U.wat[7].w > 0.5);
+    var a = vec3<f32>(0.0);
+    if (dye) {
+      let dv = w_dye_at(q);
+      s += dv.w;
+      a = dv.rgb;
+    }
+    let d = s * st;
+    if (tau + d >= want) {
+      let te = clamp(t - 0.5 * st + st * (want - tau) / max(d, 1e-9), sp.x, sp.y);
+      g_wdye += a * max(te - (t - 0.5 * st), 0.0);
+      return te;
+    }
     tau += d;
+    g_wdye += a * st;
     t += st;
   }
   return -1.0;
@@ -260,19 +287,30 @@ fn w_ww_event(ro: vec3<f32>, rd: vec3<f32>, tmax: f32, in_water: bool, u: f32, j
 
 // How much of a shadow ray's light the whitewater on its way lets through (spray in the air, bubbles in the water).
 fn w_ww_tr(p: vec3<f32>, d: vec3<f32>, tmax: f32) -> f32 {
-  if (U.wat[7].w < 0.5) { return 1.0; }
+  if (U.wat[7].w < 0.5 && !w_dye_on()) { return 1.0; }
   let sp = w_box_span(p, d, min(tmax, 1.0e3));
   if (sp.x >= sp.y) { return 1.0; }
   let st = 2.0 * w_h();
   var tau = 0.0;
   var t = sp.x + 0.5 * st;
+  var col = vec3<f32>(0.0);
   for (var i = 0; i < 96; i++) {
     if (t > sp.y || tau > 6.0) { break; }
     let q = p + d * t;
-    tau += w_ww_sigma(q, w_phi(q) < 0.0) * st;
+    let inside = w_phi(q) < 0.0;
+    if (U.wat[7].w > 0.5) { tau += w_ww_sigma(q, inside) * st; }
+    if (inside && w_dye_on()) {
+      // (dye: its scattering grey, its absorption in its colour, the colour put back by lu_direct: g_wcol)
+      let dv = w_dye_at(q);
+      tau += dv.w * st;
+      col += dv.rgb * st;
+    }
     t += st;
   }
-  return exp(-tau);
+  let cd = exp(-col);
+  let gd = max(luma(cd), 1e-8);
+  g_wcol *= cd / gd;
+  return exp(-tau) * gd;
 }
 
 // Distances to the nearest and next-nearest of the cell points round p (a Worley pattern).
@@ -333,7 +371,7 @@ fn w_event(ro: vec3<f32>, rd: vec3<f32>, tseg: f32, in_water: bool, u: vec2<f32>
   let tw = w_ww_event(ro, rd, min(tseg, tev), in_water, u.y, jit);
   if (tw >= 0.0 && tw < tev) {
     tev = tw;
-    keep = vec3<f32>(0.95);   // (spray and bubbles: white)
+    keep = vec3<f32>(0.95);   // (spray, bubbles and the dye's grains: white; the dye's colour is its absorption: g_wdye)
   }
   if (tev >= tseg) { return vec4<f32>(-1.0, keep); }
   return vec4<f32>(tev, keep);

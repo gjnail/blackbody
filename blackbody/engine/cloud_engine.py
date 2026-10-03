@@ -129,9 +129,18 @@ class CloudEngine:
         wind = (float(w[0][mid]), 0.0, float(w[1][mid]))
         samples = max(1, int(samples))
         step = 0.5 if final else 0.75
+        # Lume lights the cloud (cloud_lume.wgsl): afresh for a final render or a jump; else carried on, a couple of passes
+        # a frame (the light in a cloud changes slowly as it moves)
+        from . import lume as LU
+        lume = None
+        if LU.settings(scene).on:
+            key = (tuple(C.dims), frame)
+            fresh = final or self.cloud_r.lv_key is None or abs(frame - self.cloud_r.lv_key[1]) > 2 or self.cloud_r.lv_key[0] != key[0]
+            lume = (2, fresh)
+            self.cloud_r.lv_key = key
         with self.gpu.batch() as b:
             if samples == 1:
-                self.cloud_r.render(b, C, A, B, P, cs, fire, look, (fw, fh), seed=base_seed, step=step, wind=wind)
+                self.cloud_r.render(b, C, A, B, P, cs, fire, look, (fw, fh), seed=base_seed, step=step, wind=wind, lume=lume)
             else:
                 # jittered rays averaged (the accumulators the fire and liquid renders use)
                 from .gpu import Uniforms
@@ -139,7 +148,7 @@ class CloudEngine:
                 set0, set1 = self._acc[0:3], self._acc[3:6]
                 for i in range(samples):
                     self.cloud_r.render(b, C, A, B, P, cs, fire, look, (fw, fh), seed=base_seed + i * 7919, step=step,
-                                        wind=wind, light=(i == 0))
+                                        wind=wind, light=(i == 0), lume=lume)
                     src_in, dst = (set0, set1) if i % 2 == 0 else (set1, set0)
                     b.run(self.k_accum, [r.beauty, r.emit, r.aux, *src_in, *dst], Uniforms().v4(fw, fh, 0, i), (fw, fh, 1))
                 last, other = (set1, set0) if (samples - 1) % 2 == 0 else (set0, set1)

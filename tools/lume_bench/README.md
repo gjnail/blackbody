@@ -72,3 +72,23 @@ What is left:
 - **Speed in general**: Mitsuba traces with the GPU's ray-tracing cores (OptiX); Lume traces in compute shaders, plain shapes exactly and meshes and matter by marching.
 
 What the benchmark has caught and fixed so far. In Lume: Russian roulette from the second bounce (twice the noise on shiny metal; now from the fourth), caustics not traced (2.6% dark with a glass ball; now traced from the lights, through glass and off smooth metal), sky caustics leaking up through the ground, the last bounce dropping the sky's share of light (all scenes up to 8x too dark in sky-lit shade), a path clamp that removed most of an HDRI sun's bounced light, lamps treated as soft points (3% dark near them), rays off a ball's underside slipping under the floor (bright contact rings), ray offsets of a pixel or two putting surfaces that much nearer the lamps (up to 3% bright), boxes shaded with normals rounded over a pixel at their edges (a pixel too dark or bright along every edge and corner), a lamp's highlight in glass left out, caustics seen through their glass or in a mirror left unfocused (now from the caustic cache), and lamps sending their caustics' light from their middle as points (a big lamp's caustic too sharp and too small: on the glass scene, fourteen times the error). In the benchmark itself: Mitsuba's ground one rectangle 4 km across (the reference up to 14% dark under a low lamp: the 0.8% Lume seemed too bright on the glossy scene was this), Blackbody's plain surfaces a little uneven (a fixed blotchy difference no number of samples took away), the reference too noisy at 16,384 samples for errors this small, comparing only against Mitsuba's plain random sampler (its stratified ones are up to fifteen times closer on direct light), and the reference losing its rays where a glass ball touches the floor (a dark spot under the ball, seen through it, that is not there).
+
+## Clouds
+
+Lume's clouds (`blackbody/engine/wgsl/cloud_lume.wgsl`) are measured the same way, on one cumulus of the `cumulus_day` preset (frame 240) taken out of its sky, its sub-grid detail and the haze off so that both renderers see the same density:
+
+```
+python tools/lume_bench/cloud_blackbody.py out/cloud_lit.npz 240 240 160 lit
+mitsuba-env\Scripts\python tools/lume_bench/cloud_mitsuba.py out/cloud_lit.npz out/cloud_lit_ref.npz 2048
+python tools/lume_bench/cloud_mitsuba.py compare out/cloud_lit.npz out/cloud_lit_ref.npz
+```
+
+(`below` in place of `lit`: from the ground under it, with the ground.) Mitsuba path traces the cloud with every bounce, its droplets' phase, the sun and the renderer's own sky; a final frame of the cloud takes it a few minutes, Lume about a second.
+
+| View | Lume, over the cloud | Lume, per pixel (median, rms) | Classic estimate, over the cloud |
+|---|---|---|---|
+| Sunlit side, sky and sun | 1.03 | 0.00 stops, 0.22 | 0.59 |
+| From the ground under it, with the ground | 1.03 | 0.00 stops, 0.32 | 0.65 |
+
+Lume traced with the similarity relation instead of the droplets' own phase (scattering evenly at sigma (1 - g)) came out 1.25 to 1.5 on the sunlit side, which is why it follows the real phase; with isotropic scattering on both sides it was 1.005. Runs differ by a few percent with Lume's own grain (its light grid is traced afresh each time).
+

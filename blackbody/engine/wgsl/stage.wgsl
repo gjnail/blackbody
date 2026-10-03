@@ -64,8 +64,9 @@ const F_MARCH: bool = ${F_MARCH};
 const F_SHOTS: bool = ${F_SHOTS};   // (what bullets leave: marks and bores, marks.wgsl)
 const F_WOOD: bool = ${F_WOOD};     // (wood, by its species: wood.wgsl)
 const F_WATER: bool = ${F_WATER};   // (Lume traces the water: lume_water.wgsl)
-const F_CHAR: bool = ${F_CHAR};     // (something burns: char, its cracks and their glow, burnt_at)
 const F_HEAT: bool = ${F_HEAT};     // (hot objects glow: hot_glow, objheat.py)
+const F_LPASS: bool = ${F_LPASS};   // (Lume's per-light passes: lume.wgsl lu_lp)
+const F_CHAR: bool = ${F_CHAR};     // (something burns: char, its cracks and their glow, burnt_at)
 
 struct Mat {
   c: vec4<f32>,   // albedo (linear rgb), roughness
@@ -122,6 +123,9 @@ struct Params {
   cl2w: mat4x4<f32>,    // fire-local -> world
   ctg: array<vec4<f32>, 8>,   // the curved clear things and mirrors the light is aimed at: a sphere round each (fire-local centre, radius)
   wat: array<vec4<f32>, 12>,  // the water Lume traces (lume_water.wgsl; stage.py water_uniforms): its grid, look, open water
+  lp: vec4<f32>,        // per-light passes: the share of the caustics' light (cache and splats) from the key light, the sky,
+                        // the fire, the lamps (stage.py)
+  lu4: vec4<f32>,       // Lume: dispersion (times the materials' own; 0: none), _, _, _
 };
 
 @group(0) @binding(0) var atlas: texture_3d<f32>;       // mesh distance fields (meshsdf.wgsl)
@@ -167,6 +171,7 @@ struct PieceG { a: vec4<f32>, q: vec4<f32>, v: vec4<f32>, o: vec4<f32>, r: vec4<
 @group(0) @binding(35) var w_caus: texture_2d<f32>;   // the key light on the ground under it (liq_caustics.wgsl)
 @group(0) @binding(36) var w_wet_t: texture_2d<f32>;  // how wet the ground it ran over is
 @group(0) @binding(37) var<storage, read> PB: array<vec4<f32>>;          // wood burning spot by spot (point_burn)
+@group(0) @binding(38) var w_dye: texture_3d<f32>;    // the water's dye (lume_water.wgsl): absorption (1/m, rgb), scattering (1/m)
 @group(1) @binding(0) var<uniform> U: Params;
 
 var<private> g_tau: f32;   // this sample's time in the shutter (s): objects are moved along their motion
@@ -1268,8 +1273,10 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
       }
     }
     s.f0 = vec3<f32>(0.04);
-    if (water_on() && U.stage.z < 0.5) {
-      // (no set, a background colour behind: the ground under the water is that colour, as the march has it)
+    let bg_floor = water_on() && U.stage.z < 0.5;
+    if (bg_floor) {
+      // (no set, a background colour behind: the ground under the water is that colour, as the march has it, flat: no
+      // sheen of its own to mirror the sky in)
       s.alb = U.bg.rgb;
       s.rough = 0.7;
     }
@@ -1278,6 +1285,7 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
       let wt = w_wet(s.p);
       s.alb *= 1.0 - U.wat[9].x * wt;
       s.rough = mix(s.rough, 0.08, U.wat[9].y * wt);
+      if (bg_floor) { s.f0 *= U.wat[9].y * wt; }
     }
     if (marks_on()) { s = bullet_marks(s, min(s.alb * 1.4 + vec3<f32>(0.02), vec3<f32>(0.9)), fw); }
     if (s.p.y < U.stage.y - s.eps) {
@@ -1614,6 +1622,7 @@ fn stage_pixel(id: vec3<u32>, lume: bool) {
   let seed = u32(px.x) * 1973u + u32(px.y) * 9277u + u32(U.depth.z) * 26699u;
   var aov_a = vec4<f32>(0.0);
   var aov_n = vec4<f32>(0.0);
+  var lpa = array<vec3<f32>, 4>(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0));
   if (lume) { lu_seed(px, 0u); }
   for (var i = 0; i < ns; i++) {
     // samples on a rotated grid over the pixel, each at its own time in the shutter (Lume: anywhere in the pixel and the
@@ -1650,6 +1659,9 @@ fn stage_pixel(id: vec3<u32>, lume: bool) {
     if (lume) {
       aov_a += vec4<f32>(lu_alb, lu_dist);
       aov_n += vec4<f32>(lu_nrm, 0.0);
+      if (F_LPASS) {
+        for (var g = 0; g < 4; g++) { lpa[g] += lu_lp[g] * lu_lp_k; }
+      }
     }
     cov += s.cg;
     let to_near = U.fwd.w / max(dot(rd_w, U.fwd.xyz), 1e-3);   // camera to where the ray starts (m)
@@ -1675,8 +1687,20 @@ fn stage_pixel(id: vec3<u32>, lume: bool) {
       nn += AOV[2u * k + 1u];
     }
     // (and the light the lights focus through curved glass onto what this pixel sees, traced from the lights this pass)
-    if (U.lume3.x > 0.5) { a = vec4<f32>(a.rgb + lu_caustic_at(k), a.a); }
+    var cs = vec3<f32>(0.0);
+    if (U.lume3.x > 0.5) { cs = lu_caustic_at(k); }
+    a = vec4<f32>(a.rgb + cs, a.a);
     ACC[k] = a;
+    if (F_LPASS) {
+      // the light split by where it came from, after the picture (its brightness squared in w, for the denoiser)
+      let n = u32(U.res.x) * u32(U.res.y);
+      for (var g = 0u; g < 4u; g++) {
+        let c = lpa[g] * inv;
+        var e = vec4<f32>(c + cs * U.lp[g], luma(c) * luma(c));
+        if (U.lume.y > 0.5) { e += ACC[n * (g + 1u) + k]; }
+        ACC[n * (g + 1u) + k] = e;
+      }
+    }
     AOV[2u * k] = al;
     AOV[2u * k + 1u] = nn;
     outc = a / (U.lume.y + 1.0);

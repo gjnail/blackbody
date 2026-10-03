@@ -97,6 +97,12 @@ class ExportDialog(QDialog):
         self.comp_audio.setChecked(True)
         row(self.comp, self.comp_profile, self.comp_audio)
 
+        self.comp_exr = QCheckBox('Composite · EXR sequence')
+        self.comp_exr.setToolTip('The finished shot in scene-linear OpenEXR, for grading and finishing. With Lume\'s Light '
+                                 'passes on, it also holds the set\'s light split by where it comes from (light_key, light_sky, '
+                                 'light_fire, light_lamps), to turn each light up or down in the comp.')
+        row(self.comp_exr, QLabel('RGB · Lume light passes'))
+
         self.vdb = QCheckBox('Volume · OpenVDB sequence')
         self.vdb.setToolTip('density, temperature, flame, fuel and vel grids for Blender, Houdini, Maya, Unreal…')
         row(self.vdb, QLabel('density · temperature · flame · fuel · vel'))
@@ -195,6 +201,7 @@ class ExportDialog(QDialog):
         self.png.setChecked(s.value('export/png', False, type=bool))
         self.mov.setChecked(s.value('export/mov', False, type=bool) and self.mov.isEnabled())
         self.comp.setChecked(s.value('export/comp', bool(sc.footage), type=bool))
+        self.comp_exr.setChecked(s.value('export/comp_exr', False, type=bool))
         self.vdb.setChecked(s.value('export/vdb', False, type=bool))
         self.deep.setChecked(s.value('export/deep', False, type=bool) and sc.kind in ('fire', 'liquid'))
         self.deep.setEnabled(sc.kind in ('fire', 'liquid'))
@@ -204,7 +211,7 @@ class ExportDialog(QDialog):
         self.mesh.setEnabled(sc.kind in ('liquid', 'both'))
         i = self.comp_profile.findData(s.value('export/comp_profile', 'prores422hq'))
         self.comp_profile.setCurrentIndex(max(0, i))
-        for w in (self.exr, self.deep, self.png, self.mov, self.comp, self.vdb, self.mesh, self.folder, self.name):
+        for w in (self.exr, self.deep, self.png, self.mov, self.comp, self.comp_exr, self.vdb, self.mesh, self.folder, self.name):
             (w.toggled if isinstance(w, QCheckBox) else w.textChanged).connect(self._update_labels)
         self.comp_profile.currentIndexChanged.connect(self._update_labels)
         self._update_labels()
@@ -243,6 +250,9 @@ class ExportDialog(QDialog):
             prof = self.comp_profile.currentData()
             ext = {'h264': '.mp4', 'h265': '.mp4'}.get(prof, '.mov')
             out.append(Output('video', str(folder / f'{name}_comp{ext}'), 'composite', prof, audio=self.comp_audio.isChecked()))
+        if self.comp_exr.isChecked():
+            out.append(Output('exr', str(folder / f'{name}_comp' / f'{name}_comp.####.exr'), 'composite',
+                              compression=self.exr_comp.currentData(), half=not self.exr_float.isChecked()))
         if self.vdb.isChecked():
             out.append(Output('vdb', str(folder / f'{name}_vdb' / f'{name}.####.vdb')))
         if self.mesh.isChecked() and self.mesh.isEnabled():
@@ -253,7 +263,7 @@ class ExportDialog(QDialog):
         s = QSettings()
         s.setValue('export/folder', self.folder.text())
         for k, w in (('exr', self.exr), ('deep', self.deep), ('png', self.png), ('mov', self.mov), ('comp', self.comp),
-                     ('vdb', self.vdb), ('mesh', self.mesh)):
+                     ('comp_exr', self.comp_exr), ('vdb', self.vdb), ('mesh', self.mesh)):
             s.setValue(f'export/{k}', w.isChecked())
         s.setValue('export/comp_profile', self.comp_profile.currentData())
         if self.last.value() < self.first.value():
