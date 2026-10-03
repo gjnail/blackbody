@@ -34,7 +34,8 @@ Notable changes to Blackbody. The format follows
   off mirror-like metal: the bright spot a glass ball focuses into its shadow, the sky's glow through it and the light
   it throws on round it. The light paths also leave their light in a cache of where they land, so a caustic seen
   through its own glass or in a mirror is focused too. Its samples are spread evenly (Owen-scrambled Sobol), and after
-  the same time it has 0.023 to 0.95 times the error of Mitsuba's best sampler for each scene on all ten. Lume compiles
+  the same time it has 0.036 to 0.86 times the error of Mitsuba's best sampler for each scene on nine of the ten (the
+  tenth, a furnace test that renders in a few milliseconds, 1.2 times). Lume compiles
   its own camera kernel for what the set has, on first use (a few seconds). A lamp's light off glossy metal, plastic
   and painted coats is traced from the lamp (no sparkles), and the denoiser carries its estimate of the noise through
   its levels (half the error it left before, thin highlights kept).
