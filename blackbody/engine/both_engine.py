@@ -642,12 +642,12 @@ class BothEngine:
 
         march_look = look   # (Lume's, once it has lit the smoke: Engine._lume_volume)
 
-        def one(b, jit, s):
+        def one(b, jit, s, k=0):
             # (the fire's point lights as r.light left them: it may have reallocated them for this box)
             fire_lights = (r.lights, r.light_count) if fire_lit and r.lights is not None else None
-            # the fire, whole: behind the liquids it is seen through them
+            # the fire, whole: behind the liquids it is seen through them (its motion vectors are the front one's)
             r.march(b, vol, cs, fire, march_look, (fw, fh), jitter=jit, seed=s, shutter=shutter, ground=ground, time=t,
-                    surfaces=surfaces)
+                    surfaces=surfaces, vec_pass=None)
             b.run(self.k_bfp, [r.beauty, ptex if ptex is not None else r._black, self.gpu.linear, T['fp']], fp_u, size)
             water_plate = T['fp']
             lay = None
@@ -684,7 +684,7 @@ class BothEngine:
                 b.copy_texture(src, T[key], size)
             # the fire in front of the liquids, over them
             r.march(b, vol, cs, fire, march_look, (fw, fh), jitter=jit, seed=s, shutter=shutter, ground=ground, time=t,
-                    surfaces=surfaces, limit=T['la'])
+                    surfaces=surfaces, limit=T['la'], vec_pass=k)
             for src, key in ((r.beauty, 'fb'), (r.emit, 'fe'), (r.aux, 'fa')):
                 b.copy_texture(src, T[key], size)
             b.run(self.k_bmerge, [T['fb'], T['fe'], T['fa'], T['lb'], T['le'], T['la'], r.beauty, r.emit, r.aux],
@@ -737,7 +737,7 @@ class BothEngine:
                 sur0, sur1 = self._acc2[0:3], self._acc2[3:6]
                 srcs2 = [r.surf, r.mask, r.mask]
                 for i in range(samples):
-                    one(b, (_halton(i + 1, 2) - 0.5, _halton(i + 1, 3) - 0.5), base_seed + i)
+                    one(b, (_halton(i + 1, 2) - 0.5, _halton(i + 1, 3) - 0.5), base_seed + i, i)
                     src_in, dst = (set0, set1) if i % 2 == 0 else (set1, set0)
                     b.run(self.k_accum, [r.beauty, r.emit, r.aux, *src_in, *dst], Uniforms().v4(fw, fh, 0, i), size)
                     s_in, s_dst = (sur0, sur1) if i % 2 == 0 else (sur1, sur0)

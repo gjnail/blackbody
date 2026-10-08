@@ -201,6 +201,24 @@ LP_FLOATS = 8      # (stage.wgsl Params lp: the caustics' light's share from eac
 WATER_FLOATS = 48   # (stage.wgsl Params wat: the water Lume traces, liquid_render.LumeWater)   # (stage.wgsl: the classic kernel has everything)
 
 
+ID_HEAD = 16                 # vec4s of parameters at the head of the compositing passes' buffer (stage_ids.wgsl)
+ID_OUT = 6                   # vec4s they write per pixel
+ID_BAND_BYTES = 32 << 20     # the most one band of rows writes (read back before the next: well within any GPU's binding)
+
+
+@dataclass
+class IdPass:
+    """What the compositing passes ask of the stage (Stage.draw's ids; render/passes.py makes it). head: (ID_HEAD, 4)
+    float32 as stage_ids.wgsl reads it (the last, this and the next frame's fire-local -> clip matrices; samples per
+    pixel and simulation seconds per frame in row 12; the floor's, the matter's and the splinters' codes and whether
+    the sky turns with the camera in row 13; the footage's fit in the picture in row 14's z, w). code(owner): the code
+    of what a piece is a piece of (piece_arrays' owners). The pass fills out: (h, w, ID_OUT, 4) float32, as
+    stage_ids.wgsl writes each pixel."""
+    head: np.ndarray
+    code: object
+    out: np.ndarray = None
+
+
 def plain_shape(c):
     """Whether collider c is a plain shape, found exactly by each ray (stage.wgsl plain): a sphere, box or cylinder, not
     hollow, nothing cut out of it."""
@@ -236,6 +254,8 @@ class Stage:
         self._env_key = None
         self.env_sky = None     # the HDRI's average colour (the sky's light), when it has one
         self.lume = None        # Lume's state (lume.Lume), once a scene asks for Lume
+        self.notes = []         # what the last render job's compositing passes cut short, in words (Engine.notices)
+        self.owners = []        # what each piece of the last draw is a piece of (piece_arrays' owners)
         self._lume_off = [gpu.buffer(16, 'stage-no-acc'), gpu.buffer(32, 'stage-no-aov'), gpu.buffer(16, 'stage-no-env'),
                           gpu.buffer(16, 'stage-no-caustics')]
 
@@ -267,17 +287,21 @@ class Stage:
         return b
 
     @staticmethod
-    def piece_arrays(scene, pieces, shutter=0.0, ropes=None, ground_y=None, bolts=None, shots=None):
+    def piece_arrays(scene, pieces, shutter=0.0, ropes=None, ground_y=None, bolts=None, shots=None, owners=None):
         """The pieces of broken objects and the segments of ropes and springs, for the shader: (pieces (n, 5, 4),
         planes (p, 4), grid corner, cell size, grid dims, cells (g, 2) uint32, list uint32), or None.
         pieces: {collider index: Solids.piece_poses entry}; ropes: {collider index: Solids.rope_poses entry};
         ground_y: the ground's height (a snapped rope hangs down to it); bolts: lightning (Scene.bolts);
-        shots: what bullets do (ballistics.Ballistics.view): debris, bullets in flight, sparks, tracers, flashes."""
+        shots: what bullets do (ballistics.Ballistics.view): debris, bullets in flight, sparks, tracers, flashes.
+        owners: a list given to be filled with what each piece is a piece of, in their order (the compositing passes
+        name it): ('object', collider index) for a broken object's pieces, ('rope', collider index) for the segments
+        of the rope or spring it hangs on, else 'debris', 'bullets', 'lightning' or 'sparks'."""
         from .ropes import CHAIN, chain_links, num, prism_planes, rope_points, segments
         from .solids import fractured
         enabled = [i for i, c in enumerate(scene.colliders) if c['enabled']][:MAX_COLLIDERS]
         row_of = {ci: r for r, ci in enumerate(enabled)}
         P, PL, centres, radii = [], [], [], []
+        own = owners if owners is not None else []
         SP = []          # (wood that burns, spot by spot: per piece a row of its half extents, then its 54 spots)
         first = 0
         for ci, pose in (pieces or {}).items():
@@ -305,6 +329,7 @@ class Stage:
                     SP.append(np.concatenate([[[*halves[k], 0.0]], spots[k]], 0))
                 P.append([[*pos, len(pl)], [*np.asarray(pose['quat'][k], float)], [*vel, first],
                           [*np.asarray(pose['omega'][k], float), row], [*pc.centroid, rad], [*b]])
+                own.append(('object', ci))
                 PL.append(pl)
                 first += len(pl)
                 centres.append(pos)
@@ -325,6 +350,7 @@ class Stage:
                     bound = math.hypot(half, r)
                     P.append([[*centre, len(pl)], [*quat], [0.0, 0.0, 0.0, first], [0.0, 0.0, 0.0, ROPE_ROW + 1],
                               [0.0, 0.0, 0.0, bound], [0.0] * 4])
+                    own.append(('rope', ci))
                     PL.append(pl)
                     first += len(pl)
                     centres.append(centre)
@@ -334,6 +360,7 @@ class Stage:
                 pl = prism_planes(rad, half)
                 bound = math.hypot(half, rad)
                 P.append([[*centre, len(pl)], [*quat], [*v, first], [0.0, 0.0, 0.0, row], [strands, along, twist, bound], [0.0] * 4])
+                own.append(('rope', ci))
                 PL.append(pl)
                 first += len(pl)
                 centres.append(centre)
@@ -341,11 +368,12 @@ class Stage:
         # what bullets do: debris and bullets as pieces (shot_draw.py)
         from . import shot_draw as SD
         if shots:
-            for row, pl, c, rad in (SD.debris_rows(shots, row_of, SHOT_ROW + 2, SHOT_ROW + 1, shutter)
-                                    + SD.bullet_rows(shots, SHOT_ROW, shutter)):
+            debris = SD.debris_rows(shots, row_of, SHOT_ROW + 2, SHOT_ROW + 1, shutter)
+            for k, (row, pl, c, rad) in enumerate(debris + SD.bullet_rows(shots, SHOT_ROW, shutter)):
                 row = np.array(row, np.float32)
                 row[2, 3] = first
                 P.append(row)
+                own.append('debris' if k < len(debris) else 'bullets')
                 PL.append(pl)
                 first += len(pl)
                 centres.append(c)
@@ -357,6 +385,7 @@ class Stage:
                 pl = prism_planes(rad, half)
                 bound = math.hypot(half, rad)
                 P.append([[*centre, len(pl)], [*quat], [0.0, 0.0, 0.0, first], [0.0, 0.0, 0.0, LIGHTNING_ROW], [*glow, bound], [0.0] * 4])
+                own.append('lightning')
                 PL.append(pl)
                 first += len(pl)
                 centres.append(centre)
@@ -366,6 +395,7 @@ class Stage:
             row = np.array(row, np.float32)
             row[2, 3] = first
             P.append(row)
+            own.append('sparks')
             PL.append(pl)
             first += len(pl)
             centres.append(c)
@@ -507,8 +537,9 @@ class Stage:
     def draw(self, b, r, scene, camstate, fire, colliders, meshes, light: StageLight, comp, size, plate_fit=(1.0, 1.0),
              samples=1, shutter=0.0, footage=False, vol=None, ground_y=0.0, frame=0, objects=True, floor=True,
              pieces=None, ropes=None, matter=None, bolts=None, grass=None, burns=None, final=False, shots=None,
-             water=None, colours=None):
-        """Draw the stage into self.tex (size: the plate's, footage or output) and return it.
+             water=None, colours=None, ids=None):
+        """Draw the stage into self.tex (size: the plate's, footage or output) and return it; or, given ids (an IdPass),
+        trace its compositing passes instead (what each pixel sees, render/passes.py) into ids.out and return None.
         r: the Renderer (its footage plate and holdouts, light volume, fire lights and lamp buffer);
         colliders: the objects as the solver has them (ColliderGPU, moving ones where they are this frame);
         vol: the fire's volume when this frame's light volume is lit (Renderer.light), else None;
@@ -525,7 +556,8 @@ class Stage:
         look (a liquid scene's grey stand-ins, when Lume traces the water)."""
         g = self.gpu
         pw, ph = int(size[0]), int(size[1])
-        self._ensure(pw, ph)
+        if ids is None or self.tex is None:
+            self._ensure(pw, ph)   # (the passes write neither: what the last draw left stays for the march)
         rows = looks(scene, footage)
         if not objects:
             rows = [(IN_FOOTAGE if row[0] == CG else row[0],) + tuple(row[1:]) for row in rows]
@@ -584,7 +616,8 @@ class Stage:
         vis = float(comp.visibility)
         ns = 1 if samples <= 1 else (8 if (shutter > 0.0 and samples >= 8) else 4)
         lume = LU.settings(scene)
-        if lume.on:
+        use_lume = lume.on and ids is None   # (the passes only trace what is seen first)
+        if use_lume:
             # (Lume: the passes added up, one path per pixel each in the viewer; a final render traces several per pass,
             # so a simple set is not held up by the passes themselves)
             ns = LU.final_per_pass(pw, ph, lume.samples) if final else 1
@@ -611,7 +644,8 @@ class Stage:
              .v4(*centre, radius))
         from . import shot_draw as SD
         drawn_shots = bool(shots) and any(k in shots for k in ('debris', 'bullets', 'tracers', 'flashes'))
-        pa = (self.piece_arrays(scene, pieces, shutter, ropes, ground_y, bolts, shots)
+        self.owners = []   # (what each piece is a piece of, for the passes)
+        pa = (self.piece_arrays(scene, pieces, shutter, ropes, ground_y, bolts, shots, owners=self.owners)
               if (pieces or ropes or bolts or drawn_shots) else None)
         self.has_pieces = pa is not None
         if pa is not None:
@@ -697,7 +731,7 @@ class Stage:
         u.v4(*gc, fl.roughness).v4(0.0, 0.0, 0.0, float(CG)).v4(*np.minimum(gc * 1.25, 1.0), 1.5).v4()
         black = r._black
         lume_bufs = self._lume_off
-        if lume.on:
+        if use_lume:
             if self.lume is None:
                 self.lume = LU.Lume(g)
             L = self.lume
@@ -713,7 +747,7 @@ class Stage:
             first, count = L.plan(lume, key, final, samples)
             if final:
                 count = -(-count // ns)
-        elif self.lume is not None:
+        elif self.lume is not None and ids is None:
             self.lume.pending = False
         res = [meshes.atlas if meshes is not None else r._empty_r32,
                # (with Lume lighting the smoke, its light volume: the key light's shadows through the smoke as deep as
@@ -734,7 +768,10 @@ class Stage:
                water.surf if water is not None else r._empty, water.ww if water is not None else r._empty,
                water.caus if water is not None else black, water.wet if water is not None else black, spots,
                water.dye if (water is not None and water.dye is not None) else r._empty]
-        if not lume.on:
+        if ids is not None:
+            self._trace_ids(b, res, u.raw([0.0] * (LU.TAIL_FLOATS + WATER_FLOATS + LP_FLOATS)), ids, pw, ph)
+            return None
+        if not use_lume:
             b.run(self.k, res, u.raw([0.0] * (LU.TAIL_FLOATS + WATER_FLOATS + LP_FLOATS)), (pw, ph, 1))
             return self.tex
         # Lume: its passes, each a new path per pixel added to the ones before (lume.wgsl), then the denoiser
@@ -789,6 +826,42 @@ class Stage:
         else:
             L.finish(b, self.tex, L.passes, False)
         return self.tex
+
+    def ids_kernel(self):
+        """The compositing passes' kernel (stage_ids.wgsl): the stage's bindings and their buffer, compiled when first
+        asked for. (That buffer is the kernel's sixteenth storage buffer, the most GPU asks a device for: a storage
+        buffer added to the stage's bindings has to take its place, or raise that.)"""
+        return self.gpu.kernel('stage_ids.wgsl', list(self.k.bindings) + ['buf'], 'ids_main', defines=ALL_FEATURES,
+                               workgroup=(8, 8, 1))
+
+    def _trace_ids(self, b, res, u, ids, w, h):
+        """Trace the compositing passes (draw's ids) band by band of rows, each read back before the next (so the
+        buffer stays small at any size), into ids.out."""
+        k = self.ids_kernel()
+        owners = [float(ids.code(o)) for o in getattr(self, 'owners', None) or []]
+        nown = -(-len(owners) // 4)
+        head = np.zeros((ID_HEAD + nown, 4), np.float32)
+        head[:ID_HEAD] = np.asarray(ids.head, np.float32)
+        head.reshape(-1)[ID_HEAD * 4:ID_HEAD * 4 + len(owners)] = owners
+        start = ID_HEAD + nown
+        head[14, :2] = (start, len(owners))
+        rows = int(max(1, min(h, ID_BAND_BYTES // (w * ID_OUT * 16))))
+        need = (start + rows * w * ID_OUT) * 16
+        buf = self._bufs.get('ids')
+        if buf is None or buf.size < need:
+            if buf is not None:
+                buf.destroy()
+            buf = self._bufs['ids'] = self.gpu.buffer(need, 'stage-ids')
+        out = np.zeros((h, w, ID_OUT, 4), np.float32)
+        for y0 in range(0, h, rows):
+            n = min(rows, h - y0)
+            head[12, :2] = (y0, n)
+            self.gpu.write_buffer(buf, head)
+            b.run(k, res + [buf], u, (w, n, 1))
+            b.submit(restart=True)
+            raw = self.gpu.read_buffer(buf, n * w * ID_OUT * 16, start * 16)
+            out[y0:y0 + n] = np.frombuffer(raw, np.float32).reshape(n, w, ID_OUT, 4)
+        ids.out = out
 
     def light_passes(self):
         """Lume's per-light passes of the last picture (Lume › Light passes): {LIGHT_PASSES name: rgb (h x w x 3)}, or

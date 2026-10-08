@@ -2,7 +2,8 @@
 
 Outputs:
   exr       multi-layer OpenEXR sequence of the fire element, scene-linear, premultiplied
-            (RGBA beauty plus emission, glow, heat and depth layers)
+            (RGBA beauty plus emission, glow, heat and depth layers), or of the composite; both with the compositing
+            passes (render/passes.py): motion vectors, normals and positions, per-object mattes and Cryptomatte
   deep      deep OpenEXR sequence of the fire element (DEEP_SAMPLES, or up to DEEP_MAX, samples per
             pixel, each with its colour, alpha and front and back depth), for deep compositing in Nuke; in
             a shot with layers, every fire and liquid layer's samples in one image
@@ -43,6 +44,8 @@ import blackbody
 from ..io.colour import view_transform
 from ..io.images import element_to_display, float_to_uint, write_exr, write_png
 from ..io.video import PROFILES, VideoWriter
+from . import passes as P
+from .passes import PASSES
 
 log = logging.getLogger('blackbody.job')
 
@@ -52,6 +55,8 @@ DEEP_MAX = 16                     # the most samples per pixel the march gathers
 DEEP_KINDS = ('fire', 'liquid')   # the simulations deep samples are made for
 FABRIC_KINDS = ('fire', 'liquid', 'both')
 DATA_KINDS = ('vdb', 'mesh', 'scene', 'camera')   # outputs that are not pictures: no element or composite is rendered for them
+PASS_KINDS = ('fire', 'liquid', 'both')   # the scenes with a set to write compositing passes of (a sky has none)
+LOSSY_EXR = ('dwaa', 'dwab')   # EXR compressions that change the values (of every R, G, B and Y channel, float ones too)
 KIND_NAMES = {'fire': 'a fire scene', 'liquid': 'a liquid scene', 'both': 'a fire-and-liquid scene', 'cloud': 'a sky scene'}
 
 
@@ -64,7 +69,7 @@ class Output:
                                       # or element (the liquid's surface, with the fabric beside it as name.fabric.*);
                                       # a scene: scene (everything) or camera (the camera alone)
     profile: str = 'prores4444'       # video profile key
-    layers: tuple = ('emission', 'glow', 'heat', 'depth', 'surface')
+    layers: tuple = ('emission', 'glow', 'heat', 'depth', 'surface') + PASSES   # (EXR; a composite's: only PASSES)
     compression: str = 'zip'
     half: bool = True
     bits: int = 16                    # PNG
@@ -315,6 +320,13 @@ def output_notes(scene, outputs):
                                                            else '.'))
         if o.kind == 'scene' and o.content != 'camera':
             notes += _scene_notes(o, order)
+        if o.kind == 'exr' and layered and wants_passes(scene, o):
+            notes.append(f'{o.path}: its motion vectors, normals, mattes and Cryptomatte are the base layer\'s (its set '
+                         'and its fire); the other layers are not in them.')
+        if o.kind == 'exr' and exr_compression(scene, o) != o.compression:
+            c = o.compression.upper()
+            notes.append(f'{o.path} is written with ZIP, not {c}: {c} is lossy, and would garble its Cryptomatte and '
+                         f'positions (leave the compositing passes out to keep {c}).')
     return notes
 
 
@@ -335,6 +347,20 @@ def _scene_notes(o, order):
         out.append(f'{o.path}: the liquid and the fabric are not in the USD scene: write them with their own outputs '
                    '(Liquid surface · USD, Fabric · USD).')
     return out
+
+
+def wants_passes(scene, o):
+    """Whether output o writes compositing passes (render/passes.py) for this scene."""
+    return o.kind == 'exr' and scene.kind in PASS_KINDS and bool(set(o.layers) & set(PASSES))
+
+
+def exr_compression(scene, o):
+    """The compression EXR output o is written with: its own, or ZIP in place of a lossy one when it carries
+    Cryptomatte or positions, which must come back exactly (DWA's lossy maths works on every channel named R, G, B or
+    Y, 32-bit float ones too: a Cryptomatte id changed in its last bit names nothing)."""
+    if o.compression in LOSSY_EXR and wants_passes(scene, o) and {'crypto', 'normals'} & set(o.layers):
+        return 'zip'
+    return o.compression
 
 
 class RenderJob:
@@ -358,6 +384,7 @@ class RenderJob:
         self._no_cached_vel = False
         self._cam_attrs = None         # the frame's camera for the EXRs' headers (io/camera_out.py exr_attrs)
         self.notes = []                # what the writers could not write as it is (a USD scene's), said after the run
+        self.names = None    # what the compositing passes name (render/passes.SetNames), when an EXR has them
 
     def _plate(self, frame):
         if self.footage is None:
@@ -416,11 +443,23 @@ class RenderJob:
         tags, roots = layer_tags(order), layer_roots(order)
         own_cam = {u for u, _ in own_cameras(sc, (W, H))} if (scene_out and layered) else set()
         cam_attrs = any(o.kind in ('exr', 'deep') for o in self.outputs)
+        # the compositing passes: the set's, traced per frame; the fire's vectors from its march (Renderer.motion)
+        pass_out = [o for o in self.outputs if wants_passes(sc, o)]
+        elem_passes = any(o.content == 'element' for o in pass_out)
+        comp_passes = any(o.content == 'composite' for o in pass_out)
+        fire_vectors = sc.kind in ('fire', 'both') and any('motion' in o.layers for o in pass_out)
+        if getattr(eng, '_stage', None) is not None:
+            eng.stage.notes = []   # (what an earlier render's passes said)
+        if pass_out:
+            self.names = P.set_names(sc, footage=self.footage is not None)
         try:
             for i, frame in enumerate(range(self.first, self.last + 1)):
                 if (cancelled and cancelled()) or self.cancelled:
                     self.cancelled = True
                     break
+                if fire_vectors:
+                    eng.renderer.motion = P.march_motion(sc, frame, (W, H))
+                epass = None
 
                 def sim_progress(frac, f, _i=i):
                     if progress:
@@ -455,13 +494,19 @@ class RenderJob:
                                  plate_fit=self._plate_fit(), holdout=holdout if lay.kind != 'liquid' else None,
                                  deep=deep if lay.kind == 'fire' else 0)
                         a = e.aovs()
+                        if elem_passes and uid == 'base' and lay.kind == 'liquid':
+                            a['mattes'] = e.gpu.read(e.renderer.mask)   # (where its liquid is, for the passes)
                         if deep and lay.kind in DEEP_KINDS:
                             dparts.append(self._deep_samples(e, lay, frame, a))
                         beauties.append(a['beauty'])
                         if uid == 'base' or aov is None:
                             aov = a
+                    if elem_passes:
+                        # (the base layer's set and fire: only its march gathers the fire's vectors)
+                        epass = self._passes(eng, sc, frame, aov, 0.0)
                     aov = dict(aov)
                     aov['beauty'] = merge_elements(beauties).astype(np.float16)
+                    aov['passes'] = epass
                     dparts = [d for d in dparts if d.shape[:2] == dparts[0].shape[:2]]
                     for o in self.outputs:
                         if o.kind == 'deep':
@@ -477,6 +522,8 @@ class RenderJob:
                     aov = eng.aovs()
                     if liquid:
                         aov['mattes'] = eng.gpu.read(eng.renderer.mask)
+                    if elem_passes:
+                        aov['passes'] = epass = self._passes(eng, sc, frame, aov, 0.0)
                     elem_lin = eng.linear_comp()
                     glow = self.engine.gpu.read(eng.renderer.bloom_tex) if any('glow' in o.layers for o in self.outputs if o.kind == 'exr') else None
                     dsamples = self._deep_samples(eng, sc, frame, aov) if deep else None
@@ -491,9 +538,20 @@ class RenderJob:
                                           holdout=holdout)
                     comp_lin = front.linear_comp()
                     lpass = _light_passes(front, self.scene, comp_lin.shape[:2])
+                    cpass = None
+                    if comp_passes:
+                        # through the footage's lens, as the composite shows it (the element's are a pinhole's)
+                        k1 = float(sc.data['composite'].get('lens_k1', 0.0))
+                        if epass is not None and k1 == 0.0:
+                            cpass = epass
+                        else:
+                            a = eng.aovs()
+                            if sc.kind == 'liquid':
+                                a['mattes'] = eng.gpu.read(eng.renderer.mask)
+                            cpass = self._passes(eng, sc, frame, a, k1)
                     for o in self.outputs:
                         if o.content == 'composite' and o.kind not in DATA_KINDS:
-                            self._write_comp(o, frame, comp_lin, writers, audio_src, lpass)
+                            self._write_comp(o, frame, comp_lin, writers, audio_src, lpass, cpass)
                 for uid, lay in order:
                     e = LE.get(uid)
                     for o in need_vdb:
@@ -530,6 +588,8 @@ class RenderJob:
                 if progress:
                     progress((i + 1) / total, f'Frame {frame} of {self.last}')
         finally:
+            if fire_vectors:   # (a scene or camera output's job may have no renderer at all)
+                eng.renderer.motion = None
             if eng.cache.disk is not None:
                 eng.cache.disk.flush()
             if self.holdout is not None:
@@ -600,6 +660,23 @@ class RenderJob:
                     FM.write_obj(p, meshes)
                     self.written.append(p)
 
+    def _passes(self, eng, sc, frame, aov, lens):
+        """The compositing passes of the frame `eng` has just rendered (render/passes.frame_passes), through a lens of
+        distortion `lens`; what they cut short goes to the engine's notices."""
+        fire_vec = eng.renderer.read_vectors() if eng.renderer.motion is not None else None
+        out = P.frame_passes(eng, sc, frame, self.size, self.names, aov, lens, footage=self.footage is not None,
+                             motion_blur=self.motion_blur, fire_vec=fire_vec, plate_fit=self._plate_fit())
+        notes = list(out['notes'])
+        if fire_vec is not None and eng.sim_frame != frame:
+            entry = eng.cache.get(frame)
+            if entry is not None and 'vel' not in entry:
+                notes.append('Motion vectors: the cache holds no velocities (it was simulated with motion blur off), so '
+                             'the fire\'s vectors are only the camera\'s motion.')
+        for n in notes:
+            if n not in eng.stage.notes:
+                eng.stage.notes.append(n)
+        return out
+
     def _fire_fields(self, frame, eng=None):
         """What a fire VDB is written from: the solver when it holds `frame`, else the frame from the cache (a
         render from the disk cache never steps the solver, which holds only its start)."""
@@ -666,13 +743,18 @@ class RenderJob:
                 else:
                     ch['temperature.Y'] = x[..., 2] * 1000.0
             attrs = {'software': f'{blackbody.APP_NAME} {blackbody.__version__}', **(self._cam_attrs or {})}
+            keep32 = set()
+            if aov.get('passes') is not None:
+                pc, pa = P.channels(aov['passes'], self.names, o.layers, keep32)
+                ch.update(pc)
+                attrs.update(pa)
             space = self._exr_space()
             if space:
                 ch = self._to_space(ch, space)
                 attrs['colorspace'] = space
-            ch = {k: v.astype(dt) for k, v in ch.items()}
+            ch = {k: v.astype(np.float32 if k in keep32 else dt) for k, v in ch.items()}
             p = frame_path(o.path, frame)
-            write_exr(p, ch, o.compression, attrs)
+            write_exr(p, ch, exr_compression(self.scene, o), attrs)
             self.written.append(p)
             return
         pipe = self._pipe() if view['view'] == 'ocio' else None
@@ -785,7 +867,7 @@ class RenderJob:
         order = samples[..., 4].argsort(axis=-1)
         return np.take_along_axis(samples, order[..., None], axis=2)
 
-    def _write_comp(self, o, frame, comp_lin, writers, audio_src, lpass=None):
+    def _write_comp(self, o, frame, comp_lin, writers, audio_src, lpass=None, cpass=None):
         view = self.scene.data['composite']
         pipe = self._pipe() if view['view'] == 'ocio' else None
         if pipe is not None:
@@ -797,13 +879,19 @@ class RenderJob:
             ch = {'R': comp_lin[..., 0], 'G': comp_lin[..., 1], 'B': comp_lin[..., 2]}
             ch.update(lpass or {})          # (Lume's per-light passes of the set)
             attrs = dict(self._cam_attrs or {})
+            keep32 = set()
+            if cpass is not None:
+                pc, pa = P.channels(cpass, self.names, o.layers, keep32)
+                ch.update(pc)
+                attrs.update(pa)
             space = self._exr_space()
             if space:
                 ch = self._to_space({k: v.astype(np.float32) for k, v in ch.items()}, space)
                 attrs['colorspace'] = space
             dt = np.float16 if o.half else np.float32
             p = frame_path(o.path, frame)
-            write_exr(p, {k: v.astype(dt) for k, v in ch.items()}, o.compression, attrs)
+            write_exr(p, {k: v.astype(np.float32 if k in keep32 else dt) for k, v in ch.items()},
+                      exr_compression(self.scene, o), attrs or None)
             self.written.append(p)
         elif o.kind == 'png':
             p = frame_path(o.path, frame)

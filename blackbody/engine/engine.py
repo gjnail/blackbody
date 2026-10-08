@@ -872,7 +872,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
                     jit = (halton(i + 1, 2) - 0.5, halton(i + 1, 3) - 0.5)
                     lim = cloth_pass(b, i, jit)
                     r.march(b, vol, cs, fire, march_look, (fw, fh), jitter=jit, seed=base_seed + i, shutter=shutter,
-                            ground=ground, time=t, surfaces=surfaces, comp=comp, plate_fit=plate_fit, deep_pass=i, limit=lim)
+                            ground=ground, time=t, surfaces=surfaces, comp=comp, plate_fit=plate_fit, deep_pass=i, limit=lim,
+                            vec_pass=i)
                     if cloth or grass:
                         self.raster.merge(b, r, i, samples, 0.35 * (vol.cell or vol.h))
                     src_in, dst = (set0, set1) if i % 2 == 0 else (set1, set0)
@@ -1056,8 +1057,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
         """What the person making the shot should know was left out or cut short, in words: what the scene's caps leave
         out (scene/caps.py, checked in prepare, with a disk cache that would not open), and what the simulation's parts
         said as they set up and ran: the matter, the grass, the rigid bodies, meshes that could not be used, weather that
-        found no room to fall, the liquid's push on things held back, and an OCIO set-up that failed. The viewer shows
-        them and the command line prints them."""
+        found no room to fall, the liquid's push on things held back, an OCIO set-up that failed, and what a render's
+        compositing passes cut short. The viewer shows them and the command line prints them."""
         from pathlib import Path
         from .solids import MAX_ACCEL
         out = list(self._cap_notes)
@@ -1080,6 +1081,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
             out.append(msg if str(src) in msg else f'The mesh {Path(str(src)).name} could not be used: {msg}')
         if getattr(self, '_ocio_error', None):
             out.append(f'OCIO could not be used ({self._ocio_error}): the Standard view and sRGB footage are used instead.')
+        out += getattr(getattr(self, '_stage', None), 'notes', None) or []   # (a render job's compositing passes)
         return list(dict.fromkeys(out))
 
     def stats(self):

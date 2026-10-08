@@ -14,7 +14,8 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QF
                                QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
 from ..io.video import available_profiles
-from ..render.job import DEEP_SAMPLES, Output, deep_layers, fabric_layers, liquid_layers, output_notes, scene_contents
+from ..render.job import (DEEP_SAMPLES, PASS_KINDS, PASSES, Output, deep_layers, fabric_layers, liquid_layers,
+                          output_notes, scene_contents)
 from . import theme
 
 COMP_PROFILES = ['prores422hq', 'h264', 'h265', 'dnxhr_hq', 'prores4444']
@@ -115,6 +116,13 @@ class ExportDialog(QDialog):
                                  'passes on, it also holds the set\'s light split by where it comes from (light_key, light_sky, '
                                  'light_fire, light_lamps), to turn each light up or down in the comp.')
         row(self.comp_exr, QLabel('RGB · Lume light passes'))
+
+        self.passes = QCheckBox('EXR compositing passes')
+        self.passes.setToolTip('In the element and the composite EXRs: motion vectors (forward and backward, in pixels, '
+                               'for VectorBlur), the normals and positions of the set (N, P), a matte for every object, '
+                               'and Cryptomatte (objects and materials) for Nuke\'s, Fusion\'s and other Cryptomatte nodes. '
+                               'DWAA is lossy and would garble Cryptomatte, so with it these EXRs are written with ZIP.')
+        row(self.passes, QLabel('motion vectors · N · P · object mattes · Cryptomatte'))
 
         self.vdb = QCheckBox('Volume · OpenVDB sequence')
         self.vdb.setToolTip(VDB_TIPS.get(sc.kind, VDB_TIPS['fire']))
@@ -237,6 +245,8 @@ class ExportDialog(QDialog):
         self.mov.setChecked(s.value('export/mov', False, type=bool) and self.mov.isEnabled())
         self.comp.setChecked(s.value('export/comp', bool(sc.footage), type=bool))
         self.comp_exr.setChecked(s.value('export/comp_exr', False, type=bool))
+        self.passes.setChecked(s.value('export/passes', True, type=bool) and sc.kind in PASS_KINDS)
+        self.passes.setEnabled(sc.kind in PASS_KINDS)
         self.vdb.setChecked(s.value('export/vdb', False, type=bool))
         deep = deep_layers(sc)
         self.deep.setChecked(s.value('export/deep', False, type=bool) and bool(deep))
@@ -269,10 +279,11 @@ class ExportDialog(QDialog):
         self.camera.setChecked(s.value('export/camera', False, type=bool))
         i = self.comp_profile.findData(s.value('export/comp_profile', 'prores422hq'))
         self.comp_profile.setCurrentIndex(max(0, i))
-        for w in (self.exr, self.deep, self.png, self.mov, self.comp, self.comp_exr, self.vdb, self.mesh, self.fabric,
-                  self.scene_usd, self.camera, self.folder, self.name):
+        for w in (self.exr, self.deep, self.png, self.mov, self.comp, self.comp_exr, self.passes, self.vdb, self.mesh,
+                  self.fabric, self.scene_usd, self.camera, self.folder, self.name):
             (w.toggled if isinstance(w, QCheckBox) else w.textChanged).connect(self._update_labels)
         self.comp_profile.currentIndexChanged.connect(self._update_labels)
+        self.exr_comp.currentIndexChanged.connect(self._update_labels)   # (DWAA with the passes: written with ZIP)
         self.deep_n.currentIndexChanged.connect(self._update_labels)
         self._update_labels()
 
@@ -310,9 +321,10 @@ class ExportDialog(QDialog):
         folder = Path(self.folder.text() or '.')
         name = self.name.text().strip() or 'fire'
         out = []
+        passes = PASSES if (self.passes.isChecked() and self.passes.isEnabled()) else ()
         if self.exr.isChecked():
             layers = ('emission', 'glow', 'heat', 'depth', 'surface') if self.exr_layers.isChecked() else ()
-            out.append(Output('exr', str(folder / name / f'{name}.####.exr'), 'element', layers=layers,
+            out.append(Output('exr', str(folder / name / f'{name}.####.exr'), 'element', layers=layers + passes,
                               compression=self.exr_comp.currentData(), half=not self.exr_float.isChecked()))
         if self.deep.isChecked() and self.deep.isEnabled():
             out.append(Output('deep', str(folder / f'{name}_deep' / f'{name}.deep.####.exr'), 'element',
@@ -327,7 +339,7 @@ class ExportDialog(QDialog):
             ext = {'h264': '.mp4', 'h265': '.mp4'}.get(prof, '.mov')
             out.append(Output('video', str(folder / f'{name}_comp{ext}'), 'composite', prof, audio=self.comp_audio.isChecked()))
         if self.comp_exr.isChecked():
-            out.append(Output('exr', str(folder / f'{name}_comp' / f'{name}_comp.####.exr'), 'composite',
+            out.append(Output('exr', str(folder / f'{name}_comp' / f'{name}_comp.####.exr'), 'composite', layers=passes,
                               compression=self.exr_comp.currentData(), half=not self.exr_float.isChecked()))
         if self.vdb.isChecked():
             out.append(Output('vdb', str(folder / f'{name}_vdb' / f'{name}.####.vdb')))
@@ -349,6 +361,8 @@ class ExportDialog(QDialog):
                      ('comp_exr', self.comp_exr), ('vdb', self.vdb), ('mesh', self.mesh), ('fabric', self.fabric),
                      ('scene', self.scene_usd), ('camera', self.camera)):
             s.setValue(f'export/{k}', w.isChecked())
+        if self.passes.isEnabled():
+            s.setValue('export/passes', self.passes.isChecked())
         s.setValue('export/comp_profile', self.comp_profile.currentData())
         s.setValue('export/deep_samples', self.deep_n.currentData())
         if self.last.value() < self.first.value():

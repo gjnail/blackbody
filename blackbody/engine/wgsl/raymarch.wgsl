@@ -10,6 +10,11 @@
 // lamp:   rgb = how the lights in the set change the light on the surface seen, relative to the light the
 //         footage shows there (the footage is multiplied by 1 + lamp): lights added in CG brighten it,
 //         and the smoke's shadow takes away some of the light of the real lamps in the footage
+// vec:    with motion vectors on (mv.x), two vec4s per pixel, added up over the anti-aliasing passes (mv.z: this
+//         pass; the first starts them): how far the fire seen in the pixel moves on the screen (pixels, u to the right,
+//         v up) to the next frame (xy) and from the last (zw), times its share of the pixel (its opacity and its
+//         light, as the beauty has them), then that share. Its velocity and place are averaged along the ray, each
+//         step weighted by what it adds to the beauty, and moved through the three frames' cameras (render/passes.py)
 // deep:   with deep output on, up to deepp.x depth bins per pixel, shared by all the anti-aliasing
 //         passes: the colour and opacity each bin adds to the pixel (absolute, summed over the passes),
 //         then its front and back depth (m, along the view axis). The first pass that sees anything
@@ -67,6 +72,7 @@
 @group(0) @binding(27) var LT: texture_3d<f32>;                       // lamps' transmittance through the smoke (lamps.wgsl)
 @group(0) @binding(28) var<storage, read> lamps: array<Lamp>;         // the lights in the set (fire-local m)
 @group(0) @binding(29) var out_lamp: texture_storage_2d<rgba16float, write>;
+@group(0) @binding(30) var<storage, read_write> out_vec: array<vec4<f32>>;
 
 struct Lamp { p: vec4<f32>, c: vec4<f32>, d: vec4<f32>, e: vec4<f32> };  // see lamps.wgsl
 
@@ -95,6 +101,10 @@ struct Params {
   lim: vec4<f32>,        // x = stop the march at the liquid surface in `limit` (fire and liquid in one box);
                          // y = cloth in the light volume (L1.z: its extinction, 1/m; it shadows the surfaces)
   coal: vec4<f32>,       // coal bed: x = brightness (0 = none), y = temperature (K), z = lump frequency (1/m), w = height (m)
+  mv: vec4<f32>,         // motion vectors: x = on (1/0), y = simulation seconds per frame, z = anti-aliasing pass
+  mprev: mat4x4<f32>,    // fire-local -> clip at the last frame, this one and the next (the camera's own motion is in them)
+  mcur: mat4x4<f32>,
+  mnext: mat4x4<f32>,
 };
 @group(1) @binding(0) var<uniform> U: Params;
 
@@ -429,6 +439,36 @@ fn coal_emission(c: vec2<f32>, L: Look) -> vec3<f32> {
   return b.rgb * min(pow(10.0, (b.a - L.misc.x) * L.fire.w), 1.0e4) * L.fire2.x * COAL_GAIN * U.coal.x * c.x;
 }
 
+// Where fire-local p lands in the picture through m (pixels, y down); z < 0: behind the camera.
+fn screen_px(m: mat4x4<f32>, p: vec3<f32>) -> vec3<f32> {
+  let c = m * vec4<f32>(p, 1.0);
+  if (c.w <= 1e-6) { return vec3<f32>(0.0, 0.0, -1.0); }
+  return vec3<f32>((0.5 * c.x / c.w + 0.5) * U.res.x, (0.5 - 0.5 * c.y / c.w) * U.res.y, 1.0);
+}
+
+// How far fire-local p moving at v (m/s) moves on the screen to the next frame and from the last (pixels, u right, v up).
+fn screen_motion(p: vec3<f32>, v: vec3<f32>) -> vec4<f32> {
+  let c = screen_px(U.mcur, p);
+  let f = screen_px(U.mnext, p + v * U.mv.y);
+  let b = screen_px(U.mprev, p - v * U.mv.y);
+  var out = vec4<f32>(0.0);
+  if (c.z > 0.0 && f.z > 0.0) { out = vec4<f32>(f.x - c.x, c.y - f.y, 0.0, 0.0); }
+  if (c.z > 0.0 && b.z > 0.0) { out = vec4<f32>(out.xy, b.x - c.x, c.y - b.y); }
+  return out;
+}
+
+// Add this pass's motion vectors (straight) and the fire's share of the pixel to vec (the first pass starts them).
+fn add_vectors(px: vec2<i32>, v: vec4<f32>, share: f32) {
+  let k = (u32(px.y) * u32(U.res.x) + u32(px.x)) * 2u;
+  if (U.mv.z < 0.5) {
+    out_vec[k] = v * share;
+    out_vec[k + 1u] = vec4<f32>(share, 0.0, 0.0, 0.0);
+  } else {
+    out_vec[k] += v * share;
+    out_vec[k + 1u].x += share;
+  }
+}
+
 @compute @workgroup_size(8, 8, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let px = vec2<i32>(id.xy);
@@ -608,6 +648,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     textureStore(out_beauty, px, vec4<f32>(0.0));
     textureStore(out_emit, px, vec4<f32>(0.0));
     textureStore(out_aux, px, vec4<f32>(0.0));
+    if (U.mv.x > 0.5) { add_vectors(px, vec4<f32>(0.0), 0.0); }
     return;
   }
 
@@ -640,6 +681,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var d_t0 = t;
   var d_col = vec3<f32>(0.0);
   var d_tra = 1.0;
+  var m_vel = vec4<f32>(0.0);   // (motion vectors: velocity times each step's weight, and the weights; its place likewise)
+  var m_pos = vec3<f32>(0.0);
 
   let keep = 1.0 - matte;   // the fire behind an object in the footage's matte is hidden
   for (var i = 0; i < max_steps; i++) {
@@ -744,6 +787,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     dw += dop;
     tr *= a;
     tra *= exp(-(dens + wet + sf * L.fire2.w + cl.x) * ds);
+    if (U.mv.x > 0.5) {
+      // weighted as the beauty is made: by the light this step adds and the opacity it adds
+      let wv = luma(col - col_prev) + (tra_prev - tra);
+      if (wv > 0.0) {
+        m_vel += vec4<f32>(vel_at(vel, lin, p / vk, n / vk) * wv, wv);
+        m_pos += p * wv;
+      }
+    }
     t += step;
     if (deep_n > 0u) {
       if (defining) {
@@ -811,6 +862,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 
   let depth = select(0.0, dsum_depth / max(dw, 1e-6) / cells_per_m, dw > 1e-4);
+  if (U.mv.x > 0.5) {
+    var mvec = vec4<f32>(0.0);
+    if (m_vel.w > 1e-6) { mvec = screen_motion(U.org.xyz + (m_pos / m_vel.w) * h, m_vel.xyz / m_vel.w); }
+    add_vectors(px, mvec, clamp((1.0 - tra + luma(col)) * keep, 0.0, 1.0));
+  }
   textureStore(out_beauty, px, vec4<f32>(col, 1.0 - tra) * keep);
   textureStore(out_emit, px, vec4<f32>(emit, clamp(flame_a, 0.0, 1.0)) * keep);
   textureStore(out_aux, px, vec4<f32>(heat * keep, depth, kmax * 0.001, (1.0 - tra) * keep));

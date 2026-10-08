@@ -8,6 +8,13 @@ Notable changes to Blackbody. The format follows
 
 ### Added
 
+- Compositing passes in the EXRs: motion vectors (forward and backward, in pixels, for VectorBlur and retiming),
+  normals and positions (N, P), a matte for every named thing in the set (objects, broken pieces, ropes, the liquid,
+  the fabric) and Cryptomatte (objects and materials), in fire, liquid and fire-and-liquid renders, in element and
+  composite EXRs (traced through the footage's lens distortion). The fire's own motion is in the vectors. On by default
+  for EXRs ("EXR compositing passes" in the Render window, --no-passes on the command line); an EXR with them asked for
+  DWAA or DWAB is written with ZIP instead, which keeps the ids exact. They add one and a half to two seconds to a
+  full-HD EXR frame, mostly writing.
 - Export the shot to other programs: a USD scene of the whole shot (the camera, every object moving frame by frame,
   broken pieces, people's and cars' parts, ropes, sand, snow and mud as points, grass as curves, embers as points),
   and the camera alone as USD or a Nuke .chan. Every EXR now carries the camera in its header (worldToCamera,

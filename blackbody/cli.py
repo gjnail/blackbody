@@ -178,7 +178,8 @@ def cmd_render(args):
     from .engine.engine import Engine
     from .io.footage import Footage
     from .io.video import PROFILES, available_profiles
-    from .render.job import DATA_KINDS, RenderJob, check_outputs, infer_output, liquid_layers, output_notes
+    from .render.job import (DATA_KINDS, PASSES, RenderJob, check_outputs, infer_output, liquid_layers,
+                             output_notes)
     from .scene import Scene, presets
 
     if args.scene:
@@ -253,6 +254,8 @@ def cmd_render(args):
             o.compression = args.exr_compression
         if args.float:
             o.half = False
+        if args.no_passes:
+            o.layers = tuple(k for k in o.layers if k not in PASSES)
         if o.kind == 'deep' and args.deep_samples:
             o.deep_samples = args.deep_samples
         if o.kind == 'mesh' and not liquid_layers(scene):
@@ -485,6 +488,8 @@ def main(argv=None):
     r.add_argument('--png-bits', type=int, choices=(8, 16))
     r.add_argument('--exr-compression', choices=('none', 'zip', 'zips', 'piz', 'dwaa', 'dwab', 'rle', 'zstd'))
     r.add_argument('--float', action='store_true', help='32-bit float EXR instead of half')
+    r.add_argument('--no-passes', action='store_true',
+                   help='EXRs without the compositing passes (motion vectors, normals, object mattes, Cryptomatte)')
     r.add_argument('--deep-samples', type=int, choices=(8, 16),
                    help='deep EXR samples per pixel (default 8; 16 keeps thick, layered smoke apart, at twice the memory)')
     r.add_argument('--draft', action='store_true', help='interactive quality (fast)')

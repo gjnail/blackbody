@@ -234,8 +234,16 @@ class Renderer:
                                                   'st2d:rgba16float:w', 'st2d:rgba16float:w', 'st2d:rgba16float:w',
                                                   'st2d:rgba16float:w', 'st2d:rgba16float:w', 'rbuf', 'rbuf',
                                                   'utex3d', 'utex3d', 'rbuf', 'utex3d', 'utex2d', 'utex3d', 'tex2d', 'buf',
-                                                  'utex3d', 'rbuf', 'tex3d', 'rbuf', 'st2d:rgba16float:w'],
+                                                  'utex3d', 'rbuf', 'tex3d', 'rbuf', 'st2d:rgba16float:w', 'buf'],
                                 defines=BB_DEFINES, workgroup=(8, 8, 1))
+        # motion vectors of the fire (render/passes.MarchMotion: the last, this and the next frame's fire-local -> clip
+        # matrices and the simulation seconds per frame), set by a render job that writes them; None: off. The march
+        # adds each anti-aliasing pass's into vec (read_vectors): per pixel its vectors times its share of the pixel, then
+        # that share
+        self.motion = None
+        self.vec = None
+        self._vec_passes = 0
+        self._no_vec = g.buffer(32, 'no-vectors')
         self.k_lights = g.kernel('lights.wgsl', ['utex3d', 'buf', 'buf'], workgroup=(4, 4, 4))
         self.k_lamps = g.kernel('lamps.wgsl', ['tex3d', 'smp', 'rbuf', 'st3d:rgba16float:w'])
         self._lamp_buf = g.buffer(LAMP_ROWS * 64, 'lamps')
@@ -446,6 +454,18 @@ class Renderer:
             self._ember_deep_used = False
         return self.ember_deep
 
+    def read_vectors(self):
+        """The fire's motion vectors of the last render (with self.motion): (vectors (h, w, 4): forward u, v, backward
+        u, v in pixels, each anti-aliasing pass's weighted by its share of the pixel; share (h, w): how much of the pixel
+        the fire is, its opacity and its light, averaged over the passes), or None."""
+        if self.vec is None or not self._vec_passes:
+            return None
+        w, h = self.fire_size
+        raw = np.frombuffer(self.gpu.read_buffer(self.vec, w * h * 32), np.float32).reshape(h, w, 2, 4)
+        s = raw[..., 1, 0]
+        vec = np.where(s[..., None] > 1e-6, raw[..., 0, :] / np.maximum(s, 1e-6)[..., None], 0.0).astype(np.float32)
+        return vec, np.clip(s / self._vec_passes, 0.0, 1.0).astype(np.float32)
+
     def read_deep(self):
         """(h, w, samples + 1, 8) float32 deep samples, front to back: premultiplied rgba, then the front
         and back depth (m, along the view axis). They composite back (over, front to back) to the beauty
@@ -612,9 +632,11 @@ class Renderer:
 
     def march(self, b, solver, camstate: cam.CameraState, fire: cam.FireXform, look: LookParams, size,
               jitter=(0.0, 0.0), seed=0.0, shutter=0.0, ground=True, time=0.0, max_steps=None, surfaces=None,
-              limit=None, comp: CompParams | None = None, plate_fit=(1.0, 1.0), deep_pass=0):
+              limit=None, comp: CompParams | None = None, plate_fit=(1.0, 1.0), deep_pass=0, vec_pass=0):
         """limit: a texture with a liquid's depth (y, m) and coverage (w) per pixel; the march stops there.
-        comp: the footage holdout settings (depth pass units), with set_holdout."""
+        comp: the footage holdout settings (depth pass units), with set_holdout.
+        vec_pass: with motion vectors on (self.motion), which anti-aliasing pass this is: 0 starts them, a later one adds
+        to them; None: this march adds none (the fire behind a liquid, which the one in front of it covers)."""
         from .solver import pack_colliders
         self._use_response(look.colour_response)
         w, h = size
@@ -651,6 +673,17 @@ class Renderer:
         pack_colliders(u, sf.colliders, sf.meshes)
         u.v4(1.0 if limit is not None else 0.0, 1.0 if self.occluded else 0.0)
         u.v4(look.coal_bed, look.coal_k, COAL_FREQ, max(look.coal_height, 0.005))
+        mo = self.motion if vec_pass is not None else None
+        if mo is not None:
+            need = w * h * 32
+            if self.vec is None or self.vec.size < need:
+                if self.vec is not None:
+                    self.vec.destroy()
+                self.vec = self.gpu.buffer(need, 'fire-vectors')
+            self._vec_passes = int(vec_pass) + 1
+            u.v4(1.0, mo.dt, float(vec_pass)).m4(mo.prev).m4(mo.cur).m4(mo.next)
+        else:
+            u.v4().raw([0.0] * 48)
         self._haze_src = (solver, camstate, fire, look, time)
         b.run(self.k_march, [solver.scal[0], solver.vel[0], self.L0_march or self.L0, self.L1_march or self.L1, self.noise, self.bb,
                              self.gpu.linear, self.gpu.repeat, self._aux_of(solver), self._chem_of(solver),
@@ -663,7 +696,8 @@ class Renderer:
                              self.deep if self.deep_n else self._no_deep,
                              soot_obj if soot_obj is not None else self._empty_r32,
                              sf.stain_slots if soot_obj is not None else self._no_soot_slots,
-                             self.LT if self._lamps_on else self._empty, self._lamp_buf, self.lamp_surf], u, (w, h, 1))
+                             self.LT if self._lamps_on else self._empty, self._lamp_buf, self.lamp_surf,
+                             self.vec if mo is not None else self._no_vec], u, (w, h, 1))
 
     def holdouts(self, comp):
         """(texture, matte on, depth on, depth kind, metres per unit) of the holdouts this render: the stage's when
