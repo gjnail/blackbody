@@ -333,6 +333,11 @@ Notable changes to Blackbody. The format follows
 
 ### Fixed
 
+- Fabric simulates the same every time. A scene simulated after another in the same session could take the last
+  scene's fabric and dust into its smoke on its first frame; fabric touching itself summed its pushes in an order
+  the GPU chose; and on some drivers one shape of division rounds two ways from run to run, which the cloth's chaos
+  grew into a different drape. A cloth dropped on a heap of sand no longer lets the heap's top grains through it
+  when it falls fast.
 - Two presets fixed, found by the new test of every preset: one of the tsunami's cars started inside the house, and
   Snow blowing off a heap made most of its snow below the ground (its heap was centred on it) and threw it away.
 - Environment (HDRI), its rotation and strength, and Key light from environment can be set and work in fire scenes;

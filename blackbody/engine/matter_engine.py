@@ -89,10 +89,10 @@ class MatterEngine:
                 return True
         return False
 
-    def _cloth_meets_matter(self):
-        """Fabric and matter through this frame: the fabric drapes over the matter's surface as it is now, and the matter
-        meets the fabric as a sheet it cannot pass through (its push on the fabric goes into the fabric's next frame).
-        Before the frame's batch (the surface is built in a batch of its own)."""
+    def _cloth_meets_matter(self, fdt=0.0):
+        """Fabric and matter through this frame (fdt seconds): the fabric drapes over the matter's surface as it is now,
+        and the matter meets the fabric as a sheet it cannot pass through (its push on the fabric goes into the
+        fabric's next frame). Before the frame's batch (the surface is built in a batch of its own)."""
         m, c = self._matter, getattr(self, 'cloth', None)
         if c is None:
             return
@@ -104,7 +104,7 @@ class MatterEngine:
         m.surface()
         c.matter_link = m.cloth_link()
         with self.gpu.batch() as b:
-            m.cloth_field(b, c)
+            m.cloth_field(b, c, fdt)
 
     def _objects_meet_cloth(self, fdt):
         """Before the rigid bodies' frame: the fabric as it is now, for the things that fall to land on and hit

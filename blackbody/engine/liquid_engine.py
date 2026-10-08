@@ -252,7 +252,7 @@ class LiquidEngine:
         # was measured over the frame before; the liquid then sees them where they are at each substep
         solids = self.solids if self.solids.active else None
         self._push_matter(L)
-        self._cloth_meets_matter()      # (fabric and sand, snow, mud: each the other's surface this frame)
+        self._cloth_meets_matter(fdt)   # (fabric and sand, snow, mud: each the other's surface this frame)
         if solids:
             self._objects_meet_cloth(fdt)
             self._shots_ahead(scene, fdt)     # (bullets: where their ways cross the water, the sand, snow and mud)

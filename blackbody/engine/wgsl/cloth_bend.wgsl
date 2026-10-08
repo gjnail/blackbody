@@ -57,7 +57,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // curved at rest: keep the curvature's size (a scalar constraint along v)
     let l = length(v);
     if (l < 1e-9) { return; }
-    let d = (-(l - hg.c.y) - at * lam.x) / (wsum + at) * U.rng.w;
+    let d = (-(l - hg.c.y) - at * lam.x) * (U.rng.w / (wsum + at));   // (not ... / s * k: cloth_mg.wgsl l0_cheb)
     LB[hi] = vec4<f32>(lam.x + d, 0.0, 0.0, 0.0);
     dl = v / l * d;
   } else {
@@ -72,7 +72,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       let ln = length(nh);
       if (ln > 1e-12) { goal = nh / ln * (0.6 * chr * length(e)); }
     }
-    dl = (-(v - goal) - at * lam.xyz) / (wsum + at) * U.rng.w;
+    dl = (-(v - goal) - at * lam.xyz) * (U.rng.w / (wsum + at));
     LB[hi] = vec4<f32>(lam.xyz + dl, 0.0);
   }
   X[iv.x] = vec4<f32>(x0.xyz + im.x * k.x * dl, x0.w);

@@ -754,6 +754,9 @@ class Cloth:
         g.write_buffer(self.bufs['HOLED'], np.zeros(MAX_FABRICS, np.uint32))
         with g.batch() as b:
             self._normals(b)
+        # (the coupling grid still holds the cloth of a run before, perhaps another scene's: the gas takes nothing from
+        # it until splat() has filled it again)
+        self._couple_filled = False
         self.placed = True
         self.steps = 0
 

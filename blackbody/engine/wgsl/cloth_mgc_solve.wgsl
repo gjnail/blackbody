@@ -36,7 +36,7 @@ fn cheb(@builtin(global_invocation_id) id: vec3<u32>) {
     return;
   }
   let d = g.x / (U.a.y * U.a.y) + g.y;
-  let dx = DC[c].xyz * U.a.z + residual(c) / max(d, 1e-30) * U.a.w;
+  let dx = DC[c].xyz * U.a.z + residual(c) * (U.a.w / max(d, 1e-30));   // (not r / d * c: cloth_mg.wgsl l0_cheb)
   DC[c] = vec4<f32>(dx, 0.0);
   XO[c] = vec4<f32>(x.xyz + dx, 0.0);
 }

@@ -90,7 +90,9 @@ fn l0_cheb(@builtin(global_invocation_id) id: vec3<u32>) {
     return;
   }
   let rd = residual0(i);
-  let dx = DX[i].xyz * U.a.z + rd.xyz / rd.w * U.a.w;
+  // (x * (c / d), not x / d * c: the GPU's driver evaluates that one two ways, a bit apart, from one dispatch to
+  // the next, and a run then depends on timing)
+  let dx = DX[i].xyz * U.a.z + rd.xyz * (U.a.w / rd.w);
   DX[i] = vec4<f32>(dx, 0.0);
   XO[i] = vec4<f32>(x.xyz + dx, x.w);
 }

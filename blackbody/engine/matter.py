@@ -684,6 +684,11 @@ class Matter:
         self.surface_ready = False
         self._view = None            # what the surface is drawn from: None the live particles, else a cached frame's
         self._cloth = None
+        # (nor any dust shed before: the last frame's would go into the gas as smoke at the first, dust_hook)
+        self._dust_ready = False
+        for k in ('DU', 'DUF'):
+            if k in self._buf:
+                self.gpu.write_buffer(self._buf[k], np.zeros(self._buf[k].size // 4, np.uint32))
         self._compact(None)
 
     # -- stepping -------------------------------------------------------------------------------
@@ -1251,10 +1256,10 @@ class Matter:
         return (self._tex['surf'], self._tex['vel'], tuple(float(x) for x in self.origin), float(self.dx),
                 tuple(int(x) for x in self.dims))
 
-    def cloth_field(self, b, cloth):
-        """The fabric `cloth` (cloth.Cloth) as a thin sheet on the grid through this frame's steps, which the matter
-        cannot pass through (cloth_matter.wgsl splat; in batch b). Its push on the fabric is gathered as the frame
-        ends (end())."""
+    def cloth_field(self, b, cloth, frame_dt=0.0):
+        """The fabric `cloth` (cloth.Cloth) as a thin sheet on the grid through this frame's steps (frame_dt s: it
+        reaches on along the way it moves through them), which the matter cannot pass through (cloth_matter.wgsl
+        splat; in batch b). Its push on the fabric is gathered as the frame ends (end())."""
         self._cloth = None
         if not self.active or not self.count or cloth is None or not cloth.active or not cloth.placed:
             return
@@ -1266,7 +1271,7 @@ class Matter:
         b.clear_buffer(self._buf['CTK'])
         k = cloth.bufs
         n = cloth.built.n
-        u = Uniforms().v4(*self.origin, self.dx).v4(*self.dims, n).v4(self._cloth_reach(cloth), 0.0)
+        u = Uniforms().v4(*self.origin, self.dx).v4(*self.dims, n).v4(self._cloth_reach(cloth), float(frame_dt))
         b.run(self._k['cm_splat'], [k['X'], k['V'], k['N'], k['S'], self._buf['CF'], self._buf['CTK'], k['MP'], k['R']], u,
               (n, 1, 1))
         self._cloth = cloth

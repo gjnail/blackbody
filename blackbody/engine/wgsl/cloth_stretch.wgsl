@@ -50,7 +50,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let Cv = len - L0;
   var alpha = bitcast<f32>(c.w) / (U.rng.z * U.rng.z);
   if (Cv < 0.0) { alpha *= U.rng.w; }
-  let dl = (-Cv - alpha * LS[ci]) / (W + alpha) * U.k.x;
+  let dl = (-Cv - alpha * LS[ci]) * (U.k.x / (W + alpha));   // (not ... / (W + alpha) * k: cloth_mg.wgsl l0_cheb)
   LS[ci] += dl;
   let n = d / len;
   X[i] = vec4<f32>(xi.xyz + n * (wi * dl), xi.w);

@@ -311,7 +311,7 @@ class BothEngine:
         solids = self.solids if self.solids.active else None
         poses = None
         self._push_matter(L)
-        self._cloth_meets_matter()      # (fabric and sand, snow, mud: each the other's surface this frame)
+        self._cloth_meets_matter(fdt)   # (fabric and sand, snow, mud: each the other's surface this frame)
         if solids:
             self._air_for_solids()
             self._objects_meet_cloth(fdt)

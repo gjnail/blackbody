@@ -324,7 +324,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
         # rigid bodies move first through the frame (with the air's drag from the frame before); the gas then
         # sees them where they are at each substep
         poses = None
-        self._cloth_meets_matter()      # (fabric and sand, snow, mud: each the other's surface this frame)
+        self._cloth_meets_matter(fdt)   # (fabric and sand, snow, mud: each the other's surface this frame)
         if self.solids.active:
             self._air_for_solids()
             self._objects_meet_cloth(fdt)

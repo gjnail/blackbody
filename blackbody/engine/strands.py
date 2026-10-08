@@ -294,6 +294,7 @@ class Strands:
     def reset(self):
         """Grow again (place()) at the next step."""
         self._canopy_filled = False
+        self._couple_filled = False     # (its coupling grid holds the last run's burning blades until splat())
         self.placed = False
         self.time = 0.0
 

@@ -4,7 +4,8 @@
 // a triangle it was on when the substep began: one that has crossed in this step is put back on that
 // side, so a fast fold cannot slip through itself. Two fabrics collide at the larger of their radii.
 // Layers rub: half their sliding past each other is taken away. The pushes are gathered here and applied
-// in cloth_collide.wgsl.
+// in cloth_collide.wgsl. They are summed in fixed point: the hashed grid's lists come in whatever order the
+// GPU inserted them, and a float sum in that order would make each run (and every run after it) differ.
 //!include cloth_common.wgsl
 
 struct Params {
@@ -21,6 +22,9 @@ struct Params {
 @group(0) @binding(6) var<storage, read> T: array<vec4<u32>>;
 @group(0) @binding(7) var<storage, read> VT: array<u32>;
 @group(1) @binding(0) var<uniform> U: Params;
+
+const FX_D: f32 = 4194304.0;   // the pushes' fixed point (2^22 per m: a quarter of a micron, 512 m at most)
+const CHAIN_MAX: i32 = 256;    // the most of a list walked (only a cap on the work: they are a few long)
 
 fn radius(f: u32) -> f32 {
   let q = U.rad[f / 4u];
@@ -71,14 +75,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let nb = u32(U.h.z);
   let cell = U.h.y;
   let c0 = vec3<i32>(floor(xi / cell));
-  var acc = vec3<f32>(0.0);
-  var cnt = 0.0;
+  var acc = vec3<i32>(0);
+  var cnt = 0u;
   for (var k = 0; k < 27; k++) {
     let c = c0 + vec3<i32>(k % 3 - 1, (k / 3) % 3 - 1, k / 9 - 1);
     var j = HN[cell_hash(c, nb)];
     var guard = 0;
     loop {
-      if (j == 0xffffffffu || guard >= 64) { break; }
+      if (j == 0xffffffffu || guard >= CHAIN_MAX) { break; }
       guard++;
       let nj = HN[nb + j];
       if (j != i && all(vec3<i32>(floor(X[j].xyz / cell)) == c)) {
@@ -126,12 +130,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           // rub: take away half the sliding against the triangle
           let rel = (xi - pi) - ((a + b + cc) - (pa + P[t.y].xyz + P[t.z].xyz)) / 3.0;
           push -= 0.5 * (rel - dot(rel, nn) * nn);
-          acc += push;
-          cnt += 1.0;
+          acc += vec3<i32>(round(push * FX_D));
+          cnt += 1u;
         }
       }
       j = nj;
     }
   }
-  if (cnt > 0.0) { D[i] = vec4<f32>(acc / cnt, cnt); }
+  if (cnt > 0u) { D[i] = vec4<f32>(vec3<f32>(acc) / (FX_D * f32(cnt)), f32(cnt)); }
 }
