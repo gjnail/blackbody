@@ -12,6 +12,7 @@ blackbody render shot.bbfire -o wedge/fuel20.####.exr --set emitter.0.fuel=20
 blackbody render shot.bbfire -o deep/fire.deep.####.exr
 blackbody render shot.bbfire -o usd/shot.scene.usdc -o cam/shot.chan
 blackbody render --preset campfire --usd shot.usd -o fire.####.exr
+blackbody render --preset campfire --usd shot.usd --usd-offset 1000 -o fire.####.exr
 blackbody simulate shot.bbfire --cache //server/cache/shot
 blackbody render shot.bbfire --from-cache //server/cache/shot --frames 1001-1050 -o fire.####.exr
 blackbody presets
@@ -28,7 +29,7 @@ blackbody precompile
 
 - EXRs carry the compositing passes (motion vectors, normals and positions, object mattes, Cryptomatte: see [Outputs](outputs.md#compositing-passes)); `--no-passes` leaves them out, saving about two seconds a full-HD EXR frame (more in sets with many pieces). With `--exr-compression dwaa` or `dwab` an EXR that has them is written with ZIP: DWA is lossy and would garble the Cryptomatte.
 
-- `--usd FILE` brings the camera, objects (as colliders) and lights in from a USD scene before rendering.
+- `--usd FILE` brings the camera, objects (as colliders) and lights in from a USD scene before rendering, and takes its frame range and frame rate, as File › Import USD scene does (with `--footage`, or a project with footage, only where the shot starts: the footage keeps its length and rate). `--usd-offset N` turns USD frame F into frame F − N, so `--usd-offset 1000` renders a 1001–1100 shot as frames 1–100; the camera and objects stay in step. `--usd-keep-range` keeps the project's or preset's own range and rate.
 
 - **Simulate once, render anywhere.** `blackbody simulate` simulates into a disk cache folder (by default `NAME.bbcache` next to the project), with a checkpoint every few frames; run it again after a crash or a stop and it resumes from the last checkpoint. `blackbody render --from-cache FOLDER` then renders frames from that cache without simulating, so several machines can render different frame ranges of one simulation. They only read the cache, and refuse one simulated with other settings instead of overwriting it. `render --cache FOLDER` simulates and fills the cache as it renders.
 

@@ -1060,7 +1060,7 @@ def test_usd_curves_points_volumes_nested_instancers_and_lights(tmp_path, engine
     v, t = U.load_usd_mesh(path, '/Set/Rope?world')
     assert v[:, 1].min() > 0.4 and v[:, 1].max() < 1.1, 'a Catmull-Rom curve runs between its inner points'
     v, t = U.load_usd_mesh(path, '/Set/Gravel?world')
-    assert len(t) == 24
+    assert len(t) == 3 * 80, 'a ball at every point (test_import_gaps.py)'
     v, t = U.load_usd_mesh(path, '/Set/Rows?world')
     assert len(t) == 4 * 12, 'every brick of every row'
     assert sorted({round(float(z), 2) for z in v[:, 2]}) == [-3.1, -2.9, -2.1, -1.9]
@@ -1077,7 +1077,7 @@ def test_usd_curves_points_volumes_nested_instancers_and_lights(tmp_path, engine
     assert (lights['Window']['width'], lights['Window']['height']) == pytest.approx((2.0, 1.0))   # its panel
     assert lights['Spot']['kind'] == 'spot' and lights['Spot']['cone'] == pytest.approx(20.0)
     assert lights['Spot']['direction'] == pytest.approx((0.0, -1.0, 0.0), abs=1e-6)
-    assert any('PortalLight' in r for r in report)
+    assert any('light /Set/Portal (area' in r for r in report), 'a portal: a panel (test_import_gaps.py)'
 
 
 def _lamp_scene(engine, res=48):

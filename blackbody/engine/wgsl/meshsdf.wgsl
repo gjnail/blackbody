@@ -1,11 +1,24 @@
 // Mesh signed distance fields. Every mesh in use is baked once into a distance grid in mesh units,
-// and all of them are stacked along z in one r32float atlas. The including file declares
-// `atlas: texture_3d<f32>` (a 1x1x1 texture when no mesh is in use).
+// and all of them share one r32float atlas: stacked along z in columns that stand side by side in x
+// and y (engine/mesh.py pack_atlas). The including file declares `atlas: texture_3d<f32>` (a 1x1x1
+// texture when no mesh is in use).
 //
-// A mesh reference is three vec4s: m0 = bounding box min, atlas z offset (negative: no mesh);
-// m1 = bounding box max, _; m2 = grid dims (cells), _. A deforming mesh (a numbered sequence or an
-// animated USD prim) adds an = (atlas z offset of the next frame (negative: the mesh does not
-// deform), blend toward it (0..1), frames per second, _): both frames share one grid.
+// A mesh reference is three vec4s: m0 = bounding box min, atlas code (where its grid starts in the
+// atlas, atlas_org; negative: no mesh); m1 = bounding box max, _; m2 = grid dims (cells), _. A
+// deforming mesh (a numbered sequence or an animated USD prim) adds an = (atlas code of the next frame
+// (negative: the mesh does not deform), blend toward it (0..1), frames per second, _): both frames
+// share one grid.
+
+const ATLAS_TILE: i32 = 32;     // matches mesh.ATLAS_TILE: columns start on this grid in x and y
+const ATLAS_TILES: i32 = 64;    // matches mesh.ATLAS_TILES
+const ATLAS_ZSPAN: i32 = 2048;  // matches mesh.ATLAS_ZSPAN
+
+// The atlas cell a grid starts at, from its atlas code: z + ATLAS_ZSPAN * (x tile + ATLAS_TILES * y tile).
+fn atlas_org(code: f32) -> vec3<i32> {
+  let k = i32(round(code));
+  let col = k / ATLAS_ZSPAN;
+  return vec3<i32>((col % ATLAS_TILES) * ATLAS_TILE, (col / ATLAS_TILES) * ATLAS_TILE, k - col * ATLAS_ZSPAN);
+}
 
 // Rotation about the vertical axis: world offset -> object space, and back.
 fn yaw_to_local(r: vec3<f32>, yaw: f32) -> vec3<f32> {
@@ -20,9 +33,10 @@ fn yaw_to_world(q: vec3<f32>, yaw: f32) -> vec3<f32> {
   return vec3<f32>(cs * q.x + sn * q.z, q.y, -sn * q.x + cs * q.z);
 }
 
-fn atlas_at(c: vec3<i32>, dims: vec3<i32>, zoff: i32) -> f32 {
+// A grid's cell c (clamped to the grid), the grid starting at atlas cell org.
+fn atlas_at(c: vec3<i32>, dims: vec3<i32>, org: vec3<i32>) -> f32 {
   let q = clamp(c, vec3<i32>(0), dims - vec3<i32>(1));
-  return textureLoad(atlas, vec3<i32>(q.x, q.y, q.z + zoff), 0).x;
+  return textureLoad(atlas, q + org, 0).x;
 }
 
 // Signed distance (mesh units) at q (mesh space). Outside the baked box, the distance to the box
@@ -36,7 +50,7 @@ fn mesh_sdf(q: vec3<f32>, m0: vec4<f32>, m1: vec4<f32>, m2: vec4<f32>) -> f32 {
   let t = (qc - m0.xyz) / cell - vec3<f32>(0.5);
   let i0 = vec3<i32>(floor(t));
   let f = t - floor(t);
-  let z = i32(m0.w);
+  let z = atlas_org(m0.w);
   let c00 = mix(atlas_at(i0, dims, z), atlas_at(i0 + vec3<i32>(1, 0, 0), dims, z), f.x);
   let c10 = mix(atlas_at(i0 + vec3<i32>(0, 1, 0), dims, z), atlas_at(i0 + vec3<i32>(1, 1, 0), dims, z), f.x);
   let c01 = mix(atlas_at(i0 + vec3<i32>(0, 0, 1), dims, z), atlas_at(i0 + vec3<i32>(1, 0, 1), dims, z), f.x);

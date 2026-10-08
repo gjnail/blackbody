@@ -238,7 +238,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
             self.sig = None
         sig = scene.sim_signature(final)
         dims, h, origin = scene.sim_layout(final)
-        self.solver.set_meshes(scene.mesh_items(scene.start), scene.data['domain']['mesh_resolution'])
+        self.solver.set_meshes(scene.mesh_items(scene.start), scene.data['domain']['mesh_resolution'], cell=h)
         changed = self.solver.configure(dims, h, origin, scene.features(), scene.upres_for(final))
         self.base_dims = dims
         self.solver.set_colliders(scene.colliders_gpu(scene.start))

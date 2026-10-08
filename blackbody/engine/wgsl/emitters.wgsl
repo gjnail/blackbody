@@ -13,33 +13,52 @@ struct Emitter {
   g: vec4<f32>,    // swirl: speed at the core edge (m/s), axis x, axis z (world m), core radius (m)
   k: vec4<f32>,    // swirl reach (m), swirl base height (m), rotation about y (radians), douse rate (1/s)
   col: vec4<f32>,  // colourant released per second (rgb), water vapour in the released gas (g/m^3)
-  m0: vec4<f32>,   // mesh or volume: bounding box min, atlas z offset (negative: none)
-  m1: vec4<f32>,   // mesh: bounding box max; w = surface depth (m, 0 = solid). Volume: w = has a temperature layer
+  m0: vec4<f32>,   // mesh or volume: bounding box min, atlas code (meshsdf.wgsl atlas_org; negative: none)
+  m1: vec4<f32>,   // mesh: bounding box max; w = surface depth (m, 0 = solid). Volume: w = its layers past the
+                   // density (1: a temperature, 2: a velocity, 3: both)
   m2: vec4<f32>,   // mesh or volume: grid dims (cells); w = weight when picking an emitter for embers
-  s: vec4<f32>,    // deforming mesh: next frame's atlas z offset (negative: none), blend, frames per second;
-                   // w = volume mode (1 releases at its rates, 2 fills the box once, 3 keeps it topped up)
+  s: vec4<f32>,    // deforming mesh or changing volume: next frame's atlas code (negative: none), blend; z: a mesh's
+                   // frames per second, a volume's velocity strength (0..1); w = volume mode (1 releases at its
+                   // rates, 2 fills the box once, 3 keeps it topped up)
   r: vec4<f32>,    // orientation quaternion (x, y, z, w), applied after the yaw: an object it rides on tipped or
                    // tumbled (identity: none)
 };
 
 // Shape ids: 0 ellipsoid, 1 box, 2 cylinder (vertical), 3 capsule, 4 ring (horizontal torus), 5 cone, 6 mesh,
-// 7 volume (the density of a VDB, io/volume.py, in the mesh atlas: layer 0 density, layer 1 temperature).
+// 7 volume (the field of a VDB or of USD points, io/volume.py, in the mesh atlas: layer 0 density, then the
+// temperature and the velocity's x, y and z when it has them, as m1.w says).
 
-// A volume's field at q (its own frame, metres before scaling), trilinear; zero outside it.
-fn field_at(q: vec3<f32>, m0: vec4<f32>, m1: vec4<f32>, m2: vec4<f32>, layer: i32) -> f32 {
-  if (m0.w < 0.0) { return 0.0; }
+// Layer `layer` of a volume's field at q (its own frame, metres before scaling) from the grid at atlas code `code`,
+// trilinear; zero outside it.
+fn field_layer(q: vec3<f32>, code: f32, m0: vec4<f32>, m1: vec4<f32>, m2: vec4<f32>, layer: i32) -> f32 {
   let cell = (m1.xyz - m0.xyz) / max(m2.xyz, vec3<f32>(1.0));
   let t = (q - m0.xyz) / cell - vec3<f32>(0.5);
   if (any(t < vec3<f32>(-0.5)) || any(t > m2.xyz - vec3<f32>(0.5))) { return 0.0; }
   let dims = vec3<i32>(m2.xyz);
   let i0 = vec3<i32>(floor(t));
   let f = t - floor(t);
-  let z = i32(m0.w) + layer * dims.z;
+  let z = atlas_org(code) + vec3<i32>(0, 0, layer * dims.z);
   let c00 = mix(atlas_at(i0, dims, z), atlas_at(i0 + vec3<i32>(1, 0, 0), dims, z), f.x);
   let c10 = mix(atlas_at(i0 + vec3<i32>(0, 1, 0), dims, z), atlas_at(i0 + vec3<i32>(1, 1, 0), dims, z), f.x);
   let c01 = mix(atlas_at(i0 + vec3<i32>(0, 0, 1), dims, z), atlas_at(i0 + vec3<i32>(1, 0, 1), dims, z), f.x);
   let c11 = mix(atlas_at(i0 + vec3<i32>(0, 1, 1), dims, z), atlas_at(i0 + vec3<i32>(1, 1, 1), dims, z), f.x);
-  return max(mix(mix(c00, c10, f.y), mix(c01, c11, f.y), f.z), 0.0);
+  return mix(mix(c00, c10, f.y), mix(c01, c11, f.y), f.z);
+}
+
+// A volume's field at q, blended toward its next frame when it changes (an = (next frame's atlas code or -1, blend)).
+fn field_at(q: vec3<f32>, m0: vec4<f32>, m1: vec4<f32>, m2: vec4<f32>, an: vec4<f32>, layer: i32) -> f32 {
+  if (m0.w < 0.0) { return 0.0; }
+  let a = field_layer(q, m0.w, m0, m1, m2, layer);
+  if (an.x < 0.0 || an.y <= 0.0) { return a; }
+  return mix(a, field_layer(q, an.x, m0, m1, m2, layer), an.y);
+}
+
+fn volume_has_heat(e: Emitter) -> bool {
+  return (i32(e.m1.w + 0.5) & 1) != 0;
+}
+
+fn volume_has_velocity(e: Emitter) -> bool {
+  return (i32(e.m1.w + 0.5) & 2) != 0;
 }
 
 // v turned by the unit quaternion q (colliders.wgsl's quat_rotate: not every kernel with emitters includes it)
@@ -64,12 +83,33 @@ fn volume_local(e: Emitter, w: vec3<f32>) -> vec3<f32> {
 
 // A Volume emitter's density at world point w (about 1 where the volume is densest).
 fn volume_density(e: Emitter, w: vec3<f32>) -> f32 {
-  return field_at(volume_local(e, w), e.m0, e.m1, e.m2, 0);
+  return max(field_at(volume_local(e, w), e.m0, e.m1, e.m2, e.s, 0), 0.0);
 }
 
 // Its temperature (scaled the same way), or its density when it has none.
 fn volume_heat(e: Emitter, w: vec3<f32>) -> f32 {
-  return field_at(volume_local(e, w), e.m0, e.m1, e.m2, select(0, 1, e.m1.w > 0.5));
+  return max(field_at(volume_local(e, w), e.m0, e.m1, e.m2, e.s, select(0, 1, volume_has_heat(e))), 0.0);
+}
+
+// Its own velocity at world point w (m/s, world axes; scaled and turned with it); zero when it has none.
+fn volume_velocity(e: Emitter, w: vec3<f32>) -> vec3<f32> {
+  if (!volume_has_velocity(e)) { return vec3<f32>(0.0); }
+  let q = volume_local(e, w);
+  let first = select(1, 2, volume_has_heat(e));
+  let v = vec3<f32>(field_at(q, e.m0, e.m1, e.m2, e.s, first), field_at(q, e.m0, e.m1, e.m2, e.s, first + 1),
+                    field_at(q, e.m0, e.m1, e.m2, e.s, first + 2));
+  return em_turn(e.r, yaw_to_world(v * e.b.xyz, e.k.z));
+}
+
+// How strongly a Volume emitter's own velocity counts (Velocity from the volume, s.z); 0 for any other emitter.
+fn volume_vel_strength(e: Emitter) -> f32 {
+  if (i32(e.a.w + 0.5) != 7 || !volume_has_velocity(e)) { return 0.0; }
+  return clamp(e.s.z, 0.0, 1.0);
+}
+
+// Whether an emitter sets the velocity where it is at all: its Velocity strength, or its velocity from the volume.
+fn emitter_vel_blend(e: Emitter) -> f32 {
+  return max(e.d.w, volume_vel_strength(e));
 }
 fn emitter_sdf(e: Emitter, w: vec3<f32>) -> f32 {
   let shape = i32(e.a.w + 0.5);
@@ -139,7 +179,33 @@ fn emitter_weight(e: Emitter, w: vec3<f32>, h: f32, time: f32) -> f32 {
   return wgt * mix(1.0, clump, e.c.w);
 }
 
+// The velocity something an emitter releases starts with (embers, a liquid source's particles): its own Velocity,
+// plus a volume's own velocity at its strength.
 fn emitter_velocity(e: Emitter, w: vec3<f32>) -> vec3<f32> {
+  var v = emitter_own_velocity(e, w);
+  let s = volume_vel_strength(e);
+  if (s > 0.0) { v += s * volume_velocity(e, w); }
+  return v;
+}
+
+// The velocity an emitter sets the flow to where its mask is m (xyz), and how firmly (w): its own Velocity counts at
+// its Velocity strength (d.w) and a volume's own velocity at its strength (s.z), each on its own, so mixed in at w
+// the flow keeps 1 - w of its velocity and takes m d.w of the one and m s.z of the other.
+fn emitter_vel_target(e: Emitter, w: vec3<f32>, m: f32) -> vec4<f32> {
+  let a = clamp(m * e.d.w, 0.0, 1.0);
+  let b = clamp(m * volume_vel_strength(e), 0.0, 1.0);
+  let k = max(a, b);
+  if (k <= 0.0) { return vec4<f32>(0.0); }
+  // (no velocity from a volume: exactly as before, since (a own) / a is not always own in float32)
+  if (b <= 0.0) { return vec4<f32>(emitter_own_velocity(e, w), a); }
+  var t = vec3<f32>(0.0);
+  if (a > 0.0) { t += a * emitter_own_velocity(e, w); }
+  if (b > 0.0) { t += b * volume_velocity(e, w); }
+  return vec4<f32>(t / k, k);
+}
+
+// Its own Velocity at w: the set velocity plus the radial push (a volume's own velocity aside).
+fn emitter_own_velocity(e: Emitter, w: vec3<f32>) -> vec3<f32> {
   var v = e.e.xyz;
   if (e.e.w != 0.0) {
     var r = w - e.a.xyz;

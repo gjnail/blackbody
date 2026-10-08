@@ -43,7 +43,7 @@ Water that pours, splashes, sheets and breaks into drops, with spray, foam and b
 
 ### Sources
 
-Emitters become liquid *sources*. A **stream** keeps pouring at its *Velocity*: the flow is speed times area, so a spout 3 cm in radius pouring at 1 m/s gives about 2.8 litres a second. A **volume** fills its shape with liquid once, at *Starts at*: a pond, a thrown bucket, a wall of water. Any emitter shape works, meshes included. Keyframe *Flow* to open and close a tap, or *Position* to swing a hose.
+Emitters become liquid *sources*. A **stream** keeps pouring at its *Velocity*: the flow is speed times area, so a spout 3 cm in radius pouring at 1 m/s gives about 2.8 litres a second. A **volume** fills its shape with liquid once, at *Starts at*: a pond, a thrown bucket, a wall of water. Any emitter shape works, meshes included, and *Volume (VDB)*: the liquid fills where an OpenVDB volume (or a USD particle cache) is dense, moving at its velocity, so the water a FLIP sim from another program left can be carried on (see [Smoke from a volume](scene-import.md#smoke-from-a-volume-openvdb)). Keyframe *Flow* to open and close a tap, or *Position* to swing a hose.
 
 ### Colliders
 

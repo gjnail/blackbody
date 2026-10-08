@@ -1137,8 +1137,8 @@ def add(scene: Scene, key, at=None, mesh=None):
 # what a source can be turned into (Turn into, in the viewer's menus): the building block it takes its settings from
 TURN_INTO = [('burner', 'Fire'), ('smoke', 'Smoke'), ('steam', 'Steam'), ('pour', 'Water'), ('lava', 'Lava'), ('fan', 'Fan'),
              ('updraft', 'Updraft'), ('suction', 'Suction'), ('vortex', 'Vortex')]
-GEOMETRY = {'name', 'enabled', 'shape', 'mesh', 'volume', 'volume_mode', 'volume_zup', 'position', 'size', 'end', 'yaw', 'pitch',
-            'roll', 'thickness', 'mesh_offset'}
+GEOMETRY = {'name', 'enabled', 'shape', 'mesh', 'volume', 'volume_mode', 'volume_zup', 'volume_velocity', 'position', 'size',
+            'end', 'yaw', 'pitch', 'roll', 'thickness', 'mesh_offset'}
 
 
 def turn_into(scene: Scene, i, key):

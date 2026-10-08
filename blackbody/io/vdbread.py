@@ -3,12 +3,15 @@
 io/vdb.py writes VDBs and reads back its own. This reader covers what other writers produce for
 float grids (fog volumes, level sets): root tiles, the per-node compression of inactive values
 (OpenVDB's seven "mask compression" modes), grids saved as half floats, and ZIP or Blosc compression
-(Blosc with its LZ4 or zlib codecs, byte-shuffled or not, decoded here in pure Python). Vector
-grids are read as their three components. Zstd-compressed Blosc and pre-2015 files (format < 222)
-are not supported and say so.
+(Blosc with its LZ4 or zlib codecs, byte- or bit-shuffled or neither, decoded here in pure Python;
+its Zstd codec through the zstandard package, or Python's own zstd from 3.14, when there is one).
+Vector grids are read as their three components. Pre-2015 files (format < 222) are not supported
+and say so.
 
 read_float_grid(path, name) gives a grid as a dense array over its active bounding box, with the
-index-to-world transform, which is all a USD volume or a mesh bake needs.
+index-to-world transform, which is all a USD volume or a mesh bake needs. vdb_grid_info reads only
+the headers: each grid's type, transform and (when the writer stored it, as OpenVDB does) its
+bounding box, which is how a sequence's frames are fitted to one grid without reading them.
 """
 from __future__ import annotations
 
@@ -87,19 +90,48 @@ def _unshuffle(buf, typesize):
     return body.tobytes() + bytes(b[n * typesize:])
 
 
+def _bitunshuffle(buf, typesize, version=3):
+    """Undo Blosc's bit shuffle of one block (bitshuffle's bshuf_trans_bit_elem: for each byte of an element, then each
+    of its bits, a row holding that bit of every element). Format 2 shuffled only blocks of a multiple of 8 elements;
+    later formats shuffle the first multiple of 8 and leave the rest as it is."""
+    n = len(buf) // typesize
+    if version <= 2 and n % 8:
+        return bytes(buf)
+    n -= n % 8
+    if n == 0:
+        return bytes(buf)
+    a = np.frombuffer(buf, np.uint8, count=n * typesize).reshape(typesize, 8, n // 8)
+    bits = np.unpackbits(a, axis=2, bitorder='little')                       # [byte j, bit k, element]
+    body = np.packbits(bits.transpose(2, 0, 1), axis=2, bitorder='little')   # each element's bytes again
+    return body.tobytes() + bytes(buf[n * typesize:])
+
+
+def zstd_decompress(chunk, size):
+    """One Zstd frame, through Python's own zstd (3.14 on) or the zstandard package."""
+    try:
+        from compression import zstd   # (Python 3.14 and later)
+        return zstd.decompress(bytes(chunk))
+    except ImportError:
+        pass
+    try:
+        import zstandard
+    except ImportError:
+        raise VDBError('the VDB uses Zstd compression, which needs the zstandard package (pip install zstandard); '
+                       'or save it again with ZIP or Blosc LZ4 compression') from None
+    return zstandard.ZstdDecompressor().decompress(bytes(chunk), max_output_size=size)
+
+
 def blosc_decompress(buf):
-    """Decode a Blosc 1 buffer (blosclz is not supported; LZ4, LZ4HC and zlib are)."""
+    """Decode a Blosc 1 buffer (blosclz is not supported; LZ4, LZ4HC and zlib are, and Zstd with zstd_decompress)."""
     buf = memoryview(buf)
     if len(buf) < 16:
         raise VDBError('truncated Blosc buffer')
-    flags, typesize = buf[2], buf[3]
+    version, flags, typesize = buf[0], buf[2], buf[3]
     nbytes, blocksize, cbytes = struct.unpack_from('<III', buf, 4)
     if flags & 0x2 or nbytes == 0:   # copied as is (small buffers are), never shuffled
         return bytes(buf[16:16 + nbytes])
     blocksize = max(blocksize, 1)
     codec = (flags >> 5) & 0x7
-    if flags & 0x4:
-        raise VDBError('bit-shuffled Blosc data is not supported')
     nblocks = (nbytes + blocksize - 1) // blocksize
     starts = struct.unpack_from(f'<{nblocks}I', buf, 16)
     dont_split = bool(flags & 0x10)
@@ -123,10 +155,14 @@ def blosc_decompress(buf):
             elif codec == 3:
                 block += zlib.decompress(chunk)
             elif codec == 4:
-                raise VDBError('Zstd-compressed Blosc data is not supported: save the VDB with ZIP or Blosc LZ4 compression')
+                block += zstd_decompress(chunk, neblock)
             else:
                 raise VDBError(f'Blosc codec {codec} is not supported')
-        out += _unshuffle(bytes(block), typesize) if flags & 0x1 else block
+        if flags & 0x1:
+            block = _unshuffle(bytes(block), typesize)
+        elif flags & 0x4 and bsize >= typesize:
+            block = _bitunshuffle(bytes(block), typesize, version)
+        out += block
     return bytes(out[:nbytes])
 
 
@@ -168,6 +204,8 @@ class _Reader:
             elif kind in ('int32', 'int64', 'float', 'double'):
                 fmt = {'int32': '<i', 'int64': '<q', 'float': '<f', 'double': '<d'}[kind]
                 out[name] = struct.unpack(fmt, raw)[0]
+            elif kind in ('vec3i', 'vec3s', 'vec3d') and len(raw) == {'vec3d': 24}.get(kind, 12):
+                out[name] = struct.unpack({'vec3i': '<3i', 'vec3s': '<3f', 'vec3d': '<3d'}[kind], raw)
             else:
                 out[name] = raw
         return out
@@ -175,6 +213,22 @@ class _Reader:
     def mask(self, nbits):
         words = np.frombuffer(self.take(nbits // 8), '<u8')
         return np.unpackbits(words.view(np.uint8), bitorder='little').astype(bool)
+
+
+class _FileReader(_Reader):
+    """A _Reader over an open file that reads only what is asked for (headers, without the grids' data)."""
+
+    def __init__(self, f):
+        self.f = f
+        self.p = 0
+
+    def take(self, n):
+        self.f.seek(self.p)
+        b = self.f.read(n)
+        if len(b) < n:
+            raise VDBError('the VDB file is truncated')
+        self.p += n
+        return b
 
 
 class _Grid:
@@ -330,9 +384,44 @@ def read_vdb_grids(path, names=None):
             vm = r.mask(512)
             leaves[o] = g.values(512, vm, bg)
         grids[name] = {'type': gtype, 'xform': xform, 'background': bg, 'leaves': leaves, 'tiles': tiles,
-                       'class': str(meta.get('class', ''))}
+                       'class': str(meta.get('class', '')), 'meta': meta}
         r.p = epos
     return grids
+
+
+def vdb_grid_info(path):
+    """{grid name: {'type', 'class', 'xform' (4x4 index -> world), 'bbox' ((lo, hi) index box of its active voxels, hi
+    exclusive, or None when the writer did not store it), 'meta'}} from the file's headers alone: the grids' data is
+    not read (OpenVDB stores file_bbox_min and file_bbox_max with every grid)."""
+    out = {}
+    with open(path, 'rb') as f:
+        r = _FileReader(f)
+        if struct.unpack('<q', r.take(8))[0] != MAGIC:
+            raise VDBError(f'{Path(path).name} is not a VDB file')
+        if r.u32() < 222:
+            raise VDBError(f'{Path(path).name}: VDB format too old (resave it with a current OpenVDB)')
+        r.take(8)
+        has_offsets = r.take(1)[0]
+        r.take(36)
+        r.meta()
+        if not has_offsets:
+            raise VDBError('VDB files without grid offsets are not supported')
+        for _ in range(r.i32()):
+            name = r.string().split('\x1e')[0]
+            gtype = r.string()
+            r.string()
+            gpos, _bpos, epos = r.i64(), r.i64(), r.i64()
+            r.p = gpos
+            r.u32()
+            meta = r.meta()
+            xform = _read_map(r)
+            lo, hi = meta.get('file_bbox_min'), meta.get('file_bbox_max')
+            box = None
+            if isinstance(lo, tuple) and isinstance(hi, tuple) and all(b >= a for a, b in zip(lo, hi)):
+                box = (np.asarray(lo, np.int64), np.asarray(hi, np.int64) + 1)
+            out[name] = {'type': gtype, 'class': str(meta.get('class', '')), 'xform': xform, 'bbox': box, 'meta': meta}
+            r.p = epos
+    return out
 
 
 def _read_internal(r, g, origin, level, bg, tiles, leaf_masks):
@@ -362,34 +451,44 @@ def _offset(origin, i, log2, child_log):
     return (origin[0] + (x << child_log), origin[1] + (y << child_log), origin[2] + (z << child_log))
 
 
-def read_float_grid(path, name=None, max_cells=64_000_000, with_class=False, with_background=False):
+def read_float_grid(path, name=None, max_cells=64_000_000, with_class=False, with_background=False, components=False,
+                    with_meta=False):
     """(dense (nx, ny, nz) float32 over the active bounding box, index of its first cell (3,), 4x4
-    index -> world transform[, grid class][, background]) of a float grid (the first float grid if `name`
-    is None). Vector grids give their length. Voxels outside every leaf and tile hold the background."""
+    index -> world transform[, grid class][, background][, metadata]) of a float grid (the first float grid if `name`
+    is None). Vector grids give their length, or with `components` their three components ((nx, ny, nz, 3); the
+    background is then its length). Voxels outside every leaf and tile hold the background."""
     grids = read_vdb_grids(path, None if name is None else [name])
     if not grids:
         raise VDBError(f'{Path(path).name} has no {"grid " + name if name else "float grid"}')
     g = grids[name] if name in grids else next(iter(grids.values()))
+    vec = components and g['background'].size > 1
     lo, hi = np.full(3, 2**31 - 1), np.full(3, -2**31)
     for o in g['leaves']:
         lo, hi = np.minimum(lo, o), np.maximum(hi, np.asarray(o) + 8)
     for o, size, _v in g['tiles']:
         lo, hi = np.minimum(lo, o), np.maximum(hi, np.asarray(o) + size)
     bg = float(np.linalg.norm(g['background'])) if g['background'].size > 1 else float(g['background'][0])
-    extra = ((g['class'],) if with_class else ()) + ((bg,) if with_background else ())
+    extra = (((g['class'],) if with_class else ()) + ((bg,) if with_background else ())
+             + ((g['meta'],) if with_meta else ()))
+    tail = (3,) if vec else ()
+    fill = g['background'].astype(np.float32) if vec else bg
     if (hi <= lo).any():
-        return (np.full((1, 1, 1), bg, np.float32), np.zeros(3, int), g['xform']) + extra
+        return (np.full((1, 1, 1) + tail, fill, np.float32), np.zeros(3, int), g['xform']) + extra
     shape = hi - lo
     if int(np.prod(shape)) > max_cells:
         raise VDBError(f'{Path(path).name}: the grid is too large to read densely ({tuple(shape)} voxels)')
-    out = np.full(tuple(shape), bg, np.float32)
+    out = np.empty(tuple(shape) + tail, np.float32)
+    out[...] = fill
     for o, size, v in g['tiles']:
         a = np.asarray(o) - lo
         v = np.atleast_1d(v)
-        out[a[0]:a[0] + size, a[1]:a[1] + size, a[2]:a[2] + size] = np.linalg.norm(v) if v.size > 1 else v[0]
+        out[a[0]:a[0] + size, a[1]:a[1] + size, a[2]:a[2] + size] = v if vec else (np.linalg.norm(v) if v.size > 1 else v[0])
     for o, vals in g['leaves'].items():
         a = np.asarray(o) - lo
-        block = (np.linalg.norm(vals, axis=-1) if vals.ndim > 1 else vals).reshape(8, 8, 8)
+        if vec:
+            block = vals.reshape(8, 8, 8, 3)
+        else:
+            block = (np.linalg.norm(vals, axis=-1) if vals.ndim > 1 else vals).reshape(8, 8, 8)
         out[a[0]:a[0] + 8, a[1]:a[1] + 8, a[2]:a[2] + 8] = block
     return (out, lo, g['xform']) + extra
 

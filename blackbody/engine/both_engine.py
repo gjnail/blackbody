@@ -104,9 +104,9 @@ class BothEngine:
         sig = scene.sim_signature(final)
         dims, h, origin = scene.sim_layout(final)
         L = self._liq()
-        meshes = [scene.mesh_path(d['mesh']) for d in scene.emitters + scene.colliders
-                  if d['enabled'] and d['shape'] == 'mesh' and d['mesh']]
-        if self.solver.set_meshes(meshes, scene.data['domain']['mesh_resolution']):
+        # (meshes, and the fields of volumes: smoke for the fire, or liquid poured)
+        meshes = [scene.item_source(d) for d in scene.emitters + scene.colliders if d['enabled'] and scene.item_source(d)]
+        if self.solver.set_meshes(meshes, scene.data['domain']['mesh_resolution'], cell=h):
             L.colliders = None
             if self.lava is not None:
                 self.lava.colliders = None

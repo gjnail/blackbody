@@ -10,7 +10,8 @@
   blackbody render flag.bbfire -o mesh/flag.usdc                     the fabric as a USD mesh (or .####.obj)
   blackbody render shot.bbfire -o usd/shot.scene.usdc                camera, objects, pieces, sand, grass, embers
   blackbody render shot.bbfire -o cam/shot.chan                      the camera for Nuke (or cam.camera.usda: USD)
-  blackbody render --preset campfire --usd shot.usd -o fire.####.exr  camera and objects from USD
+  blackbody render --preset campfire --usd shot.usd -o fire.####.exr  camera, objects and frame range from USD
+  blackbody render --preset campfire --usd shot.usd --usd-offset 1000 -o fire.####.exr   USD 1001-1100 as 1-100
 
 Render farms: simulate once into a shared disk cache (resuming from the last checkpoint if it was
 stopped), then render frame ranges on as many machines as you like from that cache:
@@ -374,11 +375,15 @@ def cmd_info(args):
 
 
 def _usd_and_cache(scene, args):
-    """--usd FILE (camera and meshes from a USD scene), --cache / --from-cache DIR (the disk cache)."""
+    """--usd FILE (camera and meshes from a USD scene; its frame range and rate too, as the app's import does, unless
+    --usd-keep-range: with footage, only where the shot starts, the footage keeping its length and rate; --usd-offset N
+    turns USD frame F into frame F - N), --cache / --from-cache DIR (the disk cache)."""
     if getattr(args, 'usd', None):
         from .io.usd import import_usd
+        footage = bool(getattr(args, 'footage', None) or (scene.footage or {}).get('path'))
+        match = False if getattr(args, 'usd_keep_range', False) else ('start' if footage else True)
         try:
-            for line in import_usd(scene, args.usd):
+            for line in import_usd(scene, args.usd, offset=getattr(args, 'usd_offset', 0) or 0, match_range=match):
                 if not getattr(args, 'quiet', False):
                     print(f'USD: {line}')
         except Exception as ex:
@@ -459,6 +464,15 @@ def cmd_simulate(args):
     return 0 if ok else 1
 
 
+def _usd_args(p):
+    p.add_argument('--usd', help='bring in the camera, objects and lights from a USD scene, and its frame range and rate')
+    p.add_argument('--usd-offset', type=int, default=0, metavar='FRAMES',
+                   help='USD frame F becomes frame F - FRAMES (1000 turns a 1001-1100 shot into 1-100; up to 100000 '
+                        'either way)')
+    p.add_argument('--usd-keep-range', action='store_true',
+                   help="keep the project's (or preset's) frame range and rate instead of the USD scene's")
+
+
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     _utf8_streams()
@@ -501,7 +515,7 @@ def main(argv=None):
                    help='deep EXR samples per pixel (default 8; 16 keeps thick, layered smoke apart, at twice the memory)')
     r.add_argument('--draft', action='store_true', help='interactive quality (fast)')
     r.add_argument('--no-motion-blur', action='store_true')
-    r.add_argument('--usd', help='bring in the camera and meshes (as colliders) from a USD scene')
+    _usd_args(r)
     r.add_argument('--cache', help='also write the simulated frames to this disk cache folder')
     r.add_argument('--from-cache', help='render frames already simulated into this disk cache folder (see simulate)')
     r.add_argument('-q', '--quiet', action='store_true')
@@ -512,7 +526,7 @@ def main(argv=None):
     sm.add_argument('--frames', help='simulate up to the last frame of this range, e.g. 1-120')
     sm.add_argument('--res', type=int, help='voxels on the longest side of the box')
     sm.add_argument('--set', action='append', metavar='SECTION.KEY=VALUE', help='override any setting')
-    sm.add_argument('--usd', help='bring in the camera and meshes (as colliders) from a USD scene')
+    _usd_args(sm)
     sm.add_argument('--draft', action='store_true', help='interactive quality (fast)')
     sm.add_argument('-q', '--quiet', action='store_true')
     sub.add_parser('presets', help='list the built-in presets')

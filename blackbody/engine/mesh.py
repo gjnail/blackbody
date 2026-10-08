@@ -5,7 +5,9 @@ meshes use the exact distance everywhere and the generalised winding number for 
 which copes with holes and overlapping parts. Dense meshes use a fast bake: exact distances in a
 band near the surface and signed ray crossings for inside/outside. Bakes are kept on disk, so a
 mesh is only baked once per machine. All meshes in use share one atlas texture that the solver
-kernels sample.
+kernels sample: the grids stand in columns, each a stack along z, side by side in x and y
+(pack_atlas), so the atlas stays within the 2048 cells a side every GPU allows. Grids that do not fit
+(or would take it past ATLAS_MAX_BYTES) are left out one object at a time, with a message.
 
 A mesh source is a file path (OBJ, STL, or a greyscale image read as a heightfield: terrain), a
 numbered sequence ('burning_man.####.obj', one file per frame) or a USD prim ('shot.usd#/World/Car').
@@ -36,10 +38,108 @@ FAST_SLICE = 20000   # triangles per dispatch of the banded bake
 BAKE_VERSION = 3     # bump when the bake changes, so stale disk caches are ignored
 IMAGE_EXTS = ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.exr')
 HEIGHTFIELD_MAX = 192  # heightfield images are resampled to at most this many points a side
+ATLAS_TILE = 32        # cells: the atlas's columns start on this grid in x and y ...
+ATLAS_TILES = 64       # ... of this many tiles a side, so the atlas is at most 2048 cells wide and tall
+ATLAS_ZSPAN = 2048     # cells: a column's depth at most (2048 is the least any GPU allows a 3-D texture side)
+ATLAS_SPAN = ATLAS_TILE * ATLAS_TILES
+ATLAS_MAX_BYTES = 2000 << 20   # the atlas texture at most (D3D12 allows one resource 2048 MB on large cards)
 
 
 class MeshError(ValueError):
     pass
+
+
+# -- the atlas layout ----------------------------------------------------------------------------------
+
+def atlas_code(corner):
+    """The number a grid's corner in the atlas (x, y, z) travels as (m0.w, an.x): z + ATLAS_ZSPAN * (x tile + ATLAS_TILES
+    * y tile). It stays below 2^24, so a float32 holds it exactly; meshsdf.wgsl atlas_org takes it apart."""
+    x, y, z = (int(c) for c in corner)
+    return float(z + ATLAS_ZSPAN * (x // ATLAS_TILE + ATLAS_TILES * (y // ATLAS_TILE)))
+
+
+def atlas_corner(code):
+    """The corner (x, y, z) an atlas code stands for (atlas_org in meshsdf.wgsl)."""
+    col, z = divmod(int(round(code)), ATLAS_ZSPAN)
+    return (col % ATLAS_TILES) * ATLAS_TILE, (col // ATLAS_TILES) * ATLAS_TILE, z
+
+
+def _tiled(n):
+    return -(-int(n) // ATLAS_TILE) * ATLAS_TILE
+
+
+def _columns(boxes, idx, cap):
+    """The grids `idx` stacked into columns at most `cap` deep, tallest first: [[w, h, depth, [(grid, z)]]]."""
+    cols = []
+    for i in sorted(idx, key=lambda i: (-_tiled(boxes[i][1]), -_tiled(boxes[i][0]), -boxes[i][2], i)):
+        w, h, d = boxes[i]
+        for c in cols:
+            if c[2] + d <= cap:
+                c[3].append((i, c[2]))
+                c[0], c[1], c[2] = max(c[0], w), max(c[1], h), c[2] + d
+                break
+        else:
+            cols.append([w, h, d, [(i, 0)]])
+    return cols
+
+
+def _rows(cols, span):
+    """The columns side by side in rows (x), the rows one behind the other (y), on the tile grid: [(x, y)] per
+    column, or None if they do not fit in span x span cells."""
+    at = [None] * len(cols)
+    x = y = row = 0
+    for k in sorted(range(len(cols)), key=lambda k: (-_tiled(cols[k][1]), k)):
+        w, h = cols[k][0], cols[k][1]
+        if x > 0 and x + w > span:
+            x, y, row = 0, y + row, 0
+        if x + w > span or y + h > span:
+            return None
+        at[k] = (x, y)
+        x += _tiled(w)
+        row = max(row, _tiled(h))
+    return at
+
+
+def pack_atlas(boxes, groups=None, limit=ATLAS_SPAN, budget=ATLAS_MAX_BYTES, depth=ATLAS_ZSPAN):
+    """Lay grids out in the mesh atlas: `boxes` [(nx, ny, nz)] -> (the atlas's size (w, h, d), [the corner (x, y, z) of
+    each, or None for one left out]). Grids stack along z in columns at most `depth` deep; the columns stand side by side
+    in x and y on a grid of ATLAS_TILE cells, every side within `limit` (and 2048) cells. Of the column depths that
+    could do, the one giving the smallest atlas is taken. When the grids do not all fit, or would take the atlas past
+    `budget` bytes, whole groups are left out (`groups`: one key per grid, so both frames of a deforming mesh go
+    together), the last in the list first."""
+    n = len(boxes)
+    boxes = [tuple(int(v) for v in b) for b in boxes]
+    groups = list(range(n)) if groups is None else list(groups)
+    span = min(int(limit), ATLAS_SPAN)
+    cap = min(int(depth), ATLAS_ZSPAN, int(limit))
+    big = {groups[i] for i in range(n) if boxes[i][0] > span or boxes[i][1] > span or boxes[i][2] > cap}
+    keep = [i for i in range(n) if groups[i] not in big]   # (a grid too big for any column)
+    while keep:
+        total = sum(boxes[i][2] for i in keep)
+        deepest = max(boxes[i][2] for i in keep)
+        best = None
+        for k in range(1, 9):   # columns as deep as allowed, or shallower so that k of them come out even
+            c = cap if k == 1 else max(deepest, -(-total // k))
+            if c > cap or (k > 1 and c >= total):
+                continue
+            cols = _columns(boxes, keep, c)
+            at = _rows(cols, span)
+            if at is None:
+                continue
+            size = (max(x + col[0] for col, (x, _) in zip(cols, at)), max(y + col[1] for col, (_, y) in zip(cols, at)),
+                    max(col[2] for col in cols))
+            cells = size[0] * size[1] * size[2]
+            if best is None or cells < best[0]:
+                best = (cells, size, cols, at)
+        if best is not None and best[0] * 4 <= budget:
+            corners = [None] * n
+            for col, (x, y) in zip(best[2], best[3]):
+                for i, z in col[3]:
+                    corners[i] = (x, y, z)
+            return best[1], corners
+        last = groups[max(keep)]
+        keep = [i for i in keep if groups[i] != last]
+    return (1, 1, 1), [None] * n
 
 
 def load_obj(path):
@@ -445,18 +545,22 @@ def mesh_deforms(source):
 
 
 class MeshLibrary:
-    """The meshes a scene uses, baked on first use and packed into one atlas texture. A deforming
+    """The meshes a scene uses, baked on first use and packed into one atlas texture (pack_atlas). A deforming
     mesh contributes the two frames around the current time. Volume fields (io/volume.py: the smoke
-    of a VDB, for Volume emitters) go in the same atlas; a changing one contributes its current frame."""
+    of a VDB, for Volume emitters) go in the same atlas; a changing one contributes the two frames around the current
+    time too, on the one grid all its frames share, so the solver blends between them."""
 
     def __init__(self, gpu: GPU):
         self.gpu = gpu
-        self._baked = {}     # (source, frame or None, stamp, resolution) -> MeshSDF
+        self._baked = {}     # (source, frame or None, stamp, resolution, field cell) -> MeshSDF or FieldGrid
         self._seq = {}       # (source, stamp, resolution) -> shared grid (lo, dims, cell)
+        self._fgrid = {}     # (field source, stamp, finest cell) -> the grid all its frames share (volume.field_grid)
         self._anim = {}      # (source, stamp) -> animated?
         self._field_ref = {}  # field source -> (density, temperature) scale shared by all its frames
-        self.slots = {}      # source or (source, frame) -> (z offset, MeshSDF)
+        self.slots = {}      # source or (source, frame) -> (atlas code, MeshSDF)
         self.errors = {}     # source -> message
+        self.left_out = {}   # source -> message: what the last atlas had no room for
+        self.field_cell = None   # m: the simulation's cell, which sets how fine a field is kept (None: as fine as it is)
         self._key = ()
         self.atlas = gpu.texture3d((1, 1, 1), 'r32float', 'mesh-atlas')
         gpu.upload(self.atlas, np.full((1, 1, 1, 1), 1.0e6, np.float32))
@@ -493,10 +597,24 @@ class MeshLibrary:
             g = self._seq[key] = (tuple(lo_g), dims, cell)
         return g
 
+    def _finest(self):
+        """The finest cell a volume's field is worth keeping (m): FIELD_PER_CELL to the simulation's cell, or None."""
+        from ..io.volume import FIELD_PER_CELL
+        return None if not self.field_cell else round(float(self.field_cell) / FIELD_PER_CELL, 9)
+
+    def _field_grid(self, source, stamp, finest):
+        from ..io.volume import field_grid
+        key = (source, stamp, finest)
+        g = self._fgrid.get(key)
+        if g is None:
+            g = self._fgrid[key] = field_grid(source, finest=finest)
+        return g
+
     def require(self, items, resolution=96):
         """Make sure every mesh in `items` is baked and in the atlas. Items are sources, or
-        (source, frame) pairs for meshes that may deform. True if the atlas changed."""
-        from ..io.volume import is_field
+        (source, frame) pairs for meshes that may deform. True if the atlas changed. When the atlas has no room for
+        them all, the last in the list are left out (left_out, and errors)."""
+        from ..io.volume import is_field, load_field
         want = []
         for it in items:
             src, frame = (it, None) if isinstance(it, str) else (it[0], it[1])
@@ -504,28 +622,29 @@ class MeshLibrary:
                 continue
             if frame is not None and self.is_animated(src):
                 fi = int(math.floor(frame))
-                want += [(src, fi)] if is_field(src) else [(src, fi), (src, fi + 1)]
+                want += [(src, fi), (src, fi + 1)]
             else:
                 want.append((src, None))
-        from ..io.volume import is_field, load_field
-        want = sorted(set(want), key=lambda k: (k[0], -1e18 if k[1] is None else k[1]))
+        want = list(dict.fromkeys(want))   # (in the scene's order: the first in it keep their room in the atlas)
         entries = []
         errors = {}
+        finest = self._finest()
         for src, fr in want:
             try:
                 stamp = self._stamp(src)
             except OSError:
                 errors[src] = f'Mesh not found: {src}'
                 continue
-            key = (src, fr, stamp, int(resolution))
+            field = is_field(src)
+            key = (src, fr, stamp, int(resolution), finest if field else None)
             sdf = self._baked.get(key)
             if sdf is None:
                 try:
                     import time
                     t0 = time.perf_counter()
-                    if is_field(src):
-                        cells = max(96, min(2 * int(resolution), 192))
-                        sdf, ref = load_field(src, fr, cells, self._field_ref.get(src))
+                    if field:
+                        grid = None if fr is None else self._field_grid(src, stamp, finest)
+                        sdf, ref = load_field(src, fr, reference=self._field_ref.get(src), finest=finest, grid=grid)
                         self._field_ref.setdefault(src, ref)
                     elif fr is None:
                         sdf = load_or_bake(self.gpu, src, resolution)
@@ -548,15 +667,15 @@ class MeshLibrary:
                         del self._baked[k]
                 self._baked[key] = sdf
             entries.append(((src if fr is None else (src, fr)), sdf))
-        self.errors = errors
         for p, msg in errors.items():
             log.warning('%s', msg)
         key = tuple((p, id(s)) for p, s in entries)
-        if key == self._key:
-            return False
-        self._key = key
-        self._build_atlas(entries)
-        return True
+        changed = key != self._key
+        if changed:
+            self._key = key
+            self._build_atlas(entries)
+        self.errors = {**errors, **{s: m for s, m in self.left_out.items() if s not in errors}}
+        return changed
 
     @staticmethod
     def _held(source, frame):
@@ -570,33 +689,35 @@ class MeshLibrary:
         return fr
 
     def _build_atlas(self, entries):
+        """Pack the grids into a new atlas texture (pack_atlas) and upload each where it goes. Those it has no room for
+        are left out a whole source at a time (both frames of a deforming one), the last in the list first."""
         self.slots = {}
-        if not entries:
-            w = h = d = 1
-            data = np.full((1, 1, 1), 1.0e6, np.float32)
-        else:
-            w = max(s.dims[0] for _, s in entries)
-            h = max(s.dims[1] for _, s in entries)
-            d = sum(s.data.shape[0] for _, s in entries)
-            lim = int(self.gpu.limits.get('max-texture-dimension-3d', 2048))
-            if d > lim:
-                raise RuntimeError(f'Too many meshes for the GPU at this mesh detail ({d} > {lim} cells); '
-                                   'lower Domain › Mesh detail or use fewer meshes.')
-            data = np.full((d, h, w), 1.0e6, np.float32)
-            z = 0
-            for p, s in entries:
-                nx, ny, _ = s.dims
-                depth = s.data.shape[0]   # a field's layers are stacked along z
-                data[z:z + depth, :ny, :nx] = s.data
-                self.slots[p] = (z, s)
-                z += depth
+        self.left_out = {}
+        lim = int(self.gpu.limits.get('max-texture-dimension-3d', 2048))
+        boxes = [(s.dims[0], s.dims[1], s.data.shape[0]) for _, s in entries]   # (a field's layers stack along z)
+        groups = [p if isinstance(p, str) else p[0] for p, _ in entries]
+        size, corners = pack_atlas(boxes, groups, limit=lim) if entries else ((1, 1, 1), [])
         self.atlas.destroy()
-        self.atlas = self.gpu.texture3d((w, h, d), 'r32float', 'mesh-atlas')
-        self.gpu.upload(self.atlas, data[..., None])
+        self.atlas = self.gpu.texture3d(size, 'r32float', 'mesh-atlas')
+        if not any(c is not None for c in corners):
+            self.gpu.upload(self.atlas, np.full((1, 1, 1, 1), 1.0e6, np.float32))
+        for (p, s), c in zip(entries, corners):
+            src = p if isinstance(p, str) else p[0]
+            if c is None:
+                if src not in self.left_out:
+                    self.left_out[src] = ('there is no room for it in the GPU\'s atlas of meshes and volumes, so it is left '
+                                          'out: lower Domain › Mesh detail, or use fewer or smaller meshes and volumes.')
+                    log.warning('%s: %s', src, self.left_out[src])
+                continue
+            a = np.ascontiguousarray(s.data, np.float32)
+            d, ny, nx = a.shape
+            self.gpu.queue.write_texture({'texture': self.atlas.tex, 'origin': tuple(int(v) for v in c), 'mip_level': 0},
+                                         a, {'offset': 0, 'bytes_per_row': nx * 4, 'rows_per_image': ny}, (nx, ny, d))
+            self.slots[p] = (atlas_code(c), s)
 
     def ref(self, path):
         """(m0, m1, m2) vec4 triples for a static mesh in the atlas (or the first frame of a
-        deforming one), or None if it is not available."""
+        deforming one), or None if it is not available. m0.w is its atlas code (atlas_code)."""
         slot = self.slots.get(path) if path else None
         if slot is None and path:
             frames = sorted(k[1] for k in self.slots if isinstance(k, tuple) and k[0] == path)
@@ -604,21 +725,21 @@ class MeshLibrary:
         if slot is None:
             return None
         z, s = slot
-        # m1.w: a field's layers past the density (1: it has a temperature)
-        return (s.bmin + (float(z),), s.bmax + (float(getattr(s, 'layers', 1) - 1),), tuple(float(x) for x in s.dims) + (0.0,))
+        # m1.w: what a field holds past its density (1 a temperature, 2 a velocity: FieldGrid.flags)
+        return (s.bmin + (float(z),), s.bmax + (float(getattr(s, 'flags', 0)),), tuple(float(x) for x in s.dims) + (0.0,))
 
     def ref_at(self, path, frame=None):
-        """(m0, m1, m2, anim) for a mesh at a (fractional) frame. anim = (atlas z offset of the next
-        frame, blend toward it, 0, 0), or z offset -1 for a mesh that does not deform."""
+        """(m0, m1, m2, anim) for a mesh at a (fractional) frame. anim = (atlas code of the next
+        frame, blend toward it, 0, 0), or code -1 for a mesh that does not deform. A changing field
+        blends the same way: its frames share one grid."""
         if frame is not None and path and (path, int(math.floor(frame))) in self.slots:
             fi = int(math.floor(frame))
             za, sa = self.slots[(path, fi)]
-            if hasattr(sa, 'layers'):   # a field: the frame as it is, no blending
-                return (sa.bmin + (float(za),), sa.bmax + (float(sa.layers - 1),), tuple(float(x) for x in sa.dims) + (0.0,),
-                        (-1.0, 0.0, 0.0, 0.0))
-            zb, _ = self.slots.get((path, fi + 1), (za, sa))
-            return (sa.bmin + (float(za),), sa.bmax + (0.0,), tuple(float(x) for x in sa.dims) + (0.0,),
-                    (float(zb), float(frame - fi), 0.0, 0.0))
+            zb, sb = self.slots.get((path, fi + 1), (za, sa))
+            if sb.dims != sa.dims or sb.bmin != sa.bmin or getattr(sb, 'flags', 0) != getattr(sa, 'flags', 0):
+                zb = -1.0   # (not on one grid with the same layers: no blending)
+            return (sa.bmin + (float(za),), sa.bmax + (float(getattr(sa, 'flags', 0)),),
+                    tuple(float(x) for x in sa.dims) + (0.0,), (float(zb), float(frame - fi), 0.0, 0.0))
         r = self.ref(path)
         return None if r is None else r + ((-1.0, 0.0, 0.0, 0.0),)
 

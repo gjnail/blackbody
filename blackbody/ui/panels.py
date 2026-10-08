@@ -882,9 +882,9 @@ class Inspector(QWidget):
             if e['shape'] != 'mesh':
                 hide |= {'mesh', 'thickness'}
             if e['shape'] != 'volume':
-                hide |= {'volume', 'volume_mode', 'volume_zup'}
+                hide |= {'volume', 'volume_mode', 'volume_zup', 'volume_velocity'}
             else:
-                hide |= {'softness'}
+                hide |= {'softness'} | ({'volume_mode'} if ekind == 'liquid' else set())   # (a liquid pours by Pours)
                 if e.get('volume_mode') in ('fill', 'hold'):
                     hide |= {'noise', 'noise_freq', 'noise_rise', 'contrast', 'seed', 'embers'}
                 if e.get('volume_mode') == 'fill':

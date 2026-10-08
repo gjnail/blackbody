@@ -662,13 +662,17 @@ SECTIONS = {
     ],
 }
 
+FRAME_OFFSET_MAX = 100000.0   # frames: a mesh's frame offset either way at most (and a USD import's Frame offset)
+
 MESH_TIP = ('A triangle mesh in OBJ or STL format, in metres with y up (the usual export settings); it need not be watertight. '
             'A numbered sequence (name.####.obj) deforms over time; a USD prim (file.usd#/World/Car) comes from a USD scene; '
             'a greyscale image (PNG, TIFF, EXR) is a heightfield: terrain, scaled by Size (width, height, depth in metres).')
 
 VOLUME_TIP = ('An OpenVDB volume (.vdb) from Houdini, Blender, EmberGen or Blackbody itself, a numbered sequence of them '
-              '(smoke.####.vdb, one # per digit) or a Volume prim in a USD file. Its density grid (density, smoke or the first float '
-              'grid) is the smoke; a temperature grid, if there is one, is its heat. Metres; level sets become their inside.')
+              '(smoke.####.vdb, one # per digit, blended from frame to frame), a Volume prim in a USD file, or a Points prim '
+              '(its particles, each a soft ball as wide as its width). Its density grid (density, smoke or the first float '
+              'grid) is the smoke; a temperature grid, if there is one, is its heat; a vel grid, how it moves. Metres; level '
+              'sets become their inside.')
 
 EMITTER_PARAMS = [
     Param('name', 'Name', 'str', 'Emitter'),
@@ -685,6 +689,11 @@ EMITTER_PARAMS = [
           'it on. For both, Smoke and Fuel are the amount where the volume is densest (as much as a second of release) and Heat its '
           'temperature. Releases: the volume is a source, releasing at the emitter\'s rates wherever it is dense.', group='Shape'),
     B('volume_zup', 'Z-up file', False, tip='The VDB was saved with Z up (Blender does): turn it to y up. USD volumes are turned by the stage\'s own up axis.', group='Shape'),
+    F('volume_velocity', 'Velocity from the volume', 1.0, 0.0, 1.0, '', 2, tip='How firmly the air takes up the volume\'s '
+      'own velocity (its vel grid, or its points\' velocities) where it is dense, so the smoke of an explosion from '
+      'another program moves off as it did there: 1 fully, 0 not at all (the smoke starts still). It works on its own, '
+      'on top of the emitter\'s Velocity at its Velocity strength. A liquid source starts its water moving with it.',
+      group='Shape'),
     V('position', 'Position', (0.0, 0.08, 0.0), -50.0, 50.0, 'm', anim=True, decimals=3,
       tip='Keyframe it to move the emitter: a waved torch, a running stuntman, falling debris. The fire trails behind it.', group='Shape'),
     V('size', 'Size', (0.32, 0.08, 0.32), 0.001, 20.0, 'm', anim=True, decimals=3,
@@ -692,7 +701,8 @@ EMITTER_PARAMS = [
     V('end', 'Line end', (1.0, 0.08, 0.0), -50.0, 50.0, 'm', anim=True, decimals=3, tip='Second point of a Line emitter.', group='Shape'),
     F('yaw', 'Rotation', 0.0, -180.0, 180.0, '°', 1, anim=True, tip='Turns the emitter about the vertical axis.', group='Shape'),
     F('thickness', 'Surface depth', 0.04, 0.0, 1.0, 'm', 3, tip='Mesh: fuel comes out within this distance of the surface, so the outside of the object burns. 0 fills the whole inside.', group='Shape'),
-    F('mesh_offset', 'Mesh frame offset', 0.0, -10000.0, 10000.0, 'frames', 1, tip='A deforming mesh (sequence or animated USD) plays this many frames late (negative: early).', group='Shape', advanced=True),
+    F('mesh_offset', 'Mesh frame offset', 0.0, -FRAME_OFFSET_MAX, FRAME_OFFSET_MAX, 'frames', 1, tip='A deforming mesh (sequence or animated USD) plays this many frames late (negative: early). A USD import with a Frame offset sets it to the offset\'s opposite, so the object is read at its own USD frame.', group='Shape', advanced=True,
+      hard_lo=-FRAME_OFFSET_MAX, hard_hi=FRAME_OFFSET_MAX),
     F('softness', 'Edge softness', 0.0, 0.0, 0.5, 'm', 3, group='Shape'),
     F('fuel', 'Fuel', 14.0, 0.0, 200.0, '/s', 1, anim=True, tip='Fuel released per second inside the emitter.', group='Emission', log=True),
     F('temperature', 'Heat', 0.45, 0.0, 3.0, '', 2, anim=True, tip='Temperature injected with the fuel. Needs to exceed the ignition temperature to light it.', group='Emission'),
@@ -746,7 +756,8 @@ COLLIDER_PARAMS = [
       'Rotation: its top leans toward its front. A ramp, a leaning wall, a wheel on its side.', group='Shape'),
     F('roll', 'Roll', 0.0, -180.0, 180.0, '°', 1, anim=True, tip='Rolls it about its own front-to-back axis, after its '
       'Tilt: its top leans to its left.', group='Shape'),
-    F('mesh_offset', 'Mesh frame offset', 0.0, -10000.0, 10000.0, 'frames', 1, tip='A deforming mesh (sequence or animated USD) plays this many frames late (negative: early).', group='Shape', advanced=True),
+    F('mesh_offset', 'Mesh frame offset', 0.0, -FRAME_OFFSET_MAX, FRAME_OFFSET_MAX, 'frames', 1, tip='A deforming mesh (sequence or animated USD) plays this many frames late (negative: early). A USD import with a Frame offset sets it to the offset\'s opposite, so the object is read at its own USD frame.', group='Shape', advanced=True,
+      hard_lo=-FRAME_OFFSET_MAX, hard_hi=FRAME_OFFSET_MAX),
     F('hollow', 'Hollow walls', 0.0, 0.0, 1.0, 'm', 3, anim=True, tip='Makes the collider hollow, with walls this thick: a room, a tank, a pipe. 0 is solid.', group='Walls and openings'),
     V('opening', 'Opening size', (0.0, 0.0, 0.0), 0.0, 10.0, 'm', anim=True, decimals=3, tip='Half size of a box cut out of the collider: a door, a window, a vent. Keyframe it to open a door. 0 is none. Make it a little deeper than the wall it cuts through: one that stops flush with the wall’s inside can leave a film there that sand and the like catch on.', group='Walls and openings'),
     V('opening_at', 'Opening at', (0.0, 0.0, 0.0), -20.0, 20.0, 'm', anim=True, decimals=3, tip='Centre of the opening, measured from the collider\'s centre in its own frame (it turns with the collider).', group='Walls and openings'),

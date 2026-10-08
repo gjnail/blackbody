@@ -1080,15 +1080,13 @@ class MainWindow(QMainWindow):
         if dlg.exec() != UsdImportDialog.Accepted:
             return
         cams, meshes, as_, holdout, burnable, lights = dlg.choice()
+        offset, match = dlg.timing()
         from ..io.usd import import_usd
         report = []
 
         def fn(s):
             report.extend(import_usd(s, path, cameras=cams, meshes=meshes, as_=as_, holdout=holdout, burnable=burnable,
-                                     lights=lights, volumes=dlg.volume_choice()))
-            if info.frames and dlg.match_range.isChecked():
-                s.data['render']['start'], s.data['render']['end'] = info.frames
-                s.data['render']['fps'] = info.fps
+                                     lights=lights, volumes=dlg.volume_choice(), offset=offset, match_range=match))
         try:
             self.doc.edit('Import USD', fn, structure=True)
         except Exception as ex:

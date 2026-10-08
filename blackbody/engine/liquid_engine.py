@@ -60,9 +60,9 @@ class LiquidEngine:
         sig = scene.sim_signature(final)
         dims, h, origin = scene.sim_layout(final)
         L = self._liq()
-        meshes = [scene.mesh_path(d['mesh']) for d in scene.emitters + scene.colliders
-                  if d['enabled'] and d['shape'] == 'mesh' and d['mesh']]
-        if self.solver.set_meshes(meshes, scene.data['domain']['mesh_resolution']):
+        # (meshes, and the fields of volumes that pour liquid)
+        meshes = [scene.item_source(d) for d in scene.emitters + scene.colliders if d['enabled'] and scene.item_source(d)]
+        if self.solver.set_meshes(meshes, scene.data['domain']['mesh_resolution'], cell=h):
             L.colliders = None  # the atlas changed: rewrite the solid distance field
         changed = L.configure(dims, h, origin, scene.liquid_capacity(final), scene.whitewater_capacity())
         L._prm = scene.liquid_params(scene.start)

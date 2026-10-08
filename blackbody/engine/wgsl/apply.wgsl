@@ -50,13 +50,13 @@ fn emit_vel(cur: f32, wp: vec3<f32>, axis: i32, h: f32) -> f32 {
   let cnt = i32(U.cnt.x);
   for (var i = 0; i < cnt; i++) {
     let e = U.em[i];
-    if (e.d.w <= 0.0) { continue; }
+    if (emitter_vel_blend(e) <= 0.0) { continue; }
     let m = emitter_mask(e, wp, h);
     if (m <= 0.0) { continue; }
-    let tv = emitter_velocity(e, wp);
+    let tv = emitter_vel_target(e, wp, m);
     var t = tv.z;
     if (axis == 0) { t = tv.x; } else if (axis == 1) { t = tv.y; }
-    v = mix(v, t, clamp(m * e.d.w, 0.0, 1.0));
+    v = mix(v, t, tv.w);
   }
   return v;
 }

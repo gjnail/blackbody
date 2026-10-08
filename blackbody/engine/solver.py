@@ -170,6 +170,7 @@ class EmitterGPU:
     mesh_frame: float | None = None  # frame of a deforming mesh (numbered sequence or animated USD prim)
     mesh_fps: float = 24.0         # its frames per second of simulation time
     volume_mode: int = 0           # Volume emitters: 1 releases at its rates where the volume is dense, 2 fills (VOLUME_MODES)
+    volume_vel: float = 0.0        # Volume emitters: how strongly the air takes up the volume's own velocity (0..1)
     quat: tuple = (0.0, 0.0, 0.0, 1.0)   # orientation (x, y, z, w) after the yaw: carried by a tipped or tumbling object
 
 
@@ -200,7 +201,8 @@ class ColliderGPU:
 
 
 def _mesh_ref(meshes, path, frame=None, fps=24.0):
-    """(m0, m1, m2, anim) of a mesh in the atlas, anim = (next frame's z offset or -1, blend, fps, 0)."""
+    """(m0, m1, m2, anim) of a mesh in the atlas (m0.w its atlas code: meshsdf.wgsl atlas_org; negative: none), anim =
+    (next frame's atlas code or -1, blend, fps, 0)."""
     ref = meshes.ref_at(path, frame) if (meshes is not None and path) else None
     if ref is None:
         return NO_MESH + (NO_ANIM,)
@@ -272,10 +274,10 @@ def pack_emitters(u: Uniforms, emitters, extra1=0.0, extra2=0.0, meshes=None):
     for e in em:
         cx, cz, core, base = emitter_extent(e, meshes)
         m0, m1, m2, an = _mesh_ref(meshes, e.mesh, e.mesh_frame, e.mesh_fps) if e.shape in ('mesh', 'volume') else NO_MESH + (NO_ANIM,)
-        # a mesh's m1.w is its surface depth; a volume's says whether it has a temperature layer
+        # a mesh's m1.w is its surface depth; a volume's says what layers it has (a temperature, a velocity)
         depth = m1[3] if e.shape == 'volume' else e.thickness
-        if e.shape == 'volume':
-            an = (-1.0, 0.0, 0.0, float(e.volume_mode))
+        if e.shape == 'volume':   # (its next frame and the blend toward it, its velocity's strength, its mode)
+            an = (an[0], an[1], float(e.volume_vel), float(e.volume_mode))
         u.v4(*e.pos, SHAPES.get(e.shape, 0))
         u.v4(*e.size, e.soft)
         u.v4(*e.p1, e.noise)
@@ -569,8 +571,10 @@ class Solver:
         self._burn_dirty = True
         self._stain_dirty = True
 
-    def set_meshes(self, paths, resolution=96):
-        """Bake and load the meshes the scene uses. True if the atlas changed."""
+    def set_meshes(self, paths, resolution=96, cell=None):
+        """Bake and load the meshes the scene uses, and its volumes' fields as fine as a simulation cell of `cell` (m;
+        this solver's own when not given) can use. True if the atlas changed."""
+        self.meshes.field_cell = cell or self.h or None
         changed = self.meshes.require(paths, resolution)
         if changed and self.dims is not None:
             with self.gpu.batch() as b:

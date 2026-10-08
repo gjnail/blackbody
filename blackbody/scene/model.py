@@ -831,6 +831,7 @@ class Scene:
                 swirl=g('swirl') * env, swirl_width=e['swirl_width'], douse=g('douse') * env, vapour=g('vapour') * env,
                 color=tuple(float(x) * amount for x in e['color']), thickness=e['thickness'],
                 mesh=self.item_source(e), volume_mode=VOLUME_MODES.get(e.get('volume_mode', 'fill'), 0) if e['shape'] == 'volume' else 0,
+                volume_vel=float(e.get('volume_velocity', 1.0)) * env if e['shape'] == 'volume' else 0.0,
                 **self._mesh_time(e, frame)))
         if not embers_only and self.lights:
             out = out + self.lightning_fires(frame)     # (flames where lightning strikes)
@@ -1195,15 +1196,18 @@ class Scene:
                     continue
             motion = np.asarray(self.rate(('emitter', i, 'position'), frame), float)
             vel = np.asarray(g('velocity'), float) + float(e['inherit']) * motion
-            out.append(source(shape=e['shape'], pos=tuple(g('position')), size=tuple(g('size')), p1=tuple(g('end')),
-                              vel=tuple(float(x) for x in vel), radial=g('radial'), strength=strength, fill=fill,
-                              jitter=e['jitter'], vel_blend=0.0 if fill else e['vel_blend'], yaw=math.radians(g('yaw')),
-                              dye=tuple(e.get('dye', (1.0, 1.0, 1.0))), dye_amount=float(e.get('dye_amount', 0.0)),
-                              dye_cloud=float(e.get('dye_cloud', 0.5)),
-                              density=(float(e.get('liquid_density', 0.0)) / max(float(ref), 1.0)
-                                       if e.get('liquid_density', 0.0) > 0 else 1.0),
-                              mesh=self.mesh_path(e['mesh']) if e['shape'] == 'mesh' else '', soft=e['softness'],
-                              temp=float(e.get('liquid_temp', 20.0)) if e.get('temp_own') else None))
+            src = source(shape=e['shape'], pos=tuple(g('position')), size=tuple(g('size')), p1=tuple(g('end')),
+                         vel=tuple(float(x) for x in vel), radial=g('radial'), strength=strength, fill=fill,
+                         jitter=e['jitter'], vel_blend=0.0 if fill else e['vel_blend'], yaw=math.radians(g('yaw')),
+                         dye=tuple(e.get('dye', (1.0, 1.0, 1.0))), dye_amount=float(e.get('dye_amount', 0.0)),
+                         dye_cloud=float(e.get('dye_cloud', 0.5)),
+                         density=(float(e.get('liquid_density', 0.0)) / max(float(ref), 1.0)
+                                  if e.get('liquid_density', 0.0) > 0 else 1.0),
+                         mesh=self.item_source(e), soft=e['softness'],
+                         temp=float(e.get('liquid_temp', 20.0)) if e.get('temp_own') else None)
+            if e['shape'] == 'volume':   # (a volume pours where it is dense, its water moving as the volume does)
+                src.volume_vel = float(e.get('volume_velocity', 1.0))
+            out.append(src)
         return out[:MAX_EMITTERS]
 
     def water_look(self, frame, final=False):
@@ -1398,7 +1402,9 @@ class Scene:
         blob = {
             'sections': {s: {k: _to_json_value(v) for k, v in self.data[s].items() if (s, k) not in CACHE_ONLY and (s, k) not in LOOK_KEYS}
                          for s in SIM_SECTIONS},
-            'emitters': [{k: _to_json_value(v) for k, v in e.items() if k != 'name'} for e in self.emitters],
+            # (Velocity from the volume moves nothing but a Volume emitter: left out for the others, their caches stand)
+            'emitters': [{k: _to_json_value(v) for k, v in e.items()
+                          if k != 'name' and (k != 'volume_velocity' or e.get('shape') == 'volume')} for e in self.emitters],
             'colliders': [{k: _to_json_value(v) for k, v in c.items() if k != 'name'} for c in self.colliders],
             'fabrics': [{k: _to_json_value(v) for k, v in f.items() if k != 'name'} for f in self.fabrics],
             # (lightning that sets fire adds flames where it strikes)

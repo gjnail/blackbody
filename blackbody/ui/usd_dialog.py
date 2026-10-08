@@ -5,7 +5,9 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel, QListWidget,
-                               QListWidgetItem, QVBoxLayout)
+                               QListWidgetItem, QSpinBox, QVBoxLayout)
+
+from ..scene.params import FRAME_OFFSET_MAX
 
 MOTION = {'static': 'still', 'rigid': 'moves', 'world': 'deforms or tumbles (baked per frame)'}
 KINDS = {'Mesh': 'mesh', 'Cube': 'cube', 'Sphere': 'sphere', 'Cylinder': 'cylinder', 'Capsule': 'capsule', 'Cone': 'cone',
@@ -40,13 +42,19 @@ class UsdImportDialog(QDialog):
         self.volumes = QComboBox()
         self.volumes.addItem('Smoke (the volume fills the box with its smoke)', 'smoke')
         self.volumes.addItem('Solid objects (like the meshes)', 'solid')
-        self.volumes.setEnabled(any(m.prim_type == 'Volume' for m in info.meshes()))
-        form.addRow('Volumes become', self.volumes)
+        self.volumes.setEnabled(any(m.prim_type == 'Volume' or m.particles for m in info.meshes()))
+        self.volumes.setToolTip('Volumes, and points that are a particle system (they move, or carry velocities), come in '
+                                'as smoke: in a liquid scene, as water poured once. Still points without velocities '
+                                '(gravel, debris) are always solid balls.')
+        form.addRow('Volumes and particles become', self.volumes)
         v.addLayout(form)
         self.meshes = QListWidget()
         for m in info.meshes():
-            kind = KINDS.get(m.prim_type, 'mesh')
-            it = QListWidgetItem(f'{m.path}  ·  {kind}  ·  {MOTION.get(m.motion, m.motion)}  ·  {m.triangles:,} triangles')
+            if m.particles:   # (a source, splatted: no triangles of its own unless made solid)
+                it = QListWidgetItem(f'{m.path}  ·  particles  ·  {"move" if m.motion == "world" else "still"}')
+            else:
+                it = QListWidgetItem(f'{m.path}  ·  {KINDS.get(m.prim_type, "mesh")}  ·  {MOTION.get(m.motion, m.motion)}  ·  '
+                                     f'{m.triangles:,} triangles')
             it.setData(Qt.UserRole, m.path)
             it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
             it.setCheckState(Qt.Checked)
@@ -68,6 +76,14 @@ class UsdImportDialog(QDialog):
         self.match_range.setEnabled(bool(info.frames))
         for w in (self.holdout, self.burnable, self.match_range):
             v.addWidget(w)
+        self.offset = QSpinBox()
+        self.offset.setRange(-int(FRAME_OFFSET_MAX), int(FRAME_OFFSET_MAX))
+        self.offset.setToolTip('USD frame F becomes frame F minus this: 1000 brings a 1001–1100 shot in as frames 1–100. '
+                               'The camera, objects and lights stay in step; objects that change read their own USD '
+                               'frame through their Mesh frame offset (up to 100 000 frames either way).')
+        off = QFormLayout()
+        off.addRow('Frame offset', self.offset)
+        v.addLayout(off)
         note = QLabel('Objects land where they are in the USD scene, relative to the fire’s position and rotation '
                       '(Camera › Fire position). Alembic files: convert them to USD first.')
         note.setWordWrap(True)
@@ -80,8 +96,12 @@ class UsdImportDialog(QDialog):
         v.addWidget(bb)
 
     def volume_choice(self):
-        """'smoke' or 'solid': what the USD file's Volume prims become."""
+        """'smoke' or 'solid': what the USD file's Volume prims (and particle systems) become."""
         return self.volumes.currentData()
+
+    def timing(self):
+        """(frame offset, take the USD's frame range and rate) for io.usd.import_usd."""
+        return int(self.offset.value()), bool(self.info.frames and self.match_range.isChecked())
 
     def choice(self):
         cam = self.camera.currentData()

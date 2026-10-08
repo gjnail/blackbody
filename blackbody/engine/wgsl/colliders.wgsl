@@ -7,12 +7,12 @@ struct Collider {
   a: vec4<f32>,   // position (world m), shape id (0 sphere, 1 box, 2 cylinder, 3 mesh)
   b: vec4<f32>,   // size (m): radius or half extents, or the mesh scale; w = rotation about y (radians)
   v: vec4<f32>,   // velocity (m/s); w = spin about y (radians/s)
-  m0: vec4<f32>,  // mesh: bounding box min, atlas z offset (negative: no mesh)
+  m0: vec4<f32>,  // mesh: bounding box min, atlas code (meshsdf.wgsl atlas_org; negative: no mesh)
   m1: vec4<f32>,  // mesh: bounding box max; w = burnable (1/0)
   m2: vec4<f32>,  // mesh: grid dims (cells); w = burn atlas slot (negative: none)
   x: vec4<f32>,   // opening centre (object space, m); w = hollow wall thickness (m, 0 = solid)
   y: vec4<f32>,   // opening half size (m, 0 = none); w = hides the fire behind it (1/0)
-  s: vec4<f32>,   // deforming mesh: next frame's atlas z offset (negative: none), blend, frames per second, _
+  s: vec4<f32>,   // deforming mesh: next frame's atlas code (atlas_org; negative: none), blend, frames per second, _
   r: vec4<f32>,   // orientation quaternion (x, y, z, w), applied after the yaw: a tumbling object (identity: none)
   o: vec4<f32>,   // angular velocity (radians/s, world axes), on top of the spin about y
 };

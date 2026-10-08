@@ -8,6 +8,13 @@ Notable changes to Blackbody. The format follows
 
 ### Added
 
+- Importing: a VDB's velocity drives the smoke ("Velocity from the volume"), a VDB sequence blends between its frames
+  instead of jumping, and a VDB keeps its own detail down to half a simulation cell (it was cut to 192 cells a side);
+  bit-shuffled Blosc VDBs read. USD points that move or carry velocities come in as a particle source (a fill in a
+  liquid scene), IES profiles on disc and rect lights, portal and geometry lights and shadow-off lights are kept, and
+  the command line's `--usd` takes the stage's frame range and rate (`--usd-offset` renumbers a 1001-based shot).
+  Many meshes and VDBs no longer stop a scene with "Too many meshes for the GPU": they are packed in columns, and what
+  still does not fit is left out with a notice.
 - Compositing passes in the EXRs: motion vectors (forward and backward, in pixels, for VectorBlur and retiming),
   normals and positions (N, P), a matte for every named thing in the set (objects, broken pieces, ropes, the liquid,
   the fabric) and Cryptomatte (objects and materials), in fire, liquid and fire-and-liquid renders, in element and

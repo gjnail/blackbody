@@ -209,11 +209,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     for (var s = 0; s < cnt; s++) {
       let em = U.em[s];
-      if (em.d.w <= 0.0 || em.d.x <= 0.0) { continue; }
+      // (a fill's liquid starts with a volume's velocity, liq_spawn.wgsl, but is held only by its Velocity strength)
+      let firm = select(emitter_vel_blend(em), em.d.w, em.d.y > 0.5);
+      if (firm <= 0.0 || em.d.x <= 0.0) { continue; }
       let msk = emitter_mask(em, wp, h);
       if (msk <= 0.0) { continue; }
-      let tv = emitter_velocity(em, wp);
-      v[k] = mix(v[k], tv[k], clamp(msk * em.d.w, 0.0, 1.0));
+      let tv = emitter_vel_target(em, wp, msk);
+      v[k] = mix(v[k], tv[k], tv.w);
       mask |= 1u << k;
     }
   }
