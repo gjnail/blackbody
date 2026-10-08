@@ -39,7 +39,7 @@ The numbers are handbook values. Friction is the Coulomb coefficient: a block on
 - **Fire.** A *Burnable* one with Spreading fire on catches where flames touch it and keeps burning as it tumbles: its fire is in its own frame.
 - **Cloth.** They land on fabric and rest in it, and the fabric carries their weight: a crate dropped onto a sheet tied at its corners sags it and stays there, and a hammock holds what is put in it.
 
-Things attached to a falling object (*Attach to* in the viewer's menus) go with it: a fire on a crate, a lamp on a swinging sign, the pins of a flag on a falling pole.
+Things attached to a falling object (*Attach to* in the viewer's menus) go with it: a fire on a crate, a lamp on a swinging sign, the pins of a flag on a falling pole. An emitter tips over and tumbles with it, shape and jet: a flame jet on a toppling barrel keeps firing out of the barrel.
 
 ![Crates into a fire](media/gif/crates_in_fire.gif "Crates into a fire: three wooden crates dropped onto a campfire; they land on the logs, catch and burn.")
 
@@ -203,7 +203,7 @@ CG objects go over the footage lit by the shot's light, and their shadows darken
 - Contacts are slightly soft, so bounces are within about 0.05 of a material's bounce, and the least a thing bounces is about 0.2. Things that start inside each other are thrown apart when they are let go (the viewer's notices say which).
 - In a liquid scene with grey stand-ins (Water › *Colliders*), things that fall or float are drawn as stand-ins in their material's colour.
 - A motor holds its speed, not its angle: things on separate motors drift a little out of step when their loads differ. Give one balanced part one motor (the windmill's sails are two bars crossed on its hub).
-- Emitters still turn only about the vertical: an emitter attached to a tilted object keeps upright.
+- An emitter attached to a fixed object keeps its own turn (only fire shaped like the object, such as burning letters, tips with it); one on a falling object turns with it whichever way it tumbles. The pins of a fabric on a falling object still turn only about the vertical.
 - Things that fall come to rest on cloth but do not bounce off it (a trampoline does not throw a ball back up): the two
   meet once a frame, the things against the cloth as it was at the frame's start. A broken object's pieces pass
   through cloth, and a falling mesh meets it as its hull's box.

@@ -125,6 +125,24 @@ def quat_matrix(q):
                      [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)]])
 
 
+def matrix_quat(m):
+    """The quaternion (x, y, z, w, w >= 0) of a 3x3 rotation: quat_matrix undone."""
+    m = np.asarray(m, float)
+    t = m[0, 0] + m[1, 1] + m[2, 2]
+    if t > 0.0:
+        k = 2.0 * math.sqrt(1.0 + t)
+        q = ((m[2, 1] - m[1, 2]) / k, (m[0, 2] - m[2, 0]) / k, (m[1, 0] - m[0, 1]) / k, 0.25 * k)
+    else:   # (near a half turn: from the largest diagonal term, which keeps it accurate)
+        i = int(np.argmax(np.diag(m)))
+        j, l = (i + 1) % 3, (i + 2) % 3
+        k = 2.0 * math.sqrt(max(1.0 + m[i, i] - m[j, j] - m[l, l], 1e-12))
+        v = [0.0, 0.0, 0.0]
+        v[i], v[j], v[l] = 0.25 * k, (m[j, i] + m[i, j]) / k, (m[l, i] + m[i, l]) / k
+        q = (v[0], v[1], v[2], (m[l, j] - m[j, l]) / k)
+    q = np.asarray(q) / max(float(np.linalg.norm(q)), 1e-12)
+    return tuple(float(x) for x in (q if q[3] >= 0.0 else -q))
+
+
 def turn_matrix(yaw, pitch=0.0, roll=0.0):
     """turn_quat as a 3x3 rotation (own frame -> fire-local), angles in degrees."""
     return quat_matrix(turn_quat(math.radians(yaw), math.radians(pitch), math.radians(roll)))
@@ -721,12 +739,32 @@ class Scene:
             env *= 1.0 - _smoothstep(e['stop'], e['stop'] + max(e['fade_out'], 1e-3), t)
         return env
 
+    def emitter_turn(self, i, frame, carried=None):
+        """Emitter i's orientation for the GPU at `frame`: (its yaw in radians, a quaternion (x, y, z, w) applied after
+        it). One that takes its shape from a tipped-over collider (a link with 'shape': fire on solid letters) takes
+        the collider's whole turn. carried: how far the falling or floating object it rides on has turned since the
+        start (engine/solids.py attached), on top."""
+        yaw, quat = math.radians(float(self.get(('emitter', i, 'yaw'), frame))), (0.0, 0.0, 0.0, 1.0)
+        name = self.emitters[i]['name']
+        for l in getattr(self, 'links', None) or []:
+            if l.get('shape') and list(l['child']) == ['emitter', name] and l['parent'][0] == 'collider':
+                pi, _ = self.find_object(*l['parent'])
+                if pi is not None and self.tilted(pi):
+                    f = self.start if carried is not None else frame   # (a carried one turns from where it started)
+                    yaw, quat = 0.0, turn_quat(*(math.radians(float(self.get(('collider', pi, k), f)))
+                                                 for k in ('yaw', 'pitch', 'roll')))
+                break
+        if carried is not None:
+            quat = quat_mul(tuple(float(x) for x in carried), quat)
+        return yaw, quat
+
     def emitters_gpu(self, frame, embers_only=False, substeps=6, moved=None):
         """Emitters at `frame`, which may be fractional (the solver evaluates them every substep so
         fast-moving emitters leave a continuous trail). substeps: how many steps the frame is taken in, so
         that steering the gas (puffing) is as firm per frame however many there are. moved: emitter index ->
-        {position, end, yaw, velocity} for emitters carried by a falling or floating object (engine/solids.py
-        attached), in place of their keys."""
+        {position, end, velocity, turn} for emitters carried by a falling or floating object (engine/solids.py
+        attached), in place of their keys: velocity is how fast the point it rides on moves, turn how far the
+        object has turned since the start (a quaternion), which turns the emitter's shape and its own Velocity."""
         moved = moved or {}
         out = []
         master = self.v('combustion', 'fuel_scale', frame)
@@ -757,12 +795,19 @@ class Scene:
             motion = np.asarray(self.rate(('emitter', i, 'position'), frame), float)
             if e['shape'] == 'capsule':
                 motion = 0.5 * (motion + np.asarray(self.rate(('emitter', i, 'end'), frame), float))
+            carried = None
             if mv is not None:
                 motion = np.asarray(mv['velocity'], float)
+                carried = mv.get('turn')
             speed = float(np.linalg.norm(motion))
             inherit = float(e['inherit'])
-            vel = np.asarray(g('velocity'), float) + inherit * motion
+            # its own jet (Velocity, not how fast it is carried), turned as far as the object carrying it has turned
+            vel = np.asarray(self.get(('emitter', i, 'velocity'), frame), float)
+            if carried is not None:
+                vel = quat_matrix(carried) @ vel
+            vel = vel + inherit * motion
             blend = max(float(e['vel_blend']), inherit * min(1.0, speed / 0.5))
+            yaw, quat = self.emitter_turn(i, frame, carried)
             amount = g('color_amount') * env
             heat = g('temperature') * min(1.0, env * 4.0)
             if puffing > 0.0 and blend <= 0.0 and g('fuel') > 0.0:
@@ -781,7 +826,7 @@ class Scene:
                 fuel=g('fuel') * env * master, temp=heat, smoke=g('smoke') * env,
                 vel=tuple(float(x) for x in vel), radial=g('radial'), vel_blend=blend * env,
                 noise=e['noise'], noise_freq=e['noise_freq'], noise_rise=e['noise_rise'], contrast=e['contrast'],
-                seed=float(e['seed'] * 13 + seed * 7 + i), yaw=math.radians(g('yaw')),
+                seed=float(e['seed'] * 13 + seed * 7 + i), yaw=yaw, quat=quat,
                 swirl=g('swirl') * env, swirl_width=e['swirl_width'], douse=g('douse') * env, vapour=g('vapour') * env,
                 color=tuple(float(x) * amount for x in e['color']), thickness=e['thickness'],
                 mesh=self.item_source(e), volume_mode=VOLUME_MODES.get(e.get('volume_mode', 'fill'), 0) if e['shape'] == 'volume' else 0,

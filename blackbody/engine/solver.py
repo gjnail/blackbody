@@ -35,7 +35,7 @@ VOLUME_MODES = {'source': 1, 'fill': 2, 'hold': 3}   # a Volume emitter releases
 COLLIDER_SHAPES = {'sphere': 0, 'box': 1, 'cylinder': 2, 'mesh': 3}
 MAX_EMITTERS = 16   # matches MAX_EMITTERS in emitters.wgsl
 MAX_COLLIDERS = 16  # matches MAX_COLLIDERS in colliders.wgsl
-EMITTER_VEC4 = 13   # vec4s per Emitter struct (emitters.wgsl)
+EMITTER_VEC4 = 14   # vec4s per Emitter struct (emitters.wgsl)
 COLLIDER_VEC4 = 11  # vec4s per Collider struct (colliders.wgsl)
 # Latent heat of condensing water: 2.26 MJ/kg into air of about 1.2 kg/m^3 and 1005 J/(kg K)
 LATENT_K_PER_G = 2.26e6 / (1.2 * 1005.0) / 1000.0  # Kelvin per g/m^3 condensed
@@ -170,6 +170,7 @@ class EmitterGPU:
     mesh_frame: float | None = None  # frame of a deforming mesh (numbered sequence or animated USD prim)
     mesh_fps: float = 24.0         # its frames per second of simulation time
     volume_mode: int = 0           # Volume emitters: 1 releases at its rates where the volume is dense, 2 fills (VOLUME_MODES)
+    quat: tuple = (0.0, 0.0, 0.0, 1.0)   # orientation (x, y, z, w) after the yaw: carried by a tipped or tumbling object
 
 
 @dataclass
@@ -207,6 +208,14 @@ def _mesh_ref(meshes, path, frame=None, fps=24.0):
     return m0, m1, m2, (an[0], an[1], fps if an[0] >= 0 else 0.0, 0.0)
 
 
+def _quat_turn(q, v):
+    """Vector v turned by the unit quaternion q (x, y, z, w), as quat_rotate in colliders.wgsl."""
+    u, w = np.asarray(q[:3], float), float(q[3])
+    v = np.asarray(v, float)
+    t = 2.0 * np.cross(u, v)
+    return v + w * t + np.cross(u, t)
+
+
 def emitter_extent(e: EmitterGPU, meshes=None):
     """Swirl axis (x, z), core radius and base height of an emitter, in world metres."""
     s = np.asarray(e.size, float)
@@ -221,9 +230,8 @@ def emitter_extent(e: EmitterGPU, meshes=None):
             lo, hi = np.asarray(b[0]) * s, np.asarray(b[1]) * s
             c = 0.5 * (lo + hi)
             cs, sn = math.cos(e.yaw), math.sin(e.yaw)
-            cx = p[0] + cs * c[0] + sn * c[2]
-            cz = p[2] - sn * c[0] + cs * c[2]
-            return cx, cz, max(0.5 * max(hi[0] - lo[0], hi[2] - lo[2]), 1e-3), p[1] + lo[1]
+            c = _quat_turn(e.quat, (cs * c[0] + sn * c[2], c[1], -sn * c[0] + cs * c[2]))
+            return p[0] + c[0], p[2] + c[2], max(0.5 * max(hi[0] - lo[0], hi[2] - lo[2]), 1e-3), p[1] + lo[1]
         return p[0], p[2], 0.5, p[1]
     if e.shape == 'ring':
         return p[0], p[2], s[0] + s[1], p[1] - s[1]
@@ -282,10 +290,12 @@ def pack_emitters(u: Uniforms, emitters, extra1=0.0, extra2=0.0, meshes=None):
         # embers come mostly from where the fuel is; fuel-less emitters (sparks) still get a share
         u.v4(*m2[:3], max(e.fuel, 0.0) if e.fuel > 0 else mean_fuel)
         u.v4(*an)
+        u.v4(*e.quat)
     for _ in range(MAX_EMITTERS - len(em)):
-        for _ in range(EMITTER_VEC4 - 1):
+        for _ in range(EMITTER_VEC4 - 2):
             u.v4()
         u.v4(*NO_ANIM)
+        u.v4(0.0, 0.0, 0.0, 1.0)
     return u
 
 

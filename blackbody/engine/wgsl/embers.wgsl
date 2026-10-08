@@ -79,7 +79,7 @@ fn spawn_point(e: Emitter, r: vec3<f32>, r2: vec3<f32>, seed: u32) -> vec3<f32> 
     for (var k = 0u; k < 16u; k++) {
       let rr = rand3(seed, 11u + k);
       let q = mix(e.m0.xyz, e.m1.xyz, rr);
-      let w = e.a.xyz + yaw_to_world(q * s, e.k.z);
+      let w = em_to_world(e, q * s);
       let dd = emitter_sdf(e, w);
       if (dd < best_d) { best_d = dd; best = w; }
       if (dd <= 0.0) { break; }
@@ -102,7 +102,7 @@ fn spawn_point(e: Emitter, r: vec3<f32>, r2: vec3<f32>, seed: u32) -> vec3<f32> 
     let dir = vec3<f32>(sz * cos(ang), z, sz * sin(ang));
     q = dir * pow(r.z, 1.0 / 3.0) * e.b.xyz;
   }
-  return e.a.xyz + yaw_to_world(q, e.k.z);
+  return em_to_world(e, q);
 }
 
 // A direction uniformly distributed over the cone of half-angle `half` around `axis`.

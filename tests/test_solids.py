@@ -278,6 +278,100 @@ def test_things_attached_to_a_tipped_over_object_keep_their_place_on_it():
     assert np.allclose(out[i]['position'], np.array([0.0, 1.0, 0.0]) + _rx(math.radians(-40.0)) @ (0.0, 0.3, 0.0), atol=1e-9)
 
 
+def _emitter_turn(e):
+    """An EmitterGPU's own frame -> fire-local, as emitters.wgsl turns it: its yaw, then its quaternion."""
+    return _rotation(e.quat) @ _ry(e.yaw)
+
+
+def test_an_emitter_on_a_tumbling_object_tips_over_with_it_shape_and_jet():
+    s = scene_of(dict(name='Rocket', shape='box', position=(0.0, 1.0, 0.0), size=(0.1, 0.4, 0.1), dynamic=True, material='wood'))
+    i = s.add_emitter(name='Nozzle', shape='box', position=(0.0, 0.55, 0.0), size=(0.05, 0.1, 0.02), yaw=30.0, fuel=20.0,
+                      velocity=(0.0, -6.0, 0.0), vel_blend=1.0, inherit=1.0)
+    s.links = [{'child': ['emitter', 'Nozzle'], 'parent': ['collider', 'Rocket'], 'offset': [0.0, -0.45, 0.0]}]
+    # fallen onto its side (a quarter turn about z) and sliding along at 2 m/s
+    q = (0.0, 0.0, math.sin(math.pi / 4), math.cos(math.pi / 4))
+    out = attached(s, 'emitter', {0: dict(pos=(0.0, 0.1, 0.0), vel=(2.0, 0.0, 0.0), quat=q, omega=(0.0, 0.0, 0.0, 0.0))})
+    assert np.allclose(out[i]['turn'], q) and 'yaw' not in out[i]
+    e = s.emitters_gpu(s.start, moved=out)[i]
+    assert np.allclose(e.pos, (0.45, 0.1, 0.0), atol=1e-9)
+    # its shape: its own Rotation, then the whole turn of the rocket (not just the part of it about the vertical)
+    assert np.allclose(_emitter_turn(e), _rz(math.pi / 2) @ _ry(math.radians(30.0)), atol=1e-9)
+    # its jet fires along the rocket, out of its tail, plus the rocket's own motion (once)
+    assert np.allclose(e.vel, (6.0 + 2.0, 0.0, 0.0), atol=1e-9)
+    # upright and still, it is as it was set
+    out = attached(s, 'emitter', {0: dict(pos=(0.0, 1.0, 0.0), vel=(0.0, 0.0, 0.0), quat=(0.0, 0.0, 0.0, 1.0),
+                                          omega=(0.0, 0.0, 0.0, 0.0))})
+    e = s.emitters_gpu(s.start, moved=out)[i]
+    assert np.allclose(e.quat, (0.0, 0.0, 0.0, 1.0)) and e.yaw == pytest.approx(math.radians(30.0))
+    assert np.allclose(e.vel, (0.0, -6.0, 0.0))
+
+
+def test_fire_shaped_like_tipped_over_letters_tips_with_them():
+    s = scene_of(dict(name='Sign', shape='box', position=(0.3, 0.5, 0.0), size=(0.4, 0.2, 0.05), yaw=25.0, pitch=-70.0, roll=10.0))
+    i = s.add_emitter(name='Sign fire', shape='box', position=(0.3, 0.5, 0.0), size=(0.4, 0.2, 0.05), yaw=25.0)
+    s.links = [{'child': ['emitter', 'Sign fire'], 'parent': ['collider', 'Sign'], 'offset': [0.0, 0.0, 0.0], 'shape': True}]
+    e, cg = s.emitters_gpu(s.start)[i], s.colliders_gpu()[0]
+    # turned exactly as the object it burns on (colliders.wgsl turns that by its yaw, then its quaternion)
+    assert np.allclose(_emitter_turn(e), s.turn(0), atol=1e-9)
+    assert np.allclose(_emitter_turn(e), _rotation(cg.quat) @ _ry(cg.rot_y), atol=1e-9)
+    # an emitter merely attached to it (not shaped like it) keeps its own turn
+    s.links[0]['shape'] = False
+    e = s.emitters_gpu(s.start)[i]
+    assert np.allclose(_emitter_turn(e), _ry(math.radians(25.0)), atol=1e-9)
+    # made to fall, the fire turns from the sign's own tilt as the sign tumbles
+    from blackbody.scene.model import matrix_quat
+    s.links[0]['shape'] = True
+    s.colliders[0]['dynamic'] = True
+    turned = _rx(0.6) @ s.turn(0)
+    out = attached(s, 'emitter', {0: dict(pos=(0.3, 0.5, 0.0), vel=(0.0, 0.0, 0.0), quat=matrix_quat(turned),
+                                          omega=(0.0, 0.0, 0.0, 0.0))})
+    e = s.emitters_gpu(s.start, moved=out)[i]
+    assert np.allclose(_emitter_turn(e), turned, atol=1e-9)
+
+
+def test_the_viewer_draws_fire_on_tipped_over_letters_tipped_as_it_burns():
+    pytest.importorskip('PySide6.QtGui')
+    from blackbody.ui.viewport import emitter_lines
+    s = scene_of(dict(name='Sign', shape='box', position=(0.3, 0.5, 0.0), size=(0.4, 0.2, 0.05), yaw=25.0, pitch=-70.0, roll=10.0))
+    i = s.add_emitter(name='Sign fire', shape='box', position=(0.3, 0.5, 0.0), size=(0.4, 0.2, 0.05), yaw=25.0)
+    def drawn_as(R):   # the outline's corners are the box's turned by R, and nothing else
+        want = np.array([[0.3, 0.5, 0.0] + R @ (np.array([x, y, z]) * (0.4, 0.2, 0.05))
+                         for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)])
+        got = np.array([q for line in emitter_lines(s, i, s.start) for q in line])
+        far = np.linalg.norm(got[:, None] - want[None], axis=-1)
+        return far.min(axis=1).max() < 1e-9 and far.min(axis=0).max() < 1e-9
+    assert drawn_as(_ry(math.radians(25.0)))               # (not attached: its own Rotation)
+    s.links = [{'child': ['emitter', 'Sign fire'], 'parent': ['collider', 'Sign'], 'offset': [0.0, 0.0, 0.0], 'shape': True}]
+    assert drawn_as(s.turn(0)) and drawn_as(_emitter_turn(s.emitters_gpu(s.start)[i]))
+
+
+def test_a_turn_survives_the_round_trip_through_a_quaternion():
+    from blackbody.scene.model import matrix_quat, quat_matrix
+    rng = np.random.default_rng(3)
+    turns = [np.eye(3), _rx(math.pi), _ry(math.pi), _rz(math.pi), _rx(math.pi) @ _ry(0.5 * math.pi), _rz(math.pi - 1e-9)]
+    for q in rng.normal(size=(200, 4)):
+        turns.append(_rotation(q / np.linalg.norm(q)))
+    for m in turns:
+        q = matrix_quat(m)
+        assert abs(np.linalg.norm(q) - 1.0) < 1e-12 and q[3] >= 0.0
+        assert np.allclose(quat_matrix(q), m, atol=1e-9)
+
+
+def test_an_emitter_carries_its_turn_to_the_gpu():
+    import re
+    from pathlib import Path
+    from blackbody.engine.gpu import Uniforms
+    from blackbody.engine.solver import EMITTER_VEC4, MAX_EMITTERS, EmitterGPU, pack_emitters
+    src = (Path(__file__).resolve().parents[1] / 'blackbody/engine/wgsl/emitters.wgsl').read_text(encoding='utf-8')
+    body = re.search(r'struct Emitter \{(.*?)\};', src, re.S).group(1)
+    assert len(re.findall(r'^\s*\w+: vec4<f32>,', body, re.M)) == EMITTER_VEC4
+    q = (0.1, 0.2, 0.3, math.sqrt(1.0 - 0.14))
+    d = np.asarray(pack_emitters(Uniforms(), [EmitterGPU(quat=q)]).data, float).reshape(-1, 4)
+    assert len(d) == 1 + MAX_EMITTERS * EMITTER_VEC4
+    rows = d[1:].reshape(MAX_EMITTERS, EMITTER_VEC4, 4)
+    assert np.allclose(rows[0, -1], q) and np.allclose(rows[1:, -1], (0.0, 0.0, 0.0, 1.0))   # (the empty slots: no turn)
+
+
 # ---- blasts ---------------------------------------------------------------------------------------------------------
 
 def test_a_blast_falls_off_with_distance_and_grows_with_its_charge():

@@ -3264,7 +3264,8 @@ def _rotation(q):
 def attached(scene, kind, poses):
     """Where the things of a kind ('emitter', 'light', 'fabric') attached to a falling or floating object are,
     from the object's simulated pose (poses: collider index -> pose, as Solids.overrides gives them):
-    {index: {position, end, yaw, direction, velocity}} for Scene.emitters_gpu / lamps / fabrics_at.
+    {index: {position, end, yaw, turn, direction, velocity}} for Scene.emitters_gpu / lamps / fabrics_at (an emitter
+    gets its turn since the start as a quaternion, a fabric only the yaw of it).
 
     A link (Scene.links) keeps its child at an offset from its parent, set while the parent was where its keys
     put it at the start; the offset turns with the parent from there."""
@@ -3291,9 +3292,14 @@ def attached(scene, kind, poses):
         arm = rot @ np.asarray(link.get('offset', (0.0, 0.0, 0.0)), float)
         p = centre + arm
         entry = dict(position=tuple(float(x) for x in p), velocity=tuple(float(x) for x in vel + np.cross(omega, arm)))
-        # its turn about the vertical, for things that only turn that way (an emitter's shape, a fabric's pins)
-        dyaw = math.degrees(math.atan2(rot[0, 2], rot[2, 2]))
-        entry['yaw'] = float(scene.get((kind, ci, 'yaw'), scene.start)) + dyaw if 'yaw' in child else dyaw
+        if kind == 'emitter':
+            # the whole turn: an emitter's shape and its jet tip over and tumble with it (Scene.emitters_gpu)
+            from ..scene.model import matrix_quat
+            entry['turn'] = matrix_quat(rot)
+        else:
+            # its turn about the vertical, for things that only turn that way (a fabric's pins)
+            dyaw = math.degrees(math.atan2(rot[0, 2], rot[2, 2]))
+            entry['yaw'] = float(scene.get((kind, ci, 'yaw'), scene.start)) + dyaw if 'yaw' in child else dyaw
         if kind == 'emitter' and child.get('shape') == 'capsule' and 'end_offset' in link:
             entry['end'] = tuple(float(x) for x in centre + rot @ np.asarray(link['end_offset'], float))
         if kind == 'light':

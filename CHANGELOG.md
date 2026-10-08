@@ -318,6 +318,13 @@ Notable changes to Blackbody. The format follows
 
 ### Changed
 
+- A fire built from scratch moves at real speed: the solver's gas rises at about two-thirds of real speed at Time
+  scale 1 (measured against McCaffrey and Zukoski's puffing rate at three sizes), which the presets already correct
+  with Time scale 1.5 or more. A scene's first steady fire now gets the same 1.5, with a note; anything that moves at
+  its own real speed (water, falling things, fabric, sand, grass, bullets) puts it back to 1, and a time scale set or
+  keyed by hand is left alone.
+- A block that boils water (the Hot plate, a hot pan) turns a Liquid scene into Fire and liquid, so its steam shows.
+- Sources on tilted or tumbling objects turn with them (they turned only about the vertical).
 - Matter's heat from radiation is now the physical one (it was about 15 times too strong), so things melt by the fire
   as slowly as they really do; Chocolate by the fire is retuned to match. Matter conducts to objects and the ground as
   two bodies in contact do (fast at first, slowing), and the ground conducts.

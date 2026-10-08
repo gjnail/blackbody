@@ -18,6 +18,8 @@ struct Emitter {
   m2: vec4<f32>,   // mesh or volume: grid dims (cells); w = weight when picking an emitter for embers
   s: vec4<f32>,    // deforming mesh: next frame's atlas z offset (negative: none), blend, frames per second;
                    // w = volume mode (1 releases at its rates, 2 fills the box once, 3 keeps it topped up)
+  r: vec4<f32>,    // orientation quaternion (x, y, z, w), applied after the yaw: an object it rides on tipped or
+                   // tumbled (identity: none)
 };
 
 // Shape ids: 0 ellipsoid, 1 box, 2 cylinder (vertical), 3 capsule, 4 ring (horizontal torus), 5 cone, 6 mesh,
@@ -40,8 +42,24 @@ fn field_at(q: vec3<f32>, m0: vec4<f32>, m1: vec4<f32>, m2: vec4<f32>, layer: i3
   return max(mix(mix(c00, c10, f.y), mix(c01, c11, f.y), f.z), 0.0);
 }
 
+// v turned by the unit quaternion q (colliders.wgsl's quat_rotate: not every kernel with emitters includes it)
+fn em_turn(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
+  let t = 2.0 * cross(q.xyz, v);
+  return v + q.w * t + cross(q.xyz, t);
+}
+
+// World point w in the emitter's own frame (metres from its position): undo its orientation, then its yaw.
+fn em_to_local(e: Emitter, w: vec3<f32>) -> vec3<f32> {
+  return yaw_to_local(em_turn(vec4<f32>(-e.r.xyz, e.r.w), w - e.a.xyz), e.k.z);
+}
+
+// A point in the emitter's own frame, in the world.
+fn em_to_world(e: Emitter, q: vec3<f32>) -> vec3<f32> {
+  return e.a.xyz + em_turn(e.r, yaw_to_world(q, e.k.z));
+}
+
 fn volume_local(e: Emitter, w: vec3<f32>) -> vec3<f32> {
-  return yaw_to_local(w - e.a.xyz, e.k.z) / max(e.b.xyz, vec3<f32>(1e-4));
+  return em_to_local(e, w) / max(e.b.xyz, vec3<f32>(1e-4));
 }
 
 // A Volume emitter's density at world point w (about 1 where the volume is densest).
@@ -62,7 +80,7 @@ fn emitter_sdf(e: Emitter, w: vec3<f32>) -> f32 {
     return length(q - ba * t) - e.b.x;
   }
   if (shape == 6) {
-    let d = placed_mesh_sdf(w, e.a.xyz, e.b.xyz, e.k.z, e.m0, e.m1, e.m2, e.s);
+    let d = placed_mesh_sdf_local(em_to_local(e, w), e.b.xyz, e.m0, e.m1, e.m2, e.s);
     if (e.m1.w > 0.0) { return abs(d) - e.m1.w; }
     return d;
   }
@@ -72,7 +90,7 @@ fn emitter_sdf(e: Emitter, w: vec3<f32>) -> f32 {
     let cell = (e.m1.xyz - e.m0.xyz) / max(e.m2.xyz, vec3<f32>(1.0)) * max(e.b.xyz, vec3<f32>(1e-4));
     return (0.25 - min(volume_density(e, w), 1.0)) * 4.0 * min(cell.x, min(cell.y, cell.z));
   }
-  let q = yaw_to_local(w - e.a.xyz, e.k.z);
+  let q = em_to_local(e, w);
   if (shape == 0) {
     let r = max(e.b.xyz, vec3<f32>(1e-4));
     let k0 = length(q / r);

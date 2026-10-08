@@ -89,6 +89,22 @@ def volume_box(source, frame=None):
     return _VOLUME_BOXES[key]
 
 
+def emitter_lines(sc, i, frame):
+    """The outline of emitter i, turned as the solver turns it (Scene.emitter_turn): a flame in the shape of letters
+    that are tipped over lies tipped with them."""
+    em = sc.emitters[i]
+    g = lambda k: sc.get(('emitter', i, k), frame)
+    src = sc.item_source(em) if em['shape'] == 'volume' else sc.mesh_path(em['mesh'])
+    at = frame - em.get('mesh_offset', 0.0)
+    yaw, quat = sc.emitter_turn(i, frame)
+    if em['shape'] == 'capsule' or tuple(quat) == (0.0, 0.0, 0.0, 1.0):   # (a capsule runs between its two ends)
+        return shape_lines(em['shape'], g('position'), g('size'), g('end'), math.degrees(yaw), src, at)
+    from ..scene.model import quat_matrix
+    R = quat_matrix(quat)
+    p = np.asarray(g('position'), float)
+    return [np.asarray(l, float) @ R.T + p for l in shape_lines(em['shape'], (0.0, 0.0, 0.0), g('size'), None, math.degrees(yaw), src, at)]
+
+
 def fabric_lines(sc, i, frame):
     """The outline of fabric i where it is placed (its rest shape), with its pins marked."""
     f = sc.fabrics[i]
@@ -1348,12 +1364,9 @@ class Viewport(QWidget):
         for i, em in enumerate(sc.emitters):
             if not em['enabled']:
                 continue
-            g = lambda k: sc.get(('emitter', i, k), self.doc.frame)
             is_sel = ('emitter', i) in chosen
             pen = QPen(QColor(theme.ACCENT) if is_sel else QColor(255, 170, 90, 140), 1.6 if is_sel else 1.0)
-            self._lines(p, cs, fire, shape_lines(em['shape'], g('position'), g('size'), g('end'), g('yaw'),
-                                                 sc.item_source(em) if em['shape'] == 'volume' else sc.mesh_path(em['mesh']),
-                                                 self.doc.frame - em.get('mesh_offset', 0.0)), pen)
+            self._lines(p, cs, fire, emitter_lines(sc, i, self.doc.frame), pen)
         for i, l in enumerate(sc.lights):
             if not l['enabled']:
                 continue

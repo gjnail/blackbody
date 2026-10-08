@@ -46,7 +46,7 @@ Water evaporates into air drier than it is, at the rate its temperature, the air
 
 ### Steam
 
-With *Domain › Simulation: Fire and liquid* the box's gas is the air round the liquid: the vapour the liquid gives off goes into it, where it condenses into visible steam as it cools (clear right over boiling water, clouding as it rises; a fog rising off a hot pool on a frosty morning; a cloud of ice fog from boiling water flung into -30 °C air), and the gas's own heat (flames) boils and dries the water. Without fire the box then simply carries air and steam.
+With *Domain › Simulation: Fire and liquid* the box's gas is the air round the liquid: the vapour the liquid gives off goes into it, where it condenses into visible steam as it cools (clear right over boiling water, clouding as it rises; a fog rising off a hot pool on a frosty morning; a cloud of ice fog from boiling water flung into -30 °C air), and the gas's own heat (flames) boils and dries the water. Without fire the box then simply carries air and steam. Adding a *Hot plate* to a liquid scene, or water to a scene with something hotter than the boiling point in it, makes it a fire-and-liquid scene for this.
 
 ### Time and heat speed-up
 

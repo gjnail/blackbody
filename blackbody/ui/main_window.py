@@ -671,6 +671,7 @@ class MainWindow(QMainWindow):
         w.stillDone.connect(self._still_done)
         w.status.connect(self._engine_status)
         d = self.doc
+        d.message.connect(self.msg.setText)
         d.dirtyChanged.connect(lambda _: self._update_title())
         d.sceneReplaced.connect(self._update_title)
         d.sceneReplaced.connect(self._sync_modes)

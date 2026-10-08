@@ -59,6 +59,7 @@ class Document(QObject):
     loadStarted = Signal(str)         # a different scene replaced this one (preset, file, new): its name
     viewChanged = Signal()            # the work view turned on or off, or moved
     layersChanged = Signal()          # a layer added, removed, renamed, hidden, moved, or another one picked
+    message = Signal(str)             # a note for the status bar: what an edit changed besides what was asked
 
     def __init__(self, worker=None, parent=None):
         super().__init__(parent)
@@ -436,6 +437,7 @@ class Document(QObject):
         """Apply fn(scene) as one undoable step."""
         before = self._snap()
         kind_before = self.scene.kind
+        pace_before = self.scene.data['domain']['time_scale']
         fn(self.scene)
         if getattr(self.scene, 'links', None):
             self.scene.apply_links()   # attached objects follow what they are attached to
@@ -456,6 +458,8 @@ class Document(QObject):
             self.structureChanged.emit()
         if path is not None:
             self.paramChanged.emit(path)
+        if path != ('domain', 'time_scale') and self.scene.data['domain']['time_scale'] != pace_before:
+            self.paramChanged.emit(('domain', 'time_scale'))   # (paced for what was added: components.pace)
         self.push_soon()
 
     # -- parameters --------------------------------------------------------------------------------
@@ -477,8 +481,12 @@ class Document(QObject):
         if len(path) == 3 and path[2] in ('position', 'end') and getattr(self.scene, 'links', None):
             items = K.items(self.scene, path[0])
             link = self.scene.link_of(path[0], items[path[1]].get('name'))
+        from ..scene import components
+        paced = (path[0], path[-1]) in components.PACED   # (Falls, Floats, Rain...: the fire's Time scale may go)
+        notes = []
 
         def fn(s):
+            puffed = components.puffing_fire(s) if paced else None
             if link is not None:   # an attached object moved by hand: it keeps the new place relative to its parent
                 pi, parent = s.find_object(*link['parent'])
                 if parent is not None:
@@ -488,6 +496,8 @@ class Document(QObject):
                     else:
                         link['end_offset'] = [float(v) - float(q) for v, q in zip(value, pp)]
             s.set(path, value, self.frame)
+            if paced:
+                components.pace(s, notes, puffed)
             if lume_sky:
                 s.data['composite']['view'] = 'agx'
         # (Lume lights a sky's clouds as bright as they are, nearly twice as bright as the classic estimate: the
@@ -498,6 +508,8 @@ class Document(QObject):
         self.edit(f'Change {label}', fn, merge_key=key, path=path)
         if lume_sky:
             self.paramChanged.emit(('composite', 'view'))
+        if notes:
+            self.message.emit(' '.join(notes))
 
     def toggle_key(self, path):
         label = Scene.spec(path).label
@@ -577,6 +589,21 @@ class Document(QObject):
 
     # -- structure ---------------------------------------------------------------------------------
 
+    def _add(self, text, add):
+        """add(scene) as one undoable step, with the scene's Time scale kept right for what is in it, as a block's is
+        (components.pace: a first fire gets the fire presets' correction, things that move at their real speed take it
+        away). What that changed goes to the status bar."""
+        from ..scene import components
+        notes = []
+
+        def fn(s):
+            puffed = components.puffing_fire(s)
+            add(s)
+            components.pace(s, notes, puffed)
+        self.edit(text, fn, structure=True)
+        if notes:
+            self.message.emit(' '.join(notes))
+
     def add_emitter(self, shape='sphere', **extra):
         def fn(s):
             base = dict(position=(0.0, 0.3, 0.0), size=(0.25, 0.25, 0.25), shape=shape)
@@ -601,7 +628,7 @@ class Document(QObject):
                     base.update(position=(0.0, 0.6, 0.0), size=(0.04, 0.03, 0.04), velocity=(0.0, -0.5, 0.0))
             base.update(extra)
             s.add_emitter(**base)
-        self.edit('Add source' if self.scene.kind == 'liquid' else 'Add emitter', fn, structure=True)
+        self._add('Add source' if self.scene.kind == 'liquid' else 'Add emitter', fn)
         self.select(('emitter', len(self.scene.emitters) - 1))
 
     def duplicate_emitter(self, i):
@@ -627,7 +654,7 @@ class Document(QObject):
                 base.update(position=(0.0, 0.0, 0.0), size=(1.0, 1.0, 1.0), name=Path(extra.get('mesh') or 'Mesh').stem)
             base.update(extra)
             s.add_collider(**base)
-        self.edit('Add collider', fn, structure=True)
+        self._add('Add collider', fn)
         self.select(('collider', len(self.scene.colliders) - 1))
 
     def remove_collider(self, i):
@@ -645,9 +672,7 @@ class Document(QObject):
         self.select(('section', 'lighting'))
 
     def add_fabric(self, **extra):
-        def fn(s):
-            s.add_fabric(**extra)
-        self.edit('Add fabric', fn, structure=True)
+        self._add('Add fabric', lambda s: s.add_fabric(**extra))
         self.select(('fabric', len(self.scene.fabrics) - 1))
 
     def duplicate_fabric(self, i):
@@ -666,7 +691,7 @@ class Document(QObject):
 
     def add_matter(self, **extra):
         """Sand, snow, mud, jelly or clay (Scene.add_matter names it after what it is made of)."""
-        self.edit('Add ' + str(extra.get('material', 'sand')).replace('_', ' '), lambda s: s.add_matter(**extra), structure=True)
+        self._add('Add ' + str(extra.get('material', 'sand')).replace('_', ' '), lambda s: s.add_matter(**extra))
         self.select(('matter', len(K.items(self.scene, 'matter')) - 1))
 
     def remove_matter(self, i):
@@ -675,7 +700,7 @@ class Document(QObject):
 
     def add_strands(self, **extra):
         """A patch of grass (Scene.add_strands names it after its kind)."""
-        self.edit('Add grass', lambda s: s.add_strands(**extra), structure=True)
+        self._add('Add grass', lambda s: s.add_strands(**extra))
         self.select(('strands', len(K.items(self.scene, 'strands')) - 1))
 
     def remove_strands(self, i):
@@ -684,7 +709,7 @@ class Document(QObject):
 
     def add_shot(self, **extra):
         """A gun firing (Scene.add_shot names it after its cartridge)."""
-        self.edit('Add a gun', lambda s: s.add_shot(**extra), structure=True)
+        self._add('Add a gun', lambda s: s.add_shot(**extra))
         self.select(('shot', len(K.items(self.scene, 'shot')) - 1))
 
     def remove_shot(self, i):

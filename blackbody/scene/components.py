@@ -662,9 +662,11 @@ def has_liquid(scene):
     """Whether a scene has any liquid in it: a source, standing water, rain, snow or something floating."""
     if scene.kind == 'fire':
         return False
+    q = scene.data['liquid']
+    water = any(float(v) > 0 for v in _values(q['water_level']))   # (keyed for a tide: any of its keys)
     if scene.kind == 'both':
-        return any(e.get('emits') in ('liquid', 'lava') for e in scene.emitters) or scene.data['liquid']['water_level'] > 0
-    return bool(scene.emitters or scene.data['liquid']['water_level'] > 0 or scene.data['liquid']['rain'] > 0
+        return any(e.get('emits') in ('liquid', 'lava') for e in scene.emitters) or water
+    return bool(scene.emitters or water or any(float(v) > 0 for v in _values(q['rain']))
                 or scene.data['weather']['precip'] != 'none' or any(c.get('floating') for c in scene.colliders))
 
 
@@ -677,21 +679,103 @@ def has_fire(scene):
     return False
 
 
+def boils(scene, comp=None):
+    """Whether something is hot enough to boil the liquid (a collider hotter than its boiling point): in the scene or,
+    given a block, in the block. The steam it boils off shows only in a fire-and-liquid scene, whose gas is the air
+    over the liquid and carries it."""
+    point = float(scene.data['liquid']['boil_point'])
+    objs = comp.objects if comp is not None else [('collider', c) for c in scene.colliders if c['enabled']]
+    return any(kind == 'collider' and max(float(v) for v in _values(d.get('temperature', 20.0))) > point for kind, d in objs)
+
+
 def target_kind(scene, comp):
     """What the scene must simulate to take a block: the least it can be. An empty scene becomes whatever
-    the first source needs; fire and liquid together make a fire-and-liquid scene. None if it cannot."""
+    the first source needs; fire and liquid together make a fire-and-liquid scene, and so do liquid and something
+    hot enough to boil it (a Hot plate), so that its steam shows. None if it cannot."""
     kind, need = scene.kind, comp.need
     if kind == 'cloud':
         return kind if comp.key in IN_SKY else None
+    if kind == 'liquid' and (boils(scene, comp) or (need == 'liquid' and boils(scene))):
+        return 'both'
     if need == 'any' or kind == need or kind == 'both':
         return kind
     if need == 'lava':
         return 'both'
     if kind == 'fire' and need == 'liquid' and not has_fire(scene):
-        return 'liquid'
+        return 'both' if boils(scene) else 'liquid'
     if kind == 'liquid' and need == 'fire' and not has_liquid(scene):
         return 'fire'
     return 'both'
+
+
+# Fires built from scratch get the time scale the fire presets have. Measured with tools/fire_check.py (2026-10-07), the
+# gas of a fire made from blocks (burner, campfire, fuel pool; tabletop, person and car sized) rises at 0.64-0.69 of the
+# speed of real flames (McCaffrey), and a campfire's flames puff at a third of the 1.5/sqrt(D) times a second of real
+# ones: the solver's buoyancy, burning and cooling are tuned per second of its own time, and its grid slows the gas, so
+# its seconds pass about two thirds as fast as real ones. Retuning them would change the look of every preset, which
+# were matched to real footage with a Time scale of 1.5-2.2 instead. A Time scale of 1.5 brings the gas speed to
+# 0.94-1.01 of real at every size (and the campfire's puffing to 1.03), so a scene's first fire gets it. It speeds up
+# everything simulated, though, so things that move at their real speed whatever the gas does (water, rain and snow,
+# things that fall or float, fabric, sand, grass) keep or get back a Time scale of 1, as in most of the presets that have
+# them (not Crates into a fire, whose crates fall at its 1.4).
+FIRE_TIME_SCALE = 1.5
+
+
+def _puffs(e):
+    """Whether an emitter is a steady fire, the kind that puffs (fuel, and no jet or burst: Scene.emitters_gpu)."""
+    lit = any(float(v) > 0.0 for v in _values(e.get('fuel', 14.0)))
+    jet = any(float(v) != 0.0 for k in ('vel_blend', 'radial') for v in _values(e.get(k, 0.0)))
+    return bool(e.get('enabled', True)) and lit and not jet
+
+
+def puffing_fire(scene):
+    """Whether the scene has a steady fire in it (one that puffs)."""
+    if scene.kind not in ('fire', 'both'):
+        return False
+    return any(_puffs(e) for e in scene.emitters if scene.kind == 'fire' or e.get('emits', 'fire') == 'fire')
+
+
+def real_speed(scene):
+    """Whether anything in the scene moves at its real speed whatever the gas does: water or lava, rain, snow, sleet or
+    hail, things that fall, float, hang, break or drive, fabric, sand and snow, grass, bullets."""
+    if has_liquid(scene) or scene.fabrics or scene.matter or getattr(scene, 'strands', None) or getattr(scene, 'shots', None):
+        return True
+    wet = scene.kind in ('liquid', 'both')   # (a fire scene has no weather, and nothing floats in it)
+    if wet and (any(float(v) > 0.0 for v in _values(scene.data['liquid']['rain'])) or scene.data['weather']['precip'] != 'none'):
+        return True
+    return any(c['enabled'] and (c.get('dynamic') or (wet and c.get('floating')) or c.get('joint', 'none') != 'none'
+                                 or c.get('breakable') or c.get('build', 'none') != 'none') for c in scene.colliders)
+
+
+def pace(scene, notes, puffed=None):
+    """Keep the scene's Time scale right for what is in it (FIRE_TIME_SCALE): its first steady fire gets the
+    correction, and things that move at their real speed take it away again. puffed: whether the scene had a steady
+    fire before the change (None: the change left its fires as they were). Only 1 and the correction are changed, and
+    the correction is taken away only from a scene that had a fire to give it: a Time scale keyed, a preset's or set by
+    hand stays (but for exactly 1.5 next to a steady fire, which cannot be told from the correction)."""
+    from .anim import Curve
+    d = scene.data['domain']
+    ts = d['time_scale']
+    if isinstance(ts, Curve) or getattr(scene, 'preset', None):
+        return
+    if puffed is None:
+        puffed = puffing_fire(scene)
+    if real_speed(scene):
+        if puffed and abs(float(ts) - FIRE_TIME_SCALE) < 1e-9:   # (a water or smoke scene's own 1.5 stays)
+            d['time_scale'] = 1.0
+            notes.append('Domain › Time scale is back to 1, so the things that fall, flow or sway move at their real speed. '
+                         f'The gas of the fire now rises at about two thirds of the speed of real flames ({FIRE_TIME_SCALE:g} '
+                         'matches them, but speeds everything else up as much).')
+    elif not puffed and float(ts) == 1.0 and puffing_fire(scene):
+        d['time_scale'] = FIRE_TIME_SCALE
+        notes.append(f'Domain › Time scale is {FIRE_TIME_SCALE:g}, as for the fire presets: the simulated gas rises at about two '
+                     'thirds of the speed of real flames without it.')
+
+
+# Settings that start or stop something moving at its real speed, or make a source fire or water: changing one in
+# Properties paces the scene too (Document.set)
+PACED = {('collider', 'dynamic'), ('collider', 'floating'), ('collider', 'joint'), ('collider', 'breakable'), ('collider', 'build'),
+         ('emitter', 'emits'), ('liquid', 'rain'), ('liquid', 'water_level'), ('weather', 'precip')}
 
 
 def _liquid_look(scene):
@@ -886,6 +970,8 @@ def add(scene: Scene, key, at=None, mesh=None):
     if target is None:
         raise ValueError(f'{comp.name} cannot go in a sky scene: skies are kilometres across. Start a fire or liquid scene for it '
                          '(Create › Start from scratch).')
+    hot = comp.need != 'fire' and (boils(scene, comp) or (comp.need == 'liquid' and boils(scene)))   # (its steam needs the gas)
+    puffed = puffing_fire(scene)
     if target != scene.kind:
         was = scene.kind
         empty = not (scene.emitters or scene.colliders or scene.fabrics or scene.matter)
@@ -895,7 +981,10 @@ def add(scene: Scene, key, at=None, mesh=None):
         if target in ('liquid', 'both') and was == 'fire':
             _liquid_look(scene)
         if target == 'both':
-            notes.append('Fire and liquid now simulate together in this scene.')
+            notes.append('Fire and liquid now simulate together in this scene, so the steam of water boiling on hot things shows '
+                         '(the box carries the air over the liquid).' if hot else 'Fire and liquid now simulate together in this scene.')
+    if hot and scene.kind in ('liquid', 'both') and not scene.data['liquid']['thermal']:
+        notes.append('Turn on Liquid › Heat and phase changes for water to boil on hot things.')
     f = _scale_factor(scene) if comp.scales else 1.0
     if comp.file:
         from . import blocks
@@ -1041,6 +1130,7 @@ def add(scene: Scene, key, at=None, mesh=None):
     grown = _fit_box(scene, [(k, lists[k][i]) for k, i in added], room, f, (anchor[0] + dx, anchor[1] + dz) if anchor else (0.0, 0.0))
     if grown:
         notes.append(f'The simulation box grew to {grown[0]:.2g} × {grown[1]:.2g} × {grown[2]:.2g} m to fit it.')
+    pace(scene, notes, puffed)
     return added, notes
 
 
@@ -1057,6 +1147,7 @@ def turn_into(scene: Scene, i, key):
     comp = BY_KEY[key]
     src = next(d for kind, d in comp.objects if kind == 'emitter')
     notes = []
+    puffed = puffing_fire(scene)
     target = target_kind(scene, comp)
     if target is None:
         raise ValueError(f'A sky scene has no {comp.name.lower()} sources.')
@@ -1086,6 +1177,7 @@ def turn_into(scene: Scene, i, key):
         e['emits'] = {'fire': 'fire', 'liquid': 'liquid', 'lava': 'lava'}.get(comp.need, 'fire')
     if comp.need in ('liquid', 'lava') and 'velocity' not in src:
         e['velocity'] = (0.0, -0.5, 0.0)
+    pace(scene, notes, puffed)
     return notes
 
 
@@ -1112,6 +1204,7 @@ def make_dynamic(scene: Scene, i, on=True, release=0.0):
     from ..engine.solver import MAX_COLLIDERS
     if sum(1 for d in scene.colliders if d['enabled']) > MAX_COLLIDERS:
         notes.append(f'Only the first {MAX_COLLIDERS} objects take part in the simulation.')
+    pace(scene, notes)
     return notes
 
 
@@ -1175,6 +1268,7 @@ def add_joint(scene: Scene, i, kind='rope', to=None, on=True):
     else:
         c['joint_at'] = (0.0, top, 0.0)
         notes.append(f'{c["name"]} swings on a ball joint at its top{" on " + other["name"] if other is not None else ""}.')
+    pace(scene, notes)
     return notes
 
 
@@ -1216,6 +1310,7 @@ def make_breakable(scene: Scene, i, on=True, pieces=None, fracture=None):
     if not c.get('dynamic'):
         notes.append(f'{c["name"]} stands where it is until it breaks, held by {dict(base="its base", edges="its edges", free="nothing")[c.get("held", "base")]} '
                      '(Breaking > Held by).')
+    pace(scene, notes)
     return notes
 
 
