@@ -134,6 +134,18 @@ CLIPS = {
     'boiling_throw': clip('boiling_throw', 0.1, 96, plate='ground', plate_args=dict(DAY_SKY)),
     'frozen_pour': clip('frozen_pour', 0.5, 96, plate='ground', plate_args=DAY_FINE),
     'steaming_pool': clip('steaming_pool', 0.5, 96, plate='ground', plate_args=DAY_SKY),
+    # ---- bullets and wood (each on its own stage) ------------------------------------------------------------
+    'shooting_range': clip('shooting_range', 0.0, 72, dyaw=3.0, push=0.04),   # pane ~7, gong 22/28, can 38, board 48/54, block 60/66
+    'steel_gong': clip('steel_gong', 0.0, 96, dyaw=3.0, push=0.04),           # six rounds 0.4 s apart from frame 10, then the swing
+    'bottle_shoot': clip('bottle_shoot', 0.3, 126, dyaw=3.0, push=0.04),      # a bottle a second from 0.5 s
+    'machine_gun': clip('machine_gun', 0.0, 72, dyaw=3.0, push=0.04),         # the burst, tracers, frames 7-47
+    'board_break': clip('board_break', 1.0, 60, dyaw=3.0, push=0.04),         # slowed 4x: it snaps at frames 48-50
+    'boards_shot': clip('boards_shot', 0.0, 66, dyaw=3.0, push=0.04),         # the pistol at 0.4 s, the rifle at 1.2 s
+    'wood_lineup': clip('wood_lineup', 0.0, 96, dyaw=24.0, push=0.12),        # (nothing moves: the camera turns along the woods)
+    # ---- the materials meeting (wind on snow, a log on lava) ------------------------------------------------------
+    'snow_drift': clip('snow_drift', 0.8, 120, dyaw=4.0, push=0.04),          # the spindrift builds from about 1 s
+    'lava_raft': clip('lava_raft', 1.0, 72, plate='ground', plate_args=NIGHT, set={'lighting': DUSK}, dyaw=4.0,
+                      push=0.04),                                         # the log floats off at the flow's front
     # ---- weather and clouds ---------------------------------------------------------------------------------------
     'snow_pond': clip('snow_pond', 0.5, 120, plate='ground', plate_args=DAY_SKY, draft=True),
     'hail_pond': clip('hail_pond', 3.0, 120, plate='ground', plate_args=DAY_SKY, draft=True),

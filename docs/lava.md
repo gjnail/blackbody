@@ -42,6 +42,8 @@ Lava is a liquid of its own beside the water, with the *Lava flow* preset's beha
 
 Lava meets the other things in the box too. Things that fall float in it by its density (2600 kg/m³: a log rides high on it, stone sinks slowly through it, steel goes down) and are dragged along by its slow, heavy flow. Broken objects' pieces and sand, snow and mud are solid to it, so it flows round and over them. It heats what it touches (objects, wax, chocolate, dry leaves, which catch), and its glowing surface radiates, some 200 kW a square metre where it is fresh, warming what lies beside it, scorching cloth hung near it and heating the objects in its way ([objects' heat](physics.md#heat)). Preset: *Log on a lava flow*.
 
+![Log on a lava flow](media/gif/lava_raft.gif "Log on a lava flow: the lava reaches a pine log, which rides high on it and is carried off at its front, and swallows a steel block.")
+
 <p>
 <img src="media/gif/lava_sea.gif" width="49%" alt="Lava into the sea: a steam plume off the waterline." title="Lava into the sea: a steam plume off the waterline.">
 <img src="media/gif/lava_grass.gif" width="49%" alt="Lava into grass: the grass ahead of the front catches." title="Lava into grass: the grass ahead of the front catches.">

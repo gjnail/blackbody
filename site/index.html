@@ -1,11 +1,11 @@
-{{head|Blackbody: GPU fire, water, destruction and sand for your footage|Blackbody simulates fire, smoke, water, the sea, lava, cloth, things that fall and break, explosions, lightning, sand, snow and weather on your GPU, and puts them into live-action footage. Free and open source.|}}
+{{head|Blackbody: GPU fire, water, destruction and sand for your footage|Blackbody simulates fire, smoke, water, the sea, lava, cloth, things that fall and break, bullets, explosions, lightning, sand, snow and weather on your GPU, and puts them into live-action footage. Free and open source.|}}
 {{header|index}}
 
 <main id="main">
   <section class="hero">
     <p class="eyebrow">Free, open-source VFX simulation</p>
     <h1>Real fire. Real water. <em>Your shot.</em></h1>
-    <p class="lede">Blackbody simulates fire, smoke, liquids, the sea, lava, cloth, things that fall and break, explosions, lightning, sand, snow, grass and weather on your GPU. Build an effect from nothing or start from {{preset_count}} presets, line it up with your footage, track the camera, and render a finished composite or the passes your compositor wants.</p>
+    <p class="lede">Blackbody simulates fire, smoke, liquids, the sea, lava, cloth, things that fall and break, bullets, explosions, lightning, sand, snow, grass and weather on your GPU. Build an effect from nothing or start from {{preset_count}} presets, line it up with your footage, track the camera, and render a finished composite or the passes your compositor wants.</p>
     <div class="hero-actions">
       <a class="btn btn-primary" href="getting-started.html">Get started</a>
       <a class="btn btn-secondary" href="https://github.com/gjnail/blackbody">View on GitHub</a>
@@ -28,7 +28,7 @@
     <div class="section-head center">
       <p class="kicker">New since 1.0</p>
       <h2>Now it builds anything</h2>
-      <p class="sub">Objects that fall, break and swing. Explosions and lightning. Sand, snow and mud. Grass that burns. Your words on fire. An empty stage to build on, and a camera that follows your footage.</p>
+      <p class="sub">Objects that fall, break and swing. Bullets and wood. Explosions and lightning. Sand, snow and mud. Grass that burns. Path-traced light. Your words on fire. An empty stage to build on, and a camera that follows your footage.</p>
     </div>
     <div class="cards">
       <a class="card" href="#things"><div class="card-body"><span class="tag">Physics</span><h3>Things that fall and break</h3><p>Rigid bodies in real materials, fracture into bricks, shards and splinters, ropes, cables, springs and hinges.</p></div></a>
@@ -37,6 +37,9 @@
       <a class="card" href="#text"><div class="card-body"><span class="tag">Type</span><h3>Text and logos</h3><p>Any words in any font, or an SVG or PNG, as solid letters: burning, solid, or water that falls and splashes.</p></div></a>
       <a class="card" href="#build"><div class="card-body"><span class="tag">Build</span><h3>An empty stage and a gizmo</h3><p>{{block_count}} building blocks, a 3D gizmo, and a right-click menu that sets fire, drops, breaks and ties things.</p></div></a>
       <a class="card" href="#footage"><div class="card-body"><span class="tag">Matchmove</span><h3>Line up, track, surfaces</h3><p>The camera from a slab on the ground, its move tracked in metres, and real walls and steps that effects meet.</p></div></a>
+      <a class="card" href="#bullets"><div class="card-body"><span class="tag">Ballistics</span><h3>Bullets and wood</h3><p>Real cartridges through glass, wood and steel, and fifteen woods that bend, snap, split and burn as wood does.</p></div></a>
+      <a class="card" href="lume.html"><div class="card-body"><span class="tag">Lume</span><h3>Path-traced light</h3><p>The set, smoke, cloth, grass, water and clouds path traced: bounce light, soft shadows, caustics, dispersion, light passes for the comp.</p></div></a>
+      <a class="card" href="physics.html#heat"><div class="card-body"><span class="tag">Heat</span><h3>Objects with heat</h3><p>Objects warm, glow and cool by the air round them, what they touch and the heat of fire, lava and hot metal: steel in a fire glows, a red-hot ball boils the water it drops into.</p></div></a>
     </div>
   </section>
 
@@ -87,6 +90,9 @@
           <li><b>Meets real surfaces.</b> Line up a wall, a table, a ramp or stairs in the footage: water runs down it, smoke flows round it, fire spreads over it, and it hides what is behind it.</li>
           <li><b>Lights your scene.</b> The fire lights the ground, the walls and the objects in the footage, shadowed by the smoke.</li>
           <li><b>Hides behind real objects.</b> It goes behind stand-in colliders, roto mattes or the footage's own depth pass.</li>
+          <li><b>Lights like the real ones.</b> Point, spot and area lights (Lume traces a panel as the panel it is), a real fixture's IES profile, brightness in lumens: they light the smoke and the set.</li>
+          <li><b>Lit by your shot.</b> Environment from the footage wraps the shot round the set, so with Lume CG objects take its colours from each side and reflect them.</li>
+          <li><b>What you build goes in too.</b> CG objects go over the footage in the shot's light, cast their shadows on the real ground, and go behind real things by the depth pass and matte.</li>
           <li><b>Looks like your camera shot it.</b> Lens blur, distortion, heat haze, highlight roll-off, and noise matched to the footage's own.</li>
         </ul>
         <a class="more" href="compositing.html">Fitting it into footage →</a>
@@ -194,7 +200,7 @@
           <li>Wood, stone, brick, concrete, steel, glass, ice, rubber and more, drawn in CG</li>
           <li>Breaks by how fast it is hit, cracks crowding round the spot: glass and pottery shatter, wood splits, metal bends</li>
           <li>Hundreds of pieces when something breaks, pushing the smoke and the water</li>
-          <li>Wood that burns as wood does: it catches, climbs fast, creeps slowly, chars and cracks, and falls in</li>
+          <li>Wood that burns as wood does, spot by spot: it catches, climbs fast, creeps slowly, chars and cracks, and falls in, time-lapsed by Burn speed-up</li>
           <li>Objects with heat: steel in a fire heats through and glows, a red-hot ball boils the water it drops into</li>
           <li>Ropes, steel cables, chains, springs, hinges and ball joints that snap or tear out; a rope goes over a post</li>
           <li>A stage without footage: a floor to the horizon, lit by the fire, or path traced with Lume</li>
@@ -262,7 +268,7 @@
       <div>
         <p class="kicker">Lume lighting</p>
         <h3>A path-traced frame</h3>
-        <p>Turn on Lume and the whole frame is path traced: the set drawn in CG, the smoke and steam, the cloth and the grass, and water, refracting what is under it and throwing its caustics on the floor. Light bounces from surface to surface, so a fire inside a shed lights its walls and the light they throw back fills it, and smoke is lit by the flames, the sun and the sky scattered through it. Every fire light, glowing patch of hot metal and lamp casts its own shadow, as soft as the light is big, through the objects and the smoke. An HDRI's sun, or a physical sky's, casts sharp shadows, and glass, ice and jelly bend and tint what is seen through them and focus the light into caustics. Measured against a research path tracer on ten test scenes, its mean brightness is within 0.1% on every one, and after the same time it has less error than that tracer's best sampler for each scene on nine of them (on the simplest, a furnace test that renders in a few milliseconds, 1.2 times as much). The viewer sharpens over a few seconds once you stop.</p>
+        <p>Turn on Lume and nearly all of the frame is path traced: the set drawn in CG, the smoke and steam, the cloth and the grass, clouds, and water in a liquid scene without footage, cloth or grass, refracting what is under it and throwing its caustics on the floor (the flames are drawn as before, in its light, and the sea's waves, lava, ice and any other water by the liquid's own renderer, over the set Lume lit). Light bounces from surface to surface, so a fire inside a shed lights its walls and the light they throw back fills it, and smoke is lit by the flames, the sun and the sky scattered through it. Every fire light, glowing patch of hot metal and lamp casts its own shadow, as soft as the light is big, through the objects and the smoke. An HDRI's sun, or a physical sky's, casts sharp shadows, and glass, ice and jelly bend and tint what is seen through them and focus the light into caustics. Measured against a research path tracer on ten test scenes, its mean brightness is within 0.1% on every one, and after the same time it has less error than that tracer's best sampler for each scene on nine of them (on the simplest, a furnace test that renders in a few milliseconds, 1.2 times as much). The viewer sharpens over a few seconds once you stop.</p>
         <p>Lume also splits the set's light into passes for the comp (key, sky, fire, lamps), bends each colour by its own index through glass and water (dispersion), focuses the fire's own flickering light through glass, lights the set by the footage itself, and traces the light a cloud scatters hundreds of times: within 3% of a path-traced reference, where the classic estimate is 40% too dark.</p>
         <a class="more" href="lume.html">Lume lighting →</a>
       </div>
@@ -270,6 +276,32 @@
     <div class="stills">
       <div class="clip"><figure><div class="media"><img src="media/img/lume-clouds.jpg" alt="A sky of cumulus clouds lit by the classic estimate, dull grey, and traced by Lume, bright and sunlit with relief" width="1920" height="540" loading="lazy"></div><figcaption>Clouds: classic, and traced by Lume</figcaption></figure></div>
       <div class="clip"><figure><div class="media"><img src="media/img/lume-dispersion.jpg" alt="A glass ball under a lamp with dispersion off and on: colour fringes round its caustic and along its horizon" width="1600" height="520" loading="lazy"></div><figcaption>Dispersion off, and on (exaggerated 8×)</figcaption></figure></div>
+    </div>
+  </section>
+
+  <!-- bullets and wood -->
+  <section class="section" id="bullets">
+    <div class="feature flip">
+      <div class="feature-media">{{video|machine_gun||Machine gun at dusk}}</div>
+      <div>
+        <p class="kicker">Bullets and wood</p>
+        <h3 style="font-size:38px">Real cartridges, real holes</h3>
+        <p>A shot is a gun firing real cartridges, from an air-rifle pellet to a .50 BMG, each bullet flying its real path and doing what a real one does: it goes through glass, wood and car doors and on, slower; flattens on steel in a splash of lead and sparks; chips a crater out of concrete in a puff of dust; and skips off water and steel when it comes in flat. And wood is fifteen woods, each with its handbook stiffness along the grain and strength along and across it.</p>
+        <ul>
+          <li>Eleven cartridges with their real bullets and speeds; rounds, rate of fire, scatter, tracers and muzzle flash</li>
+          <li>Glass holed with a web of cracks or shattered; steel swings on its hinge, splashed with lead; a can flies off its post</li>
+          <li>What it leaves stays: holes and craters carved into what it hit, splinters round the split in a board's back, frosted glass round a hole, a grey star of lead on steel</li>
+          <li>A cavity in water that swells and collapses; sand and snow thrown up out of a crater; holes in cloth</li>
+          <li>Woods drawn solid through, so a break or a bullet's hole shows the same wood inside: rings, knots, pores, heartwood</li>
+          <li>Wood bends before it breaks, snaps in a jagged greenstick break, splits along its grain under an axe, and burns as wood does</li>
+        </ul>
+        <a class="more" href="bullets.html">Bullets →</a> <a class="more" href="wood.html">Wood →</a>
+      </div>
+    </div>
+    <div class="clips">
+      <div class="clip">{{video|steel_gong||Steel gong}}</div>
+      <div class="clip">{{video|board_break||Breaking a board}}</div>
+      <div class="clip">{{video|wood_lineup||Fifteen woods}}</div>
     </div>
   </section>
 
@@ -289,6 +321,7 @@
           <li>Heat by touch: chocolate melts in a hot steel pan in moments and on a wooden board more slowly; snow melts on anything warmer than freezing</li>
           <li>Heat from the fire: wax, chocolate and metal melt and set again as they cool; hot metal glows and lights the floor</li>
           <li>Sticky: packing snow thrown at a wall stays on it, mud clings to a crate, dry sand runs off</li>
+          <li>Fills a closed mesh of your own (OBJ, STL, USD): a chocolate bunny, a sand sculpture, jelly from a mould</li>
           <li>Fire: dry leaves, sawdust and coal catch, feed the flames and burn down to ash</li>
           <li>Wind: dry sand, snow and leaves blow off a heap's top and drift, and dust goes up into the smoke</li>
           <li>Cloth: a sheet catches sand poured onto it and sags, or drapes over a heap</li>
@@ -297,13 +330,15 @@
         <a class="more" href="matter.html">The guide →</a>
       </div>
     </div>
-    <div class="clips">
+    <div class="clips four">
       <div class="clip">{{video|snowballs||Snowballs that stick}}</div>
       <div class="clip">{{video|chocolate_pan||Chocolate in a hot pan}}</div>
       <div class="clip">{{video|sand_castle||Sand castle and a wave}}</div>
       <div class="clip">{{video|jelly_ball||Ball dropped on jelly}}</div>
       <div class="clip">{{video|iron_pour||Pouring molten iron}}</div>
       <div class="clip">{{video|mud_drag||Crate through mud}}</div>
+      <div class="clip">{{video|snow_drift||Snow blowing off a heap}}</div>
+      <div class="clip">{{video|chocolate_fire||Chocolate by a fire}}</div>
     </div>
   </section>
 
@@ -337,6 +372,7 @@
         <p>Type words in any font on your computer and they become solid 3D letters that work like any other object. Burning text has fire all over the letters. Text is solid: set it on fire, drop it, smash it, float it. Water letters hang in the air, then fall and splash. Logos and pictures work the same way, traced from an SVG, PNG or JPG.</p>
         <ul>
           <li>Change the words, the font or the size later, and the fire changes with them</li>
+          <li>Chocolate letters in any font: they melt in a hot pan or by a fire</li>
           <li>Invert and threshold for pictures with no transparency</li>
         </ul>
         <a class="more" href="getting-started.html#words-on-fire">Words on fire →</a>
@@ -405,7 +441,7 @@
       <div>
         <p class="kicker">Lava, fire and water together</p>
         <h3 style="font-size:38px">When the elements meet</h3>
-        <p>Molten lava glows by its own heat as a blackbody, crusts over as it cools and lights everything around it. Fire, water and lava can share one box. Water soaks fuel and boils off in a plume of steam, and lava boils the sea while its skin chills black. Hot objects glow and cool too: a red-hot steel ball dropped in water flashes it to steam, held off by a film of its own vapour, and fades from orange to black.</p>
+        <p>Molten lava glows by its own heat as a blackbody, crusts over as it cools and lights everything around it. Fire, water and lava can share one box. Water soaks fuel and boils off in a plume of steam, and lava boils the sea while its skin chills black. A log in the flow's path rides high on it and is carried off at its front, while a steel block is swallowed and shoved along. Hot objects glow and cool too: a red-hot steel ball dropped in water flashes it to steam, held off by a film of its own vapour, and fades from orange to black.</p>
         <a class="more" href="lava.html">The lava guide →</a>
       </div>
     </div>
@@ -413,7 +449,7 @@
       <div class="clip">{{video|hose_on_fire||Hose on a fire}}</div>
       <div class="clip">{{video|lava_sea||Lava into the sea}}</div>
       <div class="clip">{{video|lava_quench||Water on lava}}</div>
-      <div class="clip">{{video|quench||Red-hot steel quenched}}</div>
+      <div class="clip">{{video|lava_raft||Log on a lava flow}}</div>
     </div>
   </section>
 
@@ -428,11 +464,13 @@
         <a class="more" href="heat.html">The ice and steam guide →</a>
       </div>
     </div>
-    <div class="clips four">
+    <div class="clips">
       <div class="clip">{{video|boiling_pot||Boiling pot}}</div>
       <div class="clip">{{video|pond_freeze||Pond freezing over}}</div>
       <div class="clip">{{video|frozen_pour||Water on dry ice}}</div>
       <div class="clip">{{video|boiling_throw||Ice fog}}</div>
+      <div class="clip">{{video|quench||Red-hot steel quenched}}</div>
+      <div class="clip">{{video|kettle_steam||Kettle steam}}</div>
     </div>
   </section>
 
@@ -465,7 +503,7 @@
       <div class="feature-media">{{video|ui-effects||The Effects tab}}</div>
       <div>
         <h3>Start from {{preset_count}} presets</h3>
-        <p>Pick a chip (fire, liquids, fabric, the sea, smoke, blasts, ice, weather, falling and breaking, sand, snow and mud) and click an effect: it simulates live in your shot. Each one is an ordinary scene you can change and save as your own.</p>
+        <p>Pick a chip (fire, liquids, fabric, the sea, smoke, blasts, ice, weather, falling and breaking, sand, snow and mud, bullets, wood) and click an effect: it simulates live in your shot. Each one is an ordinary scene you can change and save as your own.</p>
         <a class="more" href="presets.html">Browse the presets →</a>
       </div>
     </div>

@@ -1,5 +1,7 @@
 # Bullets
 
+![Machine gun at dusk](media/gif/machine_gun.gif "Machine gun at dusk: a burst of 5.56 mm tracers walked across a concrete wall, a puff of dust at each hit.") ![Steel gong](media/gif/steel_gong.gif "Steel gong: six 9 mm rounds into a hanging steel plate, sparks and a grey star of splashed lead at each hit.")
+
 A *shot* is a gun firing: from its muzzle toward a point it is aimed at, a cartridge's bullets fly their real paths and do to everything they meet what real bullets do. They go through glass, wood, drywall and car doors and on, slower; flatten on steel in a splash of lead and sparks; chip craters out of concrete, brick and stone in a puff of dust; skip off water, concrete and steel when they come in flat; open a cavity in gel and water that swells and collapses; throw sand and snow up out of a crater; punch holes in cloth; and knock over, spin and shatter whatever they hit. Shots work in every kind of scene but the sky.
 
 ## Firing

@@ -1,5 +1,7 @@
 # Wood
 
+![Woods](media/gif/wood_lineup.gif "Woods: every wood side by side, as boards and as a log sawn through.") ![Breaking a board](media/gif/board_break.gif "Breaking a board: a 10 kg weight dropped from a metre onto a pine board across two blocks, slowed four times: it bends, then snaps in a jagged greenstick break.")
+
 Wood is fifteen materials: pine (Wood), spruce, Douglas fir, oak, ash, maple, birch, walnut, cherry, mahogany, teak, cedar and balsa, and two made from wood, plywood and MDF. Each is its own wood all through: its density, how stiff and how strong it is along its grain and across it (from the USDA Wood Handbook), and how it looks.
 
 ## How it looks

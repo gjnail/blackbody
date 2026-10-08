@@ -29,7 +29,10 @@ FRAMES = {'campfire': 60, 'bonfire': 72, 'torch': 48, 'candle': 48, 'gas_ring': 
           'boiling_throw': 36, 'snow_pond': 36, 'hail_pond': 240, 'cumulus_day': 300, 'thunderstorm': 600, 'lava_sea': 84, 'lava_quench': 56, 'lava_grass': 96, 'lava_raft': 48,
           'tower_knockdown': 15, 'crates_in_fire': 110, 'wall_smash': 22, 'wrecking_ball': 44, 'yard_blast': 16, 'lightning_strike': 7, 'window_smash': 14, 'vase_drop': 24,
           'sand_hopper': 100, 'snowballs': 16, 'jelly_ball': 20, 'mud_drag': 44, 'sand_castle': 34, 'sand_sling': 66, 'iron_pour': 66, 'chocolate_fire': 140, 'chocolate_pan': 240, 'snow_drift': 96, 'sheet_rip': 58,
-          'crash_test': 18, 'stunt_fall': 30, 'chain_swing': 34, 'shed_fire': 384}
+          'crash_test': 18, 'stunt_fall': 30, 'chain_swing': 34, 'shed_fire': 384,
+          # (bullets and wood: just after each one's shot or blow)
+          'shooting_range': 66, 'glass_slowmo': 52, 'bottle_shoot': 63, 'steel_gong': 40, 'machine_gun': 30,
+          'board_break': 68, 'boards_shot': 40, 'wood_lineup': 1}
 
 # presets shown over an old lava field instead of paving slabs
 FIELD_PLATES = {'lava'}

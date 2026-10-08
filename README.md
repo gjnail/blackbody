@@ -6,7 +6,7 @@
 
 <p align="center">
   <b>Fire, water, cloth, destruction, sand and weather, simulated on your GPU and put into your footage.</b><br>
-  Build an effect from nothing or start from one of 111 presets, line it up with your shot, and render a finished composite or the passes your compositor wants.
+  Build an effect from nothing or start from one of 114 presets, line it up with your shot, and render a finished composite or the passes your compositor wants.
 </p>
 
 <p align="center">
@@ -31,7 +31,7 @@
   <sub>From the 90-second film. Blackbody simulated and rendered every fire, splash, brick and grain in it, and the screen recordings are the app itself. <a href="https://gjnail.github.io/blackbody/#showreel">Watch it with sound</a>.</sub>
 </p>
 
-Blackbody simulates fire as a real gas: fuel burns into heat, soot and flame, hot gas rises, swirls and expands, and smoke drifts. Flame colour and brightness come from blackbody radiation, so thick flame saturates the way real flame does. It simulates liquids too, from a pour to an ocean, and lava, ice and steam, cloth that burns, objects that fall and break, ropes and hinges, explosions, lightning, sand, snow and mud, and the weather, up to clouds that build into storms. You can put any of them together in one scene, and they push on each other.
+Blackbody simulates fire as a real gas: fuel burns into heat, soot and flame, hot gas rises, swirls and expands, and smoke drifts. Flame colour and brightness come from blackbody radiation, so thick flame saturates the way real flame does. It simulates liquids too, from a pour to an ocean, and lava, ice and steam, cloth that burns, objects that fall and break, bullets through glass, wood and steel, ropes and hinges, explosions, lightning, sand, snow and mud, and the weather, up to clouds that build into storms. You can put any of them together in one scene, and they push on each other.
 
 You place the effect in your shot: line up the ground in the footage, track the camera move, line up the walls and steps it should meet, and it stands in the shot at its real size. Then render any of these:
 
@@ -39,10 +39,10 @@ You place the effect in your shot: line up the ground in the footage, track the 
 |---|---|
 | A finished composite (ProRes, H.264, H.265, DNxHR) | delivery and review |
 | An element with alpha (ProRes 4444, PNG) | any editor |
-| Multi-layer and deep OpenEXR | Nuke, After Effects, Fusion, Resolve, Flame |
+| Multi-layer and deep OpenEXR, and the composite as an EXR sequence (with Lume's light passes) | Nuke, After Effects, Fusion, Resolve, Flame |
 | OpenVDB volumes, and USD or OBJ meshes | Blender, Houdini, Maya, Cinema 4D, Unreal |
 
-**New since 1.0** (see the [changelog](CHANGELOG.md)): things that fall, break and hang on ropes and hinges · ramps, wheels and motors · explosions · lightning · sand, snow, mud, jelly and clay · burning text and logos · Build and Shot workspaces with a 3D gizmo and right-click actions · lining up the ground and tracking moving cameras · surfaces · layers and roto · search everything (Ctrl+K) · your own blocks · repeat in a row or a ring.
+**New since 1.0** (see the [changelog](CHANGELOG.md)): things that fall, break and hang on ropes and hinges · ramps, wheels and motors · explosions · lightning · sand, snow, mud, jelly and clay · guns and bullets · fifteen woods that bend, split and burn as wood does · objects with heat · path-traced Lume lighting · burning text and logos · Build and Shot workspaces with a 3D gizmo and right-click actions · lining up the ground and tracking moving cameras · surfaces · layers and roto · search everything (Ctrl+K) · your own blocks · repeat in a row or a ring.
 
 ## Contents
 
@@ -77,7 +77,11 @@ Cloth holds what lands on it, and tears when it cannot. Things that fall come to
 
 <img src="docs/media/gif/tower_knockdown.gif" width="49%" alt="A bowling ball knocking down a tower of wooden blocks beside a falling domino run"> <img src="docs/media/gif/wall_smash.gif" width="49%" alt="A steel ball punching through a brick wall, the bricks above caving in">
 
-Any object can fall: it tumbles, slides, bounces, stacks and knocks things over, in real materials (wood, stone, brick, steel, glass, rubber and more), and the smoke, the water and the wind push it about. Burning ones keep burning as they tumble, and lights or flames attached to them go along. Wood burns as wood does: it catches where enough heat reaches it, fire climbs it fast and creeps over it slowly, it chars black and cracks, glowing in the cracks, and it chars through. A shed on fire flashes over, burns all over and falls in, its burnt pieces crumbling to ash. [The guide](docs/physics.md)
+Any object can fall: it tumbles, slides, bounces, stacks and knocks things over, in real materials (wood, stone, brick, steel, glass, rubber and more), and the smoke, the water and the wind push it about. Burning ones keep burning as they tumble, and lights or flames attached to them go along. [The guide](docs/physics.md)
+
+<img src="docs/media/gif/shed_fire.gif" width="49%" alt="A rubbish fire in the back corner of a pine shed climbs the corner, flashes over under the roof, and the shed chars through and falls in"> <img src="docs/media/gif/crates_in_fire.gif" width="49%" alt="Three wooden crates dropped onto a campfire land on the logs, catch and burn">
+
+Breakable wood burns as wood does, spot by spot over its surface: it catches where enough heat reaches it (about five seconds in the flames for pine, never below 12 kW a square metre), fire climbs it fast and creeps over it slowly, it chars at its real charring rate, black and cracked into blocks that glow in their cracks, and it chars through its whole thickness, its glue weakening with what is left of it. So char starts where the flames touch it and spreads from there, rather than a whole board darkening at once. Real wood takes tens of minutes to burn down, so Spreading fire › *Burn speed-up* time-lapses its burning while the flames and smoke move at their own speed: *Shed on fire* flashes over, burns all over and falls in, its burnt pieces crumbling to ash. [Breaking and burning](docs/physics.md#breaking-and-burning)
 
 <img src="docs/media/gif/window_smash.gif" width="49%" alt="A stone thrown through a window: the glass cracks out from where it hits to the frame and stays in it"> <img src="docs/media/gif/vase_drop.gif" width="49%" alt="A vase tipped off a table, whole until it shatters on the floor into curved shards">
 
@@ -93,15 +97,27 @@ Objects hang on ropes, steel cables, chains, springs, hinges and ball joints, fr
 
 <img src="docs/media/img/lume-classic.jpg" width="49%" alt="A wooden shed with a fire inside, lit by the classic engine: its inner walls flat brown"> <img src="docs/media/img/lume-path.jpg" width="49%" alt="The same shed path traced with Lume: the fire's light on its inner walls and floor, bounced round inside it">
 
-The whole frame can be path traced with **Lume** (left: the classic engine, right: Lume): the set drawn in CG, the smoke and steam, the cloth and the grass, and water, refracting what is under it and throwing its caustics on the floor. Light bounces from surface to surface, so a fire inside a shed lights its walls and the light they throw back fills it, and smoke is lit as it really is, by the flames, the sun and the sky scattered through it (the classic engine over-lights thick smoke two to five times). Each fire light, glowing patch of hot metal and lamp casts its own shadow, as soft as the light is big, through the objects and the smoke. An HDRI's sun, or a physical sky's (its blue, its haze, its reddening at sunset), casts sharp shadows, and glass, ice and jelly bend and tint what is seen through them and focus the light into caustics. Measured against a research path tracer on ten test scenes, its mean brightness is within 0.1% on every one, and after the same time it has less error than that tracer's best sampler for each scene on nine of them (on the simplest, a furnace test that renders in a few milliseconds, 1.2 times as much). [Lume lighting](docs/lume.md)
+Nearly all of the frame can be path traced with **Lume** (left: the classic engine, right: Lume): the set drawn in CG, the smoke and steam, the cloth and the grass, clouds, and water in a liquid scene without footage, cloth or grass, refracting what is under it and throwing its caustics on the floor (the flames are drawn as before, in its light, and the sea's waves, lava, ice and any other water by the liquid's own renderer, over the set Lume lit). Light bounces from surface to surface, so a fire inside a shed lights its walls and the light they throw back fills it, and smoke is lit as it really is, by the flames, the sun and the sky scattered through it (the classic engine over-lights thick smoke two to five times, so presets made with it give smoke a dark colour: with Lume set Shading › *Smoke colour* to what the smoke really is, pale for wood and grass, near black for oil and rubber). Each fire light, glowing patch of hot metal and lamp casts its own shadow, as soft as the light is big, through the objects and the smoke. An HDRI's sun, or a physical sky's (its blue, its haze, its reddening at sunset), casts sharp shadows, and glass, ice and jelly bend and tint what is seen through them and focus the light into caustics. Measured against a research path tracer on ten test scenes, its mean brightness is within 0.1% on every one, and after the same time it has less error than that tracer's best sampler for each scene on nine of them (on the simplest, a furnace test that renders in a few milliseconds, 1.2 times as much). [Lume lighting](docs/lume.md)
 
 <img src="docs/media/img/lume-clouds.jpg" width="49%" alt="A sky of cumulus clouds lit by the classic estimate (left), dull grey, and traced by Lume (right), bright and sunlit with relief"> <img src="docs/media/img/lume-dispersion.jpg" width="49%" alt="A glass ball under a lamp with dispersion off (left) and on, exaggerated eight times (right): colour fringes round its caustic and along its horizon">
 
-Lume splits the set's light into passes for the comp (the key light, the sky, the fire and the lamps, each a layer of the EXR to turn up, down or recolour), bends each colour by its own index through glass, ice and water (*Dispersion*: the rainbow fringe round a caustic, the fire of a gem), focuses the fire's own flickering light through glass, can light the CG set by the footage itself, and traces the light a cloud scatters hundreds of times: measured against Mitsuba path tracing the same cumulus, it is within 3%, where the classic estimate is about 40% too dark. [Light passes](docs/lume.md#light-passes) · [Clouds](docs/lume.md#clouds)
+Lume splits the set's light into passes for the comp (the key light, the sky, the fire and the lamps, each a layer of the EXR to turn up, down or recolour), bends each colour by its own index through glass, ice and water (*Dispersion*: the rainbow fringe round a caustic, the fire of a gem), focuses the fire's own flickering light through glass, can light the CG set by the footage itself, and traces the light a cloud scatters hundreds of times: measured against Mitsuba path tracing the same cumulus, it is within 3%, where the classic estimate is about 40% too dark. In a liquid scene without footage, cloth or grass, Lume traces the water as it is: it reflects and refracts by the exact Fresnel terms, rippled as it moves, takes on its own colour over the way through and clouds with its murk or dye, and the floor under it takes its caustics in the water's colour. [Light passes](docs/lume.md#light-passes) · [Clouds](docs/lume.md#clouds)
+
+<img src="docs/media/img/lume-light-passes.jpg" width="100%" alt="The light passes: the set's light, then its key light, sky, fire and lamp layers, each on its own">
 
 <img src="docs/media/gif/cart_jump.gif" width="49%" alt="A burning motor cart racing up a ramp, jumping and crashing through a tower of blocks">
 
 Any object can be tilted and rolled as well as turned, so a plank becomes a ramp, a wall leans and a wheel stands on its rim; things slide down a slope steeper than their friction angle and stay put on a gentler one. A hinge can have a **motor**: four wheels hinged to a cart drive it along, a turntable spins up until what is on it flies off, a windmill's sails stir the smoke. [Tilted objects](docs/physics.md#tilted-objects) · [Motors](docs/physics.md#motors)
+
+### Bullets and wood
+
+<img src="docs/media/gif/machine_gun.gif" width="49%" alt="A machine-gun burst with tracers walked across a concrete wall at dusk, a puff of dust at each hit"> <img src="docs/media/gif/steel_gong.gif" width="49%" alt="A hanging steel plate shot six times: sparks at each hit and a grey star of splashed lead">
+
+A *shot* is a gun firing real cartridges, from an air-rifle pellet to a .50 BMG, each bullet flying its real path and doing what a real one does: it goes through glass, wood and car doors and on, slower; flattens on steel in a splash of lead and sparks; chips a crater out of concrete or brick in a puff of dust; skips off water, concrete and steel when it comes in flat; opens a cavity in water that swells and collapses; throws sand and snow up out of a crater; punches holes in cloth; and knocks over, spins and shatters what it hits. What it leaves stays on what it hit, its holes and craters carved right into it: splinters standing out round the split in the back of a board, a crater of flat facets in concrete or brick, a hole in glass ringed with frosted crushed glass and a web of cracks, a grey star of lead on steel. Put one in from *Create › Guns & bullets*, aim it, and set its cartridge, rounds and rate of fire; key its muzzle and its aim to sweep it across a scene. Presets: *Shooting range*, *Bullet through glass*, *Bottles on a fence*, *Steel gong*, *Machine gun at dusk*. [Bullets](docs/bullets.md)
+
+<img src="docs/media/gif/board_break.gif" width="49%" alt="A 10 kg weight dropped onto a pine board across two blocks, slowed down: the board bends, then snaps in a jagged greenstick break"> <img src="docs/media/gif/wood_lineup.gif" width="49%" alt="Fifteen woods side by side as boards and a sawn log, from pale balsa and maple to dark walnut and mahogany">
+
+Wood is fifteen woods, from balsa to oak and teak, plywood and MDF among them, each with its density, its stiffness along the grain and its strength along and across it from the USDA Wood Handbook, and its look drawn solid through it: rings, knots, pores and rays, heartwood, so a cut, a break or a bullet's hole shows the same wood inside. It bends before it breaks (a 2 m pine plank sags about 2.5 cm under 10 kg, as beam theory says) and is as strong as a sawn board is rated; bent too far it snaps in a jagged greenstick break, splinters standing out of both halves. An edge driven into its end grain splits it along the grain, as an axe does (a 3 kg wedge at 8 m/s splits a 24 cm round of pine in two), a log breaks into wedges along its rays, a bullet holes it with a split torn out of its back, and it burns as wood does. Presets: *Breaking a board*, *Bullets through boards*, *Woods*. [Wood](docs/wood.md)
 
 ### Explosions and lightning
 
@@ -113,11 +129,15 @@ A source's **Blast** is an explosive charge, in kilograms of TNT. When it goes o
 
 <img src="docs/media/gif/sand_hopper.gif" width="49%" alt="Sand running out of a hopper on legs and heaping up round them"> <img src="docs/media/gif/jelly_ball.gif" width="49%" alt="A steel ball dropped onto a block of red jelly, thrown back up">
 
-Sand pours and piles at its angle of repose, wet sand holds a cut edge, mud slumps and flows until it is thin enough to stop, jelly wobbles and springs back, and clay squashes and stays squashed. Each is hundreds of thousands of particles that remember how they have been squeezed (the material point method, on the GPU). Things that fall land on it or sink into it, objects plough through it, and cloth catches it (a sheet held at its corners sags under the sand poured onto it) or drapes over it. Water gets into sand and carries it off: a pour digs a gully down a heap, and a sand castle the water reaches soaks through and slumps. [The guide](docs/matter.md)
+Sand pours and piles at its angle of repose, wet sand holds a cut edge, mud slumps and flows until it is thin enough to stop, jelly wobbles and springs back, and clay squashes and stays squashed. Each is hundreds of thousands of particles that remember how they have been squeezed (the material point method, on the GPU). Things that fall land on it or sink into it, objects plough through it, and cloth catches it (a sheet held at its corners sags under the sand poured onto it) or drapes over it. Water gets into sand and carries it off: a pour digs a gully down a heap, and a sand castle the water reaches soaks through and slumps. A body of it can fill a closed mesh of your own (OBJ, STL or a USD prim): a chocolate bunny, a sand sculpture, jelly turned out of a mould. *Chocolate letters* are any words in any font, in chocolate that melts in a hot pan or by a fire. [The guide](docs/matter.md)
 
 <img src="docs/media/gif/snowballs.gif" width="49%" alt="Snowballs of packing snow thrown at a brick wall, squashing where they hit and sticking to it"> <img src="docs/media/gif/chocolate_pan.gif" width="49%" alt="Squares of chocolate in a hot steel pan melting into glossy pools that run together">
 
-Snow, mud, clay and wet sand stick to what they touch, each as hard as it really does: a snowball of packing snow thrown at a brick wall squashes where it hits and stays there, powder snow slides off, mud clings to a crate dragged through it, and dry sand does not stick at all. Heat passes where things touch, as fast as the two materials pass it on: squares of chocolate in a 180 °C steel pan melt from the bottom, slump into glossy pools and run together, more slowly on a wooden board as hot, and snow melts from below where it lies on anything warmer than freezing, as well as wherever flames touch it. Wax, chocolate and metal melt in the fire too and set again as they cool, and molten iron glows and lights the floor round it. Dry leaves, sawdust and coal catch fire, feed it, and burn down to ash. Wind lifts dry sand, snow, leaves and sawdust off the top of a heap once it blows hard enough and drives them along the ground, as much as is really carried, and dusty stuff throws dust into the smoke. [Things that melt](docs/matter.md#things-that-melt)
+Snow, mud, clay and wet sand stick to what they touch, each as hard as it really does: a snowball of packing snow thrown at a brick wall squashes where it hits and stays there, powder snow slides off, mud clings to a crate dragged through it, and dry sand does not stick at all. Heat passes where things touch, as fast as the two materials pass it on: squares of chocolate in a 180 °C steel pan melt from the bottom, slump into glossy pools and run together, more slowly on a wooden board as hot, and snow melts from below where it lies on anything warmer than freezing, as well as wherever flames touch it. Wax, chocolate and metal melt in the fire too and set again as they cool, and molten iron glows and lights the floor round it. Dry leaves, sawdust and coal catch fire, feed it, and burn down to ash. [Things that melt](docs/matter.md#things-that-melt)
+
+<img src="docs/media/gif/snow_drift.gif" width="49%" alt="A gale blowing powder snow off a heap in a white plume streaming downwind"> <img src="docs/media/gif/sand_castle.gif" width="49%" alt="A wave reaching a sand castle: the sand soaks, darkens and slumps">
+
+Wind blows dry sand, fresh snow, leaves, sawdust and ash off a heap once it passes the speed that starts their grains moving, and carries as much as a wind that strong really carries: the heap's windward side wears down and its crest creeps downwind, and dusty stuff throws dust into the smoke. [What moves it](docs/matter.md#what-moves-it)
 
 ### Grass and plants
 
@@ -147,7 +167,11 @@ A real ocean spectrum of waves runs on to the horizon. Whitecaps and foam streak
 
 <img src="docs/media/gif/lava_sea.gif" width="49%" alt="Lava running into the sea in a plume of steam"> <img src="docs/media/gif/hose_on_fire.gif" width="49%" alt="A hose putting out a campfire">
 
-Lava glows as a blackbody, crusts over as it cools and lights everything around it. Fire, water and lava can share one box: water soaks the fuel and boils off in a plume of steam, and lava boils the sea while its skin chills black. Things dropped on lava float or sink by its density, and it heats what it touches. [The lava guide](docs/lava.md)
+Lava glows as a blackbody, crusts over as it cools and lights everything around it. Fire, water and lava can share one box: water soaks the fuel and boils off in a plume of steam, and lava boils the sea while its skin chills black. [The lava guide](docs/lava.md)
+
+<img src="docs/media/gif/lava_raft.gif" width="49%" alt="A lava flow reaching a pine log, which rides high on it and is carried off at its front"> <img src="docs/media/gif/lava_quench.gif" width="49%" alt="Water poured on lava boils off in steam as the lava's skin chills black">
+
+Things dropped on lava float or sink by its density (2600 kg/m³: a log rides high and is carried along by the flow, while steel is swallowed and shoved along). It flows round broken pieces and sand, snow and mud, heats what it touches and radiates its heat, scorching cloth hung near it. Preset: *Log on a lava flow*. [Fire, water and lava together](docs/lava.md#fire-water-and-lava-together)
 
 ### Ice, boiling and steam
 
@@ -167,7 +191,7 @@ Snow, sleet, freezing rain, graupel and hail fall as the column of air above dec
 
 ## Build anything
 
-Blackbody opens in **Build**: an empty stage with a camera of your own. Put in one thing from the card on the stage, or anything from **Create** (Ctrl+N), which has more than 100 building blocks: fires, smoke, steam and sparks, liquids, fabric, weather, forces, objects, things that fall, ropes and hinges, sand, snow and mud, lights, text and logos, and the blocks you saved yourself. What you put in decides what the scene simulates, and fire, water, cloth, rigid bodies and sand all simulate together.
+Blackbody opens in **Build**: an empty stage with a camera of your own. Put in one thing from the card on the stage, or anything from **Create** (Ctrl+N), which has more than 100 building blocks: fires, smoke, steam and sparks, liquids, fabric, weather, forces, objects, things that fall, ropes and hinges, guns and bullets, sand, snow and mud, lights, text and logos, and the blocks you saved yourself. What you put in decides what the scene simulates, and fire, water, cloth, rigid bodies and sand all simulate together.
 
 <img src="docs/media/gif/ui-build.gif" width="100%" alt="An empty stage: a curtain from the card, moved and stretched with the gizmo, set on fire from its right-click menu, then wind from Create">
 
@@ -183,9 +207,10 @@ Blackbody opens in **Build**: an empty stage with a camera of your own. Put in o
 
 <img src="docs/media/gif/ui-search.gif" width="49%" alt="Ctrl+K: typing make it fall, then set it on fire, on a box"> <img src="docs/media/gif/ui-repeat.gif" width="49%" alt="Right-click a torch, Repeat, a ring of eight">
 
+- **The shot's camera from your view.** In Build, *Use this view* gives the shot the view you have and *Key here* keys it at this frame (keys at two frames make a camera move); with footage, the camera matches the footage instead. [The shot's camera](docs/getting-started.md#the-shots-camera)
 - **Animate it.** Click the ◆ next to a setting to keyframe it. The animation editor lists every animated setting with its keys, and the timeline shows each source's start and stop, each cloth's let-go time and each pour as bars you drag.
 - **Layers and roto.** Layers put several effects in one shot, such as a campfire in front and a waterfall behind, each its own simulation, composited back to front. Roto shapes drawn round what is in front of the effect, and keyed over the shot, put the effect behind them.
-- **Start from an effect.** The Effects tab has 111 presets, from a candle to a thunderstorm, sorted into fire, liquids, fabric, the sea, smoke, blasts, ice, weather, falling and breaking, sand, snow and mud, and bullets and wood. Click one and it simulates live.
+- **Start from an effect.** The Effects tab has 114 presets, from a candle to a thunderstorm, sorted into fire, liquids, fabric, the sea, smoke, blasts, ice, weather, falling and breaking, sand, snow and mud, and bullets and wood. Click one and it simulates live.
 
 <img src="docs/media/gif/ui-effects.gif" width="100%" alt="The Effects tab: the Falling and breaking chip and the wrecking ball, the Sand chip and the hopper, the Fire chip and the campfire">
 
@@ -203,8 +228,10 @@ Stock elements never match your camera, your light or your lens. Blackbody puts 
 <img src="docs/media/gif/ui-track.gif" width="49%" alt="Tracking, Track: the camera move worked out for 144 frames, then the fire staying on the ground as the camera dollies in"> <img src="docs/media/gif/tracked_shot.gif" width="49%" alt="The tracked shot rendered: a campfire on the paving of a dusk courtyard as the camera moves">
 
 3. **Line up surfaces.** A wall, a table, a step, a ramp or a flight of stairs in the footage becomes a solid where it is: water splashes off it and runs down it, smoke flows round it, fire spreads over it, and it hides the effect behind it. Blocks dropped onto the footage land on table tops, steps and slopes.
-4. **It goes behind real things** using stand-in colliders, roto mattes or the footage's depth pass, and it **lights the scene**: the fire lights the ground and walls in the footage, shadowed by its own smoke.
+4. **It goes behind real things** using stand-in colliders, roto mattes or the footage's depth pass, and it **lights the scene**: the fire lights the ground and walls in the footage, shadowed by its own smoke. With Lighting › *Environment from the footage* the shot lights what you build too, wrapped round the set as a panorama, so with Lume a CG object takes its colours from each side and reflects them (the classic engine takes their average).
 5. **It looks like your camera shot it:** the lens's blur and distortion, heat haze, highlight roll-off, and the footage's own noise.
+6. **Lights like the real ones.** Point, spot and area lights (a lit window, a softbox, an LED panel: Lume traces the panel itself), a real fixture's *Light profile (IES)* throwing its own pattern, brightness in lux or in lumens as on the box. They light the smoke and the set, and under a real light in the footage the ground darkens where the smoke drifts in front of it. [Lights in the set](docs/compositing.md#lights-in-the-set)
+7. **What you build goes in too.** An object's *Look* is *CG*, *In the footage* or *Automatic* (CG without footage, and in a shot only for things that fall or float): a CG crate goes over the footage lit by the shot's light, its shadow darkening the real ground, hidden behind real things by the depth pass and matte. [CG objects in your footage](docs/physics.md#in-your-footage)
 
 <img src="docs/media/img/compare-plate.jpg" width="49%" alt="The plate: a brick yard with an oil drum"> <img src="docs/media/img/compare-comp.jpg" width="49%" alt="The same plate with a fire behind the drum">
 
@@ -240,7 +267,7 @@ The [tutorial](docs/tutorial.md) takes a shot from footage to final render in ab
 |---|---|
 | [Install and first steps](docs/getting-started.md) | Requirements, install, the window, building anything, putting an effect in your shot, text and logos, layers, animation |
 | [Tutorial: your first shot](docs/tutorial.md) | Footage, placing, matching, tracking, keyframes, rendering |
-| [Presets](docs/presets.md) | All 111 built-in effects |
+| [Presets](docs/presets.md) | All 114 built-in effects |
 | [Fire, smoke and sparks](docs/fire.md) | Puffing, swirl, sparks, colour, steam, spreading fire, rooms, flame fronts, meshes |
 | [Fabric and burning cloth](docs/fabric.md) | Real fabrics, burning through, soaking, dripping and steaming |
 | [Things that fall](docs/physics.md) | Rigid bodies, materials, breaking, ropes, springs and hinges, explosions, lightning, tilted objects, motors, the CG stage, CG objects in footage |
