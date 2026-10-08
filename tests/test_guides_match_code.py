@@ -101,3 +101,12 @@ def test_presets_the_guides_name_exist():
         bad += [f'{f.name}: {n}' for n in found if n not in names]
     assert named > 20
     assert not bad, bad
+
+
+def test_the_guides_give_the_gpu_lists_caps():
+    """The matter guide gives its glow's most lights and the limits the most pieces of ice, as the code has them."""
+    from blackbody.engine.liquid_thermal import MAX_BODIES
+    from blackbody.engine.stage import MATTER_LIGHTS
+    assert f'at most {MATTER_LIGHTS} patches of its surface' in _doc('matter.md')
+    assert f'at most {MAX_BODIES:,} separate pieces' in _doc('troubleshooting.md')
+    assert f'const MAX_BODIES: u32 = {MAX_BODIES}u;' in _src('engine/wgsl/liq_therm_common.wgsl')   # (its twin)

@@ -1,12 +1,13 @@
 // Weather: precipitation particles (engine/weather.py), one thread per slot, each substep.
 //
 // A free slot may become a new particle at the top of the weather area (as many as the rate brings in
-// this step), its state drawn from what the air column above delivers there (atmos.arrivals, uploaded as
-// a table). A falling particle exchanges heat and water with the air round it (it melts, refreezes,
-// evaporates or sublimates: wx_common.wgsl), is carried by the wind and its gusts and eddies toward its
-// terminal fall (snow flutters as it falls), and moves in steps short enough to find what it hits: the
-// ground, a collider, or the liquid's surface. The area wraps round at its sides, so the wind carries the
-// fall through it without thinning it upwind.
+// this step: the first free slots in order, each new piece drawn from its number in the step, so a scene
+// falls the same way every run), its state drawn from what the air column above delivers there
+// (atmos.arrivals, uploaded as a table). A falling particle exchanges heat and water with the air round
+// it (it melts, refreezes, evaporates or sublimates: wx_common.wgsl), is carried by the wind and its gusts
+// and eddies toward its terminal fall (snow flutters as it falls), and moves in steps short enough to find
+// what it hits: the ground, a collider, or the liquid's surface. The area wraps round at its sides, so the
+// wind carries the fall through it without thinning it upwind.
 //
 // What it does when it lands depends on what it is:
 //  - in the liquid: its mass and heat go to the liquid cell it entered (wx_liquid.wgsl turns them into
@@ -51,7 +52,12 @@ struct Params {
 @group(0) @binding(8) var<storage, read_write> WA: array<vec4<f32>>;
 @group(0) @binding(9) var<storage, read_write> WB: array<vec4<f32>>;
 @group(0) @binding(10) var<storage, read_write> wctr: array<atomic<u32>>;
+@group(0) @binding(11) var<storage, read> off: array<u32>;         // free slots before each block of 64
+@group(0) @binding(12) var<storage, read_write> cnt: array<u32>;   // each block's free slots after the step
 @group(1) @binding(0) var<uniform> U: Params;
+
+var<workgroup> wfree: array<u32, 64>;
+var<workgroup> wleft: atomic<u32>;
 
 // counters
 const C_SPAWNED: u32 = 0u;
@@ -193,7 +199,8 @@ fn into_liquid(p: vec3<f32>, s: WxState, vy: f32) {
 }
 
 // A crown of spray where it struck the water, as big as what struck it and as fast as it came (a hailstone
-// throws up a splash; a snowflake none).
+// throws up a splash; a snowflake none). It goes into the liquid's spray ring in the order the threads get here, so
+// unlike the fall its drops' order, and which are kept once the ring is full, can differ between runs.
 fn splash(p: vec3<f32>, s: WxState, v: vec3<f32>, seed: u32) {
   let cap = u32(U.liq.w);
   if (cap == 0u) { return; }
@@ -219,47 +226,45 @@ fn free_slot(i: u32) {
   parts[i] = P;
 }
 
-@compute @workgroup_size(64, 1, 1)
-fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>) {
-  let i = lin_id(id, nwg);
-  if (i >= arrayLength(&parts)) { return; }
-  var P = parts[i];
+// A new piece in free slot i, the k-th of this step, at the top of the area (anywhere in it when filling at
+// the start). False if it would start inside something (it is skipped: the slot stays free).
+fn spawn(i: u32, k: u32) -> bool {
+  let dt = U.g.bc.w;
+  let born = k * 2654435761u + u32(U.turb.w) * 2246822519u;
+  let nlut = max(u32(U.spawn.y), 1u);
+  var j = min(u32(rand1(born ^ 0x9E3779B9u) * f32(nlut)), nlut - 1u);
+  if (U.phys.w > 0.5) {
+    // filling the air: as many of each as hang in it, not as cross a level (slow ones linger): pick by
+    // rejection against the slowest fall
+    for (var t = 0u; t < 16u; t++) {
+      let vj = lut[j * 2u + 1u].w;
+      if (rand1(born ^ (0x68E31DA4u + t)) * vj <= U.liq.z) { break; }
+      j = min(u32(rand1(born ^ (0x1B56C4E9u + t * 7u)) * f32(nlut)), nlut - 1u);
+    }
+  }
+  let a = lut[j * 2u];
+  let b = lut[j * 2u + 1u];
+  let r = rand3(born, 17u);
+  var y = U.area2.x - r.y * b.w * dt;
+  if (U.phys.w > 0.5) { y = U.area2.x * r.y; }
+  let x = mix(U.area.x, U.area.z, r.x);
+  let z = mix(U.area.y, U.area.w, r.z);
+  var Q: WxP;
+  Q.p = vec4<f32>(x, y, z, 0.0);
+  Q.v = vec4<f32>(wind_at(vec3<f32>(x, y, z), 0.0) + vec3<f32>(0.0, -b.w, 0.0), 0.0);
+  Q.m = vec4<f32>(a.y, a.z, a.w, b.x);
+  Q.k = vec4<f32>(a.x, b.y, b.z, rand1(born ^ 0x51ED270Bu));
+  var nrm = vec3<f32>(0.0);
+  if (probe(Q.p.xyz, 0.0, &nrm) != 0) { return false; }
+  parts[i] = Q;
+  return true;
+}
+
+// One step of the particle in slot i; true if its slot is free after it (it melted away, landed or left).
+fn advance(i: u32, P0: WxP) -> bool {
+  var P = P0;
   let dt = U.g.bc.w;
   let seed = i * 2654435761u + u32(U.turb.w) * 2246822519u;
-
-  // a free slot: maybe a new particle, at the top of the area (anywhere in it when filling at the start)
-  if (P.p.w < 0.0) {
-    let want = u32(U.spawn.x);
-    if (want == 0u || atomicLoad(&ctr[C_SPAWNED]) >= want) { return; }
-    if (atomicAdd(&ctr[C_SPAWNED], 1u) >= want) { return; }
-    let nlut = max(u32(U.spawn.y), 1u);
-    var j = min(u32(rand1(seed ^ 0x9E3779B9u) * f32(nlut)), nlut - 1u);
-    if (U.phys.w > 0.5) {
-      // filling the air: as many of each as hang in it, not as cross a level (slow ones linger): pick by
-      // rejection against the slowest fall
-      for (var t = 0u; t < 16u; t++) {
-        let vj = lut[j * 2u + 1u].w;
-        if (rand1(seed ^ (0x68E31DA4u + t)) * vj <= U.liq.z) { break; }
-        j = min(u32(rand1(seed ^ (0x1B56C4E9u + t * 7u)) * f32(nlut)), nlut - 1u);
-      }
-    }
-    let a = lut[j * 2u];
-    let b = lut[j * 2u + 1u];
-    let r = rand3(seed, 17u);
-    var y = U.area2.x - r.y * b.w * dt;
-    if (U.phys.w > 0.5) { y = U.area2.x * r.y; }
-    let x = mix(U.area.x, U.area.z, r.x);
-    let z = mix(U.area.y, U.area.w, r.z);
-    var Q: WxP;
-    Q.p = vec4<f32>(x, y, z, 0.0);
-    Q.v = vec4<f32>(wind_at(vec3<f32>(x, y, z), 0.0) + vec3<f32>(0.0, -b.w, 0.0), 0.0);
-    Q.m = vec4<f32>(a.y, a.z, a.w, b.x);
-    Q.k = vec4<f32>(a.x, b.y, b.z, rand1(seed ^ 0x51ED270Bu));
-    var nrm = vec3<f32>(0.0);
-    if (probe(Q.p.xyz, 0.0, &nrm) != 0) { return; }   // (started inside something: skip it)
-    parts[i] = Q;
-    return;
-  }
   atomicAdd(&ctr[C_ALIVE], 1u);
   P.p.w += dt;
   var s = state_of(P);
@@ -280,22 +285,24 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
   wx_exchange(&s, ta, rv, pa, dt, extra, rand1(seed ^ 0x2C1B3C6Du));
   if (wx_mass(s) < 1e-12) {
     free_slot(i);
-    return;
+    return true;
   }
   if (resting) {
     // a stone resting on the ground melts there; when it has melted it is a wet patch
     if (s.ice <= 0.0) {
       deposit(p, DEP_WATER, wx_mass(s));
       free_slot(i);
-      return;
+      return true;
     }
-    // still held up by what it rests on?
+    // it sinks as it melts (its bottom stays on what it rests on); is it still held up?
     var nrm = vec3<f32>(0.0);
     let r = wx_diameter(s) * 0.5e-3;
+    p.y -= max(wx_diameter(state_of(P)) * 0.5e-3 - r, 0.0);
+    P.p.y = p.y;
     if (probe(p - vec3<f32>(0.0, 0.01 + r, 0.0), 0.0, &nrm) == 1) {
       put_state(&P, s);
       parts[i] = P;
-      return;
+      return false;
     }
     P.v.w = 0.0;   // what held it melted or moved: it falls again
   }
@@ -325,11 +332,32 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
   var hit = 0;
   var nrm = vec3<f32>(0.0, 1.0, 0.0);
   var q = p;
+  var qh = p;
   for (var k = 1u; k <= nsteps; k++) {
     let q1 = p + travel * (f32(k) / f32(nsteps));
     hit = probe(q1, r, &nrm);
-    if (hit != 0) { break; }
+    if (hit != 0) {
+      qh = q1;
+      break;
+    }
     q = q1;
+  }
+  if (hit == 1) {
+    // where it touches: between the last point clear of the surface and the first against it, halved down to
+    // 1/256 of the step (a stone comes to rest touching, its centre its radius off the surface)
+    var lo = q;
+    var hi = qh;
+    var nn = nrm;
+    for (var t = 0u; t < 8u; t++) {
+      let mid = 0.5 * (lo + hi);
+      if (probe(mid, r, &nn) != 0) {
+        hi = mid;
+        nrm = nn;
+      } else {
+        lo = mid;
+      }
+    }
+    q = lo;
   }
   if (hit == 0) {
     q = p + travel;
@@ -343,13 +371,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
     if (q.y > U.area2.x + 1.0) { q.y = U.area2.x; }
     if (q.y < -50.0) {
       free_slot(i);
-      return;
+      return true;
     }
     P.p = vec4<f32>(q, P.p.w);
     P.v = vec4<f32>(v, 0.0);
     put_state(&P, s);
     parts[i] = P;
-    return;
+    return false;
   }
 
   // it has hit something at q
@@ -360,7 +388,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
     into_liquid(q, s, v.y);
     splash(q, s, v, seed);
     free_slot(i);
-    return;
+    return true;
   }
   let sfc = surface_at(q);
   let on_top = q.y >= sfc.x - 0.05;
@@ -371,12 +399,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
       else { deposit(q, DEP_WATER, wx_mass(s)); }
     }
     free_slot(i);
-    return;
+    return true;
   }
   if (s.kind == WX_SNOW) {
     if (on_top) { deposit(q, DEP_SNOW, s.ice); deposit(q, DEP_WATER, s.water); }
     free_slot(i);
-    return;
+    return true;
   }
   // graupel, pellets and hail bounce
   let e = select(U.phys.y, U.phys.x, s.kind == WX_HAIL);
@@ -387,18 +415,59 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) n
   let settle = length(vb) < 0.6 || e <= 0.0;
   if (settle) {
     if (s.kind == WX_HAIL) {
-      P.p = vec4<f32>(q + nrm * r, P.p.w);
+      P.p = vec4<f32>(q, P.p.w);
       P.v = vec4<f32>(0.0, 0.0, 0.0, 1.0);
       put_state(&P, s);
       parts[i] = P;
-      return;
+      return false;
     }
     if (on_top) { deposit(q, DEP_GRAIN, s.ice); deposit(q, DEP_WATER, s.water); }
     free_slot(i);
-    return;
+    return true;
   }
-  P.p = vec4<f32>(q + nrm * (r + 0.002), P.p.w);
+  P.p = vec4<f32>(q + nrm * 0.002, P.p.w);
   P.v = vec4<f32>(vb, 0.0);
   put_state(&P, s);
   parts[i] = P;
+  return false;
+}
+
+// The free slots are taken in order: the first `want` of them counted from the start (each block of 64's free
+// ones, counted at the end of the last step, turned into where the block's first goes: block_scan.wgsl), and the
+// k-th new piece of a step is drawn from k, so the same pieces start in the same slots every run, whatever order
+// the GPU runs the threads in. Each block's free slots after this step are counted for the next.
+@compute @workgroup_size(64, 1, 1)
+fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(num_workgroups) nwg: vec3<u32>,
+        @builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  let i = lin_id(id, nwg);
+  let n = arrayLength(&parts);
+  let blk = wid.x + wid.y * nwg.x;
+  if (li == 0u) { atomicStore(&wleft, 0u); }   // (workgroup memory is not always cleared for each workgroup)
+  var P: WxP;
+  var free = false;
+  if (i < n) {
+    P = parts[i];
+    free = P.p.w < 0.0;
+  }
+  wfree[li] = select(0u, 1u, free);
+  workgroupBarrier();
+  var left = free;
+  if (i < n) {
+    if (free) {
+      let want = u32(U.spawn.x);
+      if (want > 0u && off[blk] < want) {
+        var k = off[blk];
+        for (var l = 0u; l < li; l++) { k += wfree[l]; }
+        if (k < want) {
+          atomicAdd(&ctr[C_SPAWNED], 1u);
+          left = !spawn(i, k);
+        }
+      }
+    } else {
+      left = advance(i, P);
+    }
+  }
+  if (left) { atomicAdd(&wleft, 1u); }
+  workgroupBarrier();
+  if (li == 0u && blk * 64u < n) { cnt[blk] = atomicLoad(&wleft); }
 }

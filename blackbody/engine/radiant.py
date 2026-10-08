@@ -52,6 +52,7 @@ class Radiant:
         self.RLC = gpu.buffer(16, 'radiant-count')
         self.RA = gpu.buffer(CELLS * RA_WORDS * 4, 'radiant-accumulator')
         self.OB = gpu.buffer(OBJECT_SOURCES * 48, 'radiant-objects')
+        self.RT = gpu.buffer(CELLS * 48, 'radiant-cells')   # each coarse cell's source, before the list is packed
         self._k = None
         self.grid = None            # (corner (m), coarse cell size (m), coarse dims, gas cells to a coarse cell or 0)
         self.built = False
@@ -61,9 +62,11 @@ class Radiant:
     def _kernels(self):
         if self._k is None:
             g = self.gpu
+            res = ['utex3d', 'buf', 'buf', 'buf', 'buf']
             self._k = {
-                'build': g.kernel('rad_build.wgsl', ['utex3d', 'buf', 'buf', 'buf'], 'build', workgroup=(64, 1, 1)),
-                'objects': g.kernel('rad_build.wgsl', ['utex3d', 'buf', 'buf', 'buf'], 'objects', workgroup=(64, 1, 1)),
+                'build': g.kernel('rad_build.wgsl', res, 'build', workgroup=(64, 1, 1)),
+                'compact': g.kernel('rad_build.wgsl', res, 'compact', workgroup=(256, 1, 1)),
+                'objects': g.kernel('rad_build.wgsl', res, 'objects', workgroup=(64, 1, 1)),
             }
         return self._k
 
@@ -121,10 +124,12 @@ class Radiant:
              .v4(KAPPA, h, self.n_objects, 1.0 / FX_P))
         u.v4(*(tuple(gas_dims) if gas else (1, 1, 1)), 0.0)
         tex = scal if gas else self._dummy()
-        b.run(k['build'], [tex, self.RA, self.RL, self.RLC], u, groups=(-(-cells // 64), 1, 1))
+        b.run(k['build'], [tex, self.RA, self.RL, self.RLC, self.RT], u, groups=(-(-cells // 64), 1, 1))
+        # (packed in the order of the cells, then the objects in theirs: the same list every run)
+        b.run(k['compact'], [tex, self.RA, self.RL, self.RLC, self.RT], u, groups=(1, 1, 1))
         b.clear_buffer(self.RA)
         if self.n_objects:
-            b.run(k['objects'], [tex, self.OB, self.RL, self.RLC], u, groups=(-(-self.n_objects // 64), 1, 1))
+            b.run(k['objects'], [tex, self.OB, self.RL, self.RLC, self.RT], u, groups=(-(-self.n_objects // 64), 1, 1))
         self.built = True
         return True
 

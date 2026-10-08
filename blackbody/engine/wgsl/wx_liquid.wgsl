@@ -59,7 +59,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   atomicSub(&liq_dep[i + 1u], i32(round(f32(mh) * share)));
   atomicSub(&liq_dep[i + 2u], i32(round(f32(mv) * share)));
   atomicSub(&liq_dep[i + 3u], i32(round(f32(icy) * share)));
-  let seed = u32(slot) * 2654435761u + u32(U.k.w) * 97u;
+  // (placed by its cell, not by the slot it got: slots are handed out in the order the threads run)
+  let seed = nidx(c, n) * 2654435761u + u32(U.k.w) * 97u;
   let r = rand3(seed, 3u);
   let x = vec3<f32>(c) + vec3<f32>(r.x, 0.5 + 0.5 * r.y, r.z);
   var P = new_particle(x, vec3<f32>(0.0, 0.3 * min(vy, 0.0), 0.0));

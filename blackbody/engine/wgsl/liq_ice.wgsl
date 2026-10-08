@@ -14,8 +14,14 @@
 // momentum, angular momentum and inertia are summed from its cells in 64-bit fixed point (two 32-bit
 // words with the carry), so the sums are exact whatever order the threads add in.
 //
-// Entry points, in order: label_init, label_union, label_flatten, label_roots, label_assign, body_sums
-// (all over cells), body_solve (over bodies), body_faces (over the velocity's faces).
+// The pieces are numbered in the order of their roots' bricks of cells (the workgroups' 8 x 8 x 4 bricks, then
+// the cells in each), not in the order the threads happen to run: label_flatten counts each brick's roots,
+// block_scan.wgsl turns the counts into the brick's first number, and label_roots gives each root its brick's
+// first plus the roots before it in the brick. Past MAX_BODIES pieces the same ones are left without a body
+// every run (they move with the liquid), and the most there were goes in rootcnt for Engine.notices.
+//
+// Entry points, in order: label_init, label_union, label_flatten, (block_scan.wgsl), label_roots,
+// label_assign, body_sums (all over cells), body_solve (over bodies), body_faces (over the velocity's faces).
 //!include common.wgsl
 //!include liq_common.wgsl
 //!include meshsdf.wgsl
@@ -25,7 +31,7 @@
 struct Params {
   g: Grid,
   th: Therm,
-  k: vec4<f32>,     // share of a cell frozen for it to be ice, _, _, _
+  k: vec4<f32>,     // share of a cell frozen for it to be ice, bricks of cells (the workgroups), _, _
   ccnt: vec4<f32>,  // collider count
   col: array<Collider, MAX_COLLIDERS>,
   ctemp: array<vec4<f32>, 4>,   // collider temperatures (C)
@@ -40,9 +46,16 @@ struct Params {
 @group(0) @binding(6) var<storage, read_write> bodycell: array<u32>;
 @group(0) @binding(7) var<storage, read_write> sums: array<atomic<u32>>;
 @group(0) @binding(8) var<storage, read_write> bodies: array<vec4<f32>>;
+// roots in each brick (k.y of them, padded to a multiple of 4), then the most pieces there have been
+@group(0) @binding(9) var<storage, read_write> rootcnt: array<atomic<u32>>;
+@group(0) @binding(10) var<storage, read> rootoff: array<u32>;   // each brick's first piece (block_scan.wgsl), the total
 @group(1) @binding(0) var<uniform> U: Params;
 
 const COUNTER: u32 = MAX_BODIES * BODY_WORDS;
+
+var<workgroup> wroot: array<u32, 256>;
+
+fn brick_of(wid: vec3<u32>, nwg: vec3<u32>) -> u32 { return wid.x + nwg.x * (wid.y + nwg.y * wid.z); }
 
 fn is_ice(c: vec3<i32>, n: vec3<i32>) -> bool {
   if (!in_grid(c, n)) { return false; }
@@ -111,22 +124,46 @@ fn label_union(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 @compute @workgroup_size(8, 8, 4)
-fn label_flatten(@builtin(global_invocation_id) id: vec3<u32>) {
+fn label_flatten(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>,
+                 @builtin(num_workgroups) nwg: vec3<u32>) {
   let n = gdim(U.g);
   let c = vec3<i32>(id);
   if (any(c >= n) || !is_ice(c, n)) { return; }
   let i = nidx(c, n);
-  atomicStore(&lab[i], find(i));
+  let r = find(i);
+  atomicStore(&lab[i], r);
+  if (r == i) { atomicAdd(&rootcnt[brick_of(wid, nwg)], 1u); }
 }
 
 @compute @workgroup_size(8, 8, 4)
-fn label_roots(@builtin(global_invocation_id) id: vec3<u32>) {
+fn label_roots(@builtin(global_invocation_id) id: vec3<u32>, @builtin(workgroup_id) wid: vec3<u32>,
+               @builtin(num_workgroups) nwg: vec3<u32>, @builtin(local_invocation_index) li: u32) {
   let n = gdim(U.g);
   let c = vec3<i32>(id);
-  if (any(c >= n) || !is_ice(c, n)) { return; }
-  let i = nidx(c, n);
-  if (atomicLoad(&lab[i]) != i) { return; }
-  let b = atomicAdd(&sums[COUNTER], 1u);
+  let brick = brick_of(wid, nwg);
+  var root = false;
+  var i = 0u;
+  if (all(c < n) && is_ice(c, n)) {
+    i = nidx(c, n);
+    root = atomicLoad(&lab[i]) == i;
+  }
+  // the roots up to each cell of the brick (a running total over the workgroup: Hillis-Steele)
+  wroot[li] = select(0u, 1u, root);
+  workgroupBarrier();
+  for (var d = 1u; d < 256u; d <<= 1u) {
+    var v = wroot[li];
+    if (li >= d) { v += wroot[li - d]; }
+    workgroupBarrier();
+    wroot[li] = v;
+    workgroupBarrier();
+  }
+  if (brick == 0u && li == 0u) {
+    let total = rootoff[u32(U.k.y)];
+    atomicStore(&sums[COUNTER], total);
+    atomicMax(&rootcnt[4u * ((u32(U.k.y) + 3u) / 4u)], total);
+  }
+  if (!root) { return; }
+  let b = rootoff[brick] + wroot[li] - 1u;
   if (b < MAX_BODIES) {
     bodycell[i] = b;
     atomicStore(&sums[b * BODY_WORDS + 33u], i);

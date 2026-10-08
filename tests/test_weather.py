@@ -113,10 +113,54 @@ def test_hail_bounces_then_rests(gpu):
     pk = W.read_packed()
     resting = pk[:, 10] > 0.5
     assert resting.sum() > 5
-    # resting stones lie on the ground, about their own radius up
-    y = pk[resting, 1]
-    r = pk[resting, 3] * 0.5e-3
-    assert np.all(np.abs(y - r) < 0.02)
+    # resting stones lie on the ground, touching it: their centres their own radius up (found to a 256th of the last
+    # step; they sink as they melt)
+    off = pk[resting, 1] - pk[resting, 3] * 0.5e-3
+    assert np.percentile(np.abs(off), 90) < 1e-3 and np.abs(off).max() < 3e-3, off
+
+
+def test_weather_falls_the_same_every_time(gpu):
+    """New pieces take the free slots in order, each drawn from its number in the step, and are packed in the order of
+    their slots: the same scene falls the same way, in the same order, every time (the slots used to be raced for)."""
+    from blackbody.engine.weather import Weather, WeatherParams
+    prm = WeatherParams(kind='hail', rate=60.0, size=15.0, ground_t=20.0, humidity=0.8, area=(-1.0, -1.0, 1.0, 1.0),
+                        top=3.0, capacity=20000, ground_temp=20.0)
+    outs = []
+    for _ in range(2):
+        W = Weather(gpu)
+        W.configure(prm)
+        _run(W, prm, 1.5)
+        outs.append((W.read_packed(), W.read_cover(), np.frombuffer(gpu.read_buffer(W.parts), np.float32).copy()))
+    for a, b in zip(*outs):
+        assert np.array_equal(a, b)
+
+
+def test_new_pieces_take_the_first_free_slots(gpu):
+    """The free slots each block of 64 has, counted as each step ends, are where the next step's new pieces go: the first
+    ones, in order; the pack follows the slots."""
+    from blackbody.engine.weather import Weather, WeatherParams
+    prm = WeatherParams(kind='snow', rate=3.0, ground_t=-4.0, humidity=0.95, area=(-1.5, -1.5, 1.5, 1.5), top=3.0,
+                        capacity=50003, start=0.02)
+    W = Weather(gpu)
+    W.configure(prm)
+    nb = W._blocks(W.capacity)
+    with gpu.batch() as b:
+        W.surface(b, prm)
+    for _ in range(6):
+        with gpu.batch() as b:
+            for _ in range(4):
+                W.step(b, 1 / 96, prm)
+            W.pack(b)
+        W.measure()
+    parts = np.frombuffer(gpu.read_buffer(W.parts), np.float32).reshape(-1, 16)
+    live = parts[:, 3] >= 0.0
+    assert 0 < live.sum() < W.capacity
+    counts = np.frombuffer(gpu.read_buffer(W.cnt), np.uint32)[:nb]
+    assert np.array_equal(counts, np.add.reduceat((~live).astype(np.int64), np.arange(0, W.capacity, 64)))
+    # what has fallen so far sits in the first slots: none has landed yet in a fall 3 m high started 0.25 s ago
+    assert live[:live.sum()].all()
+    pk = W.read_packed()
+    assert np.array_equal(pk[:, :3], parts[live, :3])
 
 
 def test_freezing_rain_glazes(gpu):

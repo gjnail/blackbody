@@ -1,5 +1,6 @@
-"""The test suite's own machinery (conftest.py, pytest.ini) and CI's command-line check. GPU-free: the checks run a
-small pytest of their own in a folder with copies of conftest.py and pytest.ini."""
+"""The test suite's own machinery (conftest.py, pytest.ini) and CI's command-line check. GPU-free but for one (the
+shared engine's rebuild freeing the old one's GPU memory): the checks run a small pytest of their own in a folder with
+copies of conftest.py and pytest.ini."""
 import json
 import os
 import shutil
@@ -250,3 +251,98 @@ def test_the_tests_bake_meshes_into_a_cache_of_their_own(tmp_path_factory):
     run = tmp_path_factory.getbasetemp().resolve()
     assert run in cache_dir().resolve().parents
     assert run in default_root().resolve().parents
+
+
+FAKE_ENGINE = """
+import sys
+import types
+
+fake = types.ModuleType('blackbody.engine.engine')
+
+
+class Engine:
+    made = []
+
+    def __init__(self, gpu=None):
+        self.gpu = gpu if gpu is not None else object()
+        self.scene = None             # (what a test left in it)
+        self.invalidated = 0
+        Engine.made.append(self.gpu)
+
+    def invalidate(self):
+        self.invalidated += 1
+
+
+fake.Engine = Engine
+sys.modules['blackbody.engine.engine'] = fake
+"""
+
+
+def test_the_engine_is_rebuilt_after_a_failure_and_for_each_file(tmp_path):
+    """One engine for the run, kept apart as if each file had its own: what a test leaves in it stays for the next test
+    in its file, but not after a test that failed with it, nor in the next file; it is rebuilt in place (the same object,
+    held by fixtures) on the same GPU (its compiled shaders kept)."""
+    s = _suite(tmp_path, {'test_a.py': FAKE_ENGINE + """
+import pytest
+
+
+@pytest.fixture(scope='module')
+def held(engine):
+    return engine
+
+
+def test_leaves_something(engine, held):
+    engine.scene = 'campfire'
+    sys.modules['first'] = engine
+
+
+def test_sees_it_and_fails(engine):
+    assert engine.scene == 'campfire' and engine.invalidated == 1
+    raise RuntimeError('a reconfigure that broke half way')
+
+
+def test_after_the_failure(engine, held):
+    assert engine is sys.modules['first'] and held is engine
+    assert engine.scene is None and engine.invalidated == 0
+    assert len(Engine.made) == 2 and Engine.made[1] is Engine.made[0], 'rebuilt on the same GPU'
+
+
+def test_without_the_engine():
+    pass
+""", 'test_b.py': """
+import sys
+
+from blackbody.engine.engine import Engine
+
+
+def test_a_new_file(engine):
+    assert engine is sys.modules['first'] and engine.scene is None
+    assert len(Engine.made) == 3
+"""})
+    r = _pytest(s, '-p', 'no:randomly')
+    assert r.returncode == 1 and '1 failed, 4 passed' in r.stdout, r.stdout[-3000:]
+    assert 'test_sees_it_and_fails' in r.stdout and 'a reconfigure that broke half way' in r.stdout
+
+
+def test_a_rebuild_frees_the_old_engines_gpu_memory(engine, request):
+    """conftest.py rebuilds the shared engine for each file: the textures and buffers of the one before go with it (the
+    kernels' cached bind groups held them), or each rebuild leaves its scene's memory on a GPU other runs share."""
+    import wgpu
+    here = Path(__file__).with_name('conftest.py').resolve()
+    conf = next(p for p in request.config.pluginmanager.get_plugins()
+                if getattr(p, '__file__', None) and Path(p.__file__).resolve() == here)
+
+    def held():
+        n = wgpu.diagnostics.object_counts.get_dict()
+        return {k: (n[k]['count'], n[k].get('resource_mem', 0)) for k in ('Buffer', 'Texture')}
+
+    sc = presets.make('torch')
+    sc.data['domain']['resolution'] = 24
+    sc.data['domain']['disk_cache'] = False
+    after = []
+    for _ in range(3):
+        engine.prepare(sc, final=False)
+        engine.simulate_to(sc, sc.start + 1, cache=False)
+        conf.rebuild_engine('a test of the rebuild')
+        after.append(held())
+    assert after[0] == after[1] == after[2], f'(count, bytes) held after each rebuild: {after}'

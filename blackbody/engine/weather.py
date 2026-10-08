@@ -14,6 +14,12 @@ with the air round it (wx_common.wgsl), falls through the wind, gusts and eddies
   wx_liquid.wgsl  precipitation that reached the liquid becomes liquid, carrying its heat
   wx_pack.wgsl    the live particles packed for the renderer and the cache
 
+A scene falls the same way every run: new pieces take the free slots in order (each block of 64 slots' free ones,
+counted as a step ends, turned into where each block's first goes: block_scan.wgsl), each drawn from its number among
+the step's new pieces, and the pack follows the slots. (Slots raced for with an atomic counter went to whichever threads
+ran first, and seeded by their slot, which hailstones fell changed from run to run.) Hail's splashes are the exception:
+they go into the liquid's spray ring in the order the threads reach it (wx_step.wgsl splash).
+
 The weather area is a box over the scene (the liquid's box and a margin round it, from the ground up to
 `top`); it wraps round at its sides. Coordinates are the simulation's own (metres, y up, ground at 0).
 """
@@ -149,6 +155,10 @@ class Weather:
         self.capacity = 0
         self.parts = None
         self.packed = None
+        # slots handed out in order (the same every run): each block of 64 slots' free ones (counted as each step ends),
+        # and where each block's first new (or packed) piece goes
+        self.cnt = None
+        self.off = None
         self.packed_count = 0
         self.map_dims = None
         self._k = {}
@@ -170,18 +180,30 @@ class Weather:
 
     # -- set-up ------------------------------------------------------------------------------------
 
+    @staticmethod
+    def _blocks(cap):
+        return -(-int(cap) // 64)
+
+    def _starts(self, b, live):
+        """Where each block of 64 slots' first new piece goes (its free slots: the step's), or its first packed one (its
+        live ones: the pack's), from the free slots the last step counted (block_scan.wgsl)."""
+        u = Uniforms().v4(self._blocks(self.capacity), 64 if live else 0, self.capacity)
+        b.run(self._k['scan'], [self.cnt, self.off], u, groups=(1, 1, 1))
+
     def _kernels(self):
         if self._k:
             return
         g = self.gpu
         P = (64, 1, 1)
         self._k['step'] = g.kernel('wx_step.wgsl', ['buf', 'rbuf', 'buf', 'buf', 'buf', 'utex3d', 'utex3d', 'utex2d',
-                                                    'buf', 'buf', 'buf'], workgroup=P)
+                                                    'buf', 'buf', 'buf', 'rbuf', 'buf'], workgroup=P)
         self._k['surf'] = g.kernel('wx_surf.wgsl', ['utex3d', 'utex3d', 'st2d:rgba32float:w'], workgroup=(8, 8, 1))
         self._k['cover'] = g.kernel('wx_cover.wgsl', ['buf', 'buf', 'buf', 'utex2d', 'st2d:rgba32float:w'],
                                     workgroup=(8, 8, 1))
         self._k['liquid'] = g.kernel('wx_liquid.wgsl', ['buf'] * 6)
-        self._k['pack'] = g.kernel('wx_pack.wgsl', ['rbuf', 'buf', 'buf'], workgroup=P)
+        self._k['pack'] = g.kernel('wx_pack.wgsl', ['rbuf', 'buf', 'buf', 'buf'], workgroup=P)
+        self._k['count'] = g.kernel('wx_pack.wgsl', ['rbuf', 'buf', 'buf', 'buf'], 'count', workgroup=P)
+        self._k['scan'] = g.kernel('block_scan.wgsl', ['rbuf', 'buf'], workgroup=(256, 1, 1))
 
     def configure(self, prm: WeatherParams):
         """Allocate for these settings (particle capacity, cover map size). True if anything changed."""
@@ -193,11 +215,14 @@ class Weather:
         changed = False
         cap = int(max(1024, prm.capacity))
         if cap != self.capacity:
-            for b in (self.parts, self.packed):
+            for b in (self.parts, self.packed, self.cnt, self.off):
                 if b is not None:
                     b.destroy()
             self.parts = g.buffer(cap * PART_BYTES, 'wx-particles')
             self.packed = g.buffer(cap * PACK_BYTES, 'wx-packed')
+            nb = self._blocks(cap)
+            self.cnt = g.buffer(-(-nb // 4) * 16, 'wx-free-counts')     # (read four blocks at a time)
+            self.off = g.buffer((nb + 1) * 4, 'wx-block-starts')
             self.capacity = cap
             changed = True
         if (nx, nz) != self.map_dims:
@@ -243,6 +268,9 @@ class Weather:
                 b.clear_buffer(buf)
             if self.liq_dep is not None:
                 b.clear_buffer(self.liq_dep)
+            # (the free slots counted afresh: each step counts them as it ends)
+            b.run(self._k['count'], [self.parts, self.packed, self.ctr, self.cnt], Uniforms().v4(self.capacity),
+                  groups=groups_1d(self.capacity))
         self.packed_count = 0
         self._spawn_acc = 0.0
         self._asked = []
@@ -358,11 +386,12 @@ class Weather:
         sdf = L.SDF if on else self._dummy3
         dens = L.DENS if on else self._dummy3
         wa, wb, wc = (L.WA, L.WB, L.wctr) if ww else (self._dummy_buf, self._dummy_buf2, self._dummy_buf3)
+        if spawn > 0:
+            self._starts(b, live=False)
         b.run(self._k['step'], [self.parts, self.lut, self.ctr, self.cover_dep, dep if dep is not None else self._dummy_buf4,
-                                 sdf, dens, self.SURF, wa, wb, wc], u, groups=groups_1d(self.capacity))
+                                 sdf, dens, self.SURF, wa, wb, wc, self.off, self.cnt], u, groups=groups_1d(self.capacity))
         if spawn > 0 and len(self._asked) < SPAWN_LOG:
-            # how many of them found a free slot (the counter overshoots by the threads turned away: min with what was
-            # asked), read back with the frame's counters (measure)
+            # how many of them found a free slot, read back with the frame's counters (measure)
             b.copy_buffer(self.ctr, self.spawn_log, 0, 4 * len(self._asked), 4)
             self._asked.append((spawn, fill > 0.0))
         # the cover
@@ -388,11 +417,12 @@ class Weather:
         self.steps += 1
 
     def pack(self, b):
-        """Pack the live particles (for the renderer and the cache)."""
+        """Pack the live particles (for the renderer and the cache), in the order of their slots."""
         if self.parts is None:
             return
         b.clear_buffer(self.ctr, 15 * 4, 4)
-        b.run(self._k['pack'], [self.parts, self.packed, self.ctr], Uniforms().v4(self.capacity),
+        self._starts(b, live=True)
+        b.run(self._k['pack'], [self.parts, self.packed, self.ctr, self.off], Uniforms().v4(self.capacity),
               groups=groups_1d(self.capacity))
 
     def measure(self):

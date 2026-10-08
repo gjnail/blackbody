@@ -115,7 +115,9 @@ Presets: *Sand from a hopper*, *Snowballs at a wall*, *Ball dropped on jelly*, *
   does not splat flat.
 - Hot matter in water cools without boiling it: molten iron poured into a pool sets with no steam. Lava pushes the
   matter in its way aside only as a solid does, not with its weight. Hot matter's glow lights the stage (the floor, the
-  objects, the footage) but not the smoke or the water.
+  objects, the footage) but not the smoke or the water, from at most 256 patches of its surface (fewer with hot
+  objects in the scene): past that the brightest are kept by a fixed rule, so they do not flicker or differ between
+  runs, and Notices says how many more glowed.
 - A glowing heap glows evenly: coal's lumps and the brighter gaps between them are not drawn.
 - An object's opening that stops flush with the inside of its wall can leave a film there that matter catches on: make
   it a little deeper than the wall.

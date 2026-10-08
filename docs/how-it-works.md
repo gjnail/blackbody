@@ -91,7 +91,9 @@ The suite covers:
 
 - frame-accurate footage decoding and the point tracker
 
-- solver stability, incompressibility and determinism on the GPU
+- solver stability, incompressibility and determinism on the GPU; a small scene of each kind (fire, liquid, fabric, weather, fire with water, lava, falling objects) simulated in two processes at once, each loading the GPU while the other runs, and compared exactly (`tests/test_determinism.py`); the GPU lists kept in a fixed order (glowing matter's lights, pieces of ice, the radiant sources: `tests/test_gpu_lists.py`)
+
+- the window without a GPU, offscreen with a stand-in for the engine: every preset loading from the effects list, a stale frame kept off the screen, Properties' pages, search and Advanced, number fields, objects added, selected (Ctrl+click, box drag), moved, repeated, grouped, duplicated, deleted and undone, your blocks, the keys and Timing editors, layers, Ctrl+K, roto, the shot camera from the Build view and packing a project (`tests/ui/`)
 
 - liquids: stability, volume, incompressibility, determinism, source flow rates, whitewater, rendering, the cache, switching between fire and liquid, and VDB output; viscosity, open water holding still at its level, the narrow band keeping the volume with far fewer particles and while the water sloshes, wind on spray, contact angle, floating and sinking objects, fire and liquid in one box, lava glow and honey, the EXR mattes, thin sheets and the HDRI reader (`tests/test_liquid_features.py`)
 
@@ -99,7 +101,7 @@ The suite covers:
 
 - heat and phase changes: water's enthalpy, density (densest at 4 °C), vapour pressure and boiling curve; a pot boiling off at the rate its heat brings in, a pan of hot water evaporating into dry air at the Lewis-analogy rate, supercooled water staying liquid until it can hold no more and then flashing to slush, an ice cube keeping its shape and floating with the right share above the water, and the ice and steam presets (`tests/test_liquid_thermal.py`)
 
-- weather: saturation vapour pressure, lapse rates and fall speeds against the textbook values; the air column turning snow into wet snow, sleet, freezing rain or rain as its temperatures do; small hail melting into rain on the way down and big hail arriving; snow sublimating away in dry air; snow building up at the rate it falls and the density fresh snow has; hail bouncing then resting on the ground; freezing rain glazing at its rate; the weather presets (`tests/test_weather.py`)
+- weather: saturation vapour pressure, lapse rates and fall speeds against the textbook values; the air column turning snow into wet snow, sleet, freezing rain or rain as its temperatures do; small hail melting into rain on the way down and big hail arriving; snow sublimating away in dry air; snow building up at the rate it falls and the density fresh snow has; hail bouncing then resting on the ground, touching it; freezing rain glazing at its rate; the same fall every run, new pieces taking the free slots in order and packed in slot order; the weather presets (`tests/test_weather.py`)
 
 - clouds: a storm sounding's condensation level and CAPE; the background column stable and its mixed layer well mixed; a capped sky staying clear; a warm bubble growing a storm to the tropopause that rains on the ground; the microphysics conserving water; following the storm keeping the shear and taking off the drift; the sky presets (`tests/test_clouds.py`)
 

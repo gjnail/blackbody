@@ -41,8 +41,8 @@ jobs:
           python -m blackbody settings > settings.txt
           grep -q "motion.buoyancy" settings.txt
       - name: Qt's system libraries
-        # (tests/test_text.py and one of tests/test_clouds.py use PySide6, whose Qt needs these: without one, importing
-        # it fails and pytest stops while it collects the tests)
+        # (tests/test_text.py, one of tests/test_clouds.py and the window's tests in tests/ui/ use PySide6, whose Qt needs
+        # these: without one, importing it fails and pytest stops while it collects the tests)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update

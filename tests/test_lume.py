@@ -118,6 +118,16 @@ def vase(engine):
     return engine, sc, f
 
 
+def _ready(vase):
+    """The vase scene, simulated to its frame again if a test that failed before this one left the engine rebuilt
+    (conftest.py)."""
+    eng, sc, f = vase
+    if eng.sim_frame != f:
+        eng.prepare(sc, final=True)
+        eng.simulate_to(sc, f, cache=False)
+    return vase
+
+
 def _render(eng, sc, f, final=True, aa=4, **lume):
     """Render the frame with these Lume settings; aa: the render's own samples (1: the viewer's live picture)."""
     sc.data['lume'].update(lume)
@@ -126,7 +136,7 @@ def _render(eng, sc, f, final=True, aa=4, **lume):
 
 
 def test_lume_lights_the_set_about_as_classic_does(vase):
-    eng, sc, f = vase
+    eng, sc, f = _ready(vase)
     classic = _render(eng, sc, f, engine='classic')
     lume = _render(eng, sc, f, engine='lume', samples=64, bounces=4, denoise=True)
     assert np.isfinite(lume).all() and (lume[..., :3] >= 0).all()
@@ -136,7 +146,7 @@ def test_lume_lights_the_set_about_as_classic_does(vase):
 
 
 def test_more_samples_converge_and_the_denoiser_keeps_the_brightness(vase):
-    eng, sc, f = vase
+    eng, sc, f = _ready(vase)
     ref = _render(eng, sc, f, engine='lume', samples=512, bounces=4, denoise=False)[..., :3]
     lo = _render(eng, sc, f, engine='lume', samples=8, bounces=4, denoise=False)[..., :3]
     dn = _render(eng, sc, f, engine='lume', samples=8, bounces=4, denoise=True)[..., :3]
@@ -146,7 +156,7 @@ def test_more_samples_converge_and_the_denoiser_keeps_the_brightness(vase):
 
 
 def test_the_viewer_refines_progressively(vase):
-    eng, sc, f = vase
+    eng, sc, f = _ready(vase)
     sc.data['lume'].update(engine='lume', viewer_samples=6, denoise=True)
     _render(eng, sc, f, final=False, aa=1)
     L = eng.stage.lume

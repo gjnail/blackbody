@@ -109,6 +109,7 @@ class Thermal:
         self.stats = {}
         self.ice_seen = False
         self.bodies_on = False
+        self._roots_counted = False   # the pieces of ice have been numbered since the reset (most_pieces)
         self._cur = 0
         self._stats_clear = True
 
@@ -125,10 +126,11 @@ class Thermal:
         k['norm'] = g.kernel('liq_therm_norm.wgsl', ['rbuf', 'utex3d', 'utex3d', 'st3d:rgba32float:w'])
         k['heat'] = g.kernel('liq_therm_heat.wgsl', ['utex3d'] * 8 + ['st3d:rgba32float:w', 'buf'])
         k['buoy'] = g.kernel('liq_therm_buoy.wgsl', ['utex3d', 'utex3d', 'rbuf', 'st3d:r32float:w'])
-        ice = ['utex3d', 'utex3d', 'utex3d', 'utex3d', 'st3d:rgba32float:w', 'buf', 'buf', 'buf', 'buf']
+        ice = ['utex3d', 'utex3d', 'utex3d', 'utex3d', 'st3d:rgba32float:w', 'buf', 'buf', 'buf', 'buf', 'buf', 'rbuf']
         for e in ('label_init', 'label_union', 'label_flatten', 'label_roots', 'label_assign', 'body_sums', 'body_faces'):
             k[e] = g.kernel('liq_ice.wgsl', ice, e)
         k['body_solve'] = g.kernel('liq_ice.wgsl', ice, 'body_solve', workgroup=P)
+        k['scan'] = g.kernel('block_scan.wgsl', ['rbuf', 'buf'], workgroup=(256, 1, 1))
         parts = ['buf', 'rbuf', 'rbuf', 'rbuf', 'utex3d', 'buf', 'buf', 'buf']
         k['hide'] = g.kernel('liq_ice_parts.wgsl', parts, 'hide', workgroup=P)
         k['move'] = g.kernel('liq_ice_parts.wgsl', parts, 'move_ice', workgroup=P)
@@ -154,6 +156,14 @@ class Thermal:
             self.bodycell = L._b(cells * 4, 'liq-ice-bodies-per-cell')
             self.sums = L._b((MAX_BODIES * BODY_WORDS + 4) * 4, 'liq-ice-sums')
             self.bodies = L._b(MAX_BODIES * 3 * 16, 'liq-ice-bodies')
+            # the pieces numbered in a fixed order (liq_ice.wgsl): roots in each brick of 8 x 8 x 4 cells (padded to a
+            # multiple of 4, then the most pieces there have been), and each brick's first number
+            self._bricks = int(np.prod([-(-d // w) for d, w in zip(n, (8, 8, 4))]))
+            self._brick_words = -(-self._bricks // 4) * 4
+            self.rootcnt = L._b((self._brick_words + 4) * 4, 'liq-ice-roots')
+            self.rootoff = L._b((self._bricks + 1) * 4, 'liq-ice-root-starts')
+            b.clear_buffer(self.rootcnt)
+            self._roots_counted = False
             self._zero = L._t3((1, 1, 1), 'rgba32float', 'liq-therm-zero')
             self._dims = n
             self._cap = L.capacity
@@ -199,6 +209,8 @@ class Thermal:
         self.L.fill(b, self.TB)
         b.clear_buffer(self.therm)
         b.clear_buffer(self.bodycell)
+        b.clear_buffer(self.rootcnt)
+        self._roots_counted = False
         if self.gacc is not None:
             b.clear_buffer(self.gacc)
             self.L.fill(b, self.gas_flux)
@@ -206,6 +218,13 @@ class Thermal:
         self.stats = {}
         self.ice_seen = False
         self._stats_clear = True
+
+    def most_pieces(self):
+        """The most separate pieces of ice there have been at once since the reset (0 if it never froze). Past MAX_BODIES
+        the rest have no body: they move with the liquid (Engine.notices says so). Reads the GPU only once it froze."""
+        if not self._roots_counted or self._dims is None:
+            return 0
+        return int(np.frombuffer(self.gpu.read_buffer(self.rootcnt, 4, self._brick_words * 4), np.uint32)[0])
 
     # -- uniforms ------------------------------------------------------------------------------
 
@@ -315,9 +334,10 @@ class Thermal:
         L = self.L
         u = L._grid(0.0, prm)
         self._therm_u(u, prm)
-        u.v4(0.5)
+        u.v4(0.5, self._bricks)
         self._col_u(u, prm)
-        return [self.cells, L.SDF, L.meshes.atlas, vel, spare, self.lab, self.bodycell, self.sums, self.bodies], u
+        return [self.cells, L.SDF, L.meshes.atlas, vel, spare, self.lab, self.bodycell, self.sums, self.bodies,
+                self.rootcnt, self.rootoff], u
 
     def ice_rigid(self, b, prm, vel, spare):
         """After the pressure solve: the pieces of ice (connected frozen cells), and the velocity in each
@@ -330,7 +350,13 @@ class Thermal:
         n = self.L.dims
         res, u = self._ice_res(prm, vel, spare)
         b.clear_buffer(self.sums)
-        for e in ('label_init', 'label_union', 'label_flatten', 'label_roots', 'label_assign', 'body_sums'):
+        b.clear_buffer(self.rootcnt, 0, self._brick_words * 4)
+        for e in ('label_init', 'label_union', 'label_flatten'):
+            b.run(k[e], res, u, n)
+        # (the pieces numbered in the order of their roots' bricks: the same every run)
+        b.run(k['scan'], [self.rootcnt, self.rootoff], Uniforms().v4(self._bricks), groups=(1, 1, 1))
+        self._roots_counted = True
+        for e in ('label_roots', 'label_assign', 'body_sums'):
             b.run(k[e], res, u, n)
         b.run(k['body_solve'], res, u, groups=(MAX_BODIES // 64, 1, 1))
         b.run(k['body_faces'], res, u, tuple(x + 1 for x in n))

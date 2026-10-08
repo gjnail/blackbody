@@ -200,6 +200,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
         except Exception as ex:   # (a check that fails must not stop the simulation)
             log.warning('Could not check the scene against the caps: %s', ex)
             self._cap_notes = []
+        if getattr(self, '_stage', None) is not None:
+            self._stage.clear_notes()     # (what the last scene's glowing matter left out of its lights)
         if scene.data['domain'].get('disk_cache') and self.cache.disk is None:
             self._cap_notes.append('The disk cache could not be opened (Domain › Disk cache): the frames are kept in memory '
                                    'only.')
@@ -1057,8 +1059,9 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
         """What the person making the shot should know was left out or cut short, in words: what the scene's caps leave
         out (scene/caps.py, checked in prepare, with a disk cache that would not open), and what the simulation's parts
         said as they set up and ran: the matter, the grass, the rigid bodies, meshes that could not be used, weather that
-        found no room to fall, the liquid's push on things held back, an OCIO set-up that failed, and what a render's
-        compositing passes cut short. The viewer shows them and the command line prints them."""
+        found no room to fall, the liquid's push on things held back, glowing matter past its lights and ice past its
+        pieces (_list_notices), an OCIO set-up that failed, and what a render's compositing passes cut short. The viewer
+        shows them and the command line prints them."""
         from pathlib import Path
         from .solids import MAX_ACCEL
         out = list(self._cap_notes)
@@ -1077,12 +1080,31 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
             out.append(f'The weather is past its particle limit ({W.capacity / 1e6:g} M falling pieces): '
                        f'{W.short + W.fill_short:,} were not made, so it falls thinner than its rate. Raise Weather › '
                        'Particle limit or make its Area smaller.')
+        out += self._list_notices()
         for src, msg in sorted(self.solver.meshes.errors.items()):
             out.append(msg if str(src) in msg else f'The mesh {Path(str(src)).name} could not be used: {msg}')
         if getattr(self, '_ocio_error', None):
             out.append(f'OCIO could not be used ({self._ocio_error}): the Standard view and sRGB footage are used instead.')
         out += getattr(getattr(self, '_stage', None), 'notes', None) or []   # (a render job's compositing passes)
         return list(dict.fromkeys(out))
+
+    def _list_notices(self):
+        """What the GPU's fixed-size lists left out (the brightest and the first are kept, the same every run): glowing
+        matter past its lights, and pieces of ice past the rigid bodies."""
+        from .liquid_thermal import MAX_BODIES
+        from .stage import MATTER_LIGHTS
+        out = []
+        stage = getattr(self, '_stage', None)
+        cut = stage.matter_lights_cut() if stage is not None else 0
+        if cut:
+            out.append(f'Glowing matter lights what is round it from at most {MATTER_LIGHTS} patches of its surface (fewer '
+                       f'with hot objects): up to {cut:,} more glowed, and only the brightest light the set.')
+        th = getattr(getattr(self, 'liquid', None), 'thermal', None) if self.kind in ('liquid', 'both') else None
+        most = th.most_pieces() if th is not None else 0
+        if most > MAX_BODIES:
+            out.append(f'The liquid froze into {most:,} separate pieces of ice at once: only {MAX_BODIES:,} of them move as '
+                       'solid pieces, the rest move with the water.')
+        return out
 
     def stats(self):
         out = self._stats()

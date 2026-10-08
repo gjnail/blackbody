@@ -346,6 +346,11 @@ Notable changes to Blackbody. The format follows
 
 ### Fixed
 
+- Rain, snow and hail fall the same way every time (which pieces were made, and where, depended on the order the GPU's
+  threads ran, so a farm or a cleared cache gave another fall), and hailstones come to rest on the ground instead of
+  about a centimetre above it. Glowing sand or lava past its 256 lights, and ice past its 8,192 pieces, keep the same
+  ones every run (the brightest, by a fixed rule) and say so in the notices; the heat that fire, lava and hot objects
+  give to fabric and sand is summed in a fixed order.
 - Fabric simulates the same every time. A scene simulated after another in the same session could take the last
   scene's fabric and dust into its smoke on its first frame; fabric touching itself summed its pushes in an order
   the GPU chose; and on some drivers one shape of division rounds two ways from run to run, which the cloth's chaos

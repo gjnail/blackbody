@@ -66,6 +66,15 @@ before a release. A test that runs for more than 10 minutes, shader compiles
 aside, stops the run and shows where it was stuck (not while a debugger has
 stopped it).
 
+The GPU tests share one engine, rebuilt in place (on the same GPU, its
+shaders kept) at the start of each test file and after any test that failed
+with it, so what one file's scenes leave behind cannot fail another's.
+`tests/test_determinism.py` simulates a small scene of each kind in two
+processes at once and compares them exactly (about a minute). The window's
+tests (`tests/ui/`) need no GPU: they run the main window offscreen with a
+stand-in for the engine (`tests/ui/uikit.py`), its settings and files in a
+folder of the run's own.
+
 Useful tools:
 
 - `tools/fire_check.py` measures a fire's puffing, flame height and gas speed

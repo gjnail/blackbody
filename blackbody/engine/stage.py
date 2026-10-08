@@ -238,11 +238,14 @@ class Stage:
         # Lume's caustics: light traced from the lights through curved glass (lume.wgsl caustics), same bindings
         self.k_caustics = gpu.kernel('stage.wgsl', self.k.bindings, 'caustics', defines=ALL_FEATURES, workgroup=(64, 1, 1))
         self.k_lume = None   # (a kernel set in its place: tools/lume_bench and tests, else lume_kernel's for the set)
-        mg = ['utex3d', 'utex3d', 'buf', 'buf']
+        mg = ['utex3d', 'utex3d', 'buf', 'buf', 'buf']
         self.k_mglow = gpu.kernel('matter_glow.wgsl', mg, 'lights', workgroup=(4, 4, 4))
-        self.k_mglow_finish = gpu.kernel('matter_glow.wgsl', mg, 'finish', workgroup=(1, 1, 1))
+        self.k_mglow_finish = gpu.kernel('matter_glow.wgsl', mg, 'finish', workgroup=(256, 1, 1))
         self._ml = gpu.buffer((1 + 2 * MATTER_LIGHTS) * 16, 'stage-matter-lights')
+        # (the hot objects' lights before the matter's; the blocks that glowed this frame; the most left out in a frame)
         self._mlc = gpu.buffer(16, 'stage-matter-light-count')
+        self._mlb = None           # each block's light, before the brightest are kept (matter_glow.wgsl)
+        self._ml_ran = False       # matter has glowed since the notes were cleared (matter_lights_cut)
         self._no_matter = gpu.texture3d((1, 1, 1), 'rgba16float', 'stage-no-matter')
         self.tex = None
         self.hold = None           # the holdouts it leaves for the march (pieces' distance, the footage's matte)
@@ -516,8 +519,21 @@ class Stage:
             a[1 + 2 * i, 3] = 0.5 * ext
             a[2 + 2 * i, :3] = rgb * eps * area * 0.5
         self.gpu.write_buffer(self._ml, a)
-        self.gpu.write_buffer(self._mlc, np.array([len(faces), 0, 0, 0], np.uint32))
+        self.gpu.write_buffer(self._mlc, np.array([len(faces)], np.uint32))
         return len(faces)
+
+    def matter_lights_cut(self):
+        """The most glowing blocks of matter left out of its lights in a frame (the brightest MATTER_LIGHTS, less the hot
+        objects' faces, are kept) since clear_notes; 0 when none were. (Reads the GPU only once matter has glowed.)"""
+        if not self._ml_ran:
+            return 0
+        return int(np.frombuffer(self.gpu.read_buffer(self._mlc, 4, 8), np.uint32)[0])
+
+    def clear_notes(self):
+        """Start counting what matter_lights_cut says afresh (a new scene)."""
+        if self._ml_ran:
+            self.gpu.write_buffer(self._mlc, np.zeros(1, np.uint32), 8)
+        self._ml_ran = False
 
     def lume_kernel(self, pieces=True, march=True, shots=True, wood=True, water=False, heat=False, lpass=False, char=True):
         """Lume's camera kernel (lume.wgsl lume_main), compiled the first time a set wants it: the classic stage's main
@@ -701,14 +717,23 @@ class Stage:
             b.clear_buffer(self._ml, 0, 16)
         if glow:
             if not n_hot:
-                b.clear_buffer(self._mlc)
+                b.clear_buffer(self._mlc, 0, 4)
+            blocks = [-(-int(d) // GLOW_BLOCK) for d in matter.dims]
+            nb = int(np.prod(blocks))
+            if self._mlb is None or self._mlb.size < nb * 32:
+                if self._mlb is not None:
+                    self._mlb.destroy()
+                self._mlb = self.gpu.buffer(max(nb, 64) * 32, 'stage-matter-block-lights')
             gu = (Uniforms().v4(*matter.dims, GLOW_BLOCK).v4(*matter.origin, matter.dx)
-                  .v4(1.0, scale, GLOW_T0, 1.0 / GLOW_DT).v4(MATTER_LIGHTS))
+                  .v4(1.0, scale, GLOW_T0, 1.0 / GLOW_DT).v4(MATTER_LIGHTS, nb))
             for row in table:
                 gu.v4(*row)
-            res = [phi, look2, self._ml, self._mlc]
-            b.run(self.k_mglow, res, gu, groups=tuple(-(-int(d) // (4 * GLOW_BLOCK)) for d in matter.dims))
+            res = [phi, look2, self._ml, self._mlc, self._mlb]
+            b.run(self.k_mglow, res, gu, groups=tuple(-(-n // 4) for n in blocks))
+            # (the brightest that fit, in the order of the blocks: kept by a fixed rule, so they do not flicker with the
+            # order the threads ran in or differ between runs)
             b.run(self.k_mglow_finish, res, gu, groups=(1, 1, 1))
+            self._ml_ran = True
         self.has_matter = surf is not None
         pack_colliders(u, cols, meshes)
         hot = heat['rows'] if heat else []

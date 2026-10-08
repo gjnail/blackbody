@@ -236,6 +236,26 @@ def test_the_command_line_prints_each_notice_once(capsys):
     assert len(out) == 2 and out[1].startswith('Note: Box 0: the liquid pushed it harder')
 
 
+def test_the_gpu_lists_say_what_they_left_out():
+    """Glowing matter past its lights and ice past its pieces (Engine._list_notices): said once each, only when there was
+    more than the list holds, and without a stage or a liquid nothing is read."""
+    from blackbody.engine.liquid_thermal import MAX_BODIES
+    from blackbody.engine.stage import MATTER_LIGHTS
+    E = _engine(kind='both')
+    assert E.notices() == []
+    E._stage = types.SimpleNamespace(matter_lights_cut=lambda: 37)
+    E.liquid = types.SimpleNamespace(thermal=types.SimpleNamespace(most_pieces=lambda: MAX_BODIES + 500))
+    got = E.notices()
+    assert any(f'at most {MATTER_LIGHTS} patches' in n and 'up to 37 more glowed' in n for n in got), got
+    assert any(f'{MAX_BODIES + 500:,} separate pieces of ice' in n and f'only {MAX_BODIES:,} of them' in n for n in got), got
+    E.liquid.thermal.most_pieces = lambda: MAX_BODIES       # (as many as it holds: nothing left out)
+    E._stage.matter_lights_cut = lambda: 0
+    assert E.notices() == []
+    E = _engine(kind='fire')                                 # (a fire scene's liquid, left from another scene, says nothing)
+    E.liquid = types.SimpleNamespace(thermal=types.SimpleNamespace(most_pieces=lambda: 10 ** 6))
+    assert E.notices() == []
+
+
 def test_solids_count_when_the_liquids_push_is_held_back():
     pytest.importorskip('mujoco')
     from blackbody.engine.solids import Solids
