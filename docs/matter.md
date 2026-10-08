@@ -6,7 +6,7 @@ Sand, snow, mud, jelly and clay are *matter*: a body of it is made of tens or hu
 
 ## Making some
 
-Add a block from the *Sand, snow & mud* group in Create: a sand pile, a sand pour, a column of sand let go, a sand castle, a snowball, a snow drift, mud, a block of jelly, a lump of clay, chocolate letters in any font, or a mesh of your own filled with clay (*Matter shape*). Each is a matter object in the scene, with its settings in Properties:
+Add a block from the *Sand, snow & mud* group in Create: a sand pile, a sand pour, a column of sand let go, a sand castle, sand into a sling, a snowball, a snow drift, mud, a block of jelly, a lump of clay, chocolate in a hot pan, chocolate letters in any font, or a mesh of your own filled with clay (*Matter shape*). Each is a matter object in the scene, with its settings in Properties:
 
 - *Made of*: what it is (below).
 - *Shape*, *Position*, *Size*, *Rotation*: the body of it at the start: a box, a ball, a cylinder, a pile (a cone standing on its base), or a mesh it fills (*Mesh file*: a closed OBJ, STL or USD prim in metres, its own origin at *Position*, *Size* its scale on each axis).
@@ -18,7 +18,7 @@ Add a block from the *Sand, snow & mud* group in Create: a sand pile, a sand pou
 
 Right-click one in the viewer for *Made of*, *Let go at this frame*, *Pour it from here*, and *Start* or *Stop pouring at this frame*. Its dashed outline in the viewer is where it starts; a pour shows its nozzle and an arrow the way it pours.
 
-![A sand pour, then Made of › Mud](media/gif/ui-matter.gif "Create › Sand & mud › Sand pour builds a heap; right-click it, Made of › Mud, and it pours mud.")
+![A sand pour, then Made of › Mud](media/gif/ui-matter.gif "Create › Sand, snow & mud › Sand pour builds a heap; right-click it, Made of › Mud, and it pours mud.")
 
 ## What it is made of
 
@@ -27,9 +27,10 @@ Right-click one in the viewer for *Made of*, *Let go at this frame*, *Pour it fr
 | Sand | Dry grains: it pours, slides, and piles at its angle of repose (34°). Pulled apart, it falls apart. |
 | Wet sand | Holds a steeper heap (38°) and a little stretch, so it clumps and holds a cut edge. |
 | Snow | Fresh snow, 400 kg/m³: squeezed, it packs and gets harder; stretched, it breaks into lumps. |
-| Packing snow | Wet snow, 600 kg/m³, for snowballs: it splats where it hits and breaks up as it falls. |
+| Packing snow | Wet snow, 600 kg/m³, for snowballs: it squashes a little and sticks where it hits, and breaks up as it falls. |
 | Mud | Flows like a thick liquid until it is thin enough to hold itself up (its yield stress, 400 Pa), then stops. |
 | Jelly | Springs back from anything that squashes it, keeping its volume: it bounces and wobbles. It is clear and coloured. |
+| Ballistic gel | 10% ordnance gelatin, as ballistics tests use: firmer than jelly, nearly clear and pale amber. A bullet opens a cavity in it that swells and collapses, leaving its track ([Bullets](bullets.md)). |
 | Clay | Squashes and stays squashed: it holds a shape until it is pushed harder than 20 kPa. |
 | Wax | A firm solid, ivory and a little translucent. It melts at 60 °C into runny wax. |
 | Chocolate | A firm, glossy solid. It melts at 34 °C into thick melted chocolate, which slumps and runs slowly. |
@@ -62,15 +63,15 @@ Sand gets wet. Dry sand the water touches is damp after half a second: darker an
 
 ![Sand castle and a wave](media/gif/sand_castle.gif "Sand castle and a wave: a wall of water breaks over a castle of damp sand. It stands, then the water soaks into it and it slumps into a mound.")
 
-Snow melts where hot gas touches it: in flames a snowball's surface melts away in a second or two, while snow beside a fire that its heat does not reach, or buried inside a heap, lasts. It melts from below where it rests on an object warmer than freezing (an object's *Temperature*): on a 150 °C steel plate a layer every few seconds, on a warm car bonnet slowly, on frozen ground not at all. In a fire-and-liquid box its water joins the liquid and runs off; in a fire box it is simply gone. (The fire's radiant heat is not counted, so snow a little way from a fire melts only where the hot gas reaches it.)
+Snow melts where hot gas touches it: in flames a snowball's surface melts away in a second or two, while snow beside a fire that its heat does not reach, or buried inside a heap, lasts. It melts from below where it rests on an object warmer than freezing (an object's *Temperature*): on a 150 °C steel plate a layer every few seconds, on a warm car bonnet slowly, on frozen ground not at all. In a liquid or fire-and-liquid box its water joins the liquid and runs off; in a fire box it is simply gone. (The fire's radiant heat is not counted, so snow a little way from a fire melts only where the hot gas reaches it.)
 
 ## Things that melt
 
 Wax, chocolate, aluminium and iron have a temperature (Matter › *Temperature*, how hot each body starts). They warm in the fire, from the hot gas next to them and from the radiant heat on the side that faces it (the fire's, lava's, a hot object's), so a bar of chocolate beside a fire softens on that side first. They cool in the air, and much faster in water, and give off their own heat as they glow, which warms what is round them in turn. Objects warm or chill what touches them, as fast as the two conduct heat, and are warmed or chilled by it ([objects' heat](physics.md#heat)): chocolate on a 150 °C steel plate melts where it sits in moments, and on a wooden board as hot more slowly, while molten iron poured into a cold steel mould chills against its walls (warming them) and in an earth mould hardly at all. The ground takes heat too, as a large body of the floor's material: molten iron poured on concrete chills some 80 °C in its first second where it lies, its top staying bright. In a fire-and-liquid box lava heats what it touches. Heat evens out through them, quickly through metal and slowly through wax and chocolate. Past its melting point each melts into a liquid of the same stuff (runny wax and metal, thick melted chocolate) that runs and puddles, and it sets again where it cools below that point. A melt's puddle stays about as deep as its surface tension keeps it.
 
-Hot metal glows as a blackbody at its temperature: dull red from about 600 °C, orange by 1000 °C, yellow-white over 1300 °C. It glows as bright as a flame that hot (the Look's *Flame temperature*, *Intensity*, *Exposure* and *Dynamic range* set both), and it lights what is round it. Aluminium melts before it glows much, as the real metal does.
+Hot metal glows as a blackbody at its temperature: dull red from about 600 °C, orange by 1000 °C, yellow-white over 1300 °C. It glows as bright as a flame that hot (Shading › *Flame temperature*, *Emission*, *Fire exposure* and *Physical brightness* set both), and it lights what is round it. Aluminium melts before it glows much, as the real metal does.
 
-Melting takes as long as it really would, times *Heat speed* (Domain): 4 unless set, so a chocolate bar by a campfire runs in seconds rather than a minute. *Pouring molten iron* pours a ladle of it into a mould, and *Chocolate by a fire* melts three pieces beside a small fire.
+Melting runs *Heat speed* (Domain) times as fast as it really would: 4 unless set, so a chocolate bar by a campfire runs in seconds rather than a minute. *Pouring molten iron* pours a ladle of it into a mould, and *Chocolate by a fire* melts three pieces beside a small fire.
 
 ![Chocolate in a hot pan](media/gif/chocolate_pan.gif "Chocolate in a hot pan: squares of chocolate in a steel pan at 180 °C melt from the bottom, slump into glossy pools and run together.")
 
@@ -92,7 +93,7 @@ On the stage, matter is drawn in its material's look and lit like the objects: t
 - *Most matter particles* caps how many there are; each takes 128 bytes of GPU memory.
 - Its steps are as short as its stiffest material and its fastest particle need: about a hundred a frame for sand, more for packed snow. A heap of 40 litres of sand at the default detail (about 170,000 particles) takes about a tenth of a second a frame.
 
-Presets: *Sand from a hopper*, *Snowballs at a wall*, *Ball dropped on jelly*, *Crate through mud*, *Sand castle and a wave*, *Pouring molten iron*, *Chocolate by a fire*.
+Presets: *Sand from a hopper*, *Snowballs at a wall*, *Ball dropped on jelly*, *Crate through mud*, *Sand castle and a wave*, *Sand into a sling*, *Snow blowing off a heap*, *Pouring molten iron*, *Chocolate in a hot pan*, *Chocolate by a fire*.
 
 ![Crate through mud](media/gif/mud_drag.gif "Crate through mud: a crate dragged through a bed of mud ploughs a trench and leaves ridges.")
 
@@ -107,7 +108,6 @@ Presets: *Sand from a hopper*, *Snowballs at a wall*, *Ball dropped on jelly*, *
   stopped by it, but the curtain gives way a little late. Matter lying on a cloth stays half a node clear of it.
 - A cloth lying on top of matter does not pass on the weight of more matter heaped on the cloth: sand poured onto a
   sheet that is itself draped over a heap rests on the sheet without pressing the heap under it.
-- It does not burn.
 - A mesh it fills should be closed (through a hole the fill runs out into the space round it), and it is filled once,
   as it starts: a deforming mesh does not move it.
 - Up to 15 materials (or colours of them) in a scene at once.

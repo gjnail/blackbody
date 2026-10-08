@@ -169,7 +169,7 @@ and gives it back the same ways: it radiates, heats the air next to it (a shimme
 
 *Keeps its temperature* holds an object at its Temperature, as something the shot does not show would: a hot plate on its element, a stove, ground frozen hard. It still heats and chills what meets it. Scenes saved before objects warmed and cooled open with it on for every object whose Temperature is not 20 °C, so they behave as they did.
 
-Hot, an object glows as a blackbody at its surface's temperature, dull red at about 500 °C, orange by 1000 °C, as bright as its emissivity lets it, and its glow lights what is round it. It is as bright as a flame that hot would be in the Look (*Intensity*, *Exposure*, *Dynamic range*), as hot metal and lava are: in a shot with no fire, raise *Exposure* until it reads against the room's light (*Red-hot steel quenched* uses +3.5 in a dim workshop). Heat runs as fast as it really does, times Domain › *Heat speed* (as for sand, snow and the things that melt): 4 unless set. Preset: *Red-hot steel quenched* (Ice and steam).
+Hot, an object glows as a blackbody at its surface's temperature, dull red at about 500 °C, orange by 1000 °C, as bright as its emissivity lets it, and its glow lights what is round it. It is as bright as a flame that hot would be (Shading › *Emission*, *Fire exposure*, *Physical brightness*), as hot metal and lava are: in a shot with no fire, raise *Fire exposure* until it reads against the room's light (*Red-hot steel quenched* uses +3.5 in a dim workshop). Heat runs as fast as it really does, times Domain › *Heat speed* (as for wax, chocolate and metal): 4 unless set. Preset: *Red-hot steel quenched* (Ice and steam).
 
 ## How they look
 

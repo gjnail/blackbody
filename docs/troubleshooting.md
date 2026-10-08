@@ -20,13 +20,13 @@ What to do when something goes wrong, and what Blackbody does not do (yet).
 
 - Colour management: sRGB, Rec.709, Linear and ACEScg footage and Standard, AgX filmic, ACES fit and Raw views are built in, and OCIO configs are read for displays, views, looks and colour spaces. The viewer's OCIO view is a LUT (within about 1/255 of the exact transform); renders use OCIO itself.
 
-- The tracker follows one point in 2D. Shots with strong perspective change need a camera track (.chan).
+- Camera tracking (Tracking › *Track* with the ground lined up) follows about 60 spots and works out the camera from them with the lens as lined up, fixed and free of distortion: a zoom, a strongly distorting lens, or a camera that travels with no ground in view needs a solve from a matchmover (.chan or USD). Each frame's camera is found in turn, outward from the lined-up frame, with nothing refining the whole shot together afterwards, so small errors can add up over a long move. With no ground lined up, *Track* pins the effect to one point in 2D: its position, not rotation, scale or perspective.
 
 - `.chan` import is tested with generated files, not with exports from each package.
 
 - A fast-moving collider deletes the smoke it sweeps into rather than compressing it. A burnable collider's burn is laid out around its size at the start; animating its *Size* stretches the burn.
 
-- Fire light on surfaces is shadowed along one ray toward the centre of the fire, so a surface lit by two fires far apart gets one shadow. The ground is a flat plane at the fire's base unless a depth pass or a terrain collider describes it. Holdouts are only as good as the colliders, matte or depth pass you give them.
+- Fire light on the footage, and with the classic lighting engine on the set drawn in CG too, is shadowed along one ray toward the centre of the fire, so a surface lit by two fires far apart gets one shadow (Lume shadows each of the fire's lights on the set it draws). The ground is a flat plane at the fire's base unless a depth pass or a terrain collider describes it. Holdouts are only as good as the colliders, matte or depth pass you give them.
 
 - Deep EXR: a thin wisp that only a later anti-aliasing pass catches gets a sample of its own only while the pixel has fewer than its 8 samples; after that it joins the nearest one. A pixel's embers are one sample at the nearest ember's depth; one behind nearly opaque flame (as the flat image still shows it) sits at the front of that flame.
 
@@ -34,7 +34,7 @@ What to do when something goes wrong, and what Blackbody does not do (yet).
 
 - Volumes: the velocity in a VDB is not read (the smoke starts still and the simulation moves it), a sequence changes from one frame to the next without blending, and a volume is averaged down to at most twice Domain › *Mesh detail* cells a side (96 to 192). VDBs that use Zstd compression or bit shuffling, and non-float grids other than vectors, are not read. Volume emitters feed the fire, not liquid sources.
 
-- USD import: points become blobs, not particles. Portal and geometry lights are not imported, and a light's texture, IES profile and shadow settings are ignored. USD frame numbers are taken as Blackbody frame numbers.
+- USD import: points become blobs, not particles. Portal and geometry lights are not imported, nor any distant or dome light after the first; a rectangle light's texture, an IES profile on a disc or rectangle light, and shadow settings are ignored. USD frame numbers are taken as Blackbody frame numbers.
 
 - Fabric: up to 16 fabrics. In water the cloth and the water push each other by the cloth's drag, but the cloth is no wall to the water: water passes through a sheet slowed rather than held back. The water sees it through its drawn layer, so cloth outside the picture is not seen refracted or reflected in the water. Its shadows come from the light volume (half the simulation's resolution): soft close up, and a sheet thinner than a light cell shades a little round its edges. The flames of burning fabric are the fire's own (from the fuel the cloth gives off, at the fire's cell size), not a thin sheet of flame on the cloth itself; ash flakes are drawn a few to each burnt-off point of the cloth and do not land and pile up as ash. Radiation on cloth (the fire's, lava's, hot objects', glowing matter's) is not shadowed: cloth behind cloth, or behind an object, is lit as if nothing were in the way. Drops dripping off wet cloth do not make ripples or splashes in a liquid or wet the ground, the water cloth soaks up is not taken out of the liquid, and cloth in hot water is not warmed by it. Stiff materials at fine detail can need more than the four constraint passes to reach their full stiffness, so they drape slightly softer than measured.
 
