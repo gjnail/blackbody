@@ -137,6 +137,36 @@ def test_a_pane_is_holed_where_the_bullet_goes_through_and_stands():
     assert S.shots.marks and len(S.shots.debris) > 10
 
 
+def test_a_pane_stands_whole_until_it_is_hit():
+    # (a web of shards has bonds where two cells all but miss each other; a weld that small, loaded at rest as much as
+    # any, broke as the shot began, and the pane, no longer whole, showed its cuts before anything hit it: fracture.py
+    # drops those slivers)
+    from blackbody.scene import presets
+    sc = presets.make('glass_slowmo')
+    S = Solids()
+    S.configure(sc, sc.sim_layout(False))
+    S.reset()
+    for f in range(sc.start + 1, sc.start + 13):       # (the bullet reaches the pane at about frame 20)
+        S.advance(sc, f, sc.v('domain', 'time_scale', f) / sc.fps, 1)
+    assert not S.shots.impacts
+    assert S.whole(0) and not S.breaks
+
+
+def test_a_bottle_shot_bursts():
+    from blackbody.scene.shot_presets import _bottle
+    rail = dict(name='Rail', shape='box', position=(0.0, 0.9, 0.0), size=(0.3, 0.03, 0.05), material='wood')
+    bottle = _bottle('Bottle', 0.0, 0.93, 0.0)
+    shot = dict(position=(0.0, 1.02, 10.0), aim=(0.0, 1.02, 0.0), round='22lr', start=0.1, scatter=0.0, flash=False)
+    S = run(scene_of([rail, bottle], [shot]), 0.6)
+    hits = [i for i in S.shots.impacts if i.owner[0] == 'piece']
+    assert hits and hits[0].kind == 'through'
+    W = S._w
+    mine = W['set'] == 0
+    assert (W['over'][mine] < 0).all()                  # (every weld of it gone: it bursts, not just holed)
+    pos = S.data.xpos[S.sets[0].bodies]
+    assert (pos[:, 1] < 0.85).mean() > 0.7              # (its pieces off the rail, most of them on the ground)
+
+
 def test_a_can_on_a_post_is_knocked_off():
     shot = dict(PISTOL, position=(0.0, 1.06, 3.0), aim=(0.0, 1.06, -1.0))
     S = run(scene_of([POST, CAN], [shot]), 0.6)

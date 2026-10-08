@@ -663,7 +663,7 @@ def web(size, n, rng, impact=None):
             piece, _ = make_piece(np.asarray(pl, float), inner)
             if piece is not None:
                 frac.pieces.append(piece)
-    frac.bonds = touching_bonds(frac.pieces)
+    frac.bonds = touching_bonds(frac.pieces, slivers=True)
     return frac
 
 
@@ -788,9 +788,11 @@ def _area2(poly):
     return 0.5 * float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
 
 
-def touching_bonds(pieces, tol=1e-6):
+def touching_bonds(pieces, tol=1e-6, slivers=False):
     """Bonds between pieces whose faces lie on the same plane facing each other and overlap: the overlap's area,
-    the first face's normal and the overlap's centre."""
+    the first face's normal and the overlap's centre. slivers: drop the slivers of contact (_drop_slivers): a pane's
+    web of shards (web()), where nearly every bond that small is two cells all but missing each other; elsewhere they
+    are mostly whole small faces (a mesh's), or the caller filters them its own way (shells, wood)."""
     out = []
     cen = np.array([p.centroid for p in pieces])
     rad = np.array([float(np.linalg.norm(p.verts - p.centroid, axis=1).max()) for p in pieces])
@@ -821,7 +823,43 @@ def touching_bonds(pieces, tol=1e-6):
                         continue
                     c2 = ov.mean(0)
                     out.append(Bond(i, int(j), float(area), na.copy(), na * da + u * c2[0] + v * c2[1]))
-    return out
+    return _drop_slivers(out) if slivers else out
+
+
+SLIVER_BOND = 0.05    # a bond under this share of the median bond's area is a sliver of contact (every weld is as
+                      # stiff as the next, so the solver can load one this small past what it holds at rest)
+
+
+def _drop_slivers(bonds):
+    """Bonds with only a sliver of contact (two cells that all but miss each other) dropped where the object holds
+    together without them (their two pieces joined by the other bonds): a weld that small holds nothing, and the solver
+    can put a share of the object's own weight on it, so it broke as the shot began, and the object, no longer whole,
+    showed its cuts before anything hit it. A sliver that alone joins two parts of the object is kept."""
+    if len(bonds) < 3:
+        return bonds
+    med = float(np.median([b.area for b in bonds]))
+    small = [b.area < SLIVER_BOND * med for b in bonds]
+    if not any(small):
+        return bonds
+    parent = {}
+
+    def find(x):
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    for b, sm in zip(bonds, small):
+        if not sm:
+            parent[find(b.i)] = find(b.j)
+    # (the slivers that alone join two parts are kept, the largest first: the strongest of them holds the parts)
+    keep = set()
+    for k in sorted((k for k, sm in enumerate(small) if sm), key=lambda k: -bonds[k].area):
+        b = bonds[k]
+        if find(b.i) != find(b.j):
+            parent[find(b.i)] = find(b.j)
+            keep.add(k)
+    return [b for k, (b, sm) in enumerate(zip(bonds, small)) if not sm or k in keep]
 
 
 # ---- shells -----------------------------------------------------------------------------------------------------

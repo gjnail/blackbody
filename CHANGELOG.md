@@ -320,6 +320,13 @@ Notable changes to Blackbody. The format follows
 
 ### Fixed
 
+- Bottles, vases and other brittle vessels burst when shot. A hollow object's wall was counted thin twice, so a .22
+  left too little of itself in a 3 mm bottle wall to break it, and only the shards in its path came away: the rest
+  stood on in a bottle's shape. Panes and plates keep their holed web as before.
+- A glass pane stays whole until it is hit: a few slivers of bonds in its web, all but missing each other, gave way at
+  rest and showed its cut seams before the bullet came.
+- A cached frame saved before a breakable object's welds changed no longer loads (it re-armed broken welds among
+  scattered pieces and threw them apart); the frame is simulated again.
 - Dust thrown up by the wind or a blast showed in previews but not in final renders: it went only into the coarse
   smoke grid, and a final render draws the fine one.
 - Lume: coloured glass casts its shadow in its colour (its shadow rays carried the tint as grey); with a background

@@ -3162,6 +3162,13 @@ class Solids:
         q, v = np.asarray(st['qpos'], float), np.asarray(st['qvel'], float)
         if q.shape != self.data.qpos.shape or v.shape != self.data.qvel.shape:
             return False
+        # (nor one whose welds are not the model's: cut differently since, every weld it broke would hold again among
+        # pieces already flung apart)
+        ea = st.get('eq_active')
+        if ea is not None and np.shape(ea) != self.data.eq_active.shape:
+            return False
+        if self._w is not None and st.get('over') is not None and np.shape(st['over']) != self._w['over'].shape:
+            return False
         self.data.qpos[:] = q
         self.data.qvel[:] = v
         mujoco.mj_forward(self.model, self.data)

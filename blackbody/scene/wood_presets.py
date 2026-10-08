@@ -46,8 +46,8 @@ def wood_presets(K):
             'domain': {'size_x': 1.2, 'size_y': 1.0, 'size_z': 1.0, 'resolution': 64, 'preroll': 0.0},
             'motion': STILL, 'shading': DUST,
             'composite': {'backdrop': 'stage', 'floor': 'concrete'},
-            'lighting': DAY,
-            'camera': {'distance': 1.1, 'target_y': 0.45, 'pitch': 10.0, 'yaw': 55.0, 'focal_mm': 35, 'use_anchor': False},
+            'lighting': {**DAY, 'sun_azimuth': 215.0},     # (from behind: the boards' torn backs in the light)
+            'camera': {'distance': 0.85, 'target_y': 0.475, 'pitch': 4.0, 'yaw': 200.0, 'focal_mm': 35, 'use_anchor': False},
             'emitters': [],
             'colliders': [dict(name=f'Board {k + 1}', shape='box', position=(0.0, 0.45, -0.044 * k), size=(0.15, 0.45, 0.0095),
                                material='wood') for k in range(6)],

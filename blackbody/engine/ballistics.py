@@ -40,6 +40,7 @@ SPEED_OF_SOUND = 343.0 # m/s
 STOP_SPEED = 12.0      # m/s: a bullet slower than this inside something has stopped (in water it sinks)
 LEAD = 11340.0         # kg/m^3
 SPARK_LIFE = 0.12      # s a spark glows, on average
+VESSEL_BURST = 5.0     # J: a bottle, a vase or a glass struck this hard shatters whole (a .22 leaves ~35 J in its wall)
 BORES_MOST = 128       # the most holes and craters carved at once (the newest)
 CLOTH_HOLES_MOST = 64  # the most holes drawn through cloth (the newest: cloth_draw.wgsl)
 PUSH_MOST = 40.0       # m/s: the most speed a bullet gives a body or a piece it hits
@@ -577,6 +578,25 @@ class Bore:
                                 # its wood: marks.wgsl fray_*), -1 the ground
 
 
+def _shell(c):
+    """Whether a breakable is cut into its wall (fracture.fracture: a hollow cylinder or box, not cut into bricks): a
+    bottle, a vase, a crate, a tank."""
+    return (float(c.get('hollow', 0.0) or 0.0) > 0.0 and c.get('shape') in ('cylinder', 'box')
+            and c.get('fracture', 'voronoi') != 'bricks')
+
+
+def _extent(ps):
+    """A breakable's size: the longest side of the box round its pieces as cut (its own frame; a mesh's at its scale)."""
+    e = getattr(ps, '_extent', None)
+    if e is None:
+        e = float(np.ptp(np.vstack([p.verts for p in ps.frac.pieces]), axis=0).max()) if ps.frac.pieces else 0.0
+        try:
+            ps._extent = e
+        except AttributeError:
+            pass
+    return e
+
+
 def _unit(v):
     v = np.asarray(v, float)
     n = float(np.linalg.norm(v))
@@ -953,6 +973,8 @@ class Ballistics:
             return 1.0
         from ..scene.materials import material
         c = self.scene.colliders[int(owner[1])]
+        if owner[0] == 'piece' and _shell(c):
+            return 1.0     # (a hollow breakable cut into its wall: each piece is solid, as thick as the wall)
         own = float(c.get('density', 0.0) or 0.0)
         full = material(c.get('material', 'wood')).density
         return 1.0 if own <= 0.0 else float(min(1.0, own / max(full, 1e-6)))
@@ -1226,7 +1248,7 @@ class Ballistics:
         cen = d.xpos[ps.bodies]
         P = imp.pos
         Q = imp.exit if imp.exit is not None else P + imp.dir * imp.depth
-        ext = float(np.ptp(cen, axis=0).max()) + 2.0 * float(np.max(np.abs(ps.size)))
+        ext = _extent(ps)
         brittle = s.debris == 'shards'
         r_hole = crater_radius(imp.energy, s, imp.calibre, through=imp.kind == 'through', exit_side=True)
         # each piece's centre's distance from the bullet's path through it
@@ -1235,8 +1257,14 @@ class Ballistics:
         t = np.clip((cen - P) @ seg / L2, 0.0, 1.0)
         dist = np.linalg.norm(cen - (P + t[:, None] * seg[None]), axis=1)
         rad = np.array([float(np.linalg.norm(p.verts - p.centroid, axis=1).max()) for p in ps.frac.pieces[:len(ps.bodies)]])
-        if brittle and ext < 25.0 * r_hole and imp.energy > 20.0:
-            go = np.arange(len(ps.bodies))        # (small and brittle: it all goes)
+        # (a small brittle thing whole until now: it all goes. So does a brittle vessel not too big for the blow - a
+        # bottle, a vase, a glass: its thin wall shatters from far less. A pane keeps its web of cracks round the hole;
+        # a shard of something already burst is only knocked about where it is hit)
+        c = self.scene.colliders[ps.index] if ps.index < len(self.scene.colliders) else {}
+        vessel = _shell(c) and ext < 60.0 * r_hole
+        whole = solids.whole(si) if hasattr(solids, 'whole') else True
+        if brittle and whole and ((ext < 13.5 * r_hole and imp.energy > 20.0) or (vessel and imp.energy > VESSEL_BURST)):
+            go = np.arange(len(ps.bodies))
         else:
             go = np.nonzero(dist < r_hole + 0.35 * rad)[0]
             k = int(imp.owner[2])

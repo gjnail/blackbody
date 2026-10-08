@@ -75,7 +75,7 @@ def shot_presets(K):
             'emitters': [],
             'colliders': [dict(name='Pane', shape='box', position=(0.0, 0.6, 0.0), size=(0.25, 0.25, 0.003), material='glass',
                                breakable=True, fracture='shards', pieces=70, held='edges')],
-            'shots': [dict(name='Pistol', round='9mm', position=(0.02, 0.6, 2.0), aim=(0.0, 0.6, 0.0), start=0.004, scatter=0.0,
+            'shots': [dict(name='Pistol', round='9mm', position=(0.007, 0.6, 0.7), aim=(0.0, 0.6, 0.0), start=0.004, scatter=0.0,
                            flash=False)],
         },
         'bottle_shoot': {
@@ -133,7 +133,8 @@ def shot_presets(K):
             'emitters': [],
             'colliders': [dict(name='Wall', shape='box', position=(0.0, 0.9, -1.0), size=(2.2, 0.9, 0.15), material='concrete')],
             'shots': [dict(name='Machine gun', round='556', position=K((0.0, (-1.0, 1.4, 12.0)), (2.0, (1.0, 1.4, 12.0)), interp='linear'),
-                           aim=K((0.0, (-1.8, 0.2, 0.0)), (2.0, (1.8, 1.1, -1.0)), interp='linear'), start=0.3, count=25, rate=900.0,
+                           aim=K((0.0, (-1.8, 0.0, 2.5)), (0.7, (-0.9, 0.0, 1.2)), (1.0, (-0.5, 0.3, -0.85)),
+                                 (2.0, (1.8, 1.1, -1.0)), interp='linear'), start=0.3, count=25, rate=900.0,
                            scatter=0.25, tracer=True)],
         },
     }
