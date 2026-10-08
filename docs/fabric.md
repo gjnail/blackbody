@@ -56,4 +56,4 @@ Wet cloth in the heat (the gas and the fire's radiation) holds at 100 °C while 
 
 ## Output
 
-EXRs get a `fabric` layer (the cloth on its own); the beauty holds it under the fire. A render to `.obj` (one per frame) or `.usd` writes the fabric as meshes, with its burnt-through holes left out and a `burn` value per vertex (in a liquid scene, beside the liquid's surface: `name.fabric.####.obj` or `name.fabric.usd`).
+EXRs get a `fabric` layer (the cloth on its own); the beauty holds it under the fire. *Fabric · USD* in the Render window, or a render to `.obj` (one per frame) or `.usd`, writes the fabric as meshes, with its burnt-through holes left out and a `burn` value per vertex (in a liquid scene, beside the liquid's surface: `name.fabric.####.obj` or `name.fabric.usd`).

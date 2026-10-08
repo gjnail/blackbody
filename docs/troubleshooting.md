@@ -28,9 +28,9 @@ What to do when something goes wrong, and what Blackbody does not do (yet).
 
 - Fire light on the footage, and with the classic lighting engine on the set drawn in CG too, is shadowed along one ray toward the centre of the fire, so a surface lit by two fires far apart gets one shadow (Lume shadows each of the fire's lights on the set it draws). The ground is a flat plane at the fire's base unless a depth pass or a terrain collider describes it. Holdouts are only as good as the colliders, matte or depth pass you give them.
 
-- Deep EXR: a thin wisp that only a later anti-aliasing pass catches gets a sample of its own only while the pixel has fewer than its 8 samples; after that it joins the nearest one. A pixel's embers are one sample at the nearest ember's depth; one behind nearly opaque flame (as the flat image still shows it) sits at the front of that flame.
+- Deep EXR: a thin wisp that only a later anti-aliasing pass catches gets a sample of its own only while the pixel has fewer than its 8 (or 16) samples; after that it joins the nearest one. A pixel's embers are one sample at the nearest ember's depth; one behind nearly opaque flame (as the flat image still shows it) sits at the front of that flame.
 
-- A growing box grows but never shrinks during a simulation, and each growth reads the whole state back from the GPU (a fraction of a second). Farm renders from a disk cache cannot write VDBs (those need the live simulation).
+- A growing box grows but never shrinks during a simulation, and each growth reads the whole state back from the GPU (a fraction of a second). VDBs rendered from a disk cache have the simulated air's velocity without the finer grid's swirls, and none if motion blur was off as it was simulated; a sky's have none.
 
 - Volumes: the velocity in a VDB is not read (the smoke starts still and the simulation moves it), a sequence changes from one frame to the next without blending, and a volume is averaged down to at most twice Domain › *Mesh detail* cells a side (96 to 192). VDBs that use Zstd compression or bit shuffling, and non-float grids other than vectors, are not read. Volume emitters feed the fire, not liquid sources.
 

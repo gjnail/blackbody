@@ -14,10 +14,20 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QF
                                QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
 from ..io.video import available_profiles
-from ..render.job import Output
+from ..render.job import DEEP_SAMPLES, Output, deep_layers, has_fabric, output_notes
 from . import theme
 
 COMP_PROFILES = ['prores422hq', 'h264', 'h265', 'dnxhr_hq', 'prores4444']
+VDB_GRIDS = {'fire': 'density · temperature · flame · fuel · vel', 'both': 'density · temperature · flame · fuel · vel, '
+             'and the liquid beside it', 'liquid': 'density (the surface) · vel · spray · foam · bubbles',
+             'cloud': 'density · cloud_water · cloud_ice · rain · snow · hail · vel'}
+VDB_TIPS = {'fire': 'density, temperature, flame, fuel and vel grids for Blender, Houdini, Maya, Unreal…',
+            'both': 'The fire\'s density, temperature, flame, fuel and vel grids, and the liquid beside it as '
+                    'name.liquid.####.vdb, for Blender, Houdini, Maya, Unreal…',
+            'liquid': 'The liquid as density (its 0.5 level is the surface), vel, and the spray, foam and bubbles, for '
+                      'Blender, Houdini, Maya, Unreal…',
+            'cloud': 'The sky\'s water in g/m³ (density is the cloud itself, its water and ice; then cloud_water, '
+                     'cloud_ice, rain, snow and hail) and vel, in the scene\'s metres, for Blender, Houdini, Maya, Unreal…'}
 
 
 def default_folder():
@@ -65,9 +75,12 @@ class ExportDialog(QDialog):
         row(self.exr, self.exr_comp, self.exr_float, self.exr_layers)
 
         self.deep = QCheckBox('Fire element · deep EXR sequence')
-        self.deep.setToolTip('Deep OpenEXR for deep compositing (Nuke DeepRead): up to 8 samples per pixel, each with its colour, '
-                             'alpha and depth, so the fire and smoke merge correctly with other deep renders. Embers are not included.')
-        row(self.deep, QLabel('RGBA · Z · ZBack'))
+        self.deep_n = QComboBox()
+        self.deep_n.addItem('8 samples per pixel', 8)
+        self.deep_n.addItem('16 samples per pixel', 16)
+        self.deep_n.setToolTip('16 keeps thick, layered smoke in more slices, for objects merged deep inside it, at twice '
+                               'the memory and file size.')
+        row(self.deep, self.deep_n, QLabel('RGBA · Z · ZBack'))
 
         self.png = QCheckBox('Fire element · PNG sequence')
         self.png.setToolTip('RGBA with alpha, for editors and motion graphics.')
@@ -104,14 +117,20 @@ class ExportDialog(QDialog):
         row(self.comp_exr, QLabel('RGB · Lume light passes'))
 
         self.vdb = QCheckBox('Volume · OpenVDB sequence')
-        self.vdb.setToolTip('density, temperature, flame, fuel and vel grids for Blender, Houdini, Maya, Unreal…')
-        row(self.vdb, QLabel('density · temperature · flame · fuel · vel'))
+        self.vdb.setToolTip(VDB_TIPS.get(sc.kind, VDB_TIPS['fire']))
+        row(self.vdb, QLabel(VDB_GRIDS.get(sc.kind, VDB_GRIDS['fire'])))
 
         self.mesh = QCheckBox('Liquid surface · USD')
         self.mesh.setToolTip('The water surface as a polygon mesh for lighting and rendering in Blender, Houdini, Maya or '
                              'Omniverse: one USD file with the mesh (points, normals, velocities for motion blur) on '
                              'every frame, and the spray, foam and bubbles as point clouds.')
         row(self.mesh, QLabel('mesh · velocities · spray · foam · bubbles'))
+
+        self.fabric = QCheckBox('Fabric · USD')
+        self.fabric.setToolTip('The fabric as polygon meshes for Blender, Houdini, Maya or Omniverse: one USD file with each '
+                               'fabric\'s mesh (points, normals, velocities for motion blur) on every frame, its burnt-through '
+                               'holes left out, its weave as UVs and a burn value on every point for shading the char.')
+        row(self.fabric, QLabel('mesh · velocities · UVs · burn'))
         v.addWidget(box)
 
         # where -----------------------------------------------------------------------------------------
@@ -203,18 +222,42 @@ class ExportDialog(QDialog):
         self.comp.setChecked(s.value('export/comp', bool(sc.footage), type=bool))
         self.comp_exr.setChecked(s.value('export/comp_exr', False, type=bool))
         self.vdb.setChecked(s.value('export/vdb', False, type=bool))
-        self.deep.setChecked(s.value('export/deep', False, type=bool) and sc.kind in ('fire', 'liquid'))
-        self.deep.setEnabled(sc.kind in ('fire', 'liquid'))
-        if sc.kind == 'liquid':
+        deep = deep_layers(sc)
+        self.deep.setChecked(s.value('export/deep', False, type=bool) and bool(deep))
+        self.deep.setEnabled(bool(deep))
+        self.deep_n.setEnabled(bool(deep))
+        self.deep_n.setCurrentIndex(max(0, self.deep_n.findData(s.value('export/deep_samples', DEEP_SAMPLES, type=int))))
+        if deep and all(lay.kind == 'liquid' for _, lay in deep):
             self.deep.setText('Liquid element · deep EXR sequence')
+        self.deep.setToolTip(self._deep_tip(sc, deep))
         self.mesh.setChecked(s.value('export/mesh', False, type=bool) and sc.kind in ('liquid', 'both'))
         self.mesh.setEnabled(sc.kind in ('liquid', 'both'))
+        fabric = has_fabric(sc)
+        self.fabric.setChecked(s.value('export/fabric', False, type=bool) and fabric)
+        self.fabric.setEnabled(fabric)
+        if not fabric:
+            self.fabric.setToolTip(self.fabric.toolTip() + ' (There is no fabric in this scene.)')
         i = self.comp_profile.findData(s.value('export/comp_profile', 'prores422hq'))
         self.comp_profile.setCurrentIndex(max(0, i))
-        for w in (self.exr, self.deep, self.png, self.mov, self.comp, self.comp_exr, self.vdb, self.mesh, self.folder, self.name):
+        for w in (self.exr, self.deep, self.png, self.mov, self.comp, self.comp_exr, self.vdb, self.mesh, self.fabric,
+                  self.folder, self.name):
             (w.toggled if isinstance(w, QCheckBox) else w.textChanged).connect(self._update_labels)
         self.comp_profile.currentIndexChanged.connect(self._update_labels)
+        self.deep_n.currentIndexChanged.connect(self._update_labels)
         self._update_labels()
+
+    @staticmethod
+    def _deep_tip(sc, deep):
+        tip = ('Deep OpenEXR for deep compositing (Nuke DeepRead): 8 or 16 samples per pixel, each with its colour, alpha '
+               'and depth, so the fire and smoke merge correctly with other deep renders. The embers are in them as '
+               'light at their own depth.')
+        if not deep:
+            return tip + (' They are made for fire scenes and liquid scenes (and those layers of a shot), not fire-and-liquid '
+                          'or sky scenes.')
+        if any(u != 'base' for u, _ in (sc.layer_order() or [])):
+            return tip + (' In a shot with layers, every fire and liquid layer\'s samples go into the one file, each at its '
+                          'own depth.')
+        return tip
 
     def _browse(self):
         d = QFileDialog.getExistingDirectory(self, 'Render folder', self.folder.text())
@@ -227,8 +270,10 @@ class ExportDialog(QDialog):
         dims, h, _ = sc.sim_layout(final=True)
         mem = dims[0] * dims[1] * dims[2] * 88 / 1e9
         self.res_label.setText(f'{dims[0]}×{dims[1]}×{dims[2]} voxels · {h * 1000:.1f} mm · about {mem:.1f} GB of GPU memory')
-        paths = [o.path for o in self.outputs()]
-        self.preview_paths.setText('\n'.join(paths) if paths else 'Choose at least one output.')
+        outs = self.outputs()
+        paths = [o.path for o in outs]
+        notes = output_notes(getattr(self.doc, 'shot', self.doc.scene), outs)
+        self.preview_paths.setText('\n'.join(paths + notes) if paths else 'Choose at least one output.')
         self.go.setEnabled(bool(paths))
 
     def outputs(self):
@@ -239,8 +284,9 @@ class ExportDialog(QDialog):
             layers = ('emission', 'glow', 'heat', 'depth', 'surface') if self.exr_layers.isChecked() else ()
             out.append(Output('exr', str(folder / name / f'{name}.####.exr'), 'element', layers=layers,
                               compression=self.exr_comp.currentData(), half=not self.exr_float.isChecked()))
-        if self.deep.isChecked():
-            out.append(Output('deep', str(folder / f'{name}_deep' / f'{name}.deep.####.exr'), 'element'))
+        if self.deep.isChecked() and self.deep.isEnabled():
+            out.append(Output('deep', str(folder / f'{name}_deep' / f'{name}.deep.####.exr'), 'element',
+                              deep_samples=self.deep_n.currentData()))
         if self.png.isChecked():
             out.append(Output('png', str(folder / f'{name}_png' / f'{name}.####.png'), 'element', bits=self.png_bits.currentData(),
                               alpha_mode=self.png_alpha.currentData()))
@@ -256,16 +302,19 @@ class ExportDialog(QDialog):
         if self.vdb.isChecked():
             out.append(Output('vdb', str(folder / f'{name}_vdb' / f'{name}.####.vdb')))
         if self.mesh.isChecked() and self.mesh.isEnabled():
-            out.append(Output('mesh', str(folder / f'{name}_liquid.usdc')))
+            out.append(Output('mesh', str(folder / f'{name}_liquid.usdc'), 'liquid'))
+        if self.fabric.isChecked() and self.fabric.isEnabled():
+            out.append(Output('mesh', str(folder / f'{name}_fabric.usdc'), 'fabric'))
         return out
 
     def _accept(self):
         s = QSettings()
         s.setValue('export/folder', self.folder.text())
         for k, w in (('exr', self.exr), ('deep', self.deep), ('png', self.png), ('mov', self.mov), ('comp', self.comp),
-                     ('comp_exr', self.comp_exr), ('vdb', self.vdb), ('mesh', self.mesh)):
+                     ('comp_exr', self.comp_exr), ('vdb', self.vdb), ('mesh', self.mesh), ('fabric', self.fabric)):
             s.setValue(f'export/{k}', w.isChecked())
         s.setValue('export/comp_profile', self.comp_profile.currentData())
+        s.setValue('export/deep_samples', self.deep_n.currentData())
         if self.last.value() < self.first.value():
             QMessageBox.warning(self, 'Render', 'The last frame comes before the first frame.')
             return

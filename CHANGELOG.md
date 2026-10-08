@@ -320,6 +320,11 @@ Notable changes to Blackbody. The format follows
 
 ### Fixed
 
+- Farm renders from the disk cache with a .vdb output write the cached fire (they wrote the unsimulated start state
+  for every frame), placed by each frame's own transform; a frame neither live nor cached is an error, not a stale
+  file. A sky scene's .vdb output writes its clouds (density, cloud water, ice, rain, snow, hail, velocity) instead of
+  failing or writing a stale fire. Deep EXR no longer writes nothing in shots with layers, and 16 samples per pixel
+  is an option. Fire scenes get a Fabric mesh export in the Export dialog.
 - A clean install works: USD (usd-core) and OCIO (opencolorio) are installed with Blackbody, so USD import and colour
   management no longer go missing on a new machine (and in the standalone build). Python 3.12 or 3.13 is required and
   the launchers check for it, saying what to get. A failed or interrupted install is retried on the next launch, a

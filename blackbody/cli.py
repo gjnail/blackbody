@@ -7,6 +7,7 @@
   blackbody render shot.bbfire -o vol/fire.####.vdb --frames 1001-1100
   blackbody render shot.bbfire -o renders/fire.deep.####.exr          deep EXR (a name with .deep.)
   blackbody render pond.bbfire -o mesh/pond.usdc                     a liquid's surface as a USD mesh (or .####.obj)
+  blackbody render flag.bbfire -o mesh/flag.usdc                     the fabric as a USD mesh (or .####.obj)
   blackbody render --preset campfire --usd shot.usd -o fire.####.exr  camera and objects from USD
 
 Render farms: simulate once into a shared disk cache (resuming from the last checkpoint if it was
@@ -152,7 +153,7 @@ def cmd_render(args):
     from .engine.engine import Engine
     from .io.footage import Footage
     from .io.video import PROFILES, available_profiles
-    from .render.job import RenderJob, infer_output
+    from .render.job import RenderJob, check_outputs, infer_output, output_notes
     from .scene import Scene, presets
 
     if args.scene:
@@ -227,9 +228,18 @@ def cmd_render(args):
             o.compression = args.exr_compression
         if args.float:
             o.half = False
+        if o.kind == 'deep' and args.deep_samples:
+            o.deep_samples = args.deep_samples
+        if o.kind == 'mesh' and scene.kind not in ('liquid', 'both'):
+            o.content = 'fabric'   # (no liquid: the mesh is the fabric)
         if o.content == 'composite' and footage is None and o.kind not in ('vdb', 'mesh'):
             print(f'Note: {path} is a composite but there is no footage; the fire is composited over the background colour.')
         outputs.append(o)
+    problems = check_outputs(scene, outputs)
+    if problems:
+        return _fail(' '.join(problems), 2)
+    for note in output_notes(scene, outputs):
+        print(f'Note: {note}')
     try:
         engine = Engine()
     except Exception as ex:
@@ -420,7 +430,8 @@ def main(argv=None):
     r.add_argument('scene', nargs='?', help='.bbfire project file')
     r.add_argument('--preset', help='start from a built-in preset instead of a project')
     r.add_argument('-o', '--output', action='append', help='output path; #### is the frame number. .exr .png .vdb .mov .mp4 .webm, '
-                                                           'and for liquids .obj (per frame) or .usd/.usdc/.usda (repeatable)')
+                                                           'and for liquids and fabric .obj (per frame) or .usd/.usdc/.usda '
+                                                           '(repeatable)')
     r.add_argument('--format', help='video profile: prores4444, prores422hq, dnxhr_hq, dnxhr_444, h264, h265, vp9_alpha')
     r.add_argument('--content', choices=('element', 'composite', 'deep'),
                    help='the fire with alpha, the fire composited over the footage, or (for .exr) deep samples')
@@ -435,6 +446,8 @@ def main(argv=None):
     r.add_argument('--png-bits', type=int, choices=(8, 16))
     r.add_argument('--exr-compression', choices=('none', 'zip', 'zips', 'piz', 'dwaa', 'dwab', 'rle', 'zstd'))
     r.add_argument('--float', action='store_true', help='32-bit float EXR instead of half')
+    r.add_argument('--deep-samples', type=int, choices=(8, 16),
+                   help='deep EXR samples per pixel (default 8; 16 keeps thick, layered smoke apart, at twice the memory)')
     r.add_argument('--draft', action='store_true', help='interactive quality (fast)')
     r.add_argument('--no-motion-blur', action='store_true')
     r.add_argument('--usd', help='bring in the camera and meshes (as colliders) from a USD scene')

@@ -3,12 +3,15 @@
 Outputs:
   exr       multi-layer OpenEXR sequence of the fire element, scene-linear, premultiplied
             (RGBA beauty plus emission, glow, heat and depth layers)
-  deep      deep OpenEXR sequence of the fire element (up to DEEP_SAMPLES samples per pixel, each
-            with its colour, alpha and front and back depth), for deep compositing in Nuke
+  deep      deep OpenEXR sequence of the fire element (DEEP_SAMPLES, or up to DEEP_MAX, samples per
+            pixel, each with its colour, alpha and front and back depth), for deep compositing in Nuke; in
+            a shot with layers, every fire and liquid layer's samples in one image
   png       PNG sequence (8 or 16 bit) of the element with alpha, or of the composite
   video     ProRes / DNxHR / H.264 / H.265 / VP9 of the element or the composite (source audio kept)
   vdb       OpenVDB volume sequence of the simulation (density, temperature, flame, fuel, velocity; for
-            a liquid: the surface as density, velocity, and the spray, foam and bubble densities)
+            a liquid: the surface as density, velocity, and the spray, foam and bubble densities; for a
+            sky: its cloud water, ice, rain, snow and hail), live or from the disk cache
+  mesh      the liquid's surface and the fabric as meshes (one .obj per frame, or one .usd)
 
 A liquid element is rendered against the footage: the liquid refracts what is behind it, so its
 pixels carry the footage as seen through the liquid (alpha 1 where there is liquid). Its 'heat'
@@ -38,13 +41,18 @@ log = logging.getLogger('blackbody.job')
 
 CONTENT = ('element', 'composite')
 DEEP_SAMPLES = 8
+DEEP_MAX = 16                     # the most samples per pixel the march gathers (raymarch.wgsl)
+DEEP_KINDS = ('fire', 'liquid')   # the simulations deep samples are made for
+FABRIC_KINDS = ('fire', 'liquid', 'both')
+KIND_NAMES = {'fire': 'a fire scene', 'liquid': 'a liquid scene', 'both': 'a fire-and-liquid scene', 'cloud': 'a sky scene'}
 
 
 @dataclass
 class Output:
     kind: str = 'exr'                 # exr | png | video | vdb | deep | mesh (liquid surface or fabric: .obj per frame, or one .usd)
     path: str = 'renders/fire.####.exr'
-    content: str = 'element'          # element (fire with alpha) | composite (over the footage)
+    content: str = 'element'          # element (fire with alpha) | composite (over the footage); a mesh: liquid, fabric,
+                                      # or element (the liquid's surface, with the fabric beside it as name.fabric.*)
     profile: str = 'prores4444'       # video profile key
     layers: tuple = ('emission', 'glow', 'heat', 'depth', 'surface')
     compression: str = 'zip'
@@ -53,12 +61,14 @@ class Output:
     alpha_mode: str = 'premultiplied'  # element PNG / video: premultiplied or straight
     audio: bool = True
     quality: int | None = None
+    deep_samples: int = DEEP_SAMPLES  # deep: samples per pixel (up to DEEP_MAX)
 
     def label(self):
         if self.kind == 'mesh':
-            return 'Liquid surface · ' + ('USD' if Path(self.path).suffix.lower().startswith('.usd') else 'OBJ sequence')
+            what = 'Fabric' if self.content == 'fabric' else 'Liquid surface'
+            return what + ' · ' + ('USD' if Path(self.path).suffix.lower().startswith('.usd') else 'OBJ sequence')
         if self.kind == 'deep':
-            return 'Deep EXR sequence · element'
+            return f'Deep EXR sequence · {self.deep_samples} samples · element'
         if self.kind == 'video':
             return f'{PROFILES[self.profile].label} · {self.content}'
         if self.kind == 'exr':
@@ -98,6 +108,58 @@ def infer_output(path, content=None, profile=None):
     raise ValueError(f'Cannot tell the output type from "{path}". Use .exr, .png, .vdb, .obj, .usd, .mov, .mp4 or .webm.')
 
 
+def _order(scene):
+    """The shot's layers back to front, as a render takes them, and whether there are any but the base."""
+    order = scene.layer_order() or [('base', scene)]
+    return order, any(u != 'base' for u, _ in order)
+
+
+def deep_layers(scene):
+    """The shot's layers [(uid, scene)] a deep EXR holds: its fire and liquid ones."""
+    return [(u, s) for u, s in _order(scene)[0] if s.kind in DEEP_KINDS]
+
+
+def has_fabric(scene):
+    """True if the scene simulates fabric, so a mesh output can carry it."""
+    return scene.kind in FABRIC_KINDS and bool(scene.fabric_specs())
+
+
+def check_outputs(scene, outputs):
+    """Why these outputs cannot be written for this scene (or shot): a message for each, none when they can."""
+    out = []
+    kind = KIND_NAMES.get(scene.kind, 'this kind of scene')
+    for o in outputs:
+        if o.kind == 'deep':
+            if not deep_layers(scene):
+                if _order(scene)[1]:
+                    out.append(f'{o.path}: deep EXRs are made of fire and liquid layers, and this shot has none.')
+                else:
+                    out.append(f'{o.path}: deep EXRs are made for fire scenes and liquid scenes, and this is {kind}.')
+            elif not 1 <= int(o.deep_samples) <= DEEP_MAX:
+                out.append(f'{o.path}: a deep EXR holds 1 to {DEEP_MAX} samples per pixel, not {o.deep_samples}.')
+        elif o.kind == 'mesh':
+            liquid, fabric = scene.kind in ('liquid', 'both'), has_fabric(scene)
+            if o.content == 'fabric' and not fabric:
+                out.append(f'{o.path}: there is no fabric in this scene to write as a mesh.')
+            elif o.content == 'liquid' and not liquid:
+                out.append(f'{o.path}: there is no liquid to write as a mesh: this is {kind}.')
+            elif not (liquid or fabric):
+                out.append(f'{o.path}: a mesh holds a liquid\'s surface or fabric, and this scene has neither.')
+    return out
+
+
+def output_notes(scene, outputs):
+    """What these outputs leave out of this shot, to say before it renders."""
+    notes = []
+    order, layered = _order(scene)
+    left = [s.name or 'a layer' for u, s in order if s.kind not in DEEP_KINDS]
+    for o in outputs:
+        if o.kind == 'deep' and left and layered and deep_layers(scene):
+            notes.append(f'{o.path} holds the fire and liquid layers; {", ".join(left)} '
+                         f'{"is" if len(left) == 1 else "are"} not in it.')
+    return notes
+
+
 class RenderJob:
     def __init__(self, scene, outputs, engine, frames=None, final=True, footage=None, size=None, samples=None,
                  motion_blur=None, from_cache=False, engines=None):
@@ -116,6 +178,7 @@ class RenderJob:
         self.cancelled = False
         self.from_cache = from_cache   # render frames already in the disk cache instead of simulating them
         self.holdout = None
+        self._no_cached_vel = False
 
     def _plate(self, frame):
         if self.footage is None:
@@ -134,19 +197,33 @@ class RenderJob:
     def run(self, progress=None, cancelled=None):
         sc, eng = self.scene, self.engine
         t_start = time.perf_counter()
+        problems = check_outputs(sc, self.outputs)
+        if problems:
+            raise RuntimeError(' '.join(problems))
+        W, H = self.size
+        deep_out = [o for o in self.outputs if o.kind == 'deep']
+        deep = max(int(o.deep_samples) for o in deep_out) if deep_out else 0
+        if deep and any(s.kind == 'fire' for _, s in deep_layers(sc)):
+            lim = [v for k, v in (getattr(eng.gpu, 'limits', None) or {}).items()
+                   if k in ('max-storage-buffer-binding-size', 'max-buffer-size')]
+            need = W * H * deep * 32   # (the march's deep bins: two vec4s each)
+            if lim and need > min(lim):
+                raise RuntimeError(f'{deep} deep samples per pixel at {W}x{H} need {need / 2 ** 30:.1f} GB in one GPU '
+                                   f'buffer, more than this GPU allows ({min(lim) / 2 ** 30:.1f} GB): use fewer '
+                                   'samples or a smaller size.')
         eng.cache_readonly = bool(self.from_cache)
         eng.prepare(sc, final=self.final)
-        W, H = self.size
         writers = {}
         need_elem = any(o.content == 'element' and o.kind not in ('vdb', 'mesh') for o in self.outputs)
-        deep = DEEP_SAMPLES if any(o.kind == 'deep' for o in self.outputs) else 0
         from ..io.holdout import FootageHoldout
         self.holdout = FootageHoldout(sc) if sc.kind != 'liquid' else None
         hold = self.holdout if (self.holdout is not None and self.holdout.active) else None
         need_comp = any(o.content == 'composite' and o.kind != 'vdb' for o in self.outputs)
         need_vdb = [o for o in self.outputs if o.kind == 'vdb']
-        need_mesh = [o for o in self.outputs if o.kind == 'mesh'] if sc.kind in ('liquid', 'both') else []
-        need_fabric = [o for o in self.outputs if o.kind == 'mesh'] if sc.fabrics else []
+        mesh_out = [o for o in self.outputs if o.kind == 'mesh']
+        # a mesh output holds the liquid's surface, the fabric, or (content 'element') both, the fabric beside it
+        need_mesh = [o for o in mesh_out if o.content != 'fabric'] if sc.kind in ('liquid', 'both') else []
+        need_fabric = [o for o in mesh_out if o.content != 'liquid'] if has_fabric(sc) else []
         audio_src = sc.footage['path'] if (sc.footage and self.footage is not None and self.footage.audio) else None
         total = self.last - self.first + 1
         from .layers import LayerEngines, merge_elements, render as render_layers, simulate as simulate_layers
@@ -175,21 +252,28 @@ class RenderJob:
                     break
                 holdout = hold.read(frame) if hold is not None else None
                 if need_elem and layered:
-                    # each layer's element, merged back to front; the extra passes are the base layer's
-                    beauties, aov = [], None
+                    # each layer's element, merged back to front; the extra passes are the base layer's, and the
+                    # deep samples of every fire and liquid layer go into one deep image, each at its own depth
+                    beauties, aov, dparts = [], None, []
                     for uid, lay in order:
                         e = LE.get(uid)
                         e.render(lay, frame, (W, H), mode='fire', final=self.final, samples=self.samples,
                                  motion_blur=self.motion_blur, plate=self._plate(frame) if lay.kind in ('liquid', 'both') else None,
-                                 plate_fit=self._plate_fit(), holdout=holdout if lay.kind != 'liquid' else None)
+                                 plate_fit=self._plate_fit(), holdout=holdout if lay.kind != 'liquid' else None,
+                                 deep=deep if lay.kind == 'fire' else 0)
                         a = e.aovs()
+                        if deep and lay.kind in DEEP_KINDS:
+                            dparts.append(self._deep_samples(e, lay, frame, a))
                         beauties.append(a['beauty'])
                         if uid == 'base' or aov is None:
                             aov = a
                     aov = dict(aov)
                     aov['beauty'] = merge_elements(beauties).astype(np.float16)
+                    dparts = [d for d in dparts if d.shape[:2] == dparts[0].shape[:2]]
                     for o in self.outputs:
-                        if o.content == 'element' and o.kind not in ('vdb', 'deep', 'mesh'):
+                        if o.kind == 'deep':
+                            self._write_deep(o, frame, np.concatenate(dparts, axis=2))
+                        elif o.content == 'element' and o.kind not in ('vdb', 'mesh'):
                             self._write_element(o, frame, aov, aov['beauty'], None, writers, audio_src)
                 elif need_elem:
                     liquid = sc.kind == 'liquid'
@@ -202,12 +286,11 @@ class RenderJob:
                         aov['mattes'] = eng.gpu.read(eng.renderer.mask)
                     elem_lin = eng.linear_comp()
                     glow = self.engine.gpu.read(eng.renderer.bloom_tex) if any('glow' in o.layers for o in self.outputs if o.kind == 'exr') else None
+                    dsamples = self._deep_samples(eng, sc, frame, aov) if deep else None
                     for o in self.outputs:
-                        if o.kind == 'deep' and sc.kind == 'fire':
-                            self._write_deep(o, frame)
-                        elif o.kind == 'deep' and sc.kind == 'liquid':
-                            self._write_deep_liquid(o, frame, aov)
-                        elif o.content == 'element' and o.kind not in ('vdb', 'deep', 'mesh'):
+                        if o.kind == 'deep':
+                            self._write_deep(o, frame, dsamples)
+                        elif o.content == 'element' and o.kind not in ('vdb', 'mesh'):
                             self._write_element(o, frame, aov, elem_lin, glow, writers, audio_src)
                 if need_comp:
                     front = render_layers(LE, order, frame, (W, H), mode='composite', final=self.final, samples=self.samples,
@@ -223,8 +306,10 @@ class RenderJob:
                     p = frame_path(o.path, frame)
                     if sc.kind == 'liquid':
                         write_liquid_vdb_frame(p, eng, sc, frame)
+                    elif sc.kind == 'cloud':
+                        write_cloud_vdb_frame(p, eng, sc, frame)
                     else:
-                        write_vdb_frame(p, eng.solver, sc)
+                        write_vdb_frame(p, self._fire_fields(frame), sc, frame)
                     self.written.append(p)
                     if sc.kind == 'both':
                         # the liquid alongside the fire: name.liquid.####.vdb
@@ -250,7 +335,7 @@ class RenderJob:
                     for o in need_fabric:
                         # beside a liquid's surface, the fabric goes to name.fabric.####.obj (or name.fabric.usd)
                         path = o.path
-                        if sc.kind in ('liquid', 'both'):
+                        if any(o is m for m in need_mesh):
                             q = Path(o.path)
                             path = str(q.with_name(q.stem + '.fabric' + q.suffix))
                         if Path(path).suffix.lower().startswith('.usd'):
@@ -278,6 +363,21 @@ class RenderJob:
         return self.written
 
     # -- writers ---------------------------------------------------------------------------------
+
+    def _fire_fields(self, frame):
+        """What a fire VDB is written from: the solver when it holds `frame`, else the frame from the cache (a
+        render from the disk cache never steps the solver, which holds only its start)."""
+        eng = self.engine
+        if eng.sim_frame == frame:
+            return eng.solver
+        entry = eng.cache.get(frame)
+        if entry is None or 'scal' not in entry:
+            raise RuntimeError(f'Frame {frame} is neither simulated nor cached.')
+        if 'vel' not in entry and not self._no_cached_vel:
+            self._no_cached_vel = True
+            log.warning('The cache holds no velocities (it was simulated with motion blur off), so the VDBs have an '
+                        'empty vel grid.')
+        return CachedFire(entry, eng.solver)
 
     def _video(self, o, writers, audio_src):
         w = writers.get(id(o))
@@ -386,9 +486,16 @@ class RenderJob:
                     out[k] = rgb[..., i]
         return out
 
-    def _write_deep(self, o, frame):
+    def _deep_samples(self, eng, sc, frame, aov):
+        """(h, w, k, 8) deep samples of the element `eng` has just rendered for scene (or layer) `sc`."""
+        if sc.kind == 'liquid':
+            if 'mattes' not in aov:
+                aov = dict(aov, mattes=eng.gpu.read(eng.renderer.mask))
+            return self._liquid_deep(sc, frame, aov)
+        return eng.renderer.read_deep()
+
+    def _write_deep(self, o, frame, samples):
         from ..io.images import write_deep_exr
-        samples = self.engine.renderer.read_deep()
         space = self._exr_space()
         if space:
             pipe = self._pipe()
@@ -399,12 +506,10 @@ class RenderJob:
         write_deep_exr(p, samples, {'software': f'{blackbody.APP_NAME} {blackbody.__version__}'})
         self.written.append(p)
 
-    def _write_deep_liquid(self, o, frame, aov):
+    def _liquid_deep(self, sc, frame, aov):
         """A liquid element as deep samples: the water surface at its depth (opaque where there is
         water), and the spray and droplets in front of it as a partly transparent sample."""
         from ..engine import camera as cam
-        from ..io.images import write_deep_exr
-        sc = self.scene
         b = aov['beauty'].astype(np.float32)
         x = aov['aux'].astype(np.float32)
         m = aov.get('mattes')
@@ -442,15 +547,7 @@ class RenderJob:
         samples[..., 1, 4] = z_h
         samples[..., 1, 5] = z_h
         order = samples[..., 4].argsort(axis=-1)
-        samples = np.take_along_axis(samples, order[..., None], axis=2)
-        space = self._exr_space()
-        if space:
-            pipe = self._pipe()
-            if pipe is not None:
-                samples[..., :3] = pipe.to_space(samples[..., :3], space)
-        p = frame_path(o.path, frame)
-        write_deep_exr(p, samples, {'software': f'{blackbody.APP_NAME} {blackbody.__version__}'})
-        self.written.append(p)
+        return np.take_along_axis(samples, order[..., None], axis=2)
 
     def _write_comp(self, o, frame, comp_lin, writers, audio_src, lpass=None):
         view = self.scene.data['composite']
@@ -494,6 +591,106 @@ class RenderJob:
             (first.parent / f'{self.scene.name or "render"}_render.json').write_text(json.dumps(info, indent=1), encoding='utf-8')
         except Exception:
             pass
+
+
+def _centres(v):
+    """Cell-centred velocity (nz, ny, nx, 3) from face velocities (nz+1, ny+1, nx+1, 4), as the solvers keep them."""
+    v = np.asarray(v, np.float32)
+    return np.stack([0.5 * (v[:-1, :-1, :-1, 0] + v[:-1, :-1, 1:, 0]), 0.5 * (v[:-1, :-1, :-1, 1] + v[:-1, 1:, :-1, 1]),
+                     0.5 * (v[:-1, :-1, :-1, 2] + v[1:, :-1, :-1, 2])], -1)
+
+
+class CachedFire:
+    """A cached fire frame, read as io/vdb.write_vdb_frame reads the solver: its fields as they were simulated,
+    at the frame's own layout (a growing box may have been smaller then). Its velocity is the simulated air's,
+    without the finer grid's swirls (the cache does not keep them), and none if the cache has none."""
+
+    def __init__(self, entry, solver):
+        self.entry = entry
+        self.upres = int(entry.get('upres', 1))
+        self.dims = tuple(int(x) for x in entry.get('dims', solver.dims))
+        self.h = float(entry.get('h', solver.h))
+        self.origin = tuple(float(x) for x in entry.get('origin', solver.origin))
+        self.features = dict(getattr(solver, 'features', None) or {})
+
+    def read_scalars(self):
+        return self.entry['scal']   # (at the finer grid's size with upres)
+
+    read_scalars_fine = read_scalars
+
+    def read_velocity_centres(self):
+        if 'vel' not in self.entry:
+            nx, ny, nz = self.dims
+            return np.zeros((nz, ny, nx, 3), np.float32)
+        return _centres(self.entry['vel'])
+
+    def read_aux(self):
+        return self.entry.get('aux')
+
+    def read_chem(self):
+        return self.entry.get('chem')
+
+    def read_stain(self):
+        return self.entry.get('stain')
+
+
+CLOUD_GRIDS = (('cloud_water', 0, 2), ('cloud_ice', 1, 0), ('rain', 0, 3), ('snow', 1, 1), ('hail', 1, 2))
+
+
+def cloud_vdb_grids(a, b, rho, vel=None, speed=1.0, rot=None):
+    """A sky frame's VDB grids (x-major) from the cloud solver's fields, (nz, ny, nx, 4) arrays (engine/cloud.py):
+    a = (potential temperature excess, vapour, cloud water, rain), b = (cloud ice, snow, graupel and hail, _), in
+    kg/kg; rho is the air's density on each level (kg/m^3). The water comes out in g/m^3: 'density' is the cloud
+    itself (its water and ice), then each kind on its own. vel: the face velocities (m/s of sky) or None; it is
+    written at the cell centres where there is water, times `speed` and turned by `rot` into the scene's frame."""
+    to_x = lambda x: np.ascontiguousarray(np.transpose(x, (2, 1, 0) + tuple(range(3, x.ndim))))
+    g = 1000.0 * np.asarray(rho, np.float32)[None, :, None]
+    src = (np.asarray(a, np.float32), np.asarray(b, np.float32))
+    parts = {name: np.maximum(src[i][..., c], 0.0) * g for name, i, c in CLOUD_GRIDS}
+    grids = {'density': to_x(parts['cloud_water'] + parts['cloud_ice'])}
+    for name, x in parts.items():
+        if x.max() > 1e-4:
+            grids[name] = to_x(x)
+    if vel is not None:
+        c = _centres(vel) * float(speed)
+        if rot is not None:
+            c = c @ np.asarray(rot, np.float32).T
+        wet = sum(parts.values()) > 1e-4
+        grids['vel'] = to_x(np.where(wet[..., None], c, 0.0).astype(np.float32))
+    return grids
+
+
+def write_cloud_vdb_frame(path, engine, scene, frame):
+    """Write a sky frame as a VDB (cloud_vdb_grids), placed and sized as the scene shows the sky: a voxel is a cell
+    of the scene's box (Atmosphere › Scale metres of sky to its metre), and vel moves the cloud as it moves in the
+    shot, in the scene's metres per second. From the disk cache there is no vel (the cache keeps only the water)."""
+    from ..engine import camera as cam
+    from ..engine.cloud import base_state
+    from ..io.vdb import write_vdb
+    C = engine.cloud
+    if engine.sim_frame == frame:
+        a, b = C.read_fields()
+        vel = engine.gpu.read(C.V[0])
+    else:
+        entry = engine.cache.get(frame)
+        if entry is None or 'cloud_a' not in entry:
+            raise RuntimeError(f'Frame {frame} is neither simulated nor cached.')
+        ca = entry['cloud_a'].astype(np.float32)
+        a = np.zeros(ca.shape[:3] + (4,), np.float32)
+        a[..., 2:4] = ca
+        b = entry['cloud_b'].astype(np.float32)
+        vel = None
+    rho = base_state(scene.cloud_params(frame), C.dims[1], C.h)[1]['rho']
+    spec, fire = scene.camera(frame)
+    yaw = math.radians(fire.yaw)
+    rot = cam.rot_y(yaw)
+    # m/s of sky to the scene's metres per second of the shot
+    speed = float(scene.v('atmosphere', 'time_lapse', frame)) * float(scene.v('domain', 'time_scale', frame)) / C.scale
+    grids = cloud_vdb_grids(a, b, rho, vel, speed, rot)
+    h = float(C.h_scene)
+    translation = tuple(rot @ (np.asarray(C.origin_scene, float) + 0.5 * h) + np.asarray(fire.position, float))
+    meta = [('blackbody_sky_metres_per_unit', 'float', float(C.scale)), ('blackbody_water_units', 'string', 'g/m^3')]
+    write_vdb(path, grids, h, translation, yaw, file_meta=meta)
 
 
 def _light_passes(eng, scene, shape):
