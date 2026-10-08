@@ -10,6 +10,8 @@ What to do when something goes wrong, and what Blackbody does not do (yet).
 
 - **Out of GPU memory:** lower *Voxels (longest side)* or *Final resolution*.
 
+- **A liquid waits on "Compiling GPU shaders":** the liquid renderer's shader is compiled once after an install or an update of Blackbody or of the graphics driver (under a minute; the app starts it in the background when it opens, and a scene that needs it while that runs waits for it). If it happens every time with Vulkan, the driver's own shader cache is being cleared or is full (NVIDIA: *Shader Cache Size* in the NVIDIA Control Panel). With Direct3D 12 it does happen every time, and takes about 3 minutes: set `BLACKBODY_BACKEND=Vulkan` if the driver offers Vulkan (`blackbody info` lists it). `BLACKBODY_PRECOMPILE=0` stops the background compile.
+
 - **Footage will not open:** anything FFmpeg decodes should work. Image sequences are found from any one numbered file.
 
 - **Footage missing after moving a project:** Blackbody looks for the clip at its saved path, then at the same place relative to the project, then next to the project file. If none of those has it, File › Import footage relinks it; the fire, camera and track are kept.
@@ -17,6 +19,8 @@ What to do when something goes wrong, and what Blackbody does not do (yet).
 ## Limitations
 
 - Tested on Windows 11 with an NVIDIA RTX 3090 (Vulkan). macOS and Linux use the same code from source, but have not been tested.
+
+- Shader compiles: WebGPU offers no pipeline cache Blackbody could keep, so compiled shaders are kept only by the graphics driver, in its own cache (Blackbody keeps a record of what has been compiled, in `%LOCALAPPDATA%\Blackbody\shaders` on Windows, `~/.cache/blackbody/shaders` elsewhere; it says what was compiled, not what the driver still has, so the app compiles the liquid renderer's shader in the background each time it opens, a moment when the driver has it). That shader takes 20 to 55 s cold on an RTX 3090 with NVIDIA's Vulkan driver (earlier versions took 8 to 17 minutes and up to 22 GB of memory). With Direct3D 12 it takes about 3 minutes on the same machine (12 on a busy one), and every time a process starts: the shader translator wgpu uses there (FXC) keeps nothing between runs (earlier versions took over 20 minutes). On Metal and other drivers the time is unmeasured. The background compile runs on the app's own GPU device while the app is open, and the app's GPU work may pause for up to about 0.4 s now and then while it runs; closing the app stops it, and it carries on next time. A process does not see what another compiled after it started (NVIDIA's Vulkan driver), so a render started while `blackbody precompile` runs compiles the shader itself.
 
 - Colour management: sRGB, Rec.709, Linear and ACEScg footage and Standard, AgX filmic, ACES fit and Raw views are built in, and OCIO configs are read for displays, views, looks and colour spaces. The viewer's OCIO view is a LUT (within about 1/255 of the exact transform); renders use OCIO itself.
 

@@ -14,11 +14,21 @@ from dataclasses import dataclass
 import numpy as np
 
 from . import camera as cam
-from .gpu import BU, GPU, SS, Uniforms, ceil_div, groups_1d, load_wgsl
+from .gpu import BU, GPU, SS, Uniforms, ceil_div, groups_1d, kernel_spec, load_wgsl
 from .liquid import PACKED_BYTES, WW_PACKED_BYTES
 from .solver import MAX_COLLIDERS, pack_colliders
 
 SLAB_NODES = 8 << 20   # surface-grid nodes per accumulation slab
+
+# the march's resources (liq_march.wgsl), and how to build it (precompile.py compiles it ahead of time: the one slow
+# kernel of the liquids)
+MARCH_BINDINGS = ['tex3d', 'tex2d', 'utex2d', 'smp', 'st2d:rgba16float:w', 'st2d:rgba16float:w', 'st2d:rgba16float:w',
+                  'tex3d', 'utex3d', 'tex2d', 'tex2d', 'smp', 'st2d:rgba16float:w', 'tex3d', 'tex3d', 'tex2d', 'tex2d',
+                  'tex3d', 'tex3d', 'rbuf', 'rbuf', 'tex2d', 'buf', 'rbuf', 'utex2d']
+
+
+def march_spec():
+    return kernel_spec('liq_march.wgsl', MARCH_BINDINGS, workgroup=(8, 8, 1))
 
 
 def glow_colour(kelvin):
@@ -261,12 +271,7 @@ class LiquidRenderer:
         self.k_ww = g.kernel('liq_surf_ww.wgsl', ['rbuf', 'buf'], workgroup=(64, 1, 1))
         self.k_blur = g.kernel('liq_surf_blur.wgsl', ['utex3d', 'st3d:rgba16float:w'])
         self.k_flatten = g.kernel('liq_surf_flatten.wgsl', ['tex3d', 'utex3d', 'smp', 'st3d:rgba16float:w'])
-        self.k_march = g.kernel('liq_march.wgsl', ['tex3d', 'tex2d', 'utex2d', 'smp', 'st2d:rgba16float:w',
-                                                   'st2d:rgba16float:w', 'st2d:rgba16float:w', 'tex3d', 'utex3d',
-                                                   'tex2d', 'tex2d', 'smp', 'st2d:rgba16float:w',
-                                                   'tex3d', 'tex3d', 'tex2d', 'tex2d', 'tex3d', 'tex3d', 'rbuf', 'rbuf',
-                                                   'tex2d', 'buf', 'rbuf', 'utex2d'],
-                                   workgroup=(8, 8, 1))
+        self._k_march = None   # (compiled when the first frame is drawn: k_march)
         self._no_cloth = g.texture2d(1, 1, 'rgba16float', 'liq-no-cloth')   # (fabric: cloth.py layer)
         g.upload(self._no_cloth, np.full((1, 1, 4), -1.0, np.float16))
         self.k_lens = g.kernel('liq_lens_drops.wgsl', ['tex2d', 'tex2d', 'smp', 'st2d:rgba8unorm:w', 'st2d:rgba16float:w'],
@@ -347,6 +352,19 @@ class LiquidRenderer:
         g.upload(self._black, np.zeros((4, 4, 4), np.uint8))
         self.sig = None
         self._drops_pipeline()
+
+    @property
+    def k_march(self):
+        """The march (liq_march.wgsl), compiled when the first frame is drawn rather than when the scene is set up:
+        the simulation starts meanwhile, and the background precompile (precompile.py) may have it ready by then."""
+        if self._k_march is None:
+            s = march_spec()
+            self._k_march = self.gpu.kernel(s['file'], s['bindings'], s['entry'], None, tuple(s['workgroup']))
+        return self._k_march
+
+    @k_march.setter
+    def k_march(self, k):
+        self._k_march = k
 
     def _drops_pipeline(self):
         """Spray droplets: streaks drawn over the traced image (premultiplied over the beauty, their

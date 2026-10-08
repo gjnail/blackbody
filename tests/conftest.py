@@ -26,7 +26,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 GPU_FIXTURES = {'engine', 'gpu'}   # a test that uses one of these (itself or through another fixture) needs the GPU
 QUICK_SECONDS = 10.0                # a test that took longer when it last ran here is left out of the quick tier
-COMPILE_SECONDS = 1800.0            # shader compile time a test may take on top of its timeout (a cold march: 8-20 min)
+COMPILE_SECONDS = 1800.0            # shader compile time a test may take on top of its timeout (generous: a cold liquid
+                                    # scene takes about a minute on a 16-thread CPU; slower CPUs and other drivers more)
 DEBUGGERS = ('bdb', 'pdb', 'pydevd', 'debugpy')   # modules whose trace function means a debugger is attached
 
 _took = {}         # node id -> seconds each test of this run took (its setup and call; not session fixtures)

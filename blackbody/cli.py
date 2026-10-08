@@ -18,6 +18,7 @@ stopped), then render frame ranges on as many machines as you like from that cac
   blackbody render shot.bbfire --from-cache //server/cache/shot --frames 1001-1050 -o fire.####.exr
 
   blackbody presets | settings | info
+  blackbody precompile          compile the slow GPU shaders now (installers, farms; the app does it in the background)
 
 Exit codes: 0 done, 1 failed, 2 bad arguments, 130 cancelled.
 """
@@ -352,6 +353,11 @@ def cmd_settings(args):
     return 0
 
 
+def cmd_precompile(args):
+    from .engine import precompile
+    return precompile.main(quiet=args.quiet)
+
+
 def cmd_info(args):
     from .engine.gpu import GPU
     from .io.video import available_profiles
@@ -457,7 +463,8 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     _utf8_streams()
     logging.basicConfig(level=logging.WARNING, format='%(levelname)s %(name)s: %(message)s')
-    if not argv or (argv[0] not in ('render', 'simulate', 'presets', 'settings', 'info', 'gui', '-h', '--help', '--version')):
+    if not argv or (argv[0] not in ('render', 'simulate', 'presets', 'settings', 'info', 'precompile', 'gui', '-h',
+                                    '--help', '--version')):
         from .ui.app import run
         return run(argv)
     ap = argparse.ArgumentParser(prog='blackbody', description='GPU fire and smoke simulation for compositing into footage.')
@@ -512,6 +519,9 @@ def main(argv=None):
     st = sub.add_parser('settings', help='list every setting --set accepts, with defaults and ranges')
     st.add_argument('section', nargs='?', help='only this section, e.g. motion or emitter')
     sub.add_parser('info', help='show GPUs and available video formats')
+    pc = sub.add_parser('precompile', help="compile the slow GPU shaders now (the liquid renderer's), so the first "
+                                           'scene that needs them does not wait')
+    pc.add_argument('-q', '--quiet', action='store_true')
     args = ap.parse_args(argv)
     if args.cmd == 'render':
         return cmd_render(args)
@@ -523,6 +533,8 @@ def main(argv=None):
         return cmd_settings(args)
     if args.cmd == 'info':
         return cmd_info(args)
+    if args.cmd == 'precompile':
+        return cmd_precompile(args)
     from .ui.app import run
     return run([args.scene] if getattr(args, 'scene', None) else [])
 

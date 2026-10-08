@@ -7,7 +7,7 @@ rem (.venv\.installed is a copy of requirements.txt, written only once an instal
 rem interrupted install is tried again next time instead of leaving an app that cannot start)
 fc /b requirements.txt .venv\.installed >nul 2>nul || call :install || exit /b 1
 set "console="
-for %%c in (render simulate presets settings info -h --help --version) do if /i "%~1"=="%%c" set "console=1"
+for %%c in (render simulate presets settings info precompile -h --help --version) do if /i "%~1"=="%%c" set "console=1"
 if defined console (
     ".venv\Scripts\python.exe" -m blackbody %*
 ) else (

@@ -17,6 +17,7 @@ blackbody render shot.bbfire --from-cache //server/cache/shot --frames 1001-1050
 blackbody presets
 blackbody settings motion
 blackbody info
+blackbody precompile
 ```
 
 - `####` is the frame number. The output type follows the extension: `.exr` `.png` `.vdb` `.mov` `.mp4` `.webm`; `.obj` or `.usd` (`.usdc`, `.usda`) for the liquid's surface and the fabric; a `.usd` name with `.scene.` in it (or `--content scene`) for the shot as a USD scene, and with `.camera.` (or `--content camera`) for its camera alone; `.chan` for the camera as Nuke reads it. See [Outputs](outputs.md).
@@ -32,5 +33,7 @@ blackbody info
 - **Simulate once, render anywhere.** `blackbody simulate` simulates into a disk cache folder (by default `NAME.bbcache` next to the project), with a checkpoint every few frames; run it again after a crash or a stop and it resumes from the last checkpoint. `blackbody render --from-cache FOLDER` then renders frames from that cache without simulating, so several machines can render different frame ranges of one simulation. They only read the cache, and refuse one simulated with other settings instead of overwriting it. `render --cache FOLDER` simulates and fills the cache as it renders.
 
 - Each render also writes a `<name>_render.json` sidecar with the full scene and settings, for reproducibility.
+
+- `blackbody precompile` compiles the slow GPU shaders now (the liquid renderer's, 20 to 55 s on an RTX 3090 with Vulkan, and any shader this machine has used that took more than 2 s and has changed since), so the first liquid render does not wait for them. Run it after installing or updating Blackbody or the graphics driver, on each farm machine (the driver keeps what it compiles, per machine). The app does the same in the background when it opens.
 
 - **On a farm:** when the output goes to a log instead of a terminal, progress is written as whole lines (`Progress: 25.0%  Frame 1 of 4 …`, one per frame) in UTF-8. Exit codes: `0` done, `1` failed (the log ends with `Error: …`), `2` bad arguments, `130` cancelled.

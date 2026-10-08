@@ -56,7 +56,10 @@ machine without one, run `pytest -m "not gpu"`, which is what CI does on
 GitHub's machines. Elsewhere a GPU test whose engine cannot start fails rather
 than skips (set `BLACKBODY_ALLOW_NO_GPU=1` to skip them). Liquid and fabric
 tests can take several minutes, and the first run of each kind of simulation
-compiles its shaders, which can take a few minutes more. While you work, run a
+compiles its shaders, which can take about a minute more (the liquid renderer's
+march, cold again after any change to it or its includes: keep its large
+functions called from few places, as `tests/test_precompile.py` checks;
+`python -m blackbody precompile` compiles it ahead). While you work, run a
 single file (`pytest -q tests/test_liquid.py`) or the quick tier
 (`pytest -m quick`: the tests that need no GPU, and the GPU tests that took
 under 10 s when they last ran on your machine). Run the whole suite

@@ -1,5 +1,5 @@
 // Shading the sea (liq_march.wgsl only; ocn_sample.wgsl samples it). Uses the march's own helpers:
-// fresnel, background, under_open, lamps_on, lamps_glint, ww_light, foam_cover, worley, sea_xz,
+// fresnel, land, lamps_on, lamps_glint, ww_light, foam_cover, worley, sea_xz,
 // sea_fade (a pixel's footprint on the water, m), lvl_at, side_in, box_d, deep_colour.
 //
 //   the surface: exact normals of the choppy sea, with the waves too small for the pixel moved into
@@ -88,10 +88,14 @@ fn sea_sky(p: vec3<f32>, rr: vec3<f32>, lg: vec3<f32>) -> vec3<f32> {
 // the surface is the sea's own it sees the sky over the next wave, as on the open water (share: how
 // much of the surface is the sea's, sea_share).
 fn sea_reflected(p: vec3<f32>, rr: vec3<f32>, lg: vec3<f32>, share: f32) -> vec3<f32> {
-  if (share >= 0.999) { return sea_sky(p, rr, lg); }
-  let r = reflected(p, rr, lg);
+  // (each looked up in one place: the driver inlines every call, and the march is large)
+  var r = vec3<f32>(0.0);
+  var above = vec3<f32>(0.0);
+  if (share < 0.999) { r = reflected(p, rr, lg); }
+  if (share > 0.0) { above = sea_sky(p, rr, lg); }
+  if (share >= 0.999) { return above; }
   if (share <= 0.0) { return r; }
-  return mix(r, sea_sky(p, rr, lg), share);
+  return mix(r, above, share);
 }
 
 // The key light's glint on the box's surface, as wide as the open water's where it is the sea's own.
@@ -140,21 +144,26 @@ fn sea_open_shade(p: vec3<f32>, rd: vec3<f32>, nrm_in: vec3<f32>, lg: vec3<f32>)
 }
 
 // What a ray going down into the open water sees: over the shallows the sea bed (sand, or the footage
-// where the colliders are in it), through the water between; elsewhere what under_open() finds.
+// where the colliders are in it), through the water between; elsewhere what the open water shows (land).
 fn sea_below(p: vec3<f32>, d: vec3<f32>, lg: vec3<f32>) -> vec3<f32> {
   let depth = lay_at(sea_xz(p)).z;
   // (only where something raises the bed: over the flat ground the footage shows it)
   let level_m = U.lvl.x * U.n.w;
   // (a bed the layer's map puts above the level, under water here all the same, is only just under: the
   // edge of the water on a beach)
-  if (d.y >= -1e-4 || depth > 1.0e4 || depth > 60.0 || abs(depth - level_m) < 0.03 * level_m + 0.02) {
-    return under_open(p, d, lg);
+  let in_open = d.y >= -1e-4 || depth > 1.0e4 || depth > 60.0 || abs(depth - level_m) < 0.03 * level_m + 0.02;
+  var below_m = 0.0;   // from this point of the surface down to the bed
+  var L = 0.0;         // metres along the ray
+  var pb = p;
+  if (!in_open) {
+    below_m = max(depth + (p.y - U.lvl.x) * U.n.w, 0.02);
+    L = below_m / max(-d.y, 0.05);
+    pb = p + d * (L / U.n.w);
   }
-  let below_m = max(depth + (p.y - U.lvl.x) * U.n.w, 0.02);   // from this point of the surface down to the bed
-  let L = below_m / max(-d.y, 0.05);                          // metres along the ray
-  let pb = p + d * (L / U.n.w);
-  // the bed as the box shows it (a collider stand-in, or the footage), lit through the water
-  var bed = stand_in(pb, d, lg);
+  // the bed as the box shows it (a collider stand-in, or the footage), lit through the water; else what
+  // the open water shows (one call of land for both: it is large, and inlined wherever it is called)
+  var bed = land(select(LAND_SOLID, LAND_OPEN, in_open), pb, d, lg);
+  if (in_open) { return bed; }
   if (U.org.w > 0.5 || U.plate.x < 0.5) {
     bed *= exp(-dot(U.absorb.rgb, vec3<f32>(0.333)) * below_m * 0.5);
   }

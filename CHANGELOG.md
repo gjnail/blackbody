@@ -346,6 +346,11 @@ Notable changes to Blackbody. The format follows
 
 ### Fixed
 
+- The first liquid scene no longer waits 8 to 20 minutes for its shaders: the liquid renderer's shader compiles cold
+  in 20 to 55 s (and 1.8 GB of memory instead of up to 22 GB), and the app compiles it in the background as soon as
+  it opens, so it is usually ready before a liquid is. The same picture draws faster too (the tsunami 181 to 64 ms a
+  frame at 1280×720). `blackbody precompile` does it ahead from the command line (for farm machines). With
+  Direct3D 12 it takes about 3 minutes in every new process: use Vulkan where the driver offers it.
 - Rain, snow and hail fall the same way every time (which pieces were made, and where, depended on the order the GPU's
   threads ran, so a farm or a cleared cache gave another fall), and hailstones come to rest on the ground instead of
   about a centimetre above it. Glowing sand or lava past its 256 lights, and ice past its 8,192 pieces, keep the same

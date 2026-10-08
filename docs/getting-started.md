@@ -26,7 +26,7 @@ Then start it:
 - **Windows:** double-click `Blackbody.bat`.
 - **macOS and Linux:** run `./blackbody.sh`.
 
-The first run creates a private Python environment in `.venv` and installs the dependencies into it (about 400 MB, a few minutes), USD and OpenColorIO among them. After that it starts straight away. The first time each kind of simulation runs, its GPU shaders are compiled, which takes a moment for fire and a few minutes for liquids; a card in the viewer says what it is doing.
+The first run creates a private Python environment in `.venv` and installs the dependencies into it (about 400 MB, a few minutes), USD and OpenColorIO among them. After that it starts straight away. The first time each kind of simulation runs, its GPU shaders are compiled, which takes a few seconds; a card in the viewer says what it is doing. Liquids, the sea, lava and ice share one larger shader, which takes under a minute (20 to 55 s on an RTX 3090 with a 16-thread CPU). The app compiles it in the background as soon as it opens, so it is usually ready before you open a liquid. The graphics driver keeps compiled shaders, so this happens again only after an update of Blackbody or of the driver (with Vulkan; with Direct3D 12 it takes about 3 minutes each time the app opens, see [Troubleshooting](troubleshooting.md)).
 
 The launcher uses Python 3.13 or 3.12, whichever is installed, and says what to get if neither is. If the install fails or is interrupted (no network, a full disk), the next start tries again, and after an update that changes `requirements.txt` it installs what changed. On Windows, problems are shown in the console window, which stays open until you press a key. Commands such as `Blackbody.bat render ...` print there too.
 

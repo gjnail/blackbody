@@ -67,6 +67,7 @@ class EngineWorker(QThread):
         self._last_progress = 0.0
         self._load_seq = 0      # which scene load (Document.load_seq) the engine is on
         self.layer_engines = None   # render/layers.LayerEngines: the engines of the shot's other layers
+        self._precompile = None     # the background compile of the slow shaders (engine/precompile.py)
 
     # -- API for the GUI thread -------------------------------------------------------------------
 
@@ -79,6 +80,8 @@ class EngineWorker(QThread):
     def stop(self):
         self.post('quit')
         self.wait(5000)
+        from ..engine import precompile
+        precompile.stop(self._precompile)   # (what it finished stays compiled; the rest is done next time)
 
     # -- thread -------------------------------------------------------------------------------------
 
@@ -87,9 +90,11 @@ class EngineWorker(QThread):
             from ..engine.engine import Engine
             from ..engine.gpu import GPU
             g = GPU()
-            g.on_compile = self._compiling
+            g.on_compile = g.on_wait = self._compiling
             self.engine = Engine(g)
             self.ready.emit({'name': g.name, 'backend': g.backend})
+            from ..engine import precompile
+            self._precompile = precompile.start_background(g)   # (the liquids' march, in a thread, on this GPU)
         except Exception as ex:
             self.failed.emit(f'{ex}\n\n{traceback.format_exc()}')
             return

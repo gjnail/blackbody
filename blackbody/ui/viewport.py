@@ -1264,7 +1264,7 @@ class Viewport(QWidget):
             note = 'Try another preset, or Simulation › Restart simulation. The details are in the status bar too.'
         elif text.startswith('Compiling GPU shaders'):
             note = ('Your graphics driver compiles each shader the first time it sees it (after an install or an update). '
-                    'The big ones can take several minutes; after that they start at once.')
+                    'The big ones take up to a minute (a few with Direct3D 12); after that they start at once.')
         elif text.startswith('Pre-roll'):
             note = 'So the effect is already going at the first frame. It is cached: you only wait once.'
         cw = min(460.0, max(260.0, r.width() - 40))

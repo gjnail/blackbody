@@ -173,17 +173,14 @@ fn mir(p: vec3<f32>) -> vec3<f32> {
   return q;
 }
 
-// -1 along the axes p was folded across (motion there turns round in the mirror), else 1.
-fn mir_sign(p: vec3<f32>) -> vec3<f32> {
-  return select(vec3<f32>(1.0), vec3<f32>(-1.0), mir(p) != p);
-}
-
 // ---- the surface ------------------------------------------------------------------------------
 
-// Raw sample at grid position p: distance in grid cells, velocity (m/s).
+// Raw sample at grid position p: distance in grid cells, velocity (m/s). Along the axes p was folded
+// across, the motion turns round in the mirror.
 fn surf_raw(p: vec3<f32>) -> vec4<f32> {
-  let s = textureSampleLevel(surf_t, lin, mir(p) / U.n.xyz, 0.0);
-  return vec4<f32>(s.x / U.nf.w, s.yzw * mir_sign(p));
+  let q = mir(p);
+  let s = textureSampleLevel(surf_t, lin, q / U.n.xyz, 0.0);
+  return vec4<f32>(s.x / U.nf.w, s.yzw * select(vec3<f32>(1.0), vec3<f32>(-1.0), q != p));
 }
 
 // Sample at p at this sample's moment in the shutter (the surface moved with its velocity).
@@ -368,9 +365,15 @@ fn phi_cubic(p_in: vec3<f32>) -> f32 {
 
 fn normal_at(p: vec3<f32>) -> vec3<f32> {
   let e = 0.6 / U.nf.w;
-  let g = vec3<f32>(phi_cubic(p + vec3<f32>(e, 0.0, 0.0)) - phi_cubic(p - vec3<f32>(e, 0.0, 0.0)),
-                    phi_cubic(p + vec3<f32>(0.0, e, 0.0)) - phi_cubic(p - vec3<f32>(0.0, e, 0.0)),
-                    phi_cubic(p + vec3<f32>(0.0, 0.0, e)) - phi_cubic(p - vec3<f32>(0.0, 0.0, e)));
+  // central differences, the six taps in a loop (one copy of phi_cubic, not six). The tap's axis is
+  // selected, not written at an index: Direct3D's compiler unrolls a loop that writes a vector at a
+  // varying index, and this one is too large to unroll.
+  var g = vec3<f32>(0.0);
+  for (var k = 0; k < 6; k++) {
+    let s = select(1.0, -1.0, (k & 1) == 1);
+    let on = vec3<i32>(k >> 1u) == vec3<i32>(0, 1, 2);
+    g += select(vec3<f32>(0.0), vec3<f32>(s * phi_cubic(p + select(vec3<f32>(0.0), vec3<f32>(s * e), on))), on);
+  }
   let l = length(g);
   if (l < 1e-8) { return vec3<f32>(0.0, 1.0, 0.0); }
   return g / l;
@@ -466,19 +469,26 @@ fn solid_d(p: vec3<f32>) -> f32 {
   let mirrored = any(q != p);
   let wm = U.org.xyz + q * U.n.w;
   var d = 1.0e9;
-  for (var i = 0; i < cnt; i++) {
+  // (each collider, then its reflection, in one loop: a single copy of the distance code. The driver
+  // inlines this function at every call in the march, so each copy here costs compile time many times)
+  for (var j = 0; j < 2 * cnt; j += select(2, 1, mirrored)) {
+    let i = j >> 1u;
     if (U.col[i].y.w < 0.5) { continue; }  // a helper, not in the shot: invisible
-    d = min(d, col_sdf(U.col[i], w));
-    if (mirrored) { d = min(d, col_sdf(U.col[i], wm)); }
+    d = min(d, col_sdf(U.col[i], select(w, wm, (j & 1) == 1)));
   }
   return d / U.n.w;
 }
 
 fn solid_n(p: vec3<f32>) -> vec3<f32> {
   let e = 0.5;
-  let g = vec3<f32>(solid_d(p + vec3<f32>(e, 0.0, 0.0)) - solid_d(p - vec3<f32>(e, 0.0, 0.0)),
-                    solid_d(p + vec3<f32>(0.0, e, 0.0)) - solid_d(p - vec3<f32>(0.0, e, 0.0)),
-                    solid_d(p + vec3<f32>(0.0, 0.0, e)) - solid_d(p - vec3<f32>(0.0, 0.0, e)));
+  // central differences, the six taps in a loop (one copy of solid_d, not six; the axis selected, as in
+  // normal_at)
+  var g = vec3<f32>(0.0);
+  for (var k = 0; k < 6; k++) {
+    let s = select(1.0, -1.0, (k & 1) == 1);
+    let on = vec3<i32>(k >> 1u) == vec3<i32>(0, 1, 2);
+    g += select(vec3<f32>(0.0), vec3<f32>(s * solid_d(p + select(vec3<f32>(0.0), vec3<f32>(s * e), on))), on);
+  }
   let l = length(g);
   if (l < 1e-8) { return vec3<f32>(0.0, 1.0, 0.0); }
   return g / l;
@@ -522,19 +532,22 @@ fn trace_out(ro: vec3<f32>, rd: vec3<f32>, t0_in: f32, t1_in: f32, max_steps: i3
     if (t0 >= t1) { return vec2<f32>(-1.0, 0.0); }
   }
   var t = t0;
-  var d = phi(ro + rd * t);
-  var s = solid_d(ro + rd * t);
-  if (s < 0.02) { return vec2<f32>(t0, 2.0); }
-  if (d < 0.0) { return vec2<f32>(t0, 1.0); }
-  for (var i = 0; i < max_steps; i++) {
-    let tp = t;
-    t += max(min(d, s) * 0.85, minstep);
-    if (t >= t1) { return vec2<f32>(-1.0, 0.0); }
+  var tp = t0;
+  var d = 0.0;
+  var s = 0.0;
+  // (the first pass looks where the ray starts: one copy of phi and solid_d for the whole march)
+  for (var i = -1; i < max_steps; i++) {
+    if (i >= 0) {
+      tp = t;
+      t += max(min(d, s) * 0.85, minstep);
+      if (t >= t1) { return vec2<f32>(-1.0, 0.0); }
+    }
     let p = ro + rd * t;
     s = solid_d(p);
     if (s < 0.02) { return vec2<f32>(t, 2.0); }
     d = phi(p);
     if (d < 0.0) {
+      if (i < 0) { return vec2<f32>(t0, 1.0); }
       var a = tp;
       var b = t;
       for (var k = 0; k < 7; k++) {
@@ -557,13 +570,19 @@ fn trace_in(ro: vec3<f32>, rd: vec3<f32>, t1: f32, max_steps: i32) -> vec3<f32> 
   var bub = 0.0;
   let use_ww = U.ww.w > 0.5 && U.ww.z > 0.0;
   if (d > 0.0) { return vec3<f32>(0.0, 1.0, 0.0); }
-  for (var i = 0; i < max_steps; i++) {
+  // (the colliders' distance at each step is the one the step before found there: one copy of solid_d
+  // in the loop, its first pass only finding it where the ray starts)
+  var s = 0.0;
+  for (var i = -1; i < max_steps; i++) {
     let tp = t;
-    let s = solid_d(ro + rd * t);
-    t += max(min(-d, max(s, 0.0)) * 0.85, minstep);
-    if (use_ww) { bub += ww_at(ro + rd * (0.5 * (tp + min(t, t1)))).z * (min(t, t1) - tp); }
-    if (t >= t1) { return vec3<f32>(t1, 0.0, bub); }
-    if (solid_d(ro + rd * t) < 0.02) { return vec3<f32>(t, 2.0, bub); }
+    if (i >= 0) {
+      t += max(min(-d, max(s, 0.0)) * 0.85, minstep);
+      if (use_ww) { bub += ww_at(ro + rd * (0.5 * (tp + min(t, t1)))).z * (min(t, t1) - tp); }
+      if (t >= t1) { return vec3<f32>(t1, 0.0, bub); }
+    }
+    s = solid_d(ro + rd * t);
+    if (i < 0) { continue; }
+    if (s < 0.02) { return vec3<f32>(t, 2.0, bub); }
     d = phi(ro + rd * t);
     if (d > 0.0) {
       var a = tp;
@@ -815,9 +834,10 @@ fn solid_id(p: vec3<f32>) -> i32 {
   let wm = U.org.xyz + mir(p) * U.n.w;
   var best = 1.0e9;
   var id = -1;
-  for (var i = 0; i < i32(U.ccnt.x); i++) {
+  for (var j = 0; j < 2 * i32(U.ccnt.x); j++) {   // (each collider and its reflection: one copy, as solid_d)
+    let i = j >> 1u;
     if (U.col[i].y.w < 0.5) { continue; }
-    let d = min(col_sdf(U.col[i], w), col_sdf(U.col[i], wm));
+    let d = col_sdf(U.col[i], select(w, wm, (j & 1) == 1));
     if (d < best) { best = d; id = i; }
   }
   return id;
@@ -840,13 +860,46 @@ fn stand_in(p: vec3<f32>, d: vec3<f32>, lg: vec3<f32>) -> vec3<f32> {
   return mix(sky(to_world_dir(d)) * 0.3, backdrop(s.xy), s.z);
 }
 
-// Where a ray leaving the liquid ends up: a collider, the ground (footage at that point, shaded) or
-// the backdrop at the backdrop distance.
-fn background(p: vec3<f32>, d: vec3<f32>, lg: vec3<f32>) -> vec3<f32> {
-  var tg = 1.0e9;
-  if (U.fwd.w > 0.5 && d.y < -1e-4) { tg = -p.y / d.y; }
-  let ts = trace_solid(p, d, min(tg, U.scene.w / U.n.w));
-  if (ts >= 0.0) { return stand_in(p + d * ts, d, lg); }
+// ---- where a ray ends ---------------------------------------------------------------------------
+// What a ray finally sees is looked up by land(), called from as few places as the march can manage:
+// the driver inlines every call of a function, so each call of this (a collider's look, the ground,
+// the open water) is a copy of all of it, and copies are what make the march slow to compile.
+
+const LAND_BACK: i32 = 0;    // what lies past p along d: a collider, the ground (the footage there, shaded)
+                             // or the backdrop at the backdrop distance (a ray leaving the liquid)
+const LAND_SOLID: i32 = 1;   // the collider at p
+const LAND_OPEN: i32 = 2;    // past p under the open water (outside the box, or leaving it under water)
+const LAND_NONE: i32 = 3;    // nothing (what the ray met is already counted: fabric)
+
+fn land(kind_in: i32, p: vec3<f32>, d: vec3<f32>, lg: vec3<f32>) -> vec3<f32> {
+  var kind = kind_in;
+  var mul = vec3<f32>(1.0);
+  var add = vec3<f32>(0.0);
+  if (kind == LAND_OPEN) {
+    // on down to the ground through the water, or up through the surface (open_up)
+    if (!(d.y < -1e-4)) { return open_up(p, d, lg); }
+    if (U.fwd.w < 0.5 || U.wet.w > 0.5) {
+      return deep_colour();   // bottomless: the water's own colour, all the way down
+    }
+    let mp = murk_path(max(-p.y / d.y, 0.0) * U.n.w);
+    mul = mp[1];
+    add = mp[0];
+    kind = LAND_BACK;
+  }
+  var q = p;
+  if (kind == LAND_BACK) {
+    var tg = 1.0e9;
+    if (U.fwd.w > 0.5 && d.y < -1e-4) { tg = -p.y / d.y; }
+    let ts = trace_solid(p, d, min(tg, U.scene.w / U.n.w));
+    if (ts >= 0.0) { q = p + d * ts; }
+    else { return past(p, d, tg, lg) * mul + add; }
+  }
+  return stand_in(q, d, lg) * mul + add;
+}
+
+// What a ray from p along d sees with no collider in the way: the ground tg cells along it (1e9: none),
+// else the backdrop.
+fn past(p: vec3<f32>, d: vec3<f32>, tg: f32, lg: vec3<f32>) -> vec3<f32> {
   if (tg < 1.0e8) {
     let pg = p + d * tg;
     let wg = to_world(pg);
@@ -981,17 +1034,10 @@ fn deep_colour() -> vec3<f32> {
   return U.murk.rgb * (U.sky.rgb + U.sun.rgb * 0.25) * (ms / max(sig, vec3<f32>(1e-5)));
 }
 
-// A ray under the open water (outside the box, or leaving it under water): on to the ground, or up
-// through the flat surface. Returns what it sees, attenuated by the water on the way.
-fn under_open(p: vec3<f32>, d: vec3<f32>, lg: vec3<f32>) -> vec3<f32> {
-  if (d.y < -1e-4) {
-    if (U.fwd.w < 0.5 || U.wet.w > 0.5) {
-      return deep_colour();   // bottomless: the water's own colour, all the way down
-    }
-    let mp = murk_path(max(-p.y / d.y, 0.0) * U.n.w);
-    return background(p, d, lg) * mp[1] + mp[0];
-  }
-  // up through the surface (the flat level, or the sea's waves where the ray meets them)
+// A ray under the open water (outside the box, or leaving it under water) going up: through the flat
+// surface, or the sea's waves where the ray meets them. Returns what it sees, attenuated by the water
+// on the way (land(LAND_OPEN) is the whole of it, a ray going down too).
+fn open_up(p: vec3<f32>, d: vec3<f32>, lg: vec3<f32>) -> vec3<f32> {
   var L = max((U.lvl.x - p.y) / max(d.y, 1e-4), 0.0);
   L = max((lvl_at(p + d * L) - p.y) / max(d.y, 1e-4), 0.0);
   let mp = murk_path(L * U.n.w);
@@ -1009,16 +1055,21 @@ fn under_open(p: vec3<f32>, d: vec3<f32>, lg: vec3<f32>) -> vec3<f32> {
 // Radiance arriving along a reflected ray from p: ground, a collider, the environment or more liquid.
 fn reflected(p: vec3<f32>, d: vec3<f32>, lg: vec3<f32>) -> vec3<f32> {
   let r = box_range(p, d);
+  var kind = LAND_BACK;
+  var q = p;
+  var more = false;
   if (r.y > r.x) {
     let hit = trace_out(p, d, r.x, r.y, 64);
-    if (hit.y > 1.5) { return stand_in(p + d * hit.x, d, lg); }
-    if (hit.y > 0.5) {
-      // the reflection sees more liquid: its surface reflects the sky and transmits a little
-      let dw = to_world_dir(d);
-      return env(dw) * 0.25 + background(p + d * hit.x, d, lg) * 0.35 * exp(-U.absorb.rgb * 0.3);
-    }
+    if (hit.y > 1.5) { kind = LAND_SOLID; q = p + d * hit.x; }
+    else if (hit.y > 0.5) { more = true; q = p + d * hit.x; }
   }
-  return background(p, d, lg);
+  let seen = land(kind, q, d, lg);
+  if (more) {
+    // the reflection sees more liquid: its surface reflects the sky and transmits a little
+    let dw = to_world_dir(d);
+    return env(dw) * 0.25 + seen * 0.35 * exp(-U.absorb.rgb * 0.3);
+  }
+  return seen;
 }
 
 // ---- shading a liquid surface point -------------------------------------------------------------
@@ -1029,8 +1080,29 @@ struct Shade {
   bub: f32,         // how much the bubbles inside hide (0..1)
 };
 
-fn shade_liquid(p: vec3<f32>, rd: vec3<f32>, nrm: vec3<f32>, lg: vec3<f32>, max_steps: i32) -> Shade {
-  let h = U.n.w;
+// A ray's way on into the liquid's body, for through(): from pos along dir, carrying thr of the light. end FOLLOW:
+// follow it through the liquid; else only what it ends at from pos (land; LAND_NONE: nothing), added to col.
+struct Way {
+  pos: vec3<f32>,
+  dir: vec3<f32>,
+  thr: vec3<f32>,
+  col: vec3<f32>,   // light gathered before it
+  end: i32,
+};
+
+const FOLLOW: i32 = -1;
+
+// A liquid surface point seen along rd: its reflection and glints (col, with the glints in it; spec), and the ray
+// refracted into its body (way, for through(): main adds what it brings back, and the crest's glow).
+struct Surface {
+  col: vec3<f32>,
+  spec: vec3<f32>,
+  f: f32,           // Fresnel reflectance
+  share: f32,       // how much of the surface is the sea's own (sea_share)
+  way: Way,
+};
+
+fn shade_surface(p: vec3<f32>, rd: vec3<f32>, nrm: vec3<f32>, lg: vec3<f32>) -> Surface {
   let ior = U.optic.x;
   let eps = 0.35 / U.nf.w;
   let cosi = clamp(-dot(rd, nrm), 0.0, 1.0);
@@ -1050,45 +1122,55 @@ fn shade_liquid(p: vec3<f32>, rd: vec3<f32>, nrm: vec3<f32>, lg: vec3<f32>, max_
   col += spec;
 
   // refraction through the body, out the far side, possibly through more drops
-  var s = through(p - nrm * eps, refract(rd, nrm, 1.0 / ior), vec3<f32>(1.0 - F), lg, max_steps);
-  s.col += col + (1.0 - F) * share * sea_crest_glow(p, nrm, rd, lg);
-  s.spec = spec;
-  return s;
+  let way = Way(p - nrm * eps, refract(rd, nrm, 1.0 / ior), vec3<f32>(1.0 - F), vec3<f32>(0.0), FOLLOW);
+  return Surface(col, spec, F, share, way);
 }
 
 // A ray inside the liquid at pos going dir, carrying thr of the light: on through the body, out
 // through its surface (or totally reflected back in), through more drops, to what it finally sees.
-fn through(pos_in: vec3<f32>, dir_in: vec3<f32>, thr_in: vec3<f32>, lg: vec3<f32>, max_steps: i32) -> Shade {
+// Followed (w.end FOLLOW) it returns the light it brings back; else what it ends at, added to w.col.
+// (Called once, from main, for both ways into the liquid; each step is written once for both ways through
+// a surface, and what the ray ends at is looked up once after the loop: the driver inlines every call.)
+fn through(w: Way, lg: vec3<f32>, max_steps: i32) -> Shade {
   let h = U.n.w;
   let ior = U.optic.x;
   let eps = 0.35 / U.nf.w;
-  var col = vec3<f32>(0.0);
-  var thr = thr_in;
+  var col = select(vec3<f32>(0.0), w.col, w.end != FOLLOW);
+  var thr = w.thr;
   var bub = 0.0;
-  var pos = pos_in;
-  var dir = dir_in;
+  var pos = w.pos;
+  var dir = w.dir;
   var inside = true;
-  var done = false;
-  let events = i32(U.q.w);
+  var end = select(w.end, LAND_BACK, w.end == FOLLOW);   // what the ray ends at (land): what lies past it, if the
+                                                          // events run out
+  let events = select(0, i32(U.q.w), w.end == FOLLOW);
   for (var ev = 0; ev < events; ev++) {
+    // the next surface: out of the liquid from inside it, else into more of it (or what lies past it)
+    let rb = box_range(pos, dir);
+    var ex = vec3<f32>(0.0);
+    var hit = vec2<f32>(-1.0, 0.0);
+    var reach = 0.0;
     if (inside) {
-      let rb = box_range(pos, dir);
-      let ex = trace_in(pos, dir, max(rb.y, 0.0), max_steps);
-      let cl = cloth_along(pos, dir, ex.x);
+      ex = trace_in(pos, dir, max(rb.y, 0.0), max_steps);
+      reach = ex.x;
+    } else {
+      if (rb.y > rb.x) { hit = trace_out(pos, dir, rb.x, rb.y, max_steps / 2); }
+      reach = select(max(rb.y, 0.0) + 2.0 * max(U.n.x, max(U.n.y, U.n.z)), hit.x, hit.y > 0.5);
+    }
+    let cl = cloth_along(pos, dir, reach);
+    if (inside) {
+      // through the body (to fabric under the liquid, if the ray meets it first)
+      let seg = select(ex.x, cl.w, cl.w >= 0.0);
+      let mp = murk_dye(seg * h, dye_along(pos, dir, seg));
+      col += thr * mp[0];
+      thr *= mp[1];
       if (cl.w >= 0.0) {
         // fabric under the liquid: seen through the water before it, and lit through the water over it
         // (the light down to it dimmed about as much as the light back up)
-        let mc = murk_dye(cl.w * h, dye_along(pos, dir, cl.w));
-        col += thr * mc[0];
-        thr *= mc[1];
-        col += thr * cl.rgb * mc[1];
-        done = true;
+        col += thr * cl.rgb * mp[1];
+        end = LAND_NONE;
         break;
       }
-      let L = ex.x * h;
-      let mp = murk_dye(L, dye_along(pos, dir, ex.x));
-      col += thr * mp[0];
-      thr *= mp[1];
       if (ex.z > 0.0) {
         let tb = exp(-ex.z * U.ww.z);
         col += thr * (1.0 - tb) * ww_light(vec3<f32>(0.0, 1.0, 0.0), lg) * 0.8;
@@ -1097,66 +1179,59 @@ fn through(pos_in: vec3<f32>, dir_in: vec3<f32>, thr_in: vec3<f32>, lg: vec3<f32
       }
       pos = pos + dir * ex.x;
       if (ex.y > 1.5) {
-        col += thr * stand_in(pos, dir, lg);
-        done = true;
+        end = LAND_SOLID;
         break;
       }
       if (ex.y < 0.5) {
         // left the box still in the liquid: on through the open water, or out at the box wall
         // (under the sea's surface there, not only the flat level: a ray out of a crest is still in the sea)
-        if (open_water() && pos.y < max(U.lvl.x, lvl_box(pos) + 0.5)) { col += thr * under_open(pos, dir, lg); }
-        else { col += thr * background(pos, dir, lg); }
-        done = true;
+        end = select(LAND_BACK, LAND_OPEN, open_water() && pos.y < max(U.lvl.x, lvl_box(pos) + 0.5));
         break;
       }
+    } else {
+      if (cl.w >= 0.0) {
+        col += thr * cl.rgb;   // fabric past the liquid (behind a drop)
+        end = LAND_NONE;
+        break;
+      }
+      if (hit.y > 1.5) {
+        pos = pos + dir * hit.x;
+        end = LAND_SOLID;
+        break;
+      }
+      if (hit.y < 0.5) {
+        end = LAND_BACK;
+        break;
+      }
+      pos = pos + dir * hit.x;
+    }
+    var n = normal_at(pos);
+    if (inside) {
       // leaving the liquid the normal faces along the ray (a drop a cell or two across can have its
       // estimated normal the wrong way round, which would count as grazing and lose all the light)
-      var n2 = normal_at(pos);
-      if (dot(dir, n2) < 0.0) { n2 = -n2; }
-      let c2 = clamp(dot(dir, n2), 0.0, 1.0);
-      let out_dir = refract(dir, -n2, ior);
+      if (dot(dir, n) < 0.0) { n = -n; }
+      let c2 = clamp(dot(dir, n), 0.0, 1.0);
+      let out_dir = refract(dir, -n, ior);
       if (dot(out_dir, out_dir) < 1e-6) {
-        dir = reflect(dir, -n2);
-        pos -= n2 * eps;
+        dir = reflect(dir, -n);
+        pos -= n * eps;
         continue;
       }
       thr *= 1.0 - fresnel(c2, ior, 1.0);
       dir = out_dir;
-      pos += n2 * eps;
+      pos += n * eps;
       inside = false;
     } else {
-      let rb = box_range(pos, dir);
-      var hit = vec2<f32>(-1.0, 0.0);
-      if (rb.y > rb.x) { hit = trace_out(pos, dir, rb.x, rb.y, max_steps / 2); }
-      let reach = select(max(rb.y, 0.0) + 2.0 * max(U.n.x, max(U.n.y, U.n.z)), hit.x, hit.y > 0.5);
-      let cl = cloth_along(pos, dir, reach);
-      if (cl.w >= 0.0) {
-        col += thr * cl.rgb;   // fabric past the liquid (behind a drop)
-        done = true;
-        break;
-      }
-      if (hit.y > 1.5) {
-        col += thr * stand_in(pos + dir * hit.x, dir, lg);
-        done = true;
-        break;
-      }
-      if (hit.y < 0.5) {
-        col += thr * background(pos, dir, lg);
-        done = true;
-        break;
-      }
-      pos = pos + dir * hit.x;
-      var n3 = normal_at(pos);
-      if (dot(dir, n3) > 0.0) { n3 = -n3; }   // entering, it faces the ray
-      let F3 = fresnel(-dot(dir, n3), 1.0, ior);
-      col += thr * F3 * env(to_world_dir(reflect(dir, n3)));
+      if (dot(dir, n) > 0.0) { n = -n; }   // entering, it faces the ray
+      let F3 = fresnel(-dot(dir, n), 1.0, ior);
+      col += thr * F3 * env(to_world_dir(reflect(dir, n)));
       thr *= 1.0 - F3;
-      dir = refract(dir, n3, 1.0 / ior);
-      pos -= n3 * eps;
+      dir = refract(dir, n, 1.0 / ior);
+      pos -= n * eps;
       inside = true;
     }
   }
-  if (!done) { col += thr * background(pos, dir, lg); }
+  if (end != LAND_NONE) { col += thr * land(end, pos, dir, lg); }
   var s: Shade;
   s.col = col;
   s.spec = vec3<f32>(0.0);
@@ -1198,41 +1273,40 @@ fn shafts(ro: vec3<f32>, rd: vec3<f32>, t: f32, lg: vec3<f32>, seed: f32) -> vec
 }
 
 // What a camera under water sees along rd (grid cells, from ro under the surface).
-fn underwater(ro: vec3<f32>, rd: vec3<f32>, lg: vec3<f32>, max_steps: i32, seed: f32) -> Shade {
+// (Its way on: through() follows it, from main.)
+fn underwater(ro: vec3<f32>, rd: vec3<f32>, lg: vec3<f32>, max_steps: i32, seed: f32) -> Way {
   let h = U.n.w;
-  var s: Shade;
-  s.spec = vec3<f32>(0.0);
-  s.bub = 0.0;
   var pos = ro;
   var col = vec3<f32>(0.0);
   var thr = vec3<f32>(1.0);
   let rb = box_range(ro, rd);
   let in_box = all(ro >= mir_lo()) && all(ro <= mir_hi());
+  var end = FOLLOW;   // through the box's liquid, or what the ray ends at without going through it (land)
   if (!in_box) {
     // under the open water past the box: through it to the box, or on without reaching it
+    var t = rb.x;
     if (rb.y <= rb.x) {
-      var far = 1.0e4;
-      if (rd.y < -1e-4) { far = -ro.y / rd.y; }
-      else if (rd.y > 1e-4) { far = (U.lvl.x - ro.y) / rd.y; }
-      s.col = under_open(ro, rd, lg) + shafts(ro, rd, far, lg, seed);
-      return s;
+      t = 1.0e4;
+      if (rd.y < -1e-4) { t = -ro.y / rd.y; }
+      else if (rd.y > 1e-4) { t = (U.lvl.x - ro.y) / rd.y; }
+      end = LAND_OPEN;
     }
-    let mp = murk_path(rb.x * h);
-    col = mp[0] + shafts(ro, rd, rb.x, lg, seed);
-    thr = mp[1];
-    pos = ro + rd * (rb.x + 1e-3);
-    if (phi(pos) >= 0.0) {
-      s.col = col + thr * background(pos, rd, lg);
-      return s;
+    let sh = shafts(ro, rd, t, lg, seed);
+    col = sh;
+    if (end == FOLLOW) {
+      let mp = murk_path(rb.x * h);
+      col = mp[0] + sh;
+      thr = mp[1];
+      pos = ro + rd * (rb.x + 1e-3);
+      if (phi(pos) >= 0.0) { end = LAND_BACK; }
     }
   }
-  // the shafts along the way to where the ray leaves the water (the first surface, or the box)
-  let ex = trace_in(pos, rd, max(box_range(pos, rd).y, 0.0), max_steps);
-  col += thr * shafts(pos, rd, ex.x, lg, seed);
-  let r = through(pos, rd, thr, lg, max_steps);
-  s.col = col + r.col;
-  s.bub = r.bub;
-  return s;
+  if (end == FOLLOW) {
+    // the shafts along the way to where the ray leaves the water (the first surface, or the box)
+    let ex = trace_in(pos, rd, max(box_range(pos, rd).y, 0.0), max_steps);
+    col += thr * shafts(pos, rd, ex.x, lg, seed);
+  }
+  return Way(pos, rd, thr, col, end);
 }
 
 // How much of what lies dist_m (metres from the camera) along the pixel's ray (uv, world direction
@@ -1342,162 +1416,183 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var under = false;
   if (all(ro > mir_lo()) && all(ro < mir_hi())) { under = phi(ro) < 0.0; }
   else if (open_water()) { under = ro.y < lvl_at(ro); }
-  if (under) {
-    g_under = true;
-    if (lamps_on()) { g_lamp = lamps_ambient(U.org.xyz + ro * U.n.w); }
-    let uw = underwater(ro, rd, lg, max_steps, seed);
-    textureStore(out_beauty, px, vec4<f32>(uw.col, 1.0));
-    textureStore(out_emit, px, vec4<f32>(0.0));
-    textureStore(out_aux, px, vec4<f32>(1.0, 0.001, 0.0, 1.0));   // the water is right at the lens
-    textureStore(out_mask, px, vec4<f32>(1.0, 0.0, uw.bub, 0.0));
-    return;
-  }
 
-  let r = box_range(ro, rd);
+  // A ray into the liquid's body is followed by one call of through() below, whichever way it went in: from a
+  // camera under water, or refracted where the camera sees the surface (it is large, and the driver inlines every
+  // call of it).
+  var way = Way(vec3<f32>(0.0), rd, vec3<f32>(0.0), vec3<f32>(0.0), LAND_NONE);
+  var r = vec2<f32>(0.0);
   var hit = vec2<f32>(-1.0, 0.0);
-  if (r.y > r.x) {
-    let jit = fract(ign(vec2<f32>(px)) + U.frame.x * 0.61803398875) * U.q.y / U.nf.w;
-    hit = trace_out(ro, rd, r.x + jit, r.y, max_steps);
-  }
-  // colliders outside the box still hold the liquid out
-  var t_solid = -1.0;
-  if (hit.y > 1.5) { t_solid = hit.x; }
-  if (U.ccnt.x > 0.5) {
-    // a solid may come before what the march found in the box: before the box (a sea bed or a bank
-    // running out past it, the ray already inside it where it enters the box), or above the slab the
-    // liquid reaches up to (trace_out marches only that: a house the ray passes on its way down)
-    let ts = trace_solid(ro, rd, select(1.0e5, hit.x, hit.y > 0.5));
-    if (ts >= 0.0 && (t_solid < 0.0 || ts < t_solid)) { t_solid = ts; }
-  }
-  // the open water past the box: first when the ray crosses it before it reaches any liquid in the
-  // box (a ray that goes under the open water and on into the box stays with the open water)
-  var t_open = -1.0;
-  var t_sheet = open_sheet(ro, rd);
-  // (the open water never lies inside a solid: a beach or bank standing above the level)
-  if (t_sheet >= 0.0 && U.ccnt.x > 0.5 && solid_d(ro + rd * t_sheet) < 0.0) { t_sheet = -1.0; }
-  if (t_sheet >= 0.0 && (hit.y < 0.5 || t_sheet < hit.x - 0.5)) {
-    if (t_solid < 0.0 || t_sheet < t_solid) {
-      t_open = t_sheet;
-      t_solid = -1.0;
-      hit = vec2<f32>(-1.0, 0.0);
-    }
-  }
-
-  if (cloth_on()) {
-    // fabric drawn before the march (cloth.py): in front of all the rest here it is what is seen
-    let cl = textureLoad(cloth_t, px, 0);
-    if (cl.w >= 0.0) {
-      let t_cl = cl.w * cells_per_m;
-      var first = 1.0e9;
-      if (t_solid >= 0.0) { first = t_solid; }
-      if (hit.y > 0.5) { first = min(first, hit.x); }
-      if (t_open >= 0.0) { first = min(first, t_open); }
-      if (t_cl < first) {
-        var sp = vec4<f32>(0.0, 0.0, 0.0, 1.0);
-        if (r.y > r.x) { sp = spray_along(ro, rd, r.x, min(t_cl, r.y), lg, seed); }
-        let keep = hold_keep(uv, rd_w, g_near + cl.w);
-        textureStore(out_beauty, px, vec4<f32>(sp.rgb + cl.rgb * sp.w, 1.0) * keep);
-        textureStore(out_emit, px, vec4<f32>(0.0));
-        textureStore(out_aux, px, vec4<f32>(1.0, cl.w, 0.0, keep));
-        textureStore(out_mask, px, vec4<f32>(0.0, (1.0 - sp.w) * keep, 0.0, 0.0));
-        return;
-      }
-    }
-  }
-
-  if (t_solid >= 0.0) {
-    // a collider in front: it is in the footage (hold out), or a grey stand-in
-    let sp = spray_along(ro, rd, r.x, min(t_solid, r.y), lg, seed);
-    let depth = t_solid / cells_per_m;
-    if (U.org.w > 0.5 || U.plate.x < 0.5) {
-      let c = stand_in(ro + rd * t_solid, rd, lg);
-      textureStore(out_beauty, px, vec4<f32>(sp.rgb + c * sp.w, 1.0));
-      textureStore(out_aux, px, vec4<f32>(1.0, depth, 0.0, 1.0));
-    } else {
-      var lit = vec3<f32>(0.0);
-      if (lava_on() && U.lava[3].w > 0.0) {
-        // the object in the footage, lit by a molten liquid's glow (liq_lava.wgsl)
-        let ps = ro + rd * t_solid;
-        lit = lava_relight(uv, U.org.xyz + ps * U.n.w, solid_n(ps)) * sp.w;
-      }
-      textureStore(out_beauty, px, vec4<f32>(sp.rgb + lit, 1.0 - sp.w));
-      textureStore(out_aux, px, vec4<f32>(1.0, depth, 0.0, 1.0 - sp.w));
-    }
-    textureStore(out_emit, px, vec4<f32>(0.0));
-    textureStore(out_mask, px, vec4<f32>(0.0, 1.0 - sp.w, 0.0, 0.0));
-    return;
-  }
-
-  if (hit.y < 0.5 && t_open < 0.0) {
-    // no liquid here: the footage may still be wet, shadowed or lit by caustics where the ray
-    // meets the ground, and spray may hang in the air
-    var add = vec3<f32>(0.0);
-    var mult = 1.0;
-    var spray = vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    if (r.y > r.x) { spray = spray_along(ro, rd, r.x, r.y, lg, seed); }
-    // spray in front of the footage's surfaces only
-    let sk = hold_keep(uv, rd_w, length(ro_w - U.scene.xyz) + max(r.x, 0.0) / cells_per_m);
-    spray = vec4<f32>(spray.rgb * sk, 1.0 - (1.0 - spray.w) * sk);
-    if (U.fwd.w > 0.5 && rd.y < -1e-5) {
-      let tg = -ro.y / rd.y;
-      let pg = ro + rd * tg;
-      if (tg > 0.0 && pg.x > -2.0 && pg.z > -2.0 && pg.x < U.n.x + 2.0 && pg.z < U.n.z + 2.0) {
-        mult = mix(1.0, ground_shade(pg, lg), hold_keep(uv, rd_w, length(ro_w - U.scene.xyz) + tg / cells_per_m));
-        let w = wet_at(pg);
-        if (w > 0.0 && U.wet.y > 0.0) {
-          let rw = reflect(rd_w, vec3<f32>(0.0, 1.0, 0.0));
-          let fr = fresnel(abs(rd_w.y), 1.0, U.optic.x);
-          add = env(rw) * (w * U.wet.y * fr);
-        }
-      }
-    }
-    if (lava_on() && U.lava[3].w > 0.0 && U.fwd.w > 0.5 && U.plate.x > 0.5 && rd.y < -1e-5) {
-      // a molten liquid's glow lights the ground around it (liq_lava.wgsl)
-      let tl = -ro.y / rd.y;
-      if (tl > 0.0) {
-        let keep = hold_keep(uv, rd_w, length(ro_w - U.scene.xyz) + tl / cells_per_m);
-        add += lava_relight(uv, U.org.xyz + (ro + rd * tl) * U.n.w, vec3<f32>(0.0, 1.0, 0.0)) * (mult * keep);
-      }
-    }
-    let sa = 1.0 - spray.w;
-    textureStore(out_beauty, px, vec4<f32>(spray.rgb + add * spray.w, sa));
-    textureStore(out_emit, px, vec4<f32>(0.0));
-    textureStore(out_aux, px, vec4<f32>(mix(mult, 1.0, sa), 0.0, 0.0, sa));
-    textureStore(out_mask, px, vec4<f32>(0.0, sa, 0.0, 0.0));
-    return;
-  }
-
-  var t_hit = hit.x;
+  var t_hit = 0.0;
   var p = vec3<f32>(0.0);
   var nrm = vec3<f32>(0.0, 1.0, 0.0);
   var sp = 0.0;
   var sh: Shade;
   var ic = 0.0;       // frozen share of the surface here (ice)
-  if (lamps_on()) {
-    let tl = select(t_open, hit.x, hit.y > 0.5);
-    g_lamp = lamps_ambient(U.org.xyz + (ro + rd * tl) * U.n.w);
-  }
-  if (hit.y > 0.5) {
-    p = ro + rd * t_hit;
-    sp = length(surf(p).yzw);
-    nrm = normal_at(p);
-    nrm = sea_facing(sea_box_normal(p, nrm), rd);   // the sea's waves the simulation cannot carry, where it is the sea
-    let n_ice = nrm;
-    nrm = rain_rings(ripple(nrm, p), p);
-    // ice keeps the shape it froze in: no ripples or rain rings on it (its frost: liq_ice_shade.wgsl)
-    ic = ice_at(p);
-    if (ic > 0.02) { nrm = normalize(mix(nrm, n_ice, ic)); }
-    if (lava_on()) {
-      sh = Shade(vec3<f32>(0.0), vec3<f32>(0.0), 0.0);   // opaque and glowing: liq_lava_shade.wgsl shades it
-    } else {
-      sh = shade_liquid(p, rd, nrm, lg, max_steps);
-    }
+  var surface: Surface;
+  if (under) {
+    g_under = true;
+    if (lamps_on()) { g_lamp = lamps_ambient(U.org.xyz + ro * U.n.w); }
+    way = underwater(ro, rd, lg, max_steps, seed);
   } else {
-    // the open water past the box
-    t_hit = t_open;
-    p = ro + rd * t_hit;
-    nrm = rain_rings(ripple(sea_normal(p), p), p);
-    sh = sea_open_shade(p, rd, nrm, lg);   // ocn_shade.wgsl
+    r = box_range(ro, rd);
+    if (r.y > r.x) {
+      let jit = fract(ign(vec2<f32>(px)) + U.frame.x * 0.61803398875) * U.q.y / U.nf.w;
+      hit = trace_out(ro, rd, r.x + jit, r.y, max_steps);
+    }
+    // colliders outside the box still hold the liquid out
+    var t_solid = -1.0;
+    if (hit.y > 1.5) { t_solid = hit.x; }
+    if (U.ccnt.x > 0.5) {
+      // a solid may come before what the march found in the box: before the box (a sea bed or a bank
+      // running out past it, the ray already inside it where it enters the box), or above the slab the
+      // liquid reaches up to (trace_out marches only that: a house the ray passes on its way down)
+      let ts = trace_solid(ro, rd, select(1.0e5, hit.x, hit.y > 0.5));
+      if (ts >= 0.0 && (t_solid < 0.0 || ts < t_solid)) { t_solid = ts; }
+    }
+    // the open water past the box: first when the ray crosses it before it reaches any liquid in the
+    // box (a ray that goes under the open water and on into the box stays with the open water)
+    var t_open = -1.0;
+    var t_sheet = open_sheet(ro, rd);
+    // (the open water never lies inside a solid: a beach or bank standing above the level)
+    if (t_sheet >= 0.0 && U.ccnt.x > 0.5 && solid_d(ro + rd * t_sheet) < 0.0) { t_sheet = -1.0; }
+    if (t_sheet >= 0.0 && (hit.y < 0.5 || t_sheet < hit.x - 0.5)) {
+      if (t_solid < 0.0 || t_sheet < t_solid) {
+        t_open = t_sheet;
+        t_solid = -1.0;
+        hit = vec2<f32>(-1.0, 0.0);
+      }
+    }
+
+    if (cloth_on()) {
+      // fabric drawn before the march (cloth.py): in front of all the rest here it is what is seen
+      let cl = textureLoad(cloth_t, px, 0);
+      if (cl.w >= 0.0) {
+        let t_cl = cl.w * cells_per_m;
+        var first = 1.0e9;
+        if (t_solid >= 0.0) { first = t_solid; }
+        if (hit.y > 0.5) { first = min(first, hit.x); }
+        if (t_open >= 0.0) { first = min(first, t_open); }
+        if (t_cl < first) {
+          var sp = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+          if (r.y > r.x) { sp = spray_along(ro, rd, r.x, min(t_cl, r.y), lg, seed); }
+          let keep = hold_keep(uv, rd_w, g_near + cl.w);
+          textureStore(out_beauty, px, vec4<f32>(sp.rgb + cl.rgb * sp.w, 1.0) * keep);
+          textureStore(out_emit, px, vec4<f32>(0.0));
+          textureStore(out_aux, px, vec4<f32>(1.0, cl.w, 0.0, keep));
+          textureStore(out_mask, px, vec4<f32>(0.0, (1.0 - sp.w) * keep, 0.0, 0.0));
+          return;
+        }
+      }
+    }
+
+    if (t_solid >= 0.0) {
+      // a collider in front: it is in the footage (hold out), or a grey stand-in
+      let sp = spray_along(ro, rd, r.x, min(t_solid, r.y), lg, seed);
+      let depth = t_solid / cells_per_m;
+      if (U.org.w > 0.5 || U.plate.x < 0.5) {
+        let c = stand_in(ro + rd * t_solid, rd, lg);
+        textureStore(out_beauty, px, vec4<f32>(sp.rgb + c * sp.w, 1.0));
+        textureStore(out_aux, px, vec4<f32>(1.0, depth, 0.0, 1.0));
+      } else {
+        var lit = vec3<f32>(0.0);
+        if (lava_on() && U.lava[3].w > 0.0) {
+          // the object in the footage, lit by a molten liquid's glow (liq_lava.wgsl)
+          let ps = ro + rd * t_solid;
+          lit = lava_relight(uv, U.org.xyz + ps * U.n.w, solid_n(ps)) * sp.w;
+        }
+        textureStore(out_beauty, px, vec4<f32>(sp.rgb + lit, 1.0 - sp.w));
+        textureStore(out_aux, px, vec4<f32>(1.0, depth, 0.0, 1.0 - sp.w));
+      }
+      textureStore(out_emit, px, vec4<f32>(0.0));
+      textureStore(out_mask, px, vec4<f32>(0.0, 1.0 - sp.w, 0.0, 0.0));
+      return;
+    }
+
+    if (hit.y < 0.5 && t_open < 0.0) {
+      // no liquid here: the footage may still be wet, shadowed or lit by caustics where the ray
+      // meets the ground, and spray may hang in the air
+      var add = vec3<f32>(0.0);
+      var mult = 1.0;
+      var spray = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+      if (r.y > r.x) { spray = spray_along(ro, rd, r.x, r.y, lg, seed); }
+      // spray in front of the footage's surfaces only
+      let sk = hold_keep(uv, rd_w, length(ro_w - U.scene.xyz) + max(r.x, 0.0) / cells_per_m);
+      spray = vec4<f32>(spray.rgb * sk, 1.0 - (1.0 - spray.w) * sk);
+      if (U.fwd.w > 0.5 && rd.y < -1e-5) {
+        let tg = -ro.y / rd.y;
+        let pg = ro + rd * tg;
+        if (tg > 0.0 && pg.x > -2.0 && pg.z > -2.0 && pg.x < U.n.x + 2.0 && pg.z < U.n.z + 2.0) {
+          mult = mix(1.0, ground_shade(pg, lg), hold_keep(uv, rd_w, length(ro_w - U.scene.xyz) + tg / cells_per_m));
+          let w = wet_at(pg);
+          if (w > 0.0 && U.wet.y > 0.0) {
+            let rw = reflect(rd_w, vec3<f32>(0.0, 1.0, 0.0));
+            let fr = fresnel(abs(rd_w.y), 1.0, U.optic.x);
+            add = env(rw) * (w * U.wet.y * fr);
+          }
+        }
+      }
+      if (lava_on() && U.lava[3].w > 0.0 && U.fwd.w > 0.5 && U.plate.x > 0.5 && rd.y < -1e-5) {
+        // a molten liquid's glow lights the ground around it (liq_lava.wgsl)
+        let tl = -ro.y / rd.y;
+        if (tl > 0.0) {
+          let keep = hold_keep(uv, rd_w, length(ro_w - U.scene.xyz) + tl / cells_per_m);
+          add += lava_relight(uv, U.org.xyz + (ro + rd * tl) * U.n.w, vec3<f32>(0.0, 1.0, 0.0)) * (mult * keep);
+        }
+      }
+      let sa = 1.0 - spray.w;
+      textureStore(out_beauty, px, vec4<f32>(spray.rgb + add * spray.w, sa));
+      textureStore(out_emit, px, vec4<f32>(0.0));
+      textureStore(out_aux, px, vec4<f32>(mix(mult, 1.0, sa), 0.0, 0.0, sa));
+      textureStore(out_mask, px, vec4<f32>(0.0, sa, 0.0, 0.0));
+      return;
+    }
+
+    t_hit = hit.x;
+    if (lamps_on()) {
+      let tl = select(t_open, hit.x, hit.y > 0.5);
+      g_lamp = lamps_ambient(U.org.xyz + (ro + rd * tl) * U.n.w);
+    }
+    if (hit.y > 0.5) {
+      p = ro + rd * t_hit;
+      sp = length(surf(p).yzw);
+      nrm = normal_at(p);
+      nrm = sea_facing(sea_box_normal(p, nrm), rd);   // the sea's waves the simulation cannot carry, where it is the sea
+      let n_ice = nrm;
+      nrm = rain_rings(ripple(nrm, p), p);
+      // ice keeps the shape it froze in: no ripples or rain rings on it (its frost: liq_ice_shade.wgsl)
+      ic = ice_at(p);
+      if (ic > 0.02) { nrm = normalize(mix(nrm, n_ice, ic)); }
+      if (lava_on()) {
+        sh = Shade(vec3<f32>(0.0), vec3<f32>(0.0), 0.0);   // opaque and glowing: liq_lava_shade.wgsl shades it
+      } else {
+        surface = shade_surface(p, rd, nrm, lg);
+        way = surface.way;
+      }
+    } else {
+      // the open water past the box
+      t_hit = t_open;
+      p = ro + rd * t_hit;
+      nrm = rain_rings(ripple(sea_normal(p), p), p);
+      sh = sea_open_shade(p, rd, nrm, lg);   // ocn_shade.wgsl
+    }
+  }
+
+  let thru = through(way, lg, max_steps);
+  if (under) {
+    var uw = thru.col;
+    if (way.end == FOLLOW) { uw = way.col + thru.col; }
+    textureStore(out_beauty, px, vec4<f32>(uw, 1.0));
+    textureStore(out_emit, px, vec4<f32>(0.0));
+    textureStore(out_aux, px, vec4<f32>(1.0, 0.001, 0.0, 1.0));   // the water is right at the lens
+    textureStore(out_mask, px, vec4<f32>(1.0, 0.0, thru.bub, 0.0));
+    return;
+  }
+  if (way.end == FOLLOW) {
+    // the surface: its reflection and glints, what came back through the body, the glow through a crest
+    sh = thru;
+    sh.col += surface.col + (1.0 - surface.f) * surface.share * sea_crest_glow(p, nrm, rd, lg);
+    sh.spec = surface.spec;
   }
   var col = sh.col;
   var spec_out = sh.spec;
