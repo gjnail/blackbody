@@ -7,7 +7,7 @@ from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QDialog, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QPushButton,
                                QSpinBox, QVBoxLayout, QWidget)
 
-from ..scene import arrange
+from ..scene import arrange, caps
 from . import theme
 from .params import guard_wheel
 
@@ -73,10 +73,12 @@ class Sketch(QWidget):
 
 
 class RepeatDialog(QDialog):
-    def __init__(self, parent, n_things, size_xz):
+    def __init__(self, parent, n_things, size_xz, room=None):
+        """room: what each copy takes from the engine's caps (scene/caps.py room), to warn before going past them."""
         super().__init__(parent)
         self.setWindowTitle('Repeat')
         self.size_xz = (max(size_xz[0], 0.05), max(size_xz[1], 0.05))
+        self.room = list(room or [])
         st = QSettings()
         v = QVBoxLayout(self)
         v.setContentsMargins(18, 16, 18, 14)
@@ -138,6 +140,11 @@ class RepeatDialog(QDialog):
         self.sketch = Sketch(self)
         body.addWidget(self.sketch, 1)
         v.addLayout(body, 1)
+        self.past = QLabel()          # past the caps: what would be left out
+        self.past.setWordWrap(True)
+        self.past.setStyleSheet(f'color: {theme.CHANGED};')
+        self.past.hide()
+        v.addWidget(self.past)
         row = QHBoxLayout()
         row.addStretch(1)
         cancel = QPushButton('Cancel')
@@ -180,7 +187,14 @@ class RepeatDialog(QDialog):
         self.count_label.setText('How many in all' if key == 'ring' else 'How many more')
         if key == 'ring' and self.count.value() < 2:
             self.count.setValue(2)
+        cut = caps.over(self.room, self.copies())
+        self.past.setText('Past what the simulation has room for. ' + ' '.join(cut) if cut else '')
+        self.past.setVisible(bool(cut))
         self.sketch.update()
+
+    def copies(self):
+        """How many new copies (a ring's count is all of them, the one you have among them)."""
+        return self.count.value() - (1 if self.key() == 'ring' else 0)
 
     def places(self):
         key = self.key()
@@ -194,7 +208,7 @@ class RepeatDialog(QDialog):
         super().accept()
 
 
-def ask(parent, n_things, size_xz):
-    """([(dx, dz, turn)], ring) for the copies, or None."""
-    d = RepeatDialog(parent, n_things, size_xz)
+def ask(parent, n_things, size_xz, room=None):
+    """([(dx, dz, turn)], ring) for the copies, or None. room: scene/caps.py room, for the warning past the caps."""
+    d = RepeatDialog(parent, n_things, size_xz, room)
     return d.places() if d.exec() == QDialog.Accepted else None

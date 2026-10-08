@@ -188,7 +188,22 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
         if getattr(self, '_lvol', None) is not None:
             self._lvol.reset()   # (Lume's light in the smoke: none carried over from another scene or run)
         self._attach_disk(scene, final)
+        self._scene_notices(scene)
         return out
+
+    def _scene_notices(self, scene):
+        """What the caps leave out of this scene (scene/caps.py) and whether its disk cache opened, for notices(); and its
+        objects' names, for what is said about them as it runs."""
+        from ..scene import caps
+        try:
+            self._cap_notes = caps.notices(scene)
+        except Exception as ex:   # (a check that fails must not stop the simulation)
+            log.warning('Could not check the scene against the caps: %s', ex)
+            self._cap_notes = []
+        if scene.data['domain'].get('disk_cache') and self.cache.disk is None:
+            self._cap_notes.append('The disk cache could not be opened (Domain › Disk cache): the frames are kept in memory '
+                                   'only.')
+        self._col_names = [c.get('name', '') for c in scene.colliders]
 
     def _attach_disk(self, scene, final):
         """Back the frame cache with the scene's disk cache (Domain › Disk cache), or detach it."""
@@ -970,7 +985,45 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
 
     # -- info ------------------------------------------------------------------------------------
 
+    _cap_notes = ()
+    _col_names = ()
+
+    def notices(self):
+        """What the person making the shot should know was left out or cut short, in words: what the scene's caps leave
+        out (scene/caps.py, checked in prepare, with a disk cache that would not open), and what the simulation's parts
+        said as they set up and ran: the matter, the grass, the rigid bodies, meshes that could not be used, weather that
+        found no room to fall, the liquid's push on things held back, and an OCIO set-up that failed. The viewer shows
+        them and the command line prints them."""
+        from pathlib import Path
+        from .solids import MAX_ACCEL
+        out = list(self._cap_notes)
+        if self.kind != 'cloud':
+            if self._matter is not None and self._matter.specs:
+                out += self._matter.warnings
+            if self._strands is not None:
+                out += self._strands.warnings
+        out += self.solids.warnings
+        for i, n in sorted(getattr(self.solids, 'capped', {}).items()):
+            name = self._col_names[i] if i < len(self._col_names) else f'Object {i + 1}'
+            out.append(f'{name}: the liquid pushed it harder than {MAX_ACCEL:g} m/s² ({n} step{"" if n == 1 else "s"}), '
+                       'so its push was held to that: it may move less than it should.')
+        W = self.weather
+        if self.kind in ('liquid', 'both') and self._wx_on and W is not None and (W.short or W.fill_short):
+            out.append(f'The weather is past its particle limit ({W.capacity / 1e6:g} M falling pieces): '
+                       f'{W.short + W.fill_short:,} were not made, so it falls thinner than its rate. Raise Weather › '
+                       'Particle limit or make its Area smaller.')
+        for src, msg in sorted(self.solver.meshes.errors.items()):
+            out.append(msg if str(src) in msg else f'The mesh {Path(str(src)).name} could not be used: {msg}')
+        if getattr(self, '_ocio_error', None):
+            out.append(f'OCIO could not be used ({self._ocio_error}): the Standard view and sRGB footage are used instead.')
+        return list(dict.fromkeys(out))
+
     def stats(self):
+        out = self._stats()
+        out['notices'] = self.notices()
+        return out
+
+    def _stats(self):
         if self.kind == 'liquid' and self.liquid is not None:
             return self._stats_liquid()
         if self.kind == 'cloud' and self.cloud is not None:

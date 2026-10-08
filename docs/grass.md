@@ -52,7 +52,7 @@ Cloth and grass are drawn together, so each hides what is behind it of the other
 
 ## Limits
 
-- Up to 8 patches and 400,000 blades in a scene (a thick, wide patch is thinned to fit).
+- Up to 8 patches and 400,000 blades in a scene (past that, every patch is thinned by the same share to fit; the viewer's notices say so).
 - The blades do not touch each other, sand, snow or cloth, and grass does not push back on what moves through it. It slows the wind only inside the simulation box. (Things that fall, broken objects' pieces and people's and cars' parts push it aside; pressed flat by a wheel or a foot it lies down, a track that stands up again over about 40 s.)
 - Under water grass is not dragged by the current yet (no kelp), and it does not get wet.
 - It grows only on objects that stay put when it is set out, and does not ride on things that move.

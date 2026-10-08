@@ -507,6 +507,7 @@ class Solids:
         self._cloth = None         # the fabric through this frame (meet_cloth): its vertices, the ones near each thing
         self._cloth_took = None    # what each vertex of it took from the things it held off through the frame (N s)
         self.shots = None          # the scene's bullets (ballistics.py), flown with the bodies
+        self.capped = {}           # collider index -> steps the liquid's push on it was held to MAX_ACCEL (since reset)
 
     # -- set up --------------------------------------------------------------------------------
 
@@ -551,6 +552,8 @@ class Solids:
         self.shots = None
         self.started = False
         self._last = {}
+        self.warnings = []
+        self.capped = {}
         return changed
 
     @staticmethod
@@ -2620,6 +2623,7 @@ class Solids:
         self.breaks = []
         self.snaps = []
         self._pushed = {}
+        self.capped = {}
         self._unsnap_all()
         self._unash()
         if self._w is not None:
@@ -2767,6 +2771,7 @@ class Solids:
                 an = float(np.linalg.norm(a))
                 if an > MAX_ACCEL:
                     a *= MAX_ACCEL / an
+                    self.capped[bd.index] = self.capped.get(bd.index, 0) + 1   # (said: Engine.notices)
                 f += mass * a - grav          # MuJoCo adds the weight itself
                 # turning: the measured moment, damped by the water it has to push round
                 R = q_rot(fb.quat)

@@ -83,3 +83,18 @@ def test_soft_changes_keep_the_simulation(engine):
     assert engine.sim_frame == sc.start + 5
     sc.set(('domain', 'size_x'), 3.0)            # a new grid always restarts
     assert engine.prepare(sc, final=False, soft=True) == 'reset'
+
+
+def test_the_stats_carry_what_the_caps_leave_out(engine):
+    # (Engine.notices: the viewer and the status bar show them, the command line prints them)
+    sc = presets.make('campfire')
+    sc.data['domain']['resolution'] = 32
+    for i in range(17):
+        sc.add_collider(name=f'Stone {i}', shape='sphere', position=(-1.5 + 0.18 * i, 0.05, 1.0), size=(0.05, 0.05, 0.05))
+    engine.invalidate()
+    engine.prepare(sc, final=False)
+    notes = engine.stats()['notices']
+    assert any('objects take part' in n and 'Stone 16' in n for n in notes), notes
+    sc.colliders[-1]['enabled'] = False
+    engine.prepare(sc, final=False)
+    assert not any('objects take part' in n for n in engine.stats()['notices'])

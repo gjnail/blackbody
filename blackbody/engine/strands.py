@@ -80,6 +80,47 @@ def kind_of(spec):
     return KINDS.get(spec.kind, KINDS['meadow'])
 
 
+def blades_wanted(spec: StrandSpec):
+    """The blades a patch grows on its area at its kind's density times its Thickness (before its ragged edge thins it)."""
+    sx, _h, sz = (abs(float(v)) for v in spec.size)
+    area = math.pi * sx * sx if spec.shape == 'disc' else 4.0 * sx * sz
+    return max(int(round(area * kind_of(spec).density * max(float(spec.thickness), 0.0))), 0)
+
+
+def budgets(specs):
+    """Each patch's most blades, and the share of what they want they get: all of it when MAX_BLADES covers them, else
+    every patch thinned by the same share (not the first ones served and the last left bare)."""
+    want = [blades_wanted(s) for s in specs]
+    total = sum(want)
+    if total <= MAX_BLADES:
+        return want, 1.0
+    share = MAX_BLADES / total
+    return [int(w * share) for w in want], share
+
+
+def notes(specs, names=None):
+    """What the grass's caps leave out of these patches (StrandSpecs; names: theirs, for the message), in words: patches
+    past MAX_PATCHES, and the thinning to MAX_BLADES. The scene's check (scene/caps.py) and Strands.configure say the
+    same."""
+    specs = list(specs)
+    out = []
+    if len(specs) > MAX_PATCHES:
+        extra = len(specs) - MAX_PATCHES
+        who = f'the last {extra}'
+        if names and len(names) == len(specs):
+            left = list(names[MAX_PATCHES:])
+            left = left if len(left) <= 4 else left[:3] + [f'{len(left) - 3} more']
+            who = left[0] if len(left) == 1 else ', '.join(left[:-1]) + ' and ' + left[-1]
+        out.append(f'Only the first {MAX_PATCHES} patches of grass are simulated: {who} '
+                   f'{"is" if extra == 1 else "are"} left out.')
+        specs = specs[:MAX_PATCHES]
+    _, share = budgets(specs)
+    if share < 1.0:
+        out.append(f'The grass is thinned to {MAX_BLADES:,} blades in all: each patch has {share:.0%} of the blades it '
+                   f'would grow (smaller or thinner patches keep more).')
+    return out
+
+
 def blades(spec: StrandSpec, patch: int, budget: int):
     """The blades of a patch as (n, 2, 4) float32: (root x, z (fire-local m), patch, a random number), (height (m),
     width (m), the azimuth its face looks along, the azimuth it leans toward). Spread evenly (a jittered grid) and in
@@ -90,7 +131,7 @@ def blades(spec: StrandSpec, patch: int, budget: int):
     if disc:
         sz = sx
     area = math.pi * sx * sx if disc else 4.0 * sx * sz
-    n = min(int(round(area * k.density * max(float(spec.thickness), 0.0))), max(int(budget), 0))
+    n = min(blades_wanted(spec), max(int(budget), 0))
     if n <= 0 or area <= 0.0:
         return np.zeros((0, 2, 4), np.float32)
     rng = np.random.default_rng(1009 + 7919 * int(spec.seed) + 104729 * int(patch))
@@ -209,25 +250,19 @@ class Strands:
     def burns(self):
         return any(s.burns for s in self.specs)
 
-    def configure(self, specs) -> bool:
-        """Lay out the scene's patches of grass (StrandSpecs). True when they changed (they grow again: place())."""
+    def configure(self, specs, names=None) -> bool:
+        """Lay out the scene's patches of grass (StrandSpecs; names: theirs, for the warnings). True when they changed
+        (they grow again: place())."""
         specs = list(specs)
-        self.warnings = []
-        if len(specs) > MAX_PATCHES:
-            self.warnings.append(f'Only the first {MAX_PATCHES} patches of grass are simulated.')
-            specs = specs[:MAX_PATCHES]
+        self.warnings = notes(specs, names)     # (every time: they hold while the patches do)
+        specs = specs[:MAX_PATCHES]
         key = repr([dataclasses.astuple(s) for s in specs])
         if key == self._key:
             return False
         self._key = key
         self.specs = specs
-        parts, budget = [], MAX_BLADES
-        for p, s in enumerate(specs):
-            bl = blades(s, p, budget)
-            budget -= len(bl)
-            parts.append(bl)
-        if budget <= 0:
-            self.warnings.append(f'The grass is thinned to {MAX_BLADES:,} blades in all.')
+        most, _share = budgets(specs)
+        parts = [blades(s, p, n) for p, (s, n) in enumerate(zip(specs, most))]
         BL = np.concatenate(parts) if parts else np.zeros((0, 2, 4), np.float32)
         self._free()
         self.n = len(BL)

@@ -8,6 +8,12 @@ Notable changes to Blackbody. The format follows
 
 ### Added
 
+- Notices: what the engine leaves out or cuts short is now shown in the app and printed by the command line, instead
+  of being dropped silently. Objects past 16 (not drawn either), sources past 16 (counting the water level's and
+  lightning's slots), set lights past 8 (a lightning bolt takes 4 while it flashes), fabrics past 16, grass patches
+  past 8 and blades thinned, sand, snow and mud past their material slots, weather particles that could not spawn,
+  bodies the water's push limit held back, mesh errors and a colour setup that failed. Repeat warns before it makes
+  copies past the limits. Grass shares its blade budget fairly between patches (the first one took it all).
 - Things that fall: any object can be a rigid body (Physics › Falls). It drops, tumbles, slides, bounces, stacks and
   knocks other things over, in fire, liquid and fire-and-liquid scenes alike (MuJoCo integrates it). The gas's drag
   pushes it (a blast, an updraft, the wind), it floats or sinks in water, a burnable one keeps burning as it falls, and

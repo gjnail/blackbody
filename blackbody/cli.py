@@ -87,6 +87,29 @@ def _progress_printer(quiet):
     return cb
 
 
+def _notices(order, engines=None, said=None):
+    """Print what the simulation leaves out or cuts short in the layers `order` ([(uid, scene)]), once each: the scenes'
+    caps before a run (scene/caps.py), or, given their engines (render/layers.LayerEngines), what those said as they
+    ran (Engine.notices). Returns what has been said."""
+    said = set() if said is None else said
+    for uid, sc in order:
+        try:
+            if engines is None:
+                from .scene import caps
+                notes = caps.notices(sc)
+            else:
+                eng = engines.base if uid == 'base' else engines.extra.get(uid)
+                notes = eng.notices() if eng is not None else []
+        except Exception as ex:   # (saying so must never stop a render)
+            notes = [f'Could not check what is left out: {ex}']
+        for n in notes:
+            line = f'Note: {sc.name}: {n}' if len(order) > 1 else f'Note: {n}'
+            if line not in said:
+                said.add(line)
+                print(line)
+    return said
+
+
 def _check_value(p, text):
     """Validate a --set value strictly (the project loader is lenient, a farm job should not be)."""
     t = text.strip()
@@ -252,9 +275,13 @@ def cmd_render(args):
               f'{dims[0]}x{dims[1]}x{dims[2]} voxels ({h * 1000:.1f} mm)')
         for o in outputs:
             print(f'  -> {o.path}  [{o.label()}]')
+    from .render.layers import LayerEngines
+    order = scene.layer_order() or [('base', scene)]
+    said = _notices(order)
+    engines = LayerEngines(engine)
     job = RenderJob(scene, outputs, engine, frames=(first, last), final=not args.draft, footage=footage,
                     samples=args.samples, motion_blur=False if args.no_motion_blur else None,
-                    from_cache=bool(args.from_cache))
+                    from_cache=bool(args.from_cache), engines=engines)
     t0 = time.perf_counter()
     try:
         written = job.run(progress=_progress_printer(args.quiet))
@@ -265,6 +292,8 @@ def cmd_render(args):
     except Exception as ex:
         traceback.print_exc()
         return _fail(f'Render failed: {ex}')
+    finally:
+        _notices(order, engines, said)     # (and what the simulation said as it ran)
     if not args.quiet:
         n = last - first + 1
         dt = time.perf_counter() - t0
@@ -395,6 +424,8 @@ def cmd_simulate(args):
         print(f'Simulating "{scene.name}" frames {scene.start}-{last} into {disk.folder if disk else "?"} '
               f'({dims[0]}x{dims[1]}x{dims[2]} voxels); {len(disk.frames()) if disk else 0} frames already cached'
               + (f', resuming from frame {max(c for c in cps if c <= last)}' if any(c <= last for c in cps) else ''))
+    from .render.layers import LayerEngines
+    said = _notices([('base', scene)])
     t0 = time.perf_counter()
     report = _progress_printer(args.quiet)
     try:
@@ -408,6 +439,7 @@ def cmd_simulate(args):
     finally:
         if engine.cache.disk is not None:
             engine.cache.disk.flush()
+        _notices([('base', scene)], LayerEngines(engine), said)
     if not args.quiet:
         print(f'Done in {time.perf_counter() - t0:.1f}s: {len(disk.frames())} frames cached, '
               f'{disk.size_bytes() / 1e9:.2f} GB.')

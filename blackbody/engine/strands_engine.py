@@ -36,7 +36,8 @@ class StrandsEngine:
         specs = scene.strand_specs() if scene.kind != 'cloud' and hasattr(scene, 'strand_specs') else []
         if not specs and self._strands is None:
             return False
-        return self.strands.configure(specs)
+        names = [d['name'] for d in getattr(scene, 'strands', None) or [] if d['enabled']] if specs else None
+        return self.strands.configure(specs, names)
 
     def _solver_hook(self):
         """Solver.cloth_hook: the burning cloth and the burning grass feed the gas (the cloth also holds the air)."""

@@ -132,6 +132,34 @@ def test_freezing_rain_glazes(gpu):
     assert 0.6 * want < glaze < 1.5 * want
 
 
+def test_a_full_particle_limit_is_counted_and_carried_on(gpu):
+    """Rain past its particle limit: the pieces that found no free slot are counted (said in the viewer and the render
+    log: Engine.notices) and carried on into the next frame, at most a frame's worth (no backlog builds up)."""
+    from blackbody.engine.weather import Weather, WeatherParams
+    prm = WeatherParams(kind='rain', rate=40.0, ground_t=15.0, humidity=0.95, area=(-1.0, -1.0, 1.0, 1.0), top=3.0,
+                        capacity=1024, start=0.02, cover=False)
+    W = Weather(gpu)
+    W.configure(prm)
+    _run(W, prm, 1.0)
+    assert W.short > 0 and W.stats['short'] == W.short and W.fill_short == 0
+    assert W.stats['alive'] > 0.9 * W.capacity
+    col = W.col
+    per_frame = max(prm.rate, 0.0) / 3600.0 * 4.0 / col.mean_mass / 24
+    assert W._spawn_acc <= per_frame + 2.0
+    # room enough: nothing is short
+    big = Weather(gpu)
+    prm2 = WeatherParams(**{**prm.__dict__, 'capacity': 200_000})
+    big.configure(prm2)
+    _run(big, prm2, 1.0)
+    assert big.short == 0 and big.fill_short == 0
+    # falling from the start fills the air at once: more than the limit holds is counted too
+    full = Weather(gpu)
+    prm3 = WeatherParams(**{**prm.__dict__, 'start': 0.0})
+    full.configure(prm3)
+    _run(full, prm3, 0.2)
+    assert full.fill_short > 0
+
+
 @pytest.mark.parametrize('name', ['snow_pond', 'hail_pond'])
 def test_weather_presets_run(engine, name):
     from blackbody.scene import presets

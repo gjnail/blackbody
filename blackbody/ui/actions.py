@@ -120,7 +120,7 @@ def set_on_fire(win, kind, i):
 
 def repeat(win, sel=None):
     """Copies of the selection (or sel) in a row, a ring or scattered, from the Repeat dialog."""
-    from ..scene import arrange as A, blocks
+    from ..scene import arrange as A, blocks, caps
     from . import repeatdialog
     doc = win.doc
     sel = sel or doc.selected_objects()
@@ -129,7 +129,7 @@ def repeat(win, sel=None):
         return
     whole = blocks.with_attached(doc.scene, sel)
     lo, hi = A.footprint(doc.scene, whole, doc.frame)
-    got = repeatdialog.ask(win, len(whole), (float(hi[0] - lo[0]), float(hi[2] - lo[2])))
+    got = repeatdialog.ask(win, len(whole), (float(hi[0] - lo[0]), float(hi[2] - lo[2])), caps.room(doc.scene, whole))
     if not got:
         return
     places, ring = got

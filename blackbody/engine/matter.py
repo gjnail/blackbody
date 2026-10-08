@@ -235,6 +235,7 @@ class MatterSpec:
     seed: int = 0
     temperature: float = 293.15           # K, as it starts
     mesh: str = ''                        # a mesh it fills (shape mesh): its source (mesh.load_mesh)
+    name: str = ''                        # its name in the scene (for what is said about it: material_slots)
 
 
 def fill_points(shape, size, spacing, rng, sdf=None):
@@ -308,6 +309,81 @@ def _yaw(v, yaw):
     c, s = math.cos(yaw), math.sin(yaw)
     v = np.asarray(v, float)
     return np.stack([c * v[..., 0] + s * v[..., 2], v[..., 1], -s * v[..., 0] + c * v[..., 2]], -1)
+
+
+def material_slots(specs, wets=False):
+    """The material slots for these sources (MatterSpecs): (each slot's (material, colour, stiffness) in order, each
+    source's slot, the wet table (mpm_wet.wgsl, MAX_MATS rows), what did not fit (in words)).
+
+    One slot per material and colour (and stiffness) of a source, its sources' first; then, with a liquid in the box
+    (`wets`), each sand's damp and soaked forms; then each material's melt, what its melt sets into and its ash. There
+    are MAX_MATS - 1 of them: a source past them is drawn and simulated as the first, and a form that does not fit is
+    never taken on (the sand never gets wet, the chocolate never melts)."""
+    slots = {}
+    slot = []
+    short = []
+    over = []
+    first = {}      # (a slot's first source, for its name)
+
+    def who(k):
+        s = first.get(k)
+        if s is not None and s.name:
+            return s.name
+        return f'the {material(k[0]).label.lower()}' + (' in its own colour' if k[1] is not None else '')
+
+    for s in specs:
+        k = (s.material, None if s.colour is None else tuple(s.colour), float(s.stiffness))
+        first.setdefault(k, s)
+        if k not in slots and len(slots) < MAX_MATS - 1:
+            slots[k] = len(slots)
+        if k not in slots:
+            over.append(s.name or f'the {material(s.material).label.lower()}')
+        slot.append(slots.get(k, 0))
+    if over:
+        over = list(dict.fromkeys(over))
+        names = over[0] if len(over) == 1 else ', '.join(over[:-1]) + ' and ' + over[-1]
+        short.append(f'{names} {"is" if len(over) == 1 else "are"} past them, so simulated and drawn as '
+                     f'{who(next(iter(slots)))}')
+    # (with a liquid in the box: sand and water. Dry sand the liquid wets becomes damp, damp sand it seeps into
+    # soaked, and soaked sand away from it drains back to damp: per slot (its damp slot, its soaked slot, what it
+    # is: 0 dry, 1 damp, 2 soaked, -1 none of these), mpm_wet.wgsl)
+    wet = [[-1.0, -1.0, -1.0, 0.0] for _ in range(MAX_MATS)]
+    if wets:
+        def slot_of(k):
+            if k not in slots:
+                if len(slots) >= MAX_MATS - 1:
+                    return None
+                slots[k] = len(slots)
+            return slots[k]
+
+        for k in [k for k in slots if k[0] in ('sand', 'wet_sand')]:
+            c, st = k[1], k[2]
+            damp = ('wet_sand', None if c is None else tuple(0.42 * x for x in c), st) if k[0] == 'sand' else k
+            d = slot_of(damp)
+            if d is None:
+                short.append(f'{who(k)} never gets wet')
+                continue
+            s = slot_of(('soaked_sand', None if damp[1] is None else tuple(0.85 * x for x in damp[1]), st))
+            if k[0] == 'sand':
+                wet[slots[k]] = [float(d), -1.0, 0.0, 0.0]
+            wet[d] = [float(d), float(-1 if s is None else s), -1.0 if s is None else 1.0, 0.0]
+            if s is not None:
+                wet[s] = [float(d), float(s), 2.0, 0.0]
+            else:
+                short.append(f'{who(k)} gets damp but never soaked')
+    # things that melt: each one's melt (or what a melt sets into) gets a slot too, in the same colour
+    for k in list(slots):
+        m = material(k[0])
+        for other, what in ((m.melt, 'never melts'), (m.freeze, 'never sets'), (m.burns_to, 'burns away leaving no ash')):
+            if other and (other, k[1], k[2]) not in slots:
+                if len(slots) < MAX_MATS - 1:
+                    slots[(other, k[1], k[2])] = len(slots)
+                else:
+                    short.append(f'{who(k)} {what}')
+    if short:
+        short = [f'Matter has room for {MAX_MATS - 1} kinds (each material in its own colour or stiffness, and its damp, '
+                 f'soaked, melted or burnt form): ' + '; '.join(dict.fromkeys(short)) + '.']
+    return list(slots), slot, wet, short
 
 
 def particles(xs, mat_index, vel, release, rng, temperature=293.15):
@@ -394,53 +470,14 @@ class Matter:
         dims = tuple(int(x) for x in np.ceil(size / self.dx).astype(int) + 1 + 2 * MARGIN)
         self.box = (np.asarray(box_origin, float), np.asarray(box_origin, float) + size)
         self.origin = np.asarray(box_origin, float) - MARGIN * self.dx
-        self.warnings = []
-        # materials: one slot per material and colour
-        slots, self._mats, self._colours = {}, [], []
-        self._slot = []
-        for s in specs:
-            k = (s.material, None if s.colour is None else tuple(s.colour), float(s.stiffness))
-            if k not in slots and len(slots) < MAX_MATS - 1:
-                slots[k] = len(slots)
-                self._mats.append(material(s.material))
-                self._colours.append((k[1], k[2]))
-            self._slot.append(slots.get(k, 0))
-        # (with a liquid in the box: sand and water. Dry sand the liquid wets becomes damp, damp sand it seeps into
-        # soaked, and soaked sand away from it drains back to damp: per slot (its damp slot, its soaked slot, what it
-        # is: 0 dry, 1 damp, 2 soaked, -1 none of these), mpm_wet.wgsl)
-        self._wet = [[-1.0, -1.0, -1.0, 0.0] for _ in range(MAX_MATS)]
-        if wets:
-            def slot_of(k):
-                if k not in slots:
-                    if len(slots) >= MAX_MATS - 1:
-                        return None
-                    slots[k] = len(slots)
-                    self._mats.append(material(k[0]))
-                    self._colours.append((k[1], k[2]))
-                return slots[k]
-
-            for k in [k for k in slots if k[0] in ('sand', 'wet_sand')]:
-                c, st = k[1], k[2]
-                damp = ('wet_sand', None if c is None else tuple(0.42 * x for x in c), st) if k[0] == 'sand' else k
-                d = slot_of(damp)
-                if d is None:
-                    continue
-                s = slot_of(('soaked_sand', None if damp[1] is None else tuple(0.85 * x for x in damp[1]), st))
-                if k[0] == 'sand':
-                    self._wet[slots[k]] = [float(d), -1.0, 0.0, 0.0]
-                self._wet[d] = [float(d), float(-1 if s is None else s), -1.0 if s is None else 1.0, 0.0]
-                if s is not None:
-                    self._wet[s] = [float(d), float(s), 2.0, 0.0]
-        # things that melt: each one's melt (or what a melt sets into) gets a slot too, in the same colour; per slot
-        # (melts at, its melt's slot, what it sets into, how fast it takes on the air's temperature) and (how fast its
-        # heat evens out, how much faster the water cools it), mpm_heat.wgsl
-        for k in list(slots):
-            m = material(k[0])
-            for other in (m.melt, m.freeze, m.burns_to):
-                if other and (other, k[1], k[2]) not in slots and len(slots) < MAX_MATS - 1:
-                    slots[(other, k[1], k[2])] = len(slots)
-                    self._mats.append(material(other))
-                    self._colours.append((k[1], k[2]))
+        # materials: one slot per material and colour, and per form it takes (wet, melted, burnt); what did not fit is
+        # said (material_slots)
+        keys, self._slot, self._wet, self.warnings = material_slots(specs, wets)
+        slots = {k: i for i, k in enumerate(keys)}
+        self._mats = [material(k[0]) for k in keys]
+        self._colours = [(k[1], k[2]) for k in keys]
+        # per slot (melts at, its melt's slot, what it sets into, how fast it takes on the air's temperature) and (how fast
+        # its heat evens out, how much faster the water cools it), mpm_heat.wgsl
         # (its surface is a particle deep, half a node spacing: the rates follow from that and the material's constants,
         # heat_speed times as fast as for real)
         self.heat_speed = float(heat_speed)

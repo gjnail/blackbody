@@ -1870,18 +1870,26 @@ class Viewport(QWidget):
         if st and st.get('lume'):
             done, want = st['lume']
             lines.append(f'Lume · {min(done, want)}/{want} light paths per pixel' + ('' if done >= want else ' · sharpening'))
+        # what the engine left out or cut short, in the notices' colour: the liquid's particle limit, then the first few
+        # notices (Engine.notices), each on a line (all of them in the status bar's Notices)
+        warn = len(lines)
         if st.get('particle_limit'):
             lines.append('particle limit reached: sources are held back (Liquid › Particle limit, advanced)')
         fm = p.fontMetrics()
+        notes = list(st.get('notices') or [])
+        for n in notes[:3]:
+            lines.append(fm.elidedText(n, Qt.ElideRight, max(200, self.width() - 60)))
+        if len(notes) > 3:
+            lines.append(f'and {len(notes) - 3} more (Notices, in the status bar)')
         w = max(fm.horizontalAdvance(ln) for ln in lines) + 20
         h = 15 * len(lines) + 10
         box = QRectF(10, 10, w, h)
         p.setPen(Qt.NoPen)
         p.setBrush(QColor(12, 12, 14, 170))
         p.drawRoundedRect(box, 6, 6)
-        p.setPen(QColor(230, 230, 232, 225))
         y = box.y() + 17
-        for ln in lines:
+        for i, ln in enumerate(lines):
+            p.setPen(QColor(theme.CHANGED) if i >= warn else QColor(230, 230, 232, 225))
             p.drawText(QPointF(box.x() + 10, y), ln)
             y += 15
         W, H = self.out_size()

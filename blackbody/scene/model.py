@@ -402,7 +402,8 @@ class Scene:
                                   pour=bool(d['pours']), rate=float(d['rate']) / 1000.0, start=float(d['pour_start']),
                                   stop=float(d['pour_stop']), colour=colour, stiffness=float(d['stiffness']), seed=int(d['seed']),
                                   temperature=self._matter_kelvin(d),
-                                  mesh=self.mesh_path(d.get('mesh', '')) if d['shape'] == 'mesh' else ''))
+                                  mesh=self.mesh_path(d.get('mesh', '')) if d['shape'] == 'mesh' else '',
+                                  name=str(d.get('name', ''))))
         return out
 
     @staticmethod

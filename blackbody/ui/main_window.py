@@ -647,6 +647,14 @@ class MainWindow(QMainWindow):
         self.stats_label.setFont(theme.mono_font(8.5))
         self.stats_label.setObjectName('faint')
         sb.addPermanentWidget(self.stats_label)
+        # what the engine left out or cut short (Engine.notices): how many, all of them on hover or click
+        self.notice_btn = QToolButton()
+        self.notice_btn.setAutoRaise(True)
+        self.notice_btn.setStyleSheet(f'QToolButton {{ color: {theme.CHANGED}; padding: 0 6px; }}')
+        self.notice_btn.clicked.connect(self._show_notices)
+        self.notice_btn.hide()
+        self._notices = []
+        sb.addPermanentWidget(self.notice_btn)
         self.gpu_label = QLabel()
         self.gpu_label.setObjectName('faint')
         sb.addPermanentWidget(self.gpu_label)
@@ -709,6 +717,30 @@ class MainWindow(QMainWindow):
             self.doc.frame_from_engine(frame)
         self.stats_label.setText(f'{stats.get("voxels", 0) / 1e6:.2f} M voxels · {stats.get("memory_mb", 0):.0f} MB · '
                                  f'cache {stats.get("cached", 0)} frames ({stats.get("cache_mb", 0):.0f} MB)  ')
+        self.set_notices(stats.get('notices') or [])
+
+    def set_notices(self, notes):
+        """The status bar's Notices: what the engine left out or cut short (the viewer shows the first few)."""
+        import html
+        notes = list(notes)
+        if notes == self._notices:
+            return
+        self._notices = notes
+        b = self.notice_btn
+        b.setVisible(bool(notes))
+        if notes:
+            b.setText(f'{len(notes)} notice{"" if len(notes) == 1 else "s"}')
+            b.setToolTip(''.join(f'<p>{html.escape(n)}</p>' for n in notes) + '<p><i>Click to keep them open.</i></p>')
+
+    def _show_notices(self):
+        if not self._notices:
+            return
+        box = QMessageBox(QMessageBox.Information, 'Notices',
+                          'What the simulation leaves out or cuts short in this scene:\n\n' + '\n\n'.join(self._notices),
+                          QMessageBox.Ok, self)
+        box.setAttribute(Qt.WA_DeleteOnClose)
+        box.setModal(False)
+        box.show()
 
     def _sim_progress(self, frac, frame):
         self.timeline.set_progress(frac, frame)
@@ -728,6 +760,7 @@ class MainWindow(QMainWindow):
 
     def _load_started(self, name):
         self.viewport.begin_load(name)
+        self.set_notices([])
         self.timeline.set_cached([])
         self.msg.setText(f'Loading {name}…')
 

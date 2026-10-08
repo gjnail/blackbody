@@ -33,6 +33,7 @@ PART_BYTES = 64
 PACK_BYTES = 48
 LUT_ENTRIES = 256
 FX_UG = 1.0e9
+SPAWN_LOG = 256       # steps a frame whose spawned count is read back (how many found a free slot)
 
 
 @dataclass
@@ -162,6 +163,10 @@ class Weather:
         self.liq_dep = None
         self._dummy3 = None
         self._dummy_buf = None
+        self._asked = []      # this frame's steps: (pieces asked for, the fill at the start)
+        self._fresh = 0.0     # pieces the rate asked for this frame (what a shortfall carried on may come to)
+        self.short = 0        # pieces that found no free slot since the start: the particle limit was full
+        self.fill_short = 0   # and those the air should hold at the start past what the limit leaves room for
 
     # -- set-up ------------------------------------------------------------------------------------
 
@@ -214,6 +219,7 @@ class Weather:
         if getattr(self, 'lut', None) is None:
             self.lut = g.buffer(LUT_ENTRIES * 32, 'wx-lut')
             self.ctr = g.buffer(16 * 4, 'wx-counters')
+            self.spawn_log = g.buffer(SPAWN_LOG * 4, 'wx-spawn-log')
             self._dummy_buf = g.buffer(64, 'wx-dummy')
             self._dummy_buf2 = g.buffer(64, 'wx-dummy2')
             self._dummy_buf3 = g.buffer(64, 'wx-dummy3')
@@ -239,6 +245,10 @@ class Weather:
                 b.clear_buffer(self.liq_dep)
         self.packed_count = 0
         self._spawn_acc = 0.0
+        self._asked = []
+        self._fresh = 0.0
+        self.short = 0
+        self.fill_short = 0
         self._filled = False
         self._lying_done = False
         self.time = 0.0
@@ -317,11 +327,14 @@ class Weather:
             self._spawn_acc += per_s * dt
             if not self._filled and prm.start <= 0.0:
                 # falling all along: the air already full of it at the start (a steady fall), not a front
-                spawn = int(min(col.density_per_flux * rate * area_m2 * prm.top, self.capacity * 0.9))
+                want = col.density_per_flux * rate * area_m2 * prm.top
+                spawn = int(min(want, self.capacity * 0.9))
+                self.fill_short = max(int(want) - spawn, 0)     # (more than the limit holds: said, Engine.notices)
                 self._filled = True
                 fill = 1.0
                 self._spawn_acc = 0.0
             else:
+                self._fresh += per_s * dt
                 spawn = int(self._spawn_acc)
                 self._spawn_acc -= spawn
         on = L is not None and L.dims is not None
@@ -347,6 +360,11 @@ class Weather:
         wa, wb, wc = (L.WA, L.WB, L.wctr) if ww else (self._dummy_buf, self._dummy_buf2, self._dummy_buf3)
         b.run(self._k['step'], [self.parts, self.lut, self.ctr, self.cover_dep, dep if dep is not None else self._dummy_buf4,
                                  sdf, dens, self.SURF, wa, wb, wc], u, groups=groups_1d(self.capacity))
+        if spawn > 0 and len(self._asked) < SPAWN_LOG:
+            # how many of them found a free slot (the counter overshoots by the threads turned away: min with what was
+            # asked), read back with the frame's counters (measure)
+            b.copy_buffer(self.ctr, self.spawn_log, 0, 4 * len(self._asked), 4)
+            self._asked.append((spawn, fill > 0.0))
         # the cover
         lying = prm.lying if not self._lying_done else 0.0
         self._lying_done = True
@@ -386,12 +404,34 @@ class Weather:
             b.clear_buffer(self.ctr, 2 * 4, 13 * 4)
         self.packed_count = int(min(raw[15], self.capacity))
         landed = {A.KIND_NAMES[k]: int(raw[2 + k]) for k in range(5)}
-        self.stats = {'alive': int(raw[1]), 'packed': self.packed_count, 'landed': landed, 'into_liquid': int(raw[8])}
+        missed = self._missed()
+        self.stats = {'alive': int(raw[1]), 'packed': self.packed_count, 'landed': landed, 'into_liquid': int(raw[8]),
+                      'missed': missed, 'short': self.short}
         if self.col is not None:
             self.stats['arriving'] = {k: round(v, 3) for k, v in self.col.summary.items()
                                       if k in ('rain', 'snow', 'graupel', 'hail', 'ice pellets', 'freezing_rain', 'wet_snow')
                                       and v > 0.001}
         return self.stats
+
+    def _missed(self):
+        """The pieces this frame's steps asked for that found no free slot (the particle limit full). They are carried on
+        into the next frame's (at most a frame's worth of the rate, so a limit that stays full builds no backlog); what is
+        not is lost, and counted in `short`."""
+        asked, self._asked = self._asked, []
+        fresh, self._fresh = self._fresh, 0.0
+        if not asked:
+            return 0
+        got = np.frombuffer(self.gpu.read_buffer(self.spawn_log, 4 * len(asked)), np.uint32)
+        missed = carry = 0
+        for (want, fill), n in zip(asked, got):
+            m = max(want - min(int(n), want), 0)
+            missed += m
+            if not fill:
+                carry += m
+        kept = int(min(carry, fresh))
+        self._spawn_acc += kept
+        self.short += missed - kept
+        return missed
 
     # -- reading back ----------------------------------------------------------------------------
 

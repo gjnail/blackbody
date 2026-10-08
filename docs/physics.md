@@ -200,7 +200,7 @@ CG objects go over the footage lit by the shot's light, and their shadows darken
 - The strengths are effective ones, set so that things hold and give way under steady loads as they look like they
   should (pottery's and glass's near a handbook's, the rest lower); hits break things by their speed (above).
 - A falling mesh collides as its convex hull: its hollows and dents are filled in.
-- Contacts are slightly soft, so bounces are within about 0.05 of a material's bounce, and the least a thing bounces is about 0.2. Things that start inside each other are thrown apart when they are let go (the log says which).
+- Contacts are slightly soft, so bounces are within about 0.05 of a material's bounce, and the least a thing bounces is about 0.2. Things that start inside each other are thrown apart when they are let go (the viewer's notices say which).
 - In a liquid scene with grey stand-ins (Water › *Colliders*), things that fall or float are drawn as stand-ins in their material's colour.
 - A motor holds its speed, not its angle: things on separate motors drift a little out of step when their loads differ. Give one balanced part one motor (the windmill's sails are two bars crossed on its hub).
 - Emitters still turn only about the vertical: an emitter attached to a tilted object keeps upright.
