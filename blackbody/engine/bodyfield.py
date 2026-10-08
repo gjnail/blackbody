@@ -52,12 +52,15 @@ def piece_records(scene, pieces, rows=None, owners=None):
 
 
 class BodyField:
-    def __init__(self, gpu):
+    def __init__(self, gpu, vel_format='rgba16float'):
+        """vel_format: the texel format of the solid velocity it writes: the solvers' rgba16float, or the matter's
+        rgba32float, whose w (1 + which piece) stays exact past 2048 pieces."""
         self.gpu = gpu
-        self.k = gpu.kernel('bodies_sdf.wgsl', ['rbuf', 'rbuf', 'rbuf', 'rbuf', 'st3d:r32float:rw', 'st3d:rgba16float:w'])
+        self.k = gpu.kernel('bodies_sdf.wgsl', ['rbuf', 'rbuf', 'rbuf', 'rbuf', 'st3d:r32float:rw', f'st3d:{vel_format}:w'],
+                            defines={'SVEL': vel_format})
         self._bufs = {}
         self.steps = []          # per substep: (first piece, first tile, pieces)
-        self.owners = []         # per substep: (collider index, piece index) of each of its pieces
+        self.owners = []         # per substep: (collider index, piece index) of each of its pieces (those reaching the grid)
         self.tiles = (1, 1, 1)
 
     def _buffer(self, name, data):
@@ -88,20 +91,25 @@ class BodyField:
         for poses in substeps:
             owners = []
             rec = piece_records(scene, poses, owners=owners)
-            self.owners.append(owners)
             if rec is None:
+                self.owners.append(owners)
                 self.steps.append(None)
                 continue
             P, planes, c, r = rec
             PL = planes if PL is None else PL
-            lists = [[] for _ in range(int(np.prod(nt)))]
             reach = r + 1.5 * h
-            a = np.clip(np.floor((c - reach[:, None] - o) / (h * TILE)).astype(int), 0, nt - 1)
-            b = np.clip(np.floor((c + reach[:, None] - o) / (h * TILE)).astype(int), 0, nt - 1)
             inside = np.all((c + reach[:, None] >= o) & (c - reach[:, None] <= o + dims * h), axis=1)
             if region is not None:
                 inside &= np.all((c + reach[:, None] >= region[0]) & (c - reach[:, None] <= region[1]), axis=1)
-            for k in np.nonzero(inside)[0]:
+            # (only the pieces that reach the grid, numbered afresh: the numbers the matter reads its pushes back by stay
+            # few however many pieces the scene has; each keeps its own planes)
+            keep = np.nonzero(inside)[0]
+            P, c, reach = P[keep], c[keep], reach[keep]
+            self.owners.append([owners[k] for k in keep])
+            lists = [[] for _ in range(int(np.prod(nt)))]
+            a = np.clip(np.floor((c - reach[:, None] - o) / (h * TILE)).astype(int), 0, nt - 1)
+            b = np.clip(np.floor((c + reach[:, None] - o) / (h * TILE)).astype(int), 0, nt - 1)
+            for k in range(len(P)):
                 for z in range(a[k, 2], b[k, 2] + 1):
                     for y in range(a[k, 1], b[k, 1] + 1):
                         for x in range(a[k, 0], b[k, 0] + 1):

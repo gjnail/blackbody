@@ -41,7 +41,7 @@ FX_R = 64.0               # mpm_grid.wgsl react's fixed point
 SURF_R = 2.0              # the surface's kernel radius (cells)
 SURF_PARTICLE = 0.55      # a particle's radius in it (cells)
 MARGIN = 3                # nodes of grid past the box all round
-MAX_PIECES = 4096         # broken objects' pieces the matter can tell apart (what each takes from it)
+PIECE_ROWS = 256          # broken pieces whose push from the matter there is room for at first (more: _react_rows)
 HEAT_SPEED = 4.0          # matter takes on and gives off heat this many times faster than for real, unless the scene
                           # says (Domain > Heat speed): melting in seconds
 HEAT_CONVECTION = 50.0    # W/m^2/K: the air (or the fire's gas) flowing past its surface
@@ -571,7 +571,7 @@ class Matter:
         self._buf['OJ'] = g.buffer(16 * 4, 'matter-heat-from-objects')
         self._buf['G'] = g.buffer(nodes * 5 * 4, 'matter-grid')    # (mpm_common.wgsl NODE)
         self._buf['S'] = g.buffer(nodes * 13 * 4, 'matter-surface-sums')
-        self._buf['react_i'] = g.buffer((16 + MAX_PIECES) * 6 * 4, 'matter-react-step')   # (objects', then pieces')
+        self._buf['react_i'] = g.buffer((16 + PIECE_ROWS) * 6 * 4, 'matter-react-step')   # (objects', then pieces')
         self._buf['react'] = g.buffer(16 * 6 * 4, 'matter-react')
         self._buf['stats'] = g.buffer(8 * 4, 'matter-stats')
         self._tex['vel'] = g.texture3d(self.dims, 'rgba32float', 'matter-vel')
@@ -1056,6 +1056,7 @@ class Matter:
         lockstep with the rigid bodies (solids.py), which take the push into their next step. substeps: the step taken
         as that many, the push over all of them."""
         owners, rebake = self._pieces(pieces)
+        self._react_rows(len(owners))
         with self.gpu.batch() as b:
             if rebake:
                 b.run(self._k['pieces_clear'], [self._tex['psdf']], Uniforms().v4(*self.dims), self.dims)
@@ -1065,7 +1066,7 @@ class Matter:
             for _ in range(n_sub):
                 self._substep(b, dt / n_sub, gu, meshes_atlas, fold=False, pieces_on=bool(owners))
         out = {}
-        n = min(len(owners), MAX_PIECES)
+        n = len(owners)
         raw = np.frombuffer(self.gpu.read_buffer(self._buf['react_i'], size=(16 + n) * 24), np.int32).reshape(16 + n, 6)
         react, pr = raw[:16], raw[16:]
         if raw.any():
@@ -1083,6 +1084,15 @@ class Matter:
                     c = np.asarray(poses[ci]['pos'][k], float)
                     out[('piece', ci, k)] = (f, t_origin - np.cross(c, f))
         return out
+
+    def _react_rows(self, pieces):
+        """Room in react_i for what the 16 objects and this many broken pieces take from the matter (mpm_grid.wgsl: 6
+        words each), grown when there are more pieces (a new buffer starts at zero, as the old is between steps)."""
+        need = (16 + pieces) * 6 * 4
+        old = self._buf['react_i']
+        if old.size < need:
+            old.destroy()
+            self._buf['react_i'] = self.gpu.buffer(max(need, 2 * old.size), 'matter-react-step')
 
     def _pieces(self, pieces):
         """Broken objects' pieces onto the matter's grid for the next step (bodyfield.py: only the ones near the matter):
@@ -1108,10 +1118,11 @@ class Matter:
     def _bake_pieces(self, pieces, lo, hi):
         from .bodyfield import BodyField
         if getattr(self, '_bf', None) is None:
-            self._bf = BodyField(self.gpu)
+            self._bf = BodyField(self.gpu, 'rgba32float')
         if 'psdf' not in self._tex:
             self._tex['psdf'] = self.gpu.texture3d(self.dims, 'r32float', 'matter-pieces-distance')
-            self._tex['psvel'] = self.gpu.texture3d(self.dims, 'rgba16float', 'matter-pieces-velocity')
+            # (w: 1 + which piece, which a half float holds exactly only to 2048)
+            self._tex['psvel'] = self.gpu.texture3d(self.dims, 'rgba32float', 'matter-pieces-velocity')
             self._pgrid = _PieceGrid(self)
         margin = 3.0 * self.dx
         if not self._bf.prepare(pieces[0], [pieces[1]], self.dims, self.dx, self.origin - 0.5 * self.dx,

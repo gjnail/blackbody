@@ -320,6 +320,11 @@ Notable changes to Blackbody. The format follows
 
 ### Fixed
 
+- Final renders with motion blur no longer show a fine diagonal hatching: each pixel's shutter offset is hashed
+  instead of taken from a lattice noise (the hatching's peak fell from about 250 to 11 times the background, the
+  grain unchanged). Sand, snow and mud push the right broken piece past 2047 pieces (piece ids were half floats).
+  Lume picks glass and mirror-like objects first for its eight caustic targets, so a glass ball listed after eight
+  pots casts its caustic.
 - Farm renders from the disk cache with a .vdb output write the cached fire (they wrote the unsimulated start state
   for every frame), placed by each frame's own transform; a frame neither live nor cached is an error, not a stale
   file. A sky scene's .vdb output writes its clouds (density, cloud water, ice, rain, snow, hail, velocity) instead of

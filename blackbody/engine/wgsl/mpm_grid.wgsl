@@ -25,7 +25,7 @@ struct Params {
 @group(0) @binding(4) var push: texture_3d<f32>;   // the liquid's force on it (N/m^3); w: 1 where the liquid is
 @group(0) @binding(5) var flow: texture_3d<f32>;   // the liquid's velocity there (m/s); w: its drag (kg/m^4)
 @group(0) @binding(6) var psdf: texture_3d<f32>;   // broken objects' pieces (bodies_sdf.wgsl): the distance to them (nodes)
-@group(0) @binding(7) var psvel: texture_3d<f32>;  // their velocity at the nodes in or by them; w: 1 + which piece
+@group(0) @binding(7) var psvel: texture_3d<f32>;  // their velocity at the nodes in or by them; w: 1 + which piece (exact: f32)
 @group(0) @binding(8) var<storage, read> CF: array<i32>;   // the fabric round each node (cloth_matter.wgsl): weight,
                                                            // w velocity (3), w normal (3), w how far in front of it
 @group(0) @binding(9) var<storage, read_write> CT: array<atomic<i32>>;   // per node: momentum the fabric took (3)
@@ -136,7 +136,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       v = adhere(boundary(v, pv.xyz, nrm, mu), pv.xyz, nrm, mu, hold);
       let dp = mass * (before - v);
       if (pv.w > 0.5 && dot(dp, dp) > 0.0) {
-        let r = 96u + 6u * u32(pv.w - 0.5);     // (after the 16 objects')
+        let r = 96u + 6u * u32(pv.w - 0.5);     // (after the 16 objects'; react has a row for each piece: matter.py _react_rows)
         let q = clamp(dp * FX_R, vec3<f32>(-2.0e9), vec3<f32>(2.0e9));
         let t = clamp(cross(p, dp) * FX_R, vec3<f32>(-2.0e9), vec3<f32>(2.0e9));   // (about the origin)
         if (r + 5u < arrayLength(&react)) {

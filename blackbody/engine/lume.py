@@ -133,18 +133,31 @@ def focusing(row, c):
     return None
 
 
+FOCUS_ORDER = ('glass', 'mirror', 'coat')   # caustics: with more than TARGETS of them, these first, in this order
+COAT_REFLECT = 0.04       # caustics: the share of light a coat's sharp highlight reflects (Fresnel head on, ior 1.5)
+
+
+def focused_light(kind, row, r):
+    """How much light a thing that focuses it (focusing: kind, its stage.looks row, the radius round it, m) can send on as
+    a caustic, relatively: the light it catches, as its cross-section, times the share it passes on (a clear thing's
+    clearness through its colour, a mirror's colour, a coat's highlight)."""
+    lum = float(np.dot(np.asarray(row[1], float)[:3], (0.2126, 0.7152, 0.0722)))
+    share = {'glass': float(row[4]) * lum, 'mirror': lum}.get(kind, COAT_REFLECT)
+    return math.pi * r * r * share
+
+
 def caustic_targets(scene, cols, rows, meshes, matter=None):
     """What the lights are traced at for caustics (lume.wgsl caustics): the curved clear things in the set (glass, ice or
     jelly balls, cylinders, meshes, clear matter) and the mirrors (bare smooth metal, any shape), as spheres round them,
     fire-local (x, y, z, radius); and which they are (a bit for each object row, bit 16 the matter). Flat clear things
-    (boxes, broken pieces) are left out: their straight-through shadow is exact."""
+    (boxes, broken pieces) are left out: their straight-through shadow is exact. With more than TARGETS of them, the clear
+    things are taken first, then the mirrors, then the coats (FOCUS_ORDER), each by the light it can focus (focused_light),
+    so a glass ball listed after a row of glazed pots still casts its caustic."""
     from .solver import _mesh_ref
-    out = []
-    mask = 0
+    found = []   # (its place in FOCUS_ORDER, minus the light it can focus, its bit, its sphere)
     for i, (c, row) in enumerate(zip(cols, rows)):
-        if len(out) >= TARGETS:
-            break
-        if focusing(row, c) is None:
+        kind = focusing(row, c)
+        if kind is None:
             continue
         s = np.abs(np.asarray(c.size, float))
         if c.shape == 'sphere':
@@ -157,15 +170,20 @@ def caustic_targets(scene, cols, rows, meshes, matter=None):
             m0, m1 = _mesh_ref(meshes, c.mesh, c.mesh_frame, c.mesh_fps)[:2]
             ext = np.maximum(np.abs(np.asarray(m0[:3], float)), np.abs(np.asarray(m1[:3], float)))
             r = float(np.linalg.norm(ext * s))
-        out.append((float(c.pos[0]), float(c.pos[1]), float(c.pos[2]), float(r) * 1.02 + 1e-3))
-        mask |= 1 << i
+        sphere = (float(c.pos[0]), float(c.pos[1]), float(c.pos[2]), float(r) * 1.02 + 1e-3)
+        found.append((FOCUS_ORDER.index(kind), -focused_light(kind, row, float(r)), i, sphere))
     if matter is not None and any(str(m.get('material', '')) == 'jelly' for m in (getattr(scene, 'matter', None) or [])):
         b = matter.world_bounds()
         if b is not None:
             lo, hi = np.asarray(b[0], float), np.asarray(b[1], float)
-            if len(out) < TARGETS:
-                out.append((*((lo + hi) / 2).tolist(), float(np.linalg.norm(hi - lo)) / 2))
-                mask |= 1 << 16
+            r = float(np.linalg.norm(hi - lo)) / 2
+            # (clear jelly: as glass that lets all the light through)
+            found.append((0, -math.pi * r * r, 16, (*((lo + hi) / 2).tolist(), r)))
+    found.sort(key=lambda f: f[:3])
+    out = [f[3] for f in found[:TARGETS]]
+    mask = 0
+    for f in found[:TARGETS]:
+        mask |= 1 << f[2]
     return out, mask
 
 

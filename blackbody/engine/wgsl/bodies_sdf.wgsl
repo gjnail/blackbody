@@ -1,7 +1,8 @@
 // The pieces of broken objects (engine/fracture.py) in a simulation grid, one substep: the signed distance to the
 // nearest one is folded into the colliders' (sdf, cells, read and written in place), and the cells inside one (or
-// within half a cell of it) get its velocity there (svel; w = 1 + which piece it is in this substep's list: the
-// matter tells it what it pushed), which the boundary passes give the faces round it.
+// within half a cell of it) get its velocity there (svel; w = 1 + which piece it is in this substep's list of those
+// that reach the grid: the matter tells it what it pushed, so its svel is rgba32float, whose w holds that exactly, as a
+// half float's whole numbers stop at 2048), which the boundary passes give the faces round it.
 // Pieces are convex: the distance is the largest of the distances to their planes (exact inside, a little short
 // outside near an edge). Each tile of the grid lists the pieces near it (bodyfield.py).
 //!include common.wgsl
@@ -19,7 +20,7 @@ struct Params {
 @group(0) @binding(2) var<storage, read> TC: array<vec2<u32>>;   // per tile: first, count in TL (this substep's)
 @group(0) @binding(3) var<storage, read> TL: array<u32>;
 @group(0) @binding(4) var sdf: texture_storage_3d<r32float, read_write>;
-@group(0) @binding(5) var svel: texture_storage_3d<rgba16float, write>;
+@group(0) @binding(5) var svel: texture_storage_3d<${SVEL}, write>;   // (the solvers' rgba16float, the matter's rgba32float)
 @group(1) @binding(0) var<uniform> U: Params;
 
 fn rot(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {

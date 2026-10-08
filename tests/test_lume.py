@@ -59,6 +59,35 @@ def test_env_table_shrinks_a_big_hdri():
     assert np.allclose(per_sr, 1 / (4 * math.pi), rtol=2e-3)
 
 
+def test_caustics_aim_at_the_clear_things_and_mirrors_first_then_the_biggest():
+    # nine glazed pots and painted floats (coats), each bigger than the last, listed before a glass ball, a mirror ball
+    # and an ice block: the glass and the mirror are traced at all the same, and of the coats the biggest; still at most
+    # TARGETS of them
+    from types import SimpleNamespace
+    from blackbody.engine.stage import looks
+    sc = Scene()
+    sc.colliders.clear()
+    for k in range(9):
+        sc.add_collider(shape='sphere', position=(k * 0.5, 0.2, 0.0), size=(0.1 + 0.01 * k,) * 3,
+                        material='ceramic' if k % 2 else 'painted')
+    glass = sc.add_collider(shape='sphere', position=(0.0, 0.2, 1.0), size=(0.08,) * 3, material='glass')
+    mirror = sc.add_collider(shape='sphere', position=(1.0, 0.2, 1.0), size=(0.3,) * 3, material='aluminium')
+    sc.add_collider(shape='box', position=(2.0, 0.2, 1.0), size=(0.2,) * 3, material='ice')   # (flat: its shadow is exact)
+    cols = [SimpleNamespace(shape=c['shape'], size=c['size'], pos=c['position']) for c in sc.colliders]
+    rows = looks(sc, False)
+    assert [LU.focusing(r, c) for r, c in zip(rows, cols)][:9] == ['coat'] * 9
+    targets, mask = LU.caustic_targets(sc, cols, rows, None)
+    assert len(targets) == LU.TARGETS
+    assert targets[0][:3] == pytest.approx((0.0, 0.2, 1.0)) and targets[1][:3] == pytest.approx((1.0, 0.2, 1.0))
+    picked = [k for k in range(16) if mask >> k & 1]
+    assert glass in picked and mirror in picked and 11 not in picked
+    assert sorted(picked) == sorted([glass, mirror] + list(range(3, 9)))      # (the six biggest coats; not the two least)
+    # a big clear thing is taken before a small one, and a clear one before a mirror however big
+    assert LU.focused_light('glass', rows[glass], 0.2) > LU.focused_light('glass', rows[glass], 0.1)
+    few, _ = LU.caustic_targets(sc, cols[9:11], rows[9:11], None)
+    assert [t[:3] for t in few] == [pytest.approx((0.0, 0.2, 1.0)), pytest.approx((1.0, 0.2, 1.0))]
+
+
 class _Plan(LU.Lume):
     def __init__(self):   # (no GPU: only the pass bookkeeping)
         self.key, self.passes, self.target, self.pending = None, 0, 0, False

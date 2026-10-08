@@ -109,6 +109,13 @@ fn ign(p: vec2<f32>) -> f32 {
   return fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
 }
 
+// A number in [0, 1) per pixel with no pattern across the picture (a hash), for the shutter time. Interleaved gradient
+// noise is a lattice, and the error a few passes leave in a moving fire is not linear in it, so its lattice came through
+// as a fine diagonal hatching (any lattice does: R2's gives stripes); a hash leaves even grain of the same strength.
+fn pixel_hash(px: vec2<i32>) -> f32 {
+  return f32(pcg3d(vec3<u32>(vec2<u32>(px), 0x5bd1e995u)).x) * (1.0 / 4294967296.0);
+}
+
 // Nearest collider in the shot at fire-local point p: (distance (m), index).
 fn holdout_sdf(p: vec3<f32>) -> vec2<f32> {
   var best = vec2<f32>(1.0e9, -1.0);
@@ -613,7 +620,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let phase = hg(cos_sun, L.amb.w);
   let lscale = U.ln.xyz / n;
   let fade_cells = max(L.misc.y, 1e-3);
-  let shutter = U.frame.y * (fract(ign(vec2<f32>(px) + vec2<f32>(17.0, 59.0)) + U.frame.x * 0.7548776662) - 0.5);
+  // (the pixel's own offset, then each pass's on from it: a pixel's passes stay spread over the shutter)
+  let shutter = U.frame.y * (fract(pixel_hash(px) + U.frame.x * 0.7548776662) - 0.5);
   let rise = vec3<f32>(0.0, -L.misc.w * L.detail.w * L.detail.y, 0.0);
   let max_steps = i32(U.frame.w);
   let vk = max(U.org.w, 1.0);
