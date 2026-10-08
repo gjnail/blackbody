@@ -949,15 +949,22 @@ def _extent(kind, d):
 
 
 def convert_kind(scene: Scene, kind):
-    """Turn a scene into another kind, keeping what each emitter emits."""
+    """Turn a scene into another kind, keeping what each emitter emits. Returns notes for the user (what was turned off)."""
     old = scene.kind
     if old == kind:
-        return
+        return []
     if kind == 'both':
         for e in scene.emitters:
             if old == 'liquid':
                 e['emits'] = 'liquid'
     scene.data['domain']['kind'] = kind
+    if kind != 'fire' and scene.data['domain'].get('grow'):
+        # (Grow to fit is fire-only, and hidden in other scenes, where it could not be turned off; it did nothing in one
+        # that was not fire already, so that goes unsaid)
+        scene.data['domain']['grow'] = False
+        if old == 'fire':
+            return ['Grow to fit is off: the box grows in fire scenes only, and this one now simulates liquid too.']
+    return []
 
 
 def add(scene: Scene, key, at=None, mesh=None):
@@ -975,7 +982,7 @@ def add(scene: Scene, key, at=None, mesh=None):
     if target != scene.kind:
         was = scene.kind
         empty = not (scene.emitters or scene.colliders or scene.fabrics or scene.matter)
-        convert_kind(scene, target)
+        notes += convert_kind(scene, target)
         if empty:   # nothing in it yet: the box takes the shape and grid that kind of simulation wants
             _domain_for(scene, target, round(scene_width(scene), 3))
         if target in ('liquid', 'both') and was == 'fire':
@@ -1159,7 +1166,7 @@ def turn_into(scene: Scene, i, key):
         scene.emitters = others
         target = target_kind(scene, comp) or target
         scene.emitters = keep
-        convert_kind(scene, target)
+        notes += convert_kind(scene, target)
         if target in ('liquid', 'both') and was == 'fire':
             _liquid_look(scene)
         if target == 'both':

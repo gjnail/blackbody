@@ -78,10 +78,11 @@ def set_on_fire(win, kind, i):
     if target is None:
         raise ValueError('Nothing burns in a sky scene.')
     spec = text_spec(d, sc) if kind == 'collider' else None
+    notes = []
 
     def fn(s):
         if target != s.kind:
-            C.convert_kind(s, target)
+            notes[:] = C.convert_kind(s, target)   # (what that turned off, said with the rest)
         dd = _items(s, kind)[i]
         if kind == 'strands':
             dd['burns'] = True
@@ -109,12 +110,12 @@ def set_on_fire(win, kind, i):
     if spec is not None:
         steady = 'Burning logo' if spec.get('kind') == 'image' else 'Burning text'
         _say(win, f'{d["name"]} catches all over at frame {doc.frame}: it flares up and burns out (Spreading fire is on). For '
-                  f'fire that keeps burning on it, use Create › {steady}.')
+                  f'fire that keeps burning on it, use Create › {steady}.' + ''.join(' ' + n for n in notes))
     else:
         _say(win, f'{d["name"]} catches at frame {doc.frame}: the flame at its base lasts 3 s, then the fire is its own'
                   + (' (Spreading fire is on).' if kind == 'collider' else '.')
                   + (' It is breakable too, so it burns piece by piece and falls in.' if kind == 'collider' and d.get('breakable')
-                     else ''))
+                     else '') + ''.join(' ' + n for n in notes))
     doc.set_playing(True)
 
 
@@ -255,10 +256,11 @@ def make_float(win, i, density):
     sc = doc.scene
     d = sc.colliders[i]
     target = C.target_kind(sc, C.BY_KEY['crate'])
+    notes = []
 
     def fn(s):
         if target and target != s.kind:
-            C.convert_kind(s, target)
+            notes[:] = C.convert_kind(s, target)   # (what that turned off, said with the rest)
         c = s.colliders[i]
         c['floating'] = True
         c['density'] = float(density)
@@ -267,7 +269,8 @@ def make_float(win, i, density):
             s.data['liquid']['settle'] = True
     doc.edit(f'{"Float" if density < 1000 else "Sink"} {d["name"]}', fn, structure=True)
     _say(win, f'{d["name"]} {"floats" if density < 1000 else "sinks"} ({density:.0f} kg/m³)'
-              + ('; there was no water, so a pond fills the bottom of the box.' if not C.has_liquid(sc) else '.'))
+              + ('; there was no water, so a pond fills the bottom of the box.' if not C.has_liquid(sc) else '.')
+              + ''.join(' ' + n for n in notes))
     doc.set_playing(True)
 
 

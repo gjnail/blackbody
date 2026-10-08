@@ -91,16 +91,17 @@ def _progress_printer(quiet):
     return cb
 
 
-def _notices(order, engines=None, said=None):
+def _notices(order, engines=None, said=None, final=True):
     """Print what the simulation leaves out or cuts short in the layers `order` ([(uid, scene)]), once each: the scenes'
-    caps before a run (scene/caps.py), or, given their engines (render/layers.LayerEngines), what those said as they
-    ran (Engine.notices). Returns what has been said."""
+    caps before a run (scene/caps.py) and what was cut to fit the GPU (Scene.memory_notes; `final` or draft), or, given
+    their engines (render/layers.LayerEngines), what those said as they ran (Engine.notices). Returns what has been
+    said."""
     said = set() if said is None else said
     for uid, sc in order:
         try:
             if engines is None:
                 from .scene import caps
-                notes = caps.notices(sc)
+                notes = caps.notices(sc) + sc.memory_notes(final)
             else:
                 eng = engines.base if uid == 'base' else engines.extra.get(uid)
                 notes = eng.notices() if eng is not None else []
@@ -222,6 +223,7 @@ def cmd_render(args):
     err = _usd_and_cache(scene, args)
     if err:
         return err
+    scene.from_cache = bool(args.from_cache)   # (laid out as the cache was simulated, on any card: Scene.memory_plan)
     if args.size:
         try:
             w, h = (int(x) for x in args.size.lower().split('x'))
@@ -284,7 +286,7 @@ def cmd_render(args):
             print(f'  -> {o.path}  [{o.label()}]')
     from .render.layers import LayerEngines
     order = scene.layer_order() or [('base', scene)]
-    said = _notices(order)
+    said = _notices(order, final=not args.draft)
     engines = LayerEngines(engine)
     job = RenderJob(scene, outputs, engine, frames=(first, last), final=not args.draft, footage=footage,
                     samples=args.samples, motion_blur=False if args.no_motion_blur else None,
@@ -368,6 +370,9 @@ def cmd_info(args):
         print(f'  {a["name"]} ({a["backend"]}, {a["type"]})')
     g = GPU()
     print(f'Using: {g.name} ({g.backend}); float32 filtering: {"yes" if g.float32_filterable else "no"}')
+    m, GB = g.memory, 2 ** 30
+    print(f'Memory: {m["total"] / GB:.1f} GB ({m["source"]}), {m["free"] / GB:.1f} GB free now; scenes are fitted within '
+          f'{g.plan / GB:.1f} GB' if m else 'Memory: not known (BLACKBODY_GPU_MEMORY gives it, in GB); scenes are made as set')
     print('Video formats:')
     for k, p in available_profiles().items():
         print(f'  {k:12s} {p.label}')
@@ -443,7 +448,7 @@ def cmd_simulate(args):
               f'({dims[0]}x{dims[1]}x{dims[2]} voxels); {len(disk.frames()) if disk else 0} frames already cached'
               + (f', resuming from frame {max(c for c in cps if c <= last)}' if any(c <= last for c in cps) else ''))
     from .render.layers import LayerEngines
-    said = _notices([('base', scene)])
+    said = _notices([('base', scene)], final=final)
     t0 = time.perf_counter()
     report = _progress_printer(args.quiet)
     try:

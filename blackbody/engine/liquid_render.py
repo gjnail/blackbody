@@ -542,8 +542,9 @@ class LiquidRenderer:
             top = max(top, (view.level + crest) / view.h)
         return top + 2.0
 
-    def memory_bytes(self, dims, f):
-        nf = self.surface_dims(dims, f)
+    @staticmethod
+    def memory_bytes(dims, f):
+        nf = LiquidRenderer.surface_dims(dims, f)
         nodes = nf[0] * nf[1] * nf[2]
         blocks = int(np.prod([(x + 1) // 2 for x in dims]))
         return nodes * 24 + min(nodes, SLAB_NODES) * ACC_BYTES + blocks * 72

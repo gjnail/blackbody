@@ -1,7 +1,12 @@
 """The engine thread. All GPU work happens here; the UI talks to it through a command queue and
-gets frames, progress and results back as Qt signals."""
+gets frames, progress and results back as Qt signals.
+
+When the GPU fails under it (its device lost to a driver reset or a time-out, or out of memory),
+the thread makes its engines again, on a new device if the old one is gone, keeping the frames
+they had cached, says so, and carries on (_recover): no restart of the app."""
 from __future__ import annotations
 
+import gc
 import logging
 import queue
 import threading
@@ -13,6 +18,8 @@ from PySide6.QtCore import QThread, Signal
 from PySide6.QtGui import QImage
 
 log = logging.getLogger('blackbody.worker')
+
+RECOVER_TRIES = 3   # times in a row the engine is made again after a GPU failure (no frame drawn between) before it stops
 
 
 def to_qimage(rgba):
@@ -68,6 +75,7 @@ class EngineWorker(QThread):
         self._load_seq = 0      # which scene load (Document.load_seq) the engine is on
         self.layer_engines = None   # render/layers.LayerEngines: the engines of the shot's other layers
         self._precompile = None     # the background compile of the slow shaders (engine/precompile.py)
+        self._recoveries = 0    # engines made again after a GPU failure since a frame was last drawn
 
     # -- API for the GUI thread -------------------------------------------------------------------
 
@@ -119,9 +127,11 @@ class EngineWorker(QThread):
                 if kind == 'quit':
                     self._close_footage()
                     return
+                self._collected()
                 self._handle(kind, value)
             if self.scene is None:
                 continue
+            self._collected()
             try:
                 if self.playing:
                     f = self.frame
@@ -138,12 +148,21 @@ class EngineWorker(QThread):
                     # (Lume adds a few light paths per pixel each refinement: refine again until it has them all)
                     self._refined = not self._lume_pending()
             except Exception as ex:
-                log.exception('render failed')
-                self.message.emit(f'Render failed: {ex}')
-                self.status.emit(f'This frame could not be simulated or drawn:\n{ex}', -2.0)
-                self.playing = False
-                self._need = False
-                self._refined = True
+                self._frame_failed(ex)
+
+    def _frame_failed(self, ex):
+        """A frame could not be simulated or drawn (`ex`): start the GPU's engines again if it was the GPU (_recover), to
+        draw the frame again; else say so, with the advice to restart the app when the GPU keeps failing."""
+        if self._recover(ex):
+            self._need = True        # (the same frame again, on the engine made anew)
+            self._refined = False
+            return
+        log.error('render failed', exc_info=ex)
+        self.message.emit(f'Render failed: {ex}{self._advice}')
+        self.status.emit(f'This frame could not be simulated or drawn:\n{ex}{self._advice}', -2.0)
+        self.playing = False
+        self._need = False
+        self._refined = True
 
     def _handle(self, kind, value):
         if kind == 'scene':
@@ -188,6 +207,90 @@ class EngineWorker(QThread):
             self._need = True
         elif kind == 'still':
             self._still(value)
+
+    # -- GPU failures ---------------------------------------------------------------------------------
+
+    def _recover(self, ex):
+        """After `ex` from a simulation or a render: if the GPU failed (engine/gpu.py failure: its device lost, or out of
+        memory; or it no longer answers), make the engines again with what they had cached (Engine.carry), on a new device
+        if the old one is gone, and say so. On running out of memory the GPU first plans within less, so the scene's grids
+        are made to fit (scene/model.py memory_plan, with a notice of what was cut). False when it was not the GPU, or it
+        failed RECOVER_TRIES times in a row, or could not be started again: then `_advice` says to restart the app, for
+        the caller to add to what it says (not said here: the caller's own message would replace it)."""
+        from ..engine import gpu as G
+        from ..engine.engine import Engine
+        from ..render.layers import LayerEngines
+        self._advice = ''
+        old = self.engine
+        if old is None:
+            return False
+        why = G.failure(ex)
+        if why is None:
+            if old.gpu.alive():
+                return False
+            why = 'lost'
+        self._recoveries += 1
+        if self._recoveries > RECOVER_TRIES:
+            self._advice = (' The GPU ran out of memory again after Blackbody started it afresh (the notices say what the '
+                            'scene needs): save your work, close other programs that use the GPU and restart the app.'
+                            if why == 'memory' else
+                            ' The GPU failed again after Blackbody started it afresh: save your work and restart the app.')
+            return False
+        log.warning('GPU failure (%s): %s; making the engine again', why, ex)
+        g = old.gpu
+        LE = self.layer_engines
+        olds = dict(LE.extra) if LE is not None else {}
+        frames = len(old.cache.items)
+        try:
+            if why == 'lost':
+                reason = g.lost_reason()
+                g = G.GPU()
+                g.keep_plan(old.gpu)   # (a plan cut after running out of memory stays cut: the scene's layout holds)
+                g.on_compile = self._compiling
+            else:
+                plan = g.out_of_memory(ex)
+                g.forget_bindings()   # (so what the old engines made is let go)
+            engine = Engine(g)
+            engine.carry(old)
+            engines = LayerEngines(engine, **({'cache_bytes': LE.cache_bytes} if LE is not None else {}))
+            for uid, e in olds.items():
+                engines.extra[uid] = n = Engine(g, cache_bytes=engines.cache_bytes)
+                n.carry(e)
+        except Exception as ex2:
+            log.exception('the engine could not be made again')
+            self._advice = f' The GPU failed and Blackbody could not start it again ({ex2}): restart the app.'
+            return False
+        self.engine, self.layer_engines = engine, engines
+        # let the old engines go now: the exception's traceback holds them (and, on the same device, their memory)
+        seen = set()
+        while ex is not None and id(ex) not in seen:
+            seen.add(id(ex))
+            ex.__traceback__ = None
+            ex = ex.__cause__ or ex.__context__
+        del old, olds, LE
+        gc.collect()
+        self._collect = True   # (and again once the caller has let go of what it held: a render job, the engines' cycles)
+        if why == 'lost':
+            said = f': {reason.strip().splitlines()[-1]}' if reason.strip() else ''
+            kept = f' and kept the {frames} cached frame{"" if frames == 1 else "s"}' if frames else ''
+            self.message.emit(f'The GPU stopped responding (its device was lost{said}). Blackbody started it again{kept}; '
+                              'frames not cached are simulated again.')
+        else:
+            # (a disk cache's frames are never simulated again for it: scene/model.py memory_plan keeps their layout)
+            self.message.emit(f'The GPU ran out of memory. Blackbody freed it and now fits the scene in about '
+                              f'{plan / G.GB:.1f} GB, keeping what a disk cache holds: the notices say what that changes.')
+        self._shown = None
+        self._last_cache = None
+        return True
+
+    _collect = False
+    _advice = ''   # after _recover gave up: to restart the app (' …'), for the caller's message
+
+    def _collected(self):
+        """After the engines were made again: collect the old ones before anything is allocated on the GPU."""
+        if self._collect:
+            self._collect = False
+            gc.collect()
 
     # -- footage ------------------------------------------------------------------------------------
 
@@ -331,6 +434,7 @@ class EngineWorker(QThread):
         if frames != self._last_cache:
             self._last_cache = frames
             self.cacheChanged.emit(frames)
+        self._recoveries = 0
         return True
 
     def _cache_range(self):
@@ -342,8 +446,16 @@ class EngineWorker(QThread):
         if self.layer_engines is None:
             self.layer_engines = LayerEngines(eng)
         self.message.emit('Simulating the frame range…')
-        ok = simulate(self.layer_engines, sc.layer_order() or [('base', sc)], sc.end, progress=self._progress,
-                      cancelled=self._interrupted)
+        try:
+            ok = simulate(self.layer_engines, sc.layer_order() or [('base', sc)], sc.end, progress=self._progress,
+                          cancelled=self._interrupted)
+        except Exception as ex:
+            if not self._recover(ex):   # (made again: the frames cached so far are kept, and Cache range carries on)
+                log.exception('caching failed')
+                self.message.emit(f'Caching stopped: {ex}{self._advice}')
+                return
+            self.post('cache_range')
+            return
         self.simProgress.emit(1.0, eng.sim_frame or sc.start)
         self.cacheChanged.emit(eng.cache.frames())
         self.message.emit('Frame range cached.' if ok else 'Caching stopped.')
@@ -369,7 +481,12 @@ class EngineWorker(QThread):
                       'frame': spec['frame'], 'path': spec.get('path'), 'mode': spec.get('mode', 'composite')}
             self.stillDone.emit(result, '')
         except Exception as ex:
-            self.stillDone.emit(None, f'{ex}')
+            text = f'{ex}'
+            if self._recover(ex):
+                text += '\n\nThe GPU failed under it: Blackbody started the engine again. Try exporting the frame again.'
+            elif self._advice:
+                text += '\n\n' + self._advice.strip()
+            self.stillDone.emit(None, text)
         finally:
             self.engine.invalidate()
             for e in (self.layer_engines.extra.values() if self.layer_engines is not None else ()):
@@ -401,6 +518,11 @@ class EngineWorker(QThread):
             cancelled = job.cancelled
         except Exception as ex:
             err = f'{ex}\n\n{traceback.format_exc()}'
+            if self._recover(ex):
+                err = (f'{ex}\n\nThe GPU failed under the render: Blackbody started the engine again, and the frames '
+                       'written so far are kept. Render again to carry on.')
+            elif self._advice:
+                err = f'{ex}\n\n{self._advice.strip()}\n\n{traceback.format_exc()}'
         finally:
             self.engine.invalidate()
         self.jobDone.emit(written, cancelled, err)

@@ -418,6 +418,7 @@ class RenderJob:
                                    f'buffer, more than this GPU allows ({min(lim) / 2 ** 30:.1f} GB): use fewer '
                                    'samples or a smaller size.')
         eng.cache_readonly = bool(self.from_cache)
+        sc.from_cache = bool(self.from_cache)   # (the layout the cache was simulated at is read as it is: Scene.memory_plan)
         # (the camera alone needs nothing simulated)
         camera_only = all(o.kind == 'camera' or (o.kind == 'scene' and o.content == 'camera') for o in self.outputs)
         if not camera_only:

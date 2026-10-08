@@ -239,13 +239,17 @@ class LiquidSolver:
         return int(ceil_div(min(int(max_particles), cells * int(ppc)), 64) * 64)
 
     def memory_bytes(self, dims=None, capacity=None, ww_capacity=None):
-        nx, ny, nz = dims or self.dims
+        return self.estimate(dims or self.dims, self.capacity if capacity is None else capacity,
+                             self.ww_capacity if ww_capacity is None else ww_capacity)
+
+    @staticmethod
+    def estimate(dims, capacity, ww_capacity=0):
+        """GPU memory (bytes) a liquid laid out so takes, without one made (scene/model.py memory_estimate)."""
+        nx, ny, nz = dims
         cells = nx * ny * nz
         faces = (nx + 1) * (ny + 1) * (nz + 1)
-        cap = self.capacity if capacity is None else capacity
-        wcap = self.ww_capacity if ww_capacity is None else ww_capacity
-        return int(faces * (16 * 3 + 32) + cells * (4 * 11 + 8 * 2 + 4 * 1.3) + cap * (PARTICLE_BYTES + PACKED_BYTES + 4)
-                   + wcap * (WW_BYTES + WW_PACKED_BYTES))
+        return int(faces * (16 * 3 + 32) + cells * (4 * 11 + 8 * 2 + 4 * 1.3) + capacity * (PARTICLE_BYTES + PACKED_BYTES + 4)
+                   + ww_capacity * (WW_BYTES + WW_PACKED_BYTES))
 
     def configure(self, dims, h, origin, capacity, ww_capacity=0):
         dims = tuple(int(x) for x in dims)

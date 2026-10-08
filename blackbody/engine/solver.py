@@ -369,6 +369,7 @@ class Solver:
         self.spots_obj = None
         self.base = None         # the layout asked for: (dims, h, origin); a growing domain may be larger
         self.grow_count = 0
+        self.grow_held = None    # what last stopped the domain growing further: 'memory', 'texture' or None
         self.water = None
         self.burn_obj = None
         self.burn_slots = None
@@ -386,15 +387,52 @@ class Solver:
         cell = max(w, h, d) / float(res)
         return tuple(max(multiple, int(round(x / cell / multiple)) * multiple) for x in (w, h, d)), cell
 
-    def memory_bytes(self, dims=None, features=None):
-        nx, ny, nz = dims or self.dims
-        f = features or self.features
+    @staticmethod
+    def mg_levels(dims):
+        """The multigrid's grids, finest first: each half the last (rounded up) until one is 8 cells or 3 thin."""
+        levels = [tuple(int(x) for x in dims)]
+        while True:
+            d = levels[-1]
+            if max(d) <= 8 or min(d) <= 3:
+                return levels
+            levels.append(tuple((x + 1) // 2 for x in d))
+
+    @staticmethod
+    def estimate(dims, features=None, upres=1, vel_bytes=16):
+        """GPU memory (bytes) the grids of a solver laid out so take: what _allocate, _allocate_optional and
+        _allocate_fine make. vel_bytes: 16 for rgba32float velocity (GPU.vel_format), 8 for rgba16float."""
+        nx, ny, nz = (int(x) for x in dims)
+        f = features or {}
         cells = nx * ny * nz
-        vb = 16 if self.gpu.vel_format == 'rgba32float' else 8
         faces = (nx + 1) * (ny + 1) * (nz + 1)
-        extra = 8 * 2 * (int(f.get('aux', False)) + int(f.get('chem', False)) + int(f.get('burn', False))) + 4 * int(f.get('stain', False))
-        fine = 28 * self.upres ** 3 if self.upres > 1 else 0
-        return int(faces * vb * 3 + cells * (8 * 5 + 4 * 2 + 4 * 3 * 8 / 7 + extra + fine))
+        levels = Solver.mg_levels((nx, ny, nz))
+        mg = sum(8 * math.prod(d) for d in levels) + sum(4 * math.prod(d) for d in levels[:-1])   # p, rhs; res
+        per = 8 * 5 + 4 * 2                       # scal0, scal1, stmp, curl, force; expansion, sdf
+        per += 16 * sum(int(bool(f.get(k))) for k in ('aux', 'chem', 'burn')) + 4 * int(bool(f.get('stain')))
+        per += 8 * int(bool(f.get('water')))
+        up = max(1, int(upres))
+        fine = 28 * up ** 3 * cells if up > 1 else 0   # scal-fine0, scal-fine1, stmp-fine; sdf-fine
+        spots = nx * nz * 4 if f.get('burn') else 0
+        groups = ceil_div(nx, 8) * ceil_div(ny, 8) * ceil_div(nz, 4)
+        return int(faces * vel_bytes * 3 + cells * per + mg + fine + spots + 12 * groups + 96)
+
+    @staticmethod
+    def view_estimate(dims, features=None, upres=1, vel_bytes=16):
+        """GPU memory (bytes) drawing such a grid takes besides: the renderer's light volume (seven fields at half the
+        drawn grid's resolution) and the textures a frame from the cache is drawn from (engine.volume_for)."""
+        nx, ny, nz = (int(x) for x in dims)
+        f = features or {}
+        up = max(1, int(upres))
+        fine = (nx * up, ny * up, nz * up)
+        light = 7 * 8 * math.prod(max(4, (d + 1) // 2) for d in fine)
+        cached = 8 * math.prod(fine) + vel_bytes * (nx + 1) * (ny + 1) * (nz + 1)
+        cached += nx * ny * nz * (8 * sum(int(bool(f.get(k))) for k in ('aux', 'chem')) + 4 * int(bool(f.get('stain'))))
+        return int(light + cached)
+
+    def memory_bytes(self, dims=None, features=None):
+        """GPU memory (bytes) of the grids, as laid out now (or at other dims and features): Solver.estimate."""
+        vb = 16 if self.gpu.vel_format == 'rgba32float' else 8
+        return self.estimate(dims or self.dims, features or self.features, self.upres, vb)
 
     def configure(self, dims, h, origin, features=None, upres=1):
         """Lay out the grid. Returns False when nothing changed; a domain that has grown (see grow)
@@ -454,12 +492,7 @@ class Solver:
         self.force = self._t3(self.dims, 'rgba16float', 'force')
         self.expo = self._t3(self.dims, 'r32float', 'expansion')
         self.sdf = self._t3(self.dims, 'r32float', 'sdf')
-        self.levels = [self.dims]
-        while True:
-            d = self.levels[-1]
-            if max(d) <= 8 or min(d) <= 3:
-                break
-            self.levels.append(tuple((x + 1) // 2 for x in d))
+        self.levels = self.mg_levels(self.dims)
         self.P = [self._t3(d, 'r32float', f'p{i}') for i, d in enumerate(self.levels)]
         self.RHS = [self._t3(d, 'r32float', f'rhs{i}') for i, d in enumerate(self.levels)]
         self.RES = [self._t3(d, 'r32float', f'res{i}') for i, d in enumerate(self.levels[:-1])]
@@ -661,7 +694,7 @@ class Solver:
         """Water vapour is carried when the scene asks for it, and always when liquid water shares the box."""
         return bool(self.aux) and (prm.vapour or self.water is not None)
 
-    def _init_burn(self, b, prm: SolverParams):
+    def _init_burn_floor(self, b, prm: SolverParams):
         sp = prm.spread
         u = (self._grid(0.0, prm)
              .v4(1.0 if sp.ground else 0.0, sp.area[0] * 0.5, sp.area[1] * 0.5, sp.coverage)
@@ -669,6 +702,9 @@ class Solver:
         pack_colliders(u, self.colliders, self.meshes)
         for t in self.burn:
             b.run(self._k['burn_init'], [self.meshes.atlas, t], u, self.dims)
+
+    def _init_burn(self, b, prm: SolverParams):
+        self._init_burn_floor(b, prm)
         self._layout_burn_obj()
         if self.burn_obj:
             u = self._burn_obj_uniforms(0.0, prm, [])
@@ -1127,26 +1163,83 @@ class Solver:
         self.steps = int(st.get('steps', 0))
         self.max_speed = float(st.get('max_speed', 0.0))
 
-    def grow(self, lo_cells, hi_cells):
+    def _carried(self):
+        """The fields a growing box carries over (the rest start again empty, as in a checkpoint): {name: texture}."""
+        out = {'vel': self.vel[0], 'scal': self.scal[0], 'p': self.P[0]}
+        for name in ('aux', 'chem', 'burn'):
+            t = getattr(self, name)
+            if t:
+                out[name] = t[0]
+        if self.stain:
+            out['stain'] = self.stain
+        if self.scal_fine is not None:
+            out['scal_fine'] = self.scal_fine[0]
+        return out
+
+    def growth_bytes(self, dims):
+        """GPU memory (bytes) growing to `dims` takes at its peak: the larger grids and, while they are copied over, the
+        fields carried (Solver.grow)."""
+        vb = 16 if self.gpu.vel_format == 'rgba32float' else 8
+        return self.estimate(dims, self.features, self.upres, vb) + sum(t.nbytes for t in self._carried().values())
+
+    def grow(self, lo_cells, hi_cells, room=None):
         """Enlarge the domain by lo_cells / hi_cells (x, y, z) on its low and high sides, keeping the
-        simulation. The origin moves out by lo_cells, so everything stays where it is in the world."""
+        simulation. The origin moves out by lo_cells, so everything stays where it is in the world.
+
+        The fields are copied into the larger grids on the GPU (texture to texture: a few milliseconds), the old ones
+        kept until then. With `room` (bytes free for the grids) too small for both at once, they go through the
+        computer's memory instead (save_state and load_state: a fraction of a second, but only one set on the GPU)."""
         lo = np.asarray(lo_cells, int)
         hi = np.asarray(hi_cells, int)
         if not (lo.any() or hi.any()):
             return False
-        st = self.save_state()
         base, feats, upres, colliders = self.base, dict(self.features), self.upres, list(self.colliders)
         count = self.grow_count
         dims = tuple(int(x) for x in np.asarray(self.dims) + lo + hi)
         origin = tuple(float(x) for x in np.asarray(self.origin) - lo * self.h)
+        vb = 16 if self.gpu.vel_format == 'rgba32float' else 8
+        on_gpu = room is None or self.growth_bytes(dims) <= room + self.estimate(self.dims, feats, upres, vb)
+        if on_gpu:
+            keep = self._carried()
+            for group in (self._tex, self._opt, self._fine):   # (out of what configure lets go)
+                group[:] = [t for t in group if all(t is not k for k in keep.values())]
+            moved = (self.time, self.steps, self.max_speed, self._stain_dirty)
+        else:
+            st = self.save_state()
         self.base = None
         self.configure(dims, self.h, origin, feats, upres)
         self.base = base
         self.colliders = []
         self.set_colliders(colliders)
-        self.load_state(st, tuple(lo))
+        if on_gpu:
+            self._paste_grown(keep, lo)
+            self.time, self.steps, self.max_speed, self._stain_dirty = moved
+        else:
+            self.load_state(st, tuple(lo))
         self.grow_count = count + 1
         return True
+
+    def _paste_grown(self, keep, lo):
+        """Copy the fields kept from before the box grew (Solver._carried) into the new grids, `lo` cells in from the low
+        corner, on the GPU; then let them go. What load_state does through the computer's memory."""
+        at = tuple(int(x) for x in lo)
+        fine_at = tuple(x * self.upres for x in at)
+        prm = self._prm
+        with self.gpu.batch() as b:
+            if 'burn' in keep:
+                self._init_burn_floor(b, prm)   # (the new floor laid out, then the old one's state over its part of it)
+            pairs = [('vel', self.vel[0]), ('scal', self.scal[0]), ('p', self.P[0])]
+            pairs += [(n, getattr(self, n)[0]) for n in ('aux', 'chem') if n in keep]
+            pairs += [('burn', t) for t in (self.burn or [])] if 'burn' in keep else []
+            pairs += [('stain', self.stain)] if 'stain' in keep else []
+            for name, dst in pairs:
+                b.copy_texture(keep[name], dst, size=keep[name].size, dst_origin=at)
+            if 'scal_fine' in keep and self.scal_fine is not None:
+                b.copy_texture(keep['scal_fine'], self.scal_fine[0], size=keep['scal_fine'].size, dst_origin=fine_at)
+        if 'burn' in keep:
+            self._burn_dirty = False   # (the objects' burn atlas is laid out by their size, not the box's: kept as it is)
+        for t in keep.values():
+            t.destroy()
 
     def grown(self):
         return self.base is not None and self.dims is not None and tuple(self.dims) != tuple(self.base[0])
@@ -1158,25 +1251,52 @@ class Solver:
             self.base = None
             self.configure(*base, feats, upres)
 
-    def growth_needed(self, margin, step, limit_dims, prm: SolverParams):
+    def growth_needed(self, margin, step, limit_dims, prm: SolverParams, max_bytes=None, max_side=None):
         """Cells to add on each side (lo, hi) when the smoke's bounding box comes within `margin` cells
-        of an open side, `step` cells at a time, up to `limit_dims` cells per axis."""
+        of an open side, `step` cells at a time, up to `limit_dims` cells per axis. Never past `max_side`
+        cells a side (the GPU's largest 3-D texture: the velocity grid is a cell larger, the upres grid
+        upres times finer), nor past `max_bytes` for the grids and drawing them (footprint): smaller
+        steps, then fewer sides. `grow_held` then says what stopped it ('memory' or 'texture'; None if
+        nothing did)."""
         lo, hi = np.zeros(3, int), np.zeros(3, int)
+        self.grow_held = None
         if self.bbox is None:
             return lo, hi
         b0, b1 = np.asarray(self.bbox[0]), np.asarray(self.bbox[1])
         d = np.asarray(self.dims)
         step = max(8, int(step) // 8 * 8)             # whole blocks of 8 cells, for the multigrid
-        room = (np.asarray(limit_dims) - d) // 8 * 8
+        asked = limit = np.asarray(limit_dims)
+        if max_side:
+            limit = np.minimum(asked, min(int(max_side) - 1, int(max_side) // max(self.upres, 1)))
+        room = (limit - d) // 8 * 8
         open_lo = [prm.open_sides, False, prm.open_sides]   # never below the ground
         open_hi = [prm.open_sides, prm.open_top, prm.open_sides]
         for a in range(3):
-            if open_lo[a] and b0[a] < margin and room[a] > 0:
+            near = (open_lo[a] and b0[a] < margin, open_hi[a] and b1[a] > d[a] - margin)
+            if any(near) and room[a] <= 0 and limit[a] < asked[a]:
+                self.grow_held = 'texture'
+            if near[0] and room[a] > 0:
                 lo[a] = min(step, room[a])
                 room[a] -= lo[a]
-            if open_hi[a] and b1[a] > d[a] - margin and room[a] > 0:
+            if near[1] and room[a] > 0:
                 hi[a] = min(step, room[a])
+        if max_bytes is not None:
+            sides = [(s, a) for a in (1, 0, 2) for s in (hi, lo)]   # (the last to go: up, where smoke goes most)
+            while (lo.any() or hi.any()) and self.footprint(tuple(d + lo + hi)) > max_bytes:
+                self.grow_held = 'memory'
+                if max(lo.max(), hi.max()) > 8:
+                    np.minimum(lo, 8, out=lo)
+                    np.minimum(hi, 8, out=hi)
+                else:
+                    s, a = next((s, a) for s, a in reversed(sides) if s[a] > 0)
+                    s[a] = 0
         return lo, hi
+
+    def footprint(self, dims=None):
+        """GPU memory (bytes) of the grids at `dims` (as laid out now by default) and of drawing them (view_estimate)."""
+        vb = 16 if self.gpu.vel_format == 'rgba32float' else 8
+        dims = dims or self.dims
+        return self.estimate(dims, self.features, self.upres, vb) + self.view_estimate(dims, self.features, self.upres, vb)
 
     def read_velocity_centres(self):
         """(nz, ny, nx, 3) float32 cell-centred velocity (m/s)."""

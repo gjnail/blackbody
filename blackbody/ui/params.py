@@ -824,8 +824,22 @@ class ParamRow(QWidget):
                 self._changed = changed
                 self.label.setStyleSheet(f'color: {theme.CHANGED};' if changed else '')
             self.reset_btn.set_active(changed, f'Changed from the preset. Click to put back its value: {_show(s, base)}' if changed else '')
+            if self.path == ('domain', 'resolution'):
+                self._memory_tip()
         finally:
             self._busy = False
+
+    def _memory_tip(self):
+        """Voxels: what a final render needs of the GPU's memory at this setting, and what the GPU has room for."""
+        from ..engine.gpu import GB, card
+        try:
+            _res, _up, need, cut = self.doc.scene.memory_plan(final=True)
+        except Exception:   # (a scene being replaced)
+            return
+        plan = card()['plan']
+        self.editor.setToolTip(self.tip + f'<br><br>A final render needs about {need / GB:.1f} GB of GPU memory'
+                               + (f', of the {plan / GB:.1f} GB this GPU has room for' if plan else '') + '.'
+                               + (f'<br>{cut}' if cut else ''))
 
 
 # Groups of expert settings that start closed (a click opens them, and they then stay open)

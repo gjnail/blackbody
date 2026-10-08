@@ -1,17 +1,20 @@
 """The scene: every setting of a shot, how it animates, and how it maps onto the engine."""
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import json
 import math
 import os
+import weakref
 from pathlib import Path
 
 import numpy as np
 
 from ..engine import SIM_VERSION
 from ..engine import camera as cam
+from ..engine.gpu import GB, card as gpu_card
 from ..engine.lut import flame_ev
 from ..engine.embers import EmberParams
 from ..engine.renderer import CompParams, LookParams
@@ -75,7 +78,25 @@ PUFF_BLEND = 1.2          # Puffing at 1: how firmly the gas over the base is st
 PUFF_HEAT = 3.0           # and how much hotter it gets at the peak of a surge
 AUTO_PX_PER_CELL = 1.5    # Resolution from the shot: screen pixels per cell of the final grid
 AUTO_MAX_UPRES = 3        # the detail upres it goes up to
-AUTO_MAX_BYTES = 2.0e9    # within this much GPU memory for the grids (the simulation plus the upres grid)
+AUTO_MAX_BYTES = 2.0e9    # within this much GPU memory for the grids (the simulation plus the upres grid), and
+AUTO_SHARE = 0.5          # this share of the GPU's plan for a scene (engine/gpu.py card(): from the card's size). Not more
+#                           on a larger card: upres 3 for 2 costs two to three times the final render (Fireball, Hillside
+#                           fire, Gas cloud and Shed fire would take it on a 24 GB card: 1.6 to 3.1 times as long a frame)
+PICTURE_BYTES = 320       # GPU memory per pixel of the output: the renderer's passes, bloom, and a refined frame's sums
+LIQUID_PICTURE_BYTES = 48  # and a liquid's surface hits besides
+MIN_RES = 16              # the fewest voxels on the longest side a scene is cut to, to fit the GPU
+MIN_GRID_SHARE = 0.25     # of the GPU's plan the grids always keep, however much a large output takes
+
+
+_PLANS = weakref.WeakKeyDictionary()   # scene: memory_plan's answers while it is held unchanged (Scene.planned; a copy
+#                                        made meanwhile is not held)
+
+
+def auto_max_bytes():
+    """What Resolution from the shot may give the grids: AUTO_MAX_BYTES, and on a smaller card AUTO_SHARE of what the GPU
+    plans to give a scene (from the card's size, so the same on every start)."""
+    plan = gpu_card()['plan']
+    return AUTO_MAX_BYTES if plan is None else min(AUTO_MAX_BYTES, AUTO_SHARE * plan)
 
 
 def _positive(v):
@@ -150,6 +171,10 @@ def turn_matrix(yaw, pitch=0.0, roll=0.0):
 
 
 class Scene:
+    # rendered from a disk cache simulated before, maybe on another machine (render --from-cache: RenderJob): the layout
+    # the cache holds is taken as it is, even past what this GPU plans for (memory_plan)
+    from_cache = False
+
     def __init__(self):
         self.name = 'Untitled'
         self.data = {s: defaults(s) for s in SECTIONS}
@@ -614,16 +639,263 @@ class Scene:
         return (float(d['size_x']), float(d['size_y']), float(d['size_z']))
 
     def sim_layout(self, final=False):
-        """Grid dims, cell size (m) and grid corner (fire-local metres)."""
-        d = self.data['domain']
-        scale = self.data['render']['final_scale'] if final else d['preview_scale']
-        res = max(16, int(round(d['resolution'] * scale)))
-        auto = self.auto_detail() if final else None
-        if auto:
-            res = auto[0]
+        """Grid dims, cell size (m) and grid corner (fire-local metres), at the voxels memory_plan settles on."""
+        return self._layout_at(self.memory_plan(final)[0])
+
+    def _layout_at(self, res):
         dims, h = Solver.dims_for(self.domain_size(), res)
         origin = (-dims[0] * h / 2.0, 0.0, -dims[2] * h / 2.0)
         return dims, h, origin
+
+    def _asked_detail(self, final=False, budget=None):
+        """(voxels on the longest side, detail upres) as the settings ask, before memory_plan fits them to the GPU (with
+        Resolution from the shot, within `budget`: auto_detail)."""
+        d, r = self.data['domain'], self.data['render']
+        auto = self.auto_detail(budget) if final else None
+        if auto:
+            return auto
+        res = max(MIN_RES, int(round(d['resolution'] * (r['final_scale'] if final else d['preview_scale']))))
+        return res, (max(1, int(r['upres'])) if (final or r.get('upres_preview')) else 1)
+
+    def _wanted_detail(self, final=False):
+        """What the settings and the shot ask for with no GPU to fit: _asked_detail with Resolution from the shot
+        unbounded by memory. The same on any machine, so a disk cache records it (Scene.cache_fit)."""
+        return self._asked_detail(final, math.inf)
+
+    def cache_folder(self, final=False):
+        """Where this scene's disk cache keeps its final or viewer frames (Domain › Disk cache, Cache folder)."""
+        from ..io.simcache import default_root
+        d = self.data['domain']
+        return (Path(d['cache_dir']) if d.get('cache_dir') else default_root(self.path)) / ('final' if final else 'preview')
+
+    def cache_fit(self, final=False):
+        """(voxels on the longest side, detail upres) this scene's disk cache holds its simulation at, when the cache is
+        of this scene (the same settings and the same detail asked for: only what was fitted to a GPU may differ) and
+        has frames in it; else None. memory_plan keeps that layout while it fits (and, after running out of memory,
+        while it fits the card), so a cache survives a start on a GPU with less room, and a render from the cache (on
+        any machine) reads it as it is. The scene's own signature is compared ('scene' in meta.json: the engine may sign
+        the cache with more besides, as the solids' fingerprint)."""
+        if not self.data['domain'].get('disk_cache'):
+            return None
+        from ..io.simcache import has_frames, read_meta
+        folder = self.cache_folder(final)
+        meta = read_meta(folder)
+        sig = meta.get('scene', meta.get('signature'))
+        fit, wanted = meta.get('fit'), meta.get('wanted')
+        if isinstance(fit, list) and len(fit) == 2 and isinstance(wanted, list) and len(wanted) == 2:
+            fit = (int(fit[0]), int(fit[1]))
+            if tuple(int(x) for x in wanted) != self._wanted_detail(final):
+                return None
+        elif self.from_cache and sig:
+            # (a cache from before layouts were recorded, rendered from: the scene as it was then laid out, if it is that)
+            fit = self._asked_detail(final, AUTO_MAX_BYTES)
+        else:
+            return None   # (none yet)
+        if self.sim_signature(final, fit) != sig or not has_frames(folder):
+            return None
+        return fit
+
+    def cache_about(self, final=False):
+        """What a disk cache records beside the signature (io/simcache.py SimCache, meta.json): the layout the scene is
+        simulated at and the one it asked for, and the scene's own signature at that layout (cache_fit)."""
+        return {'fit': list(self.memory_plan(final)[:2]), 'wanted': list(self._wanted_detail(final)),
+                'scene': self.sim_signature(final)}
+
+    def memory_estimate(self, final=False, res=None, upres=None):
+        """About how much GPU memory (bytes) the scene takes with `res` voxels on the longest side and detail `upres` (by
+        default as the settings ask): {'simulation': its grids and particles, 'drawing': what drawing those takes (the
+        light volume, the liquid's surface grid, a cached frame's textures), 'pictures': the output's passes, 'total'}.
+        Meshes, fabric, grass, matter and Lume are left to the GPU's PLAN_RESERVE (engine/gpu.py)."""
+        from ..engine.liquid import LiquidSolver
+        from ..engine.liquid_render import LiquidRenderer
+        r0, u0 = self._asked_detail(final) if res is None or upres is None else (res, upres)
+        res, upres = (r0 if res is None else res), (u0 if upres is None else upres)
+        dims = Solver.dims_for(self.domain_size(), res)[0]
+        W, H = self.output_size()
+        sim = draw = 0
+        kind = self.kind
+        if kind == 'cloud':
+            from ..engine.cloud import FIELD_FMT
+            from ..engine.gpu import texel_bytes
+            fb = texel_bytes(FIELD_FMT)
+            cells, faces = math.prod(dims), math.prod(x + 1 for x in dims)
+            levels = Solver.mg_levels(dims)
+            sim = (3 * faces + 7 * cells) * fb + 8 * cells + sum(8 * math.prod(x) for x in levels) \
+                + sum(4 * math.prod(x) for x in levels[:-1])   # (cloud.py configure: v; a, b, curl; sdf, expansion)
+            draw = 72 * cells   # (cloud_render.py: its light, density and ice fields, and a cached frame's two)
+        if kind in ('fire', 'both'):
+            up = upres if kind == 'fire' else (max(1, int(self.data['render']['upres'])) if final else 1)
+            feats = self.features()
+            sim += Solver.estimate(dims, feats, up)
+            draw += Solver.view_estimate(dims, feats, up)
+        if kind in ('liquid', 'both'):
+            q = self.data['liquid']
+            cap = LiquidSolver.capacity_for(dims, int(q['ppc']), q['max_particles'] * 1e6,
+                                            band=int(q['band_width']) if q.get('narrow_band') else None)
+            liquid = LiquidSolver.estimate(dims, cap, self.whitewater_capacity())
+            sim += liquid * (2 if self.has_lava() else 1)   # (lava: a liquid of its own beside the water)
+            f = float(self.data['water']['surface_res']) if final else min(float(self.data['water']['surface_res']), 2.0)
+            draw += LiquidRenderer.memory_bytes(dims, f) * (2 if self.has_lava() else 1)
+            draw += 7 * 8 * math.prod(max(4, (x + 1) // 2) for x in dims)
+        px = PICTURE_BYTES + (LIQUID_PICTURE_BYTES if kind in ('liquid', 'both') else 0)
+        out = {'simulation': int(sim), 'drawing': int(draw), 'pictures': int(W * H * px)}
+        out['total'] = sum(out.values())
+        return out
+
+    def memory_room(self, final=False, plan=None):
+        """Bytes the grids (the simulation and drawing it: memory_estimate) may take on the GPU in use: `plan`, by default
+        what it plans to give a scene (engine/gpu.py card(), from the card's size, less after running out of memory),
+        less the output's passes, but never under MIN_GRID_SHARE of the plan. None when the card's memory is not known
+        (or no GPU has been made)."""
+        plan = gpu_card()['plan'] if plan is None else plan
+        if plan is None:
+            return None
+        W, H = self.output_size()
+        px = PICTURE_BYTES + (LIQUID_PICTURE_BYTES if self.kind in ('liquid', 'both') else 0)
+        return max(plan - W * H * px, MIN_GRID_SHARE * plan)
+
+    def memory_plan(self, final=False):
+        """What the grids are made at on the GPU in use (engine/gpu.py card()): (voxels on the longest side, detail upres,
+        the estimate in bytes, what was cut to fit, in words, or None). The scene as set is kept while its estimate fits
+        within what the GPU plans to give a scene (memory_room) and every grid within its largest 3-D texture; past
+        either the detail upres steps down first (the fire's; a fire-and-liquid box keeps its own), then the voxels.
+        Before a GPU is made, or when its memory is not known, the scene is taken as set. The plan comes from the card's
+        size, never from what happens to be free, so the layout (and the disk cache's signature) is the same on every
+        start; and a disk cache that holds this scene at another layout (cache_fit) keeps it while it fits, and always
+        when rendered from the cache (from_cache). A plan cut after running out of memory never costs a disk cache its
+        frames: a cached layout that fits the card's own plan is kept, with a notice saying what to do if it runs out
+        again."""
+        memo = _PLANS.get(self)
+        if memo is not None and final in memo:
+            return memo[final]
+        out = self._memory_plan(final)
+        if memo is not None:
+            memo[final] = out
+        return out
+
+    @contextlib.contextmanager
+    def planned(self):
+        """A block in which the scene does not change (Engine.prepare): memory_plan, which its layout, upres, signature
+        and notices all ask, works its answer out once in it (with a disk cache, that reads and checks the cache's)."""
+        if self in _PLANS:
+            yield
+            return
+        _PLANS[self] = {}
+        try:
+            yield
+        finally:
+            _PLANS.pop(self, None)
+
+    def _memory_plan(self, final):
+        from ..engine.liquid_render import LiquidRenderer
+        res0, up0 = res, up = self._asked_detail(final)
+        c = gpu_card()
+        plan, side = c['plan'], c['side']
+        kind = self.kind
+        fire = kind == 'fire'
+        both_up = max(1, int(self.data['render']['upres'])) if (final and kind == 'both') else 1
+        w = self.data['water']['surface_res']
+        surf = max(0.5, float(w)) if final else min(float(w), 2.0)   # (the liquid's surface grid: LiquidRenderer)
+
+        def too_wide(r, u):
+            if not side:
+                return False
+            dims = Solver.dims_for(self.domain_size(), r)[0]
+            n = max(dims)
+            if kind in ('liquid', 'both') and max(LiquidRenderer.surface_dims(dims, surf)) > side:
+                return True
+            return n + 1 > side or n * (u if fire else both_up) > side
+
+        def grids(r, u):
+            e = self.memory_estimate(final, r, u)
+            return e['simulation'] + e['drawing'], e
+
+        room = self.memory_room(final)
+        why = None
+        while fire and up > 1 and too_wide(res, up):
+            up, why = up - 1, 'texture'
+        while res > MIN_RES and too_wide(res, up):
+            res, why = res - 1, 'texture'
+        need, est = grids(res, up)
+        total0 = est['total']
+        if room is not None and need > room:
+            why = 'memory'
+            while fire and up > 1 and need > room:
+                up -= 1
+                need, est = grids(res, up)
+            if need > room and res > MIN_RES:   # (about as the cube of the voxels; then step down to it)
+                res = max(MIN_RES, min(res - 1, int(res * (room / need) ** (1.0 / 3.0))))
+                need, est = grids(res, up)
+                while need > room and res > MIN_RES:
+                    res = max(MIN_RES, res - max(1, res // 32))
+                    need, est = grids(res, up)
+        name = c['name'] or 'the GPU'
+        kept = self.cache_fit(final)
+        if kept is not None and kept != (res, up):   # (the disk cache holds the scene at another layout)
+            need, est = grids(*kept)
+            wide = too_wide(*kept)
+            fits = not wide and (room is None or need <= room)
+            # (past a plan cut after running out of memory, but within the card's own plan, or on a card whose memory
+            # is not known, where the scene was laid out as set: the cached frames are kept rather than simulated again
+            # within less; if it runs out again the app gives up, and this says why)
+            card_room = self.memory_room(final, c['card_plan']) if c.get('card_plan') else None
+            held = not fits and not wide and (card_room is None or need <= card_room)
+            if fits or held or self.from_cache:
+                note, did = None, self._did(final, 'read')
+                if held and not self.from_cache:
+                    note = (f'{self._did(final, "keep")} the layout the disk cache holds ({kept[0]} voxels on the longest '
+                            f'side, Detail upres {kept[1]}) and its frames: that needs about {est["total"] / GB:.1f} GB, '
+                            f'more than the {plan / GB:.1f} GB {name} has had room for since it ran out of memory. If '
+                            'it runs out again, close other programs that use the GPU and restart Blackbody, or delete the '
+                            f'disk cache ({self.cache_folder(final)}) to simulate the scene within less.')
+                elif not fits:
+                    note = (f'{did} the disk cache at {kept[0]} voxels on the longest side and Detail upres {kept[1]}, as it '
+                            f'was simulated: more than {name} has room for, so it may run out of memory.')
+                elif kept[0] < res0 or kept[1] < up0:   # (less than asked: say so; more is not worth a word)
+                    cut = self._cut_words(final, kept, (res0, up0))
+                    note = (f'{did} the disk cache with {cut}, as it was simulated.' if self.from_cache else
+                            f'{self._did(final, "simulate")} with {cut}: the disk cache holds the simulation so. Delete the '
+                            f'disk cache ({self.cache_folder(final)}) to simulate '
+                            + ('it as set.' if (res, up) == (res0, up0) else 'it again with what this GPU has room for.'))
+                return kept[0], kept[1], est['total'], note
+            need, est = grids(res, up)
+        if (res, up) == (res0, up0):
+            return res, up, est['total'], None
+        what = f'{self._did(final, "simulate")} with {self._cut_words(final, (res, up), (res0, up0))}'
+        if why == 'memory':
+            W, H = self.output_size()
+            big = est['pictures'] > 0.5 * plan
+            # (only what can be lowered: Detail upres set by hand above 1, Voxels above the least)
+            hand = [k for k, can in (('Voxels', res0 > MIN_RES), ('Detail upres', up0 > 1 and int(self.data['render']['upres']) > 1))
+                    if can]
+            note = (f'{what}: as set, the scene needs about {total0 / GB:.1f} GB of GPU memory, more than the '
+                    f'{plan / GB:.1f} GB {name} has room for.'
+                    + (f' Lower {" or ".join(hand)} yourself to choose what gives way' if hand else '')
+                    + (f'; the {W}×{H} output alone takes about {est["pictures"] / GB:.1f} GB.' if big
+                       else ('.' if hand else '')))
+        else:
+            note = f'{what}: {name} makes 3-D textures at most {side} cells a side.'
+        return res, up, est['total'], note
+
+    @staticmethod
+    def _did(final, verb):
+        """'Final renders simulate' or 'The viewer simulates' (any verb)."""
+        return f'Final renders {verb}' if final else f'The viewer {verb}s'
+
+    def _cut_words(self, final, got, asked):
+        """'… instead of …' for a layout `got` (voxels, upres) in place of the one `asked` for, naming Resolution from the
+        shot when it picked the detail upres."""
+        (res, up), (res0, up0) = got, asked
+        picked = final and int(self.data['render']['upres']) <= 1 and self.auto_detail() is not None
+        cut = ([f'{res} voxels on the longest side instead of {res0}'] if res != res0 else []) + \
+              ([f'Detail upres {up} instead of the {up0} Resolution from the shot picked' if picked
+                else f'Detail upres {up} instead of {up0}'] if up != up0 else [])
+        return ' and '.join(cut)
+
+    def memory_notes(self, final=False):
+        """What memory_plan cut to fit the GPU, in words, for Engine.notices (empty when the scene fits as set)."""
+        note = self.memory_plan(final)[3]
+        return [note] if note else []
 
     def wind(self, frame, fire_yaw_deg):
         m = self.data['motion']
@@ -1339,12 +1611,9 @@ class Scene:
         return int(r['width']), int(r['height'])
 
     def upres_for(self, final=False):
-        """The detail upres factor: in final renders, and in the viewer with Render › Upres in the viewer."""
-        r = self.data['render']
-        auto = self.auto_detail() if final else None
-        if auto:
-            return auto[1]
-        return max(1, int(r['upres'])) if (final or r.get('upres_preview')) else 1
+        """The detail upres factor: in final renders, and in the viewer with Render › Upres in the viewer (as memory_plan
+        settles it)."""
+        return self.memory_plan(final)[1]
 
     def substep_cap(self, frame, h=None):
         """The most substeps a frame may take: Domain › Max substeps, raised with the time scale (each frame then
@@ -1356,11 +1625,12 @@ class Scene:
             cap *= max(1.0, max(self.domain_size()) / max(d['resolution'], 1) / h)
         return int(math.ceil(cap))
 
-    def auto_detail(self):
+    def auto_detail(self, budget=None):
         """Render › Resolution from the shot: (voxels on the longest side, upres) for final renders. The voxels
         stay as set; with Detail upres left at 1, the upres rises until a cell of the upres grid is about
         AUTO_PX_PER_CELL pixels on screen where the box is largest in the shot (checked at a few frames), within
-        AUTO_MAX_UPRES and the memory budget. None when it is off or the box is not in view."""
+        AUTO_MAX_UPRES and the memory `budget` (bytes; by default auto_max_bytes: about 2 GB, less on a small card).
+        None when it is off or the box is not in view."""
         r, d = self.data['render'], self.data['domain']
         if not r.get('auto_resolution') or self.kind != 'fire':
             return None
@@ -1391,14 +1661,18 @@ class Scene:
         if hand_up > 1:
             return res, hand_up   # Detail upres set by hand is kept
         up = min(max(1, math.ceil(cells / res)), AUTO_MAX_UPRES)
-        # within the memory budget (Solver.memory_bytes, about), never below the hand settings
+        # within the memory budget (about, per cell: a tuned rule of thumb, kept so the upres it picks stays where it
+        # was; memory_plan checks the scene against the card with Solver.estimate), never below the hand settings
         n = int(np.prod(Solver.dims_for(self.domain_size(), res)[0]))
-        while up > hand_up and n * (62 + 28 * up ** 3) > AUTO_MAX_BYTES:
+        budget = auto_max_bytes() if budget is None else budget
+        while up > hand_up and n * (62 + 28 * up ** 3) > budget:
             up -= 1
         return res, up
 
-    def sim_signature(self, final=False):
-        """Changes whenever anything that affects the simulation changes."""
+    def sim_signature(self, final=False, fit=None):
+        """Changes whenever anything that affects the simulation changes. `fit`: (voxels, upres) to sign the scene at in
+        place of what memory_plan settles on (Scene.cache_fit)."""
+        res, up = fit if fit is not None else self.memory_plan(final)[:2]
         blob = {
             'sections': {s: {k: _to_json_value(v) for k, v in self.data[s].items() if (s, k) not in CACHE_ONLY and (s, k) not in LOOK_KEYS}
                          for s in SIM_SECTIONS},
@@ -1415,7 +1689,7 @@ class Scene:
                         for m in getattr(self, 'strands', None) or []],
             'shots': [{k: _to_json_value(v) for k, v in m.items() if k != 'name'}
                       for m in getattr(self, 'shots', None) or []],
-            'fps': self.fps, 'start': self.start, 'layout': [list(x) if isinstance(x, tuple) else x for x in self.sim_layout(final)],
+            'fps': self.fps, 'start': self.start, 'layout': [list(x) if isinstance(x, tuple) else x for x in self._layout_at(res)],
             'embers': {k: _to_json_value(v) for k, v in self.data['embers'].items()},
             'fire_yaw': _to_json_value(self.data['camera']['fire_yaw']),
             'meshes': self._mesh_stamps(),
@@ -1423,7 +1697,7 @@ class Scene:
             # air's temperature and humidity: with steam these look settings change the simulation too
             'steam': ([round(self.boil_temp(), 5)] + [self.data['shading'][k] for k in ('ambient_k', 'flame_k', 'humidity')]
                       if self.features()['vapour'] else None),
-            'upres': self.upres_for(final),
+            'upres': up,
             'engine': SIM_VERSION,     # (frames simulated by older code are another simulation's)
         }
         return hashlib.sha1(json.dumps(blob, sort_keys=True, default=str).encode()).hexdigest()[:16]

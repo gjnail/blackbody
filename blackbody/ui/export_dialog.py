@@ -309,8 +309,10 @@ class ExportDialog(QDialog):
         sc = getattr(self.doc, 'shot', self.doc.scene).copy()
         sc.data['render']['final_scale'] = self.res_scale.value()
         dims, h, _ = sc.sim_layout(final=True)
-        mem = dims[0] * dims[1] * dims[2] * 88 / 1e9
-        self.res_label.setText(f'{dims[0]}×{dims[1]}×{dims[2]} voxels · {h * 1000:.1f} mm · about {mem:.1f} GB of GPU memory')
+        _res, _up, need, cut = sc.memory_plan(final=True)
+        self.res_label.setText(f'{dims[0]}×{dims[1]}×{dims[2]} voxels · {h * 1000:.1f} mm · about {need / 2 ** 30:.1f} GB of GPU memory'
+                               + (' · not as set (its tooltip says why)' if cut else ''))
+        self.res_label.setToolTip(cut or '')
         outs = self.outputs()
         paths = [o.path for o in outs]
         notes = output_notes(getattr(self.doc, 'shot', self.doc.scene), outs)

@@ -3,6 +3,14 @@
 Every simulation and render pass is a compute kernel. A kernel's resources live in bind group 0
 and its parameters in bind group 1, a dynamic-offset window into a per-submission uniform arena,
 so one command buffer can carry hundreds of dispatches that each see their own parameters.
+
+The GPU also knows the card's memory (read from the system: card_memory) and counts what its
+textures and buffers take (GPU.allocated). A scene's grids are fitted to the card before they are
+made (scene/model.py memory_plan, through card()): to a plan made from the card's size alone, never
+from what happens to be free, so a scene is laid out (and its cache signed) the same on every start.
+An allocation past what the system gives the app is refused before the driver is asked
+(GPUOutOfMemory), and failure() tells a lost device or an allocation the card could not make from
+other errors, so the app can start the engine again (ui/worker.py) instead of needing a restart.
 """
 from __future__ import annotations
 
@@ -12,6 +20,7 @@ import logging
 import math
 import os
 import re
+import sys
 import threading
 import time
 from pathlib import Path
@@ -40,10 +49,73 @@ FORMATS = {
 }
 
 DEFAULT_USAGE = TU.TEXTURE_BINDING | TU.STORAGE_BINDING | TU.COPY_SRC | TU.COPY_DST
+GB = 2 ** 30   # a GB of GPU memory as the system shows it (a 24 GB card has 24 of these)
+# bytes per texel of formats made without being read back (FORMATS has the rest)
+OTHER_TEXELS = {'depth32float': 4, 'depth24plus': 4, 'depth24plus-stencil8': 4, 'bgra8unorm': 4, 'rgba8unorm-srgb': 4,
+                'r8unorm': 1, 'rg8unorm': 2, 'r16uint': 2, 'r32sint': 4, 'rg32uint': 8, 'rgba32uint': 16}
+
+
+def texel_bytes(fmt):
+    f = FORMATS.get(fmt)
+    return f[2] if f is not None else OTHER_TEXELS.get(fmt, 16)
 
 
 class GPUUnavailable(RuntimeError):
     """No usable GPU adapter was found."""
+
+
+class GPUOutOfMemory(RuntimeError):
+    """An allocation the card has no room for: refused before the driver was asked (past what the system gives the app),
+    or refused by the driver."""
+
+    def __init__(self, wanted, allocated, budget, label='', driver=False):
+        self.wanted, self.allocated, self.budget, self.label, self.driver = int(wanted), int(allocated), budget, label, driver
+        what = f'{label} ({wanted / GB:.2f} GB)' if label else f'{wanted / GB:.2f} GB more'
+        if driver or budget is None:
+            text = f'The GPU had no memory left for {what}, with {allocated / GB:.2f} GB in use.'
+        else:
+            text = f'The GPU has no room for {what}: {allocated / GB:.2f} GB of the {budget / GB:.1f} GB it gives Blackbody are in use.'
+        super().__init__(text)
+
+
+def failure(ex):
+    """What kind of GPU failure an exception is: 'lost' (the device is gone: a driver reset, a time-out, a card that went
+    away), 'memory' (an allocation the card could not make) or None (anything else). wgpu reports both as validation
+    errors ('Parent device is lost', 'Not enough memory left'), so the words are what tells them apart; the causes of an
+    exception are looked at too."""
+    seen = set()
+    while ex is not None and id(ex) not in seen:
+        seen.add(id(ex))
+        if isinstance(ex, (GPUOutOfMemory, wgpu.GPUOutOfMemoryError)):
+            return 'memory'
+        if isinstance(ex, (wgpu.GPUError, RuntimeError)):
+            text = str(ex).lower()
+            if any(w in text for w in ('device is lost', 'device lost', 'device was lost', 'devicelost', 'device_lost')):
+                return 'lost'
+            if any(w in text for w in ('not enough memory', 'out of memory', 'outofmemory', 'out_of_memory')):
+                return 'memory'
+        ex = ex.__cause__ or ex.__context__
+    return None
+
+
+class _LostWatch(logging.Handler):
+    """wgpu says a device was lost, and why, only in its log (its device-lost callback cannot raise): keep it, for what
+    the app says when it starts the GPU again (GPU.lost_reason)."""
+
+    count = 0
+    text = ''
+
+    def emit(self, record):
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return
+        if 'device was lost' in msg:
+            _LostWatch.count += 1
+            _LostWatch.text = msg
+
+
+logging.getLogger('wgpu').addHandler(_LostWatch(logging.ERROR))
 
 
 def ceil_div(a, b):
@@ -57,30 +129,65 @@ def groups_1d(n, size=64):
     return (min(g, 65535), ceil_div(g, 65535), 1)
 
 
+def _made(obj, gpu, nbytes, label, make):
+    """Make a texture or buffer through `make()`, counted in the GPU's allocated bytes: refused past its ceiling, and an
+    allocation the driver could not make raised as GPUOutOfMemory. (A stand-in GPU without the count just makes it.)"""
+    take = getattr(gpu, 'take', None)
+    if take is None:
+        return make()
+    take(nbytes, label)
+    try:
+        out = make()
+    except Exception as ex:
+        gpu.allocated -= nbytes
+        if failure(ex) == 'memory':
+            raise GPUOutOfMemory(nbytes, gpu.allocated, gpu.ceiling, label, driver=True) from ex
+        raise
+    obj._bytes = nbytes
+    return out
+
+
+def _free(obj):
+    """Take a texture or buffer out of its GPU's count (once: on destroy, or when it is collected without one)."""
+    n = obj._bytes
+    if n:
+        obj._bytes = 0
+        obj._gpu.allocated -= n
+
+
 class Texture:
     """A texture, its default view and its shape. `size` is (w, h, d); 2D textures have d == 1."""
 
-    __slots__ = ('tex', 'view', 'size', 'format', 'dim', 'label', '_gpu')
+    __slots__ = ('tex', 'view', 'size', 'format', 'dim', 'label', '_gpu', '_bytes')
 
     def __init__(self, gpu, size, fmt, dim='3d', usage=DEFAULT_USAGE, label=''):
         w, h, d = (int(size[0]), int(size[1]), int(size[2]) if len(size) > 2 else 1)
         self._gpu = gpu
+        self._bytes = 0
         self.size = (w, h, d)
         self.format = fmt
         self.dim = dim
         self.label = label
-        self.tex = gpu.device.create_texture(size=(w, h, d), dimension=dim, format=fmt, usage=usage, label=label)
+        self.tex = _made(self, gpu, w * h * d * texel_bytes(fmt), label,
+                         lambda: gpu.device.create_texture(size=(w, h, d), dimension=dim, format=fmt, usage=usage, label=label))
         self.view = self.tex.create_view()
 
     @property
     def nbytes(self):
         w, h, d = self.size
-        return w * h * d * FORMATS[self.format][2]
+        return w * h * d * texel_bytes(self.format)
 
     def destroy(self):
+        _free(self)
         try:
             self.tex.destroy()
         except Exception:  # already destroyed or device lost
+            pass
+
+    def __del__(self):
+        try:
+            _free(self)
+        except Exception:   # (half made, or the interpreter is shutting down)
             pass
 
     def __repr__(self):
@@ -88,16 +195,25 @@ class Texture:
 
 
 class Buffer:
-    __slots__ = ('buf', 'size', 'label')
+    __slots__ = ('buf', 'size', 'label', '_gpu', '_bytes')
 
     def __init__(self, gpu, size, usage=BU.STORAGE | BU.COPY_DST | BU.COPY_SRC, label=''):
         self.size = int(size)
         self.label = label
-        self.buf = gpu.device.create_buffer(size=self.size, usage=usage, label=label)
+        self._gpu = gpu
+        self._bytes = 0
+        self.buf = _made(self, gpu, self.size, label, lambda: gpu.device.create_buffer(size=self.size, usage=usage, label=label))
 
     def destroy(self):
+        _free(self)
         try:
             self.buf.destroy()
+        except Exception:
+            pass
+
+    def __del__(self):
+        try:
+            _free(self)
         except Exception:
             pass
 
@@ -618,14 +734,222 @@ class Program:
             pass
 
 
+# ---------------------------------------------------------------------------------------------
+# The card's memory
+# ---------------------------------------------------------------------------------------------
+
+MEMORY_ENV = 'BLACKBODY_GPU_MEMORY'   # GB: take the card to have this much memory (in place of what the system says)
+PLAN_SHARE = 0.8        # of the card's memory, the share a scene is planned to fill (the rest: the desktop, other programs)
+PLAN_RESERVE = 0.4e9    # and what a scene's estimate leaves of that for what it does not count: shaders, meshes, fabric,
+#                         grass, matter, Lume, and the driver's allocations in blocks of 256 MB
+MIN_PLAN = 0.25e9       # the least a scene is ever planned within
+UNIFIED_SHARE = 0.65    # of the computer's memory a GPU that shares it (Apple silicon) may use: Metal's working set
+OOM_SHARE = 0.75        # after an allocation the card could not make: plan within this share of what it then held
+
+
+def card_memory(info):
+    """What the system says the card has: {'total': bytes on the card, 'budget': bytes it lets this process use, 'free':
+    bytes no process is using now, 'source': where that was read}, or None when it cannot be read. `info` is the
+    adapter's info (vendor_id, device_id, adapter_type, backend_type). BLACKBODY_GPU_MEMORY (in GB) stands in for all."""
+    env = os.environ.get(MEMORY_ENV, '').strip()
+    if env:
+        try:
+            b = float(env) * GB
+            if b > 0:
+                return {'total': b, 'budget': b, 'free': b, 'source': MEMORY_ENV}
+        except ValueError:
+            log.warning('%s=%r is not a number of GB; reading the card instead', MEMORY_ENV, env)
+    for read in (_dxgi_memory, _nvml_memory, _sysfs_memory, _unified_memory):
+        m = _read(read, info)
+        if m and m.get('total', 0) > 0:
+            m['budget'] = min(float(m.get('budget') or m['total']), float(m['total']))
+            if 'free' not in m:
+                # (DXGI's budget leaves out what other programs hold on the card; NVML says what is free)
+                other = _read(_nvml_memory, info) if read is not _nvml_memory else None
+                m['free'] = min(other['free'], m['budget']) if other else m['budget']
+            return m
+    return None
+
+
+def card_size(total):
+    """The card's memory in whole GB (bytes): what the system says, rounded (DXGI and NVML differ by a few hundred MB on
+    one card, and the plan must not), unless that is under a GB."""
+    return float(round(total / GB) * GB) if total >= 0.75 * GB else float(total)
+
+
+def plan_for(memory):
+    """What a scene's estimate is fitted within on a card with `memory` (card_memory; None: not known): PLAN_SHARE of the
+    card's size less PLAN_RESERVE. From the size alone, not what is free as the app starts: the plan shapes the
+    simulation (its layout and detail, so its disk cache), which must come out the same on every start. A size given
+    with BLACKBODY_GPU_MEMORY is taken as it is (not rounded to whole GB as a card's reading is)."""
+    if not memory:
+        return None
+    size = memory['total'] if memory.get('source') == MEMORY_ENV else card_size(memory['total'])
+    return max(PLAN_SHARE * size - PLAN_RESERVE, MIN_PLAN)
+
+
+def _read(read, info):
+    try:
+        return read(info)
+    except Exception as ex:   # (a reader that fails is just not the one that knows)
+        log.debug('%s: %s', read.__name__, ex)
+        return None
+
+
+def _com(obj, index, restype, *argtypes):
+    """Method `index` of a COM object's table (ctypes)."""
+    import ctypes
+    table = ctypes.cast(obj, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
+    return ctypes.WINFUNCTYPE(restype, ctypes.c_void_p, *argtypes)(table[index])
+
+
+def _dxgi_memory(info):
+    """Windows: the adapter's memory from DXGI (any API's adapter: matched by vendor and device id), and the budget the
+    system gives this process on it now (IDXGIAdapter3.QueryVideoMemoryInfo). An integrated GPU's memory is shared."""
+    if sys.platform != 'win32':
+        return None
+    import ctypes
+
+    class GUID(ctypes.Structure):
+        _fields_ = [('a', ctypes.c_uint32), ('b', ctypes.c_uint16), ('c', ctypes.c_uint16), ('d', ctypes.c_ubyte * 8)]
+
+    def guid(s):
+        s = s.replace('-', '')
+        return GUID(int(s[:8], 16), int(s[8:12], 16), int(s[12:16], 16), (ctypes.c_ubyte * 8)(*bytes.fromhex(s[16:])))
+
+    class Desc1(ctypes.Structure):
+        _fields_ = [('description', ctypes.c_wchar * 128), ('vendor', ctypes.c_uint), ('device', ctypes.c_uint),
+                    ('subsys', ctypes.c_uint), ('revision', ctypes.c_uint), ('dedicated', ctypes.c_size_t),
+                    ('dedicated_system', ctypes.c_size_t), ('shared', ctypes.c_size_t), ('luid_lo', ctypes.c_uint32),
+                    ('luid_hi', ctypes.c_int32), ('flags', ctypes.c_uint)]
+
+    class VideoMemory(ctypes.Structure):
+        _fields_ = [('budget', ctypes.c_uint64), ('usage', ctypes.c_uint64), ('reservable', ctypes.c_uint64),
+                    ('reserved', ctypes.c_uint64)]
+
+    PP = ctypes.POINTER(ctypes.c_void_p)
+    release = lambda o: _com(o, 2, ctypes.c_ulong)(o)
+    factory = ctypes.c_void_p()
+    if ctypes.WinDLL('dxgi').CreateDXGIFactory1(ctypes.byref(guid('770aae78-f26f-4dba-a829-253c83d1b387')),
+                                                ctypes.byref(factory)) != 0:
+        return None
+    try:
+        i = 0
+        while True:
+            ad = ctypes.c_void_p()
+            if _com(factory, 12, ctypes.c_long, ctypes.c_uint, PP)(factory, i, ctypes.byref(ad)) != 0:   # EnumAdapters1
+                return None
+            i += 1
+            try:
+                d = Desc1()
+                _com(ad, 10, ctypes.c_long, ctypes.POINTER(Desc1))(ad, ctypes.byref(d))   # GetDesc1
+                if d.flags & 2 or d.vendor != int(info.get('vendor_id', -1)) or d.device != int(info.get('device_id', -1)):
+                    continue   # (a software adapter, or another card)
+                total = float(d.dedicated)
+                if info.get('adapter_type') == 'IntegratedGPU' or d.dedicated < 1 << 30:
+                    total += float(d.shared)
+                out = {'total': total, 'budget': total, 'source': 'DXGI'}
+                a3 = ctypes.c_void_p()
+                if _com(ad, 0, ctypes.c_long, ctypes.POINTER(GUID), PP)(
+                        ad, ctypes.byref(guid('645967a4-1392-4310-a798-8053ce3e93fd')), ctypes.byref(a3)) == 0:
+                    try:
+                        vm = VideoMemory()
+                        if _com(a3, 14, ctypes.c_long, ctypes.c_uint, ctypes.c_int, ctypes.POINTER(VideoMemory))(
+                                a3, 0, 0, ctypes.byref(vm)) == 0 and vm.budget > 0:   # QueryVideoMemoryInfo, local
+                            out['budget'] = float(vm.budget)
+                    finally:
+                        release(a3)
+                return out
+            finally:
+                release(ad)
+    finally:
+        release(factory)
+
+
+def _nvml_memory(info):
+    """An NVIDIA card (Linux, or Windows without DXGI's answer): its memory and how much is free now, from NVML."""
+    if int(info.get('vendor_id', 0)) != 0x10DE:
+        return None
+    import ctypes
+    lib = ctypes.WinDLL('nvml.dll') if sys.platform == 'win32' else ctypes.CDLL('libnvidia-ml.so.1')
+
+    class Pci(ctypes.Structure):
+        _fields_ = [('bus_legacy', ctypes.c_char * 16), ('domain', ctypes.c_uint), ('bus', ctypes.c_uint),
+                    ('device', ctypes.c_uint), ('pci_device_id', ctypes.c_uint), ('subsystem', ctypes.c_uint),
+                    ('bus_id', ctypes.c_char * 32)]
+
+    class Mem(ctypes.Structure):
+        _fields_ = [('total', ctypes.c_ulonglong), ('free', ctypes.c_ulonglong), ('used', ctypes.c_ulonglong)]
+
+    if lib.nvmlInit_v2() != 0:
+        return None
+    try:
+        n = ctypes.c_uint()
+        if lib.nvmlDeviceGetCount_v2(ctypes.byref(n)) != 0:
+            return None
+        want = (int(info.get('device_id', 0)) << 16) | 0x10DE
+        for i in range(n.value):
+            h, pci, mem = ctypes.c_void_p(), Pci(), Mem()
+            if (lib.nvmlDeviceGetHandleByIndex_v2(i, ctypes.byref(h)) != 0 or lib.nvmlDeviceGetPciInfo_v3(h, ctypes.byref(pci)) != 0
+                    or pci.pci_device_id != want or lib.nvmlDeviceGetMemoryInfo(h, ctypes.byref(mem)) != 0):
+                continue
+            return {'total': float(mem.total), 'budget': float(mem.total), 'free': float(mem.free), 'source': 'NVML'}
+        return None
+    finally:
+        lib.nvmlShutdown()
+
+
+def _sysfs_memory(info):
+    """Linux, AMD (and others whose driver says): the card's memory and what is in use, from /sys/class/drm."""
+    if not sys.platform.startswith('linux'):
+        return None
+    for dev in sorted(Path('/sys/class/drm').glob('card[0-9]*/device')):
+        try:
+            if (int((dev / 'vendor').read_text(), 16) != int(info.get('vendor_id', -1))
+                    or int((dev / 'device').read_text(), 16) != int(info.get('device_id', -1))):
+                continue
+            total = float((dev / 'mem_info_vram_total').read_text())
+            used = float((dev / 'mem_info_vram_used').read_text())
+        except (OSError, ValueError):
+            continue
+        return {'total': total, 'budget': total, 'free': max(total - used, 0.0), 'source': 'sysfs'}
+    return None
+
+
+def _unified_memory(info):
+    """Apple silicon (Metal, integrated): the GPU shares the computer's memory, and may use about UNIFIED_SHARE of it."""
+    if info.get('backend_type') != 'Metal' or info.get('adapter_type') != 'IntegratedGPU':
+        return None
+    ram = float(os.sysconf('SC_PAGE_SIZE') * os.sysconf('SC_PHYS_PAGES'))
+    return {'total': ram * UNIFIED_SHARE, 'budget': ram * UNIFIED_SHARE, 'source': 'unified memory'}
+
+
+_CARD = {'plan': None, 'card_plan': None, 'side': None, 'name': None}   # the GPU in use (the last one made): see card()
+
+
+def card():
+    """The GPU in use, for what has no GPU at hand (the scene's memory plan): {'plan': bytes a scene's estimate may take
+    (None: the card's memory is not known), 'card_plan': the plan from the card's size alone (plan_for), which a plan
+    cut after running out of memory leaves as it was, 'side': the largest 3-D texture's side (None before a GPU is
+    made), 'name'}."""
+    return dict(_CARD)
+
+
 class GPU:
-    """Owns the adapter, device, samplers and the kernel cache."""
+    """Owns the adapter, device, samplers and the kernel cache, and counts the memory its textures and buffers take."""
 
     def __init__(self, adapter_name=None, backend=None, power='high-performance'):
         self.adapter = self._pick_adapter(adapter_name, backend, power)
         info = self.adapter.info
         self.name = info.get('device', 'GPU')
         self.backend = info.get('backend_type', '')
+        self.allocated = 0          # bytes in the textures and buffers made through this GPU (and not yet freed)
+        self.memory = card_memory(info)
+        # a scene's estimate is fitted within `plan` (from the card's size: plan_for); past `ceiling` an allocation is
+        # refused: what the system gives the app as it starts, but never less than the plan promises
+        self.plan = self.card_plan = plan_for(self.memory)   # (`plan` is cut after running out of memory: out_of_memory)
+        self.ceiling = max(self.memory['budget'], self.plan + PLAN_RESERVE) if self.memory else None
+        self._lost_at = _LostWatch.count
         feats = set(self.adapter.features)
         want = [f for f in ('float32-filterable', 'timestamp-query') if f in feats]
         self.float32_filterable = 'float32-filterable' in feats
@@ -657,7 +981,70 @@ class GPU:
         self.adapter_key = adapter_key(info)
         self.record = shader_record(self.adapter_key)   # what this adapter and driver have compiled (or None)
         self.vel_format ='rgba32float' if self.float32_filterable else 'rgba16float'
-        log.info('GPU: %s (%s)', self.name, self.backend)
+        self.max_side = int(self.limits.get('max-texture-dimension-3d', 2048))
+        _CARD.update(plan=self.plan, card_plan=self.card_plan, side=self.max_side, name=self.name)
+        m = self.memory
+        log.info('GPU: %s (%s), %s', self.name, self.backend,
+                 f'{m["total"] / GB:.1f} GB, {m["free"] / GB:.1f} GB free; scenes fitted within {self.plan / GB:.1f} GB '
+                 f'({m["source"]})' if m else 'memory unknown')
+
+    # -- memory -------------------------------------------------------------------------------
+
+    def take(self, nbytes, label=''):
+        """Count an allocation in, or refuse it (GPUOutOfMemory) when it would take more than the system gives the app:
+        a request past that can bring the device down, or page the grids out to the computer's memory and crawl."""
+        if self.ceiling is not None and self.allocated + nbytes > self.ceiling:
+            raise GPUOutOfMemory(nbytes, self.allocated, self.ceiling, label)
+        self.allocated += nbytes
+
+    def room(self):
+        """Bytes still free of what the app plans to use (the plan with its reserve, less after running out of memory),
+        for choosing how a growing box is copied (Solver.grow). None: not known."""
+        return None if self.plan is None else max(self.plan + PLAN_RESERVE - self.allocated, 0.0)
+
+    def out_of_memory(self, ex=None):
+        """An allocation failed (GPUOutOfMemory `ex`): from now on, plan the scene's grids within OOM_SHARE of what the
+        card then held, and of the plan before (so each failure asks less), so the engine made again fits
+        (scene/model.py memory_plan; a layout a disk cache holds, which fits card_plan, is kept). Returns the new plan
+        (bytes)."""
+        held = float(self.allocated)
+        if isinstance(ex, GPUOutOfMemory):
+            held = float(ex.allocated + ex.wanted)
+            if not ex.driver and self.ceiling is not None:
+                held = min(held, self.ceiling)
+        cut = OOM_SHARE * held - PLAN_RESERVE
+        if self.plan is not None:
+            cut = min(cut, OOM_SHARE * self.plan)
+        self.plan = max(cut, MIN_PLAN)
+        _CARD.update(plan=self.plan)
+        return self.plan
+
+    def keep_plan(self, old):
+        """Plan within no more than another GPU did (`old`, one whose device was lost: ui/worker.py makes this one in its
+        place), so a plan cut after running out of memory stays cut and the scene is laid out as it was."""
+        if old.plan is not None and (self.plan is None or old.plan < self.plan):
+            self.plan = old.plan
+            _CARD.update(plan=self.plan)
+
+    def forget_bindings(self):
+        """Drop the kernels' cached bind groups (they keep the textures in them alive): before what an engine made is
+        let go, so its memory comes back."""
+        for k in self._kernels.values():
+            k._groups.clear()
+
+    def alive(self):
+        """Whether the device still works: a lost one fails the smallest request."""
+        try:
+            b = self.device.create_buffer(size=16, usage=BU.COPY_DST | BU.COPY_SRC)
+            self.queue.read_buffer(b, 0, 4)
+            b.destroy()
+            return True
+        except Exception:
+            return False
+
+    def lost_reason(self):
+        """What the driver said when a device was last lost since this GPU was made ('' if nothing was: wgpu only logs it)."""
+        return _LostWatch.text if _LostWatch.count != self._lost_at else ''
 
     @staticmethod
     def adapters():

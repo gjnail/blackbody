@@ -716,8 +716,15 @@ class MainWindow(QMainWindow):
         self.viewport.set_frame_image(img, frame, stats)
         if self.doc.playing:
             self.doc.frame_from_engine(frame)
-        self.stats_label.setText(f'{stats.get("voxels", 0) / 1e6:.2f} M voxels · {stats.get("memory_mb", 0):.0f} MB · '
+        gpu, plan = stats.get('gpu_mb'), stats.get('gpu_plan_mb')
+        GB = 2 ** 30 / 1e6   # (MB in a GB, as the system shows a card's memory)
+        card = f'GPU {gpu / GB:.1f} of {plan / GB:.1f} GB · ' if (gpu is not None and plan) else ''
+        self.stats_label.setText(f'{stats.get("voxels", 0) / 1e6:.2f} M voxels · {stats.get("memory_mb", 0):.0f} MB · {card}'
                                  f'cache {stats.get("cached", 0)} frames ({stats.get("cache_mb", 0):.0f} MB)  ')
+        self.stats_label.setToolTip('Cells in the simulation box, and the GPU memory its grids take'
+                                    + ('; all the GPU memory Blackbody uses now, and what it fits a scene within on this card '
+                                       '(a scene past that is simulated with fewer voxels: see the notices)' if card else '')
+                                    + '; and the frames cached in memory.')
         self.set_notices(stats.get('notices') or [])
 
     def set_notices(self, notes):

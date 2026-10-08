@@ -174,8 +174,13 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
         A new grid layout always restarts the simulation. Other simulation changes restart it too,
         unless `soft` is set: then the running simulation carries on with the new settings (live
         tweaking), and only the cache, now stale, is dropped."""
+        with scene.planned():   # (its layout fitted to the GPU once: Scene.memory_plan)
+            return self._prepare(scene, final, soft)
+
+    def _prepare(self, scene, final, soft):
         if scene.kind != 'fire':
             self.solver.cloth_hook = None   # fabric is simulated in fire scenes only
+        carried = self._carried
         if scene.kind == 'liquid':
             out = self._prepare_liquid(scene, final, soft)
         elif scene.kind == 'both':
@@ -185,15 +190,36 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
             out = self._prepare_cloud(scene, final, soft)
         else:
             out = self._prepare_fire(scene, final, soft)
+        if carried is not None:
+            self._carried = None
+            if carried[0] == (self.kind, self.sig, self.final) and not self.cache.items:
+                self.cache.items, self.cache.bytes = carried[1], carried[2]   # (the same simulation: its frames still hold)
         if getattr(self, '_lvol', None) is not None:
             self._lvol.reset()   # (Lume's light in the smoke: none carried over from another scene or run)
         self._attach_disk(scene, final)
-        self._scene_notices(scene)
+        self._scene_notices(scene, final)
         return out
 
-    def _scene_notices(self, scene):
-        """What the caps leave out of this scene (scene/caps.py) and whether its disk cache opened, for notices(); and its
-        objects' names, for what is said about them as it runs."""
+    _carried = None
+
+    def carry(self, old):
+        """Take over the frames another engine cached (one on a GPU that failed: ui/worker.py makes this one in its
+        place), to be shown as they are while this engine simulates the same scene. They are kept by the first prepare
+        that lays out the same simulation (kind, settings, preview or final), and dropped by any other. Its disk cache is
+        written out, and opened again by that prepare."""
+        c = old.cache
+        self.cache.budget = c.budget
+        self._carried = ((old.kind, old.sig, old.final), c.items, c.bytes)
+        self.cache_readonly = old.cache_readonly
+        if c.disk is not None:
+            try:
+                c.disk.flush()
+            except OSError as ex:
+                log.warning('Could not write out the disk cache: %s', ex)
+
+    def _scene_notices(self, scene, final=False):
+        """What the caps leave out of this scene (scene/caps.py), what was cut to fit the GPU's memory (Scene.memory_plan)
+        and whether its disk cache opened, for notices(); and its objects' names, for what is said about them as it runs."""
         from ..scene import caps
         try:
             self._cap_notes = caps.notices(scene)
@@ -202,6 +228,10 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
             self._cap_notes = []
         if getattr(self, '_stage', None) is not None:
             self._stage.clear_notes()     # (what the last scene's glowing matter left out of its lights)
+        try:
+            self._cap_notes += scene.memory_notes(final)
+        except Exception as ex:
+            log.warning('Could not check the scene against the GPU memory: %s', ex)
         if scene.data['domain'].get('disk_cache') and self.cache.disk is None:
             self._cap_notes.append('The disk cache could not be opened (Domain › Disk cache): the frames are kept in memory '
                                    'only.')
@@ -214,9 +244,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
             self.cache.attach(None)
             self._disk_key = None
             return
-        from pathlib import Path
-        from ..io.simcache import SimCache, default_root
-        folder = (Path(d['cache_dir']) if d.get('cache_dir') else default_root(scene.path)) / ('final' if final else 'preview')
+        from ..io.simcache import SimCache
+        folder = scene.cache_folder(final)
         sig = scene.sim_signature(final)
         if self.solids.active:
             # (and the bodies as built: cut into other pieces since, or round another hit, the frames are another
@@ -225,7 +254,8 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
         key = (str(folder), sig, self.cache_readonly)
         if key != self._disk_key or self.cache.disk is None:
             try:
-                self.cache.attach(SimCache(folder, sig, readonly=self.cache_readonly))
+                # (with the layout the scene was fitted to the GPU at: kept while it fits, and read as it is on a farm)
+                self.cache.attach(SimCache(folder, sig, readonly=self.cache_readonly, about=scene.cache_about(final)))
                 self._disk_key = key
             except OSError as ex:
                 log.warning('Disk cache unavailable (%s): %s', folder, ex)
@@ -291,6 +321,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
         self.solver.reset()
         self.embers.reset()
         self.cloth.reset()
+        self._grow_held = None
         self.sim_frame = None
 
     def invalidate(self):
@@ -397,16 +428,20 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
         self.last_step_ms = (time.perf_counter() - t0) * 1000.0
 
     def _grow(self, scene, prm):
-        """Domain › Grow to fit: enlarge the box on each open side the smoke comes near."""
+        """Domain › Grow to fit: enlarge the box on each open side the smoke comes near, within the GPU's memory (what
+        the scene's grids may take: Scene.memory_room, from the card's size, so a box grows the same on every run) and
+        its largest 3-D texture; a notice says when one of those stops it."""
         s = self.solver
         base = np.asarray(s.base[0] if s.base else s.dims)
         limit = np.maximum(base, np.floor(base * max(1.0, scene.data['domain']['grow_limit']) / 8) * 8).astype(int)
         margin = int(prm.sponge) + 4
         step = max(8, int(round(max(s.dims) * 0.125 / 8)) * 8)
-        lo, hi = s.growth_needed(margin, step, limit, prm)
+        lo, hi = s.growth_needed(margin, step, limit, prm, scene.memory_room(self.final), getattr(self.gpu, 'max_side', None))
+        if s.grow_held:
+            self._grow_held = (s.grow_held, tuple(s.dims))
         if lo.any() or hi.any():
             old = s.dims
-            s.grow(lo, hi)
+            s.grow(lo, hi, self.gpu.room())   # (what is free now only picks how the fields are copied over)
             log.info('Domain grew from %s to %s cells', old, s.dims)
 
     def _air_for_solids(self):
@@ -1086,7 +1121,20 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
         if getattr(self, '_ocio_error', None):
             out.append(f'OCIO could not be used ({self._ocio_error}): the Standard view and sRGB footage are used instead.')
         out += getattr(getattr(self, '_stage', None), 'notes', None) or []   # (a render job's compositing passes)
+        held = self._grow_held if self.kind == 'fire' else None
+        if held is not None:
+            d = '×'.join(str(x) for x in held[1])
+            if held[0] == 'memory':
+                out.append(f'Grow to fit stopped at {d} cells: a larger box would not fit in the GPU\'s memory, so smoke that '
+                           'reaches its open sides fades there. Fewer Voxels (larger cells) let it grow further.')
+            else:
+                side = getattr(self.gpu, 'max_side', 0)
+                up = self.solver.upres
+                out.append(f'Grow to fit stopped at {d} cells: this GPU makes 3-D textures at most {side} cells a side'
+                           + (f' (the detail upres grid is {up} times finer)' if up > 1 else '') + '.')
         return list(dict.fromkeys(out))
+
+    _grow_held = None    # (what stopped Grow to fit, the cells it stopped at): Solver.grow_held
 
     def _list_notices(self):
         """What the GPU's fixed-size lists left out (the brightest and the first are kept, the same every run): glowing
@@ -1109,6 +1157,9 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
     def stats(self):
         out = self._stats()
         out['notices'] = self.notices()
+        # the GPU's memory: what this app's textures and buffers take now, and what its plan for a scene is (None: unknown)
+        out['gpu_mb'] = self.gpu.allocated / 1e6
+        out['gpu_plan_mb'] = self.gpu.plan / 1e6 if self.gpu.plan else None
         return out
 
     def _stats(self):

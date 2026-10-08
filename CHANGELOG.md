@@ -8,6 +8,13 @@ Notable changes to Blackbody. The format follows
 
 ### Added
 
+- Scenes fit the GPU's memory before anything is made: Blackbody reads the card's memory, estimates what a scene
+  needs, and steps Detail upres and then the voxels down with a notice saying what it cut, instead of failing part
+  way through. If the GPU still runs out, or its driver resets, the app starts its engine again on its own and carries
+  on (a disk cache keeps its frames and layout) instead of needing a restart. The status bar shows the GPU memory in
+  use, and the Voxels tooltip what a final render needs. A disk cache keeps the layout it was simulated at, and a
+  render from it reads it as it is (`BLACKBODY_GPU_MEMORY` tells a farm machine its size). Grow to fit stops at what
+  the card has room for and at its largest 3-D texture, says so, and is offered only in fire scenes, where it works.
 - Importing: a VDB's velocity drives the smoke ("Velocity from the volume"), a VDB sequence blends between its frames
   instead of jumping, and a VDB keeps its own detail down to half a simulation cell (it was cut to 192 cells a side);
   bit-shuffled Blosc VDBs read. USD points that move or carry velocities come in as a particle source (a fill in a

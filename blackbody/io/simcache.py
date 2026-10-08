@@ -104,12 +104,45 @@ class CacheMismatch(ValueError):
     pass
 
 
+_META = {}   # meta.json read, by path: ((modified, size), its contents)
+
+
+def read_meta(folder):
+    """A cache folder's meta.json ({} when there is none): its signature and, from caches that record it, the layout the
+    scene was fitted to the GPU at (scene/model.py Scene.cache_fit). Read again only when the file changes."""
+    p = Path(folder) / 'meta.json'
+    try:
+        st = p.stat()
+    except OSError:
+        return {}
+    stamp = (st.st_mtime_ns, st.st_size)
+    hit = _META.get(str(p))
+    if hit is not None and hit[0] == stamp:
+        return hit[1]
+    try:
+        meta = json.loads(p.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        meta = {}
+    _META[str(p)] = (stamp, meta)
+    return meta
+
+
+def has_frames(folder):
+    """Whether a cache folder holds any simulated frame (looks no further than the first)."""
+    try:
+        with os.scandir(folder) as it:
+            return any(e.name.startswith('f') and e.name.endswith('.bbc') for e in it)
+    except OSError:
+        return False
+
+
 class SimCache:
     """A folder of cached frames for one simulation (one signature). Read-only caches (render farm
     machines rendering what another machine simulated) never write, and refuse a folder simulated
-    with other settings instead of clearing it."""
+    with other settings instead of clearing it. `about` goes into meta.json beside the signature
+    (the layout the scene was fitted to the GPU at, and what it asked for)."""
 
-    def __init__(self, folder, signature=None, readonly=False):
+    def __init__(self, folder, signature=None, readonly=False, about=None):
         self.folder = Path(folder)
         self.readonly = bool(readonly)
         if not self.readonly:
@@ -124,7 +157,7 @@ class SimCache:
                 # the settings changed since these frames were simulated: they no longer apply
                 self.clear()
             if not self.readonly:
-                meta.write_text(json.dumps({'signature': signature, 'format': 1}), encoding='utf-8')
+                meta.write_text(json.dumps({'signature': signature, 'format': 1, **(about or {})}), encoding='utf-8')
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='simcache')
         self._pending = {}
         self._lock = threading.Lock()

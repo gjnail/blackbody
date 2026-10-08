@@ -68,8 +68,8 @@ SECTIONS = {
         F('size_z', 'Depth', 2.0, 0.1, 20.0, 'm', tip='Simulation box depth (toward the camera).', group='Box', log=True, hard_lo=0.02),
         I('resolution', 'Voxels (longest side)', 128, 32, 384, tip='Cells along the longest side of the box for final renders. Detail and memory grow with the cube of this.', group='Resolution', hard_lo=16, hard_hi=768),
         F('preview_scale', 'Interactive resolution', 0.75, 0.25, 1.0, '×', tip='Fraction of the final resolution used while you work. Final renders always use the full resolution.', group='Resolution'),
-        B('grow', 'Grow to fit', False, tip='The box starts small around the fire and grows, keeping its cell size, wherever the smoke gets near an open side. Detail stays high near the fire, and no memory goes on empty air until the smoke needs it.', group='Box'),
-        F('grow_limit', 'Grow up to', 3.0, 1.0, 8.0, '×', 1, tip='How far the box may grow, as a multiple of its size on each side.', group='Box'),
+        B('grow', 'Grow to fit', False, tip='Fire scenes: the box starts small around the fire and grows, keeping its cell size, wherever the smoke gets near an open side. Detail stays high near the fire, and no memory goes on empty air until the smoke needs it.', group='Box'),
+        F('grow_limit', 'Grow up to', 3.0, 1.0, 8.0, '×', 1, tip='How far the box may grow, as a multiple of its size on each side. It also stops where the GPU runs out of memory or of texture size (a notice says so).', group='Box'),
         B('ground', 'Solid ground', True, tip='The bottom of the box is a floor. Turn off for fire in mid-air.', group='Boundaries'),
         B('open_sides', 'Open sides', True, tip='Gas can leave through the sides. Turn off for fire inside a room or container.', group='Boundaries'),
         B('open_top', 'Open top', True, tip='Gas can leave through the top.', group='Boundaries'),
@@ -982,7 +982,7 @@ LOOK_KEYS = {('lava', 'glow'), ('lava', 'glow_temp'), ('lava', 'crust'), ('lava'
 KIND_SECTIONS = {'fire': ('combustion', 'motion', 'shading', 'embers', 'spread'), 'liquid': ('liquid', 'water', 'weather'),
                  'both': ('lava',), 'cloud': ('atmosphere', 'sky')}
 FIRE_ONLY_KEYS = {
-    'domain': {'sponge', 'sponge_strength', 'mg_cycles', 'maccormack', 'maccormack_vel'},
+    'domain': {'sponge', 'sponge_strength', 'mg_cycles', 'maccormack', 'maccormack_vel', 'grow', 'grow_limit'},
     'composite': {'smoke_opacity', 'saturation', 'tint', 'light_cast', 'surface_shadows', 'soot', 'wet'},
     'emitter': {'fuel', 'temperature', 'smoke', 'swirl', 'swirl_width', 'douse', 'vapour', 'color_amount', 'color', 'noise',
                 'noise_freq', 'noise_rise', 'contrast', 'seed', 'fade_in', 'fade_out', 'embers'},
@@ -1000,8 +1000,9 @@ NOT_CLOUD_KEYS = {'lighting': {'environment', 'env_rotation', 'env_strength', 'e
 BOTH_ONLY_KEYS = {'emitter': {'emits'}, 'combustion': {'water_douse', 'soak', 'ember_heat', 'rekindle', 'steam_expansion'}}
 
 
-# Liquid settings a fire-and-liquid box takes from its gas instead (the gas is the air round the liquid)
-NOT_BOTH_KEYS = {'liquid': {'air_temp', 'air_humidity'}}
+# Liquid settings a fire-and-liquid box takes from its gas instead (the gas is the air round the liquid), and the growing
+# box, which only a fire-only box does (the liquid's grids stay the box's size)
+NOT_BOTH_KEYS = {'liquid': {'air_temp', 'air_humidity'}, 'domain': {'grow', 'grow_limit'}}
 
 
 def applies(section, key, kind):
