@@ -7,7 +7,7 @@ for the steam.
 """
 from __future__ import annotations
 
-BOTH_ORDER = ['hose_on_fire', 'lava_sea', 'lava_quench', 'lava_grass']
+BOTH_ORDER = ['hose_on_fire', 'lava_sea', 'lava_quench', 'lava_grass', 'lava_raft']
 
 # the campfire under the hose sits here; its logs are the collider mesh (tools/make_firewood.py LOGS)
 FIRE_AT = (0.3, 0.0, 0.0)
@@ -133,5 +133,28 @@ def both_presets(K):
             'camera': {'distance': 4.6, 'target_y': 0.3, 'pitch': 16, 'yaw': 20, 'anchor_x': 0.5, 'anchor_y': 0.7, 'focal_mm': 35},
             'emitters': [dict(name='Lava', shape='box', position=(-1.75, 0.12, 0.0), size=(0.1, 0.1, 0.35),
                               velocity=(0.9, 0.0, 0.0), emits='lava', **stream)],
+        },
+        'lava_raft': {
+            'name': 'Log on a lava flow', 'category': 'Fire and liquid', 'size': '3 m flow',
+            'blurb': 'A lava flow reaches a pine log and a steel block lying in its path. Lava is 2600 kg/m3, so the light '
+                     'log floats on it and is carried off at the front of the flow, while the heavy steel is half swallowed '
+                     'and shoved along. Both heat where the lava touches them and in its glow (Domain > Heat speed 8), '
+                     'and the air over the flow shimmers.',
+            'render': {'end': 144},
+            'domain': {'kind': 'both', 'size_x': 3.4, 'size_y': 1.6, 'size_z': 1.8, 'resolution': 96, 'preroll': 0.0,
+                       'substeps_max': 12, 'cfl': 1.5, 'matter_heat_speed': 8.0},
+            'combustion': {'burn_rate': 6.0, 'heat': 0.6, 'soot': 0.45, 'cooling': 2.4, 'flame_life': 0.08},
+            'motion': {'buoyancy': 5.0, 'turbulence': 3.0, 'turb_freq': 2.5, 'vorticity': 1.6, 'disturbance': 2.0, 'disturb_block': 0.04},
+            'shading': {'flame_k': 1650, 'smoke_density': 4.0, 'smoke_albedo': (0.3, 0.29, 0.27)},
+            'water': {**basalt},
+            'lava': {},
+            'lighting': dusk,
+            'camera': {'distance': 3.2, 'target_y': 0.1, 'pitch': 34, 'yaw': 15, 'anchor_x': 0.5, 'anchor_y': 0.6, 'focal_mm': 35},
+            'emitters': [dict(name='Lava', shape='box', position=(-1.5, 0.12, 0.0), size=(0.1, 0.1, 0.4),
+                              velocity=(0.9, 0.0, 0.0), emits='lava', **stream)],
+            'colliders': [dict(name='Log', shape='cylinder', position=(-1.05, 0.08, 0.0), size=(0.07, 0.3, 0.07), roll=90.0,
+                               material='wood', dynamic=True),
+                          dict(name='Steel block', shape='box', position=(-0.5, 0.06, 0.38), size=(0.06, 0.06, 0.06),
+                               material='steel', dynamic=True)],
         },
     }

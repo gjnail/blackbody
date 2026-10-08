@@ -988,6 +988,23 @@ PRESETS = {
                    dict(name='Truffle', material='chocolate', shape='sphere', position=(-0.09, 0.035, 0.08), size=(0.035, 0.035, 0.035)),
                    dict(name='Block', material='chocolate', shape='box', position=(0.05, 0.04, 0.0), size=(0.045, 0.04, 0.045))],
     },
+    'snow_drift': {
+        'name': 'Snow blowing off a heap', 'category': 'Sand, snow and mud', 'size': '1 m heap, 15 m/s wind',
+        'blurb': 'A gale over a heap of fresh powder snow. Its windward face wears down as the wind carries its surface '
+                 'off at the rate a wind that strong moves snow, the grains creeping over the crest and settling in its '
+                 'lee, and fine spindrift rises off it in a plume that streams downwind. Matter in Snow, Motion > Wind 15 '
+                 'm/s; the spindrift is the gas\'s smoke, coloured white (Shading > Smoke colour).',
+        'render': {'end': 144},
+        'domain': {'size_x': 3.0, 'size_y': 1.2, 'size_z': 1.4, 'resolution': 64, 'preroll': 0.0, 'matter_detail': 128},
+        'motion': {'wind_speed': 15.0, 'wind_dir': 90.0, 'gust': 0.4, 'turbulence': 2.0, 'turb_freq': 5.0, 'vorticity': 1.2},
+        'shading': {'smoke_albedo': (0.86, 0.89, 0.93), 'smoke_density': 0.1, 'ambient_k': 263.0},
+        'composite': {'backdrop': 'stage', 'floor': 'dirt'},
+        'lighting': {'sun_on': True, 'sun_intensity': 1.6, 'sun_elevation': 18.0, 'sun_azimuth': -55.0,
+                     'sun_color': (1.0, 0.9, 0.78), 'ambient': (0.55, 0.62, 0.76), 'ambient_intensity': 0.9},
+        'camera': {'distance': 2.4, 'target_y': 0.2, 'pitch': 10, 'yaw': -35, 'focal_mm': 35},
+        'emitters': [],
+        'matter': [dict(name='Heap', material='snow', shape='pile', position=(-0.6, 0.0, 0.0), size=(0.35, 0.28, 0.55))],
+    },
     'yard_blast': {
         'name': 'Blast in a yard', 'category': 'Things that fall', 'size': '2 kg charge',
         'blurb': 'Two kilograms of explosive go off among crates, barrels, a brick wall and a heap of sand: a fireball, the '
@@ -1290,7 +1307,7 @@ ORDER = ['campfire', 'bonfire', 'torch', 'candle', 'gas_ring', 'pool_fire', 'fir
          'curtain_fire', 'fabric_curtain', 'wet_towels', 'armchair_fire', 'room_fire', 'backdraft', 'flash_fire', 'gas_cloud', 'coloured_flames', 'road_flare',
          'grinder_sparks', 'fireworks', 'car_through_smoke', 'flag_wind', 'kettle_steam', 'steam_vent',
          'crates_in_fire', 'tower_knockdown', 'wall_smash', 'wrecking_ball', 'chain_swing', 'window_smash', 'vase_drop',
-         'yard_blast', 'lightning_strike', 'sheet_rip', 'crash_test', 'stunt_fall', 'cart_jump', 'meadow_fire', 'shed_fire', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag', 'sand_castle', 'sand_sling', 'iron_pour', 'chocolate_fire', 'chocolate_pan']
+         'yard_blast', 'lightning_strike', 'sheet_rip', 'crash_test', 'stunt_fall', 'cart_jump', 'meadow_fire', 'shed_fire', 'sand_hopper', 'snowballs', 'jelly_ball', 'mud_drag', 'sand_castle', 'sand_sling', 'iron_pour', 'chocolate_fire', 'chocolate_pan', 'snow_drift']
 
 
 def make(name: str, fps=None, start=None) -> Scene:

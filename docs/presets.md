@@ -1,6 +1,6 @@
 # Presets
 
-Blackbody comes with 112 presets. Click one in the app's Effects panel to load it into your shot; every one is an ordinary scene you can change and save as your own. On the website the gallery plays a clip of each one that has one: <https://gjnail.github.io/blackbody/presets.html>.
+Blackbody comes with 114 presets. Click one in the app's Effects panel to load it into your shot; every one is an ordinary scene you can change and save as your own. On the website the gallery plays a clip of each one that has one: <https://gjnail.github.io/blackbody/presets.html>.
 
 ## Fire and smoke
 
@@ -81,6 +81,7 @@ Blackbody comes with 112 presets. Click one in the app's Effects panel to load i
 | <img src="../blackbody/assets/presets/iron_pour.png" width="200" alt=""> | **Pouring molten iron**<br>3 litres of iron | Molten iron at 1320 °C poured from a ladle into a mould: it glows orange and lights the floor round it, fills the mould, and dims to red as its skin cools and sets. Matter in Molten iron, poured. |
 | <img src="../blackbody/assets/presets/chocolate_fire.png" width="200" alt=""> | **Chocolate by a fire**<br>20 cm flames | Three pieces of chocolate on a slab beside a small fire: its radiant heat softens the side of each that faces it, the nearest first, and they slump and run into glossy puddles. Matter in Chocolate, with Heat speed 50 (it melts some fifty times quicker than for real). |
 | <img src="../blackbody/assets/presets/chocolate_pan.png" width="200" alt=""> | **Chocolate in a hot pan**<br>24 cm pan | Squares of chocolate dropped into a steel pan at 180 °C: they melt from the bottom where they touch it, slump into glossy pools and run together. Matter in Chocolate; the pan’s Temperature 180 °C; Heat speed 60 (it melts some sixty times quicker than for real). |
+| <img src="../blackbody/assets/presets/snow_drift.png" width="200" alt=""> | **Snow blowing off a heap**<br>1 m heap, 15 m/s wind | A gale over a heap of fresh powder snow. Its windward face wears down as the wind carries its surface off at the rate a wind that strong moves snow, the grains creeping over the crest and settling in its lee, and fine spindrift rises off it in a plume that streams downwind. Matter in Snow, Motion > Wind 15 m/s; the spindrift is the gas's smoke, coloured white (Shading > Smoke colour). |
 
 ## Water
 
@@ -109,6 +110,7 @@ Blackbody comes with 112 presets. Click one in the app's Effects panel to load i
 | <img src="../blackbody/assets/presets/lava_sea.png" width="200" alt=""> | **Lava into the sea**<br>4 m of shore | Lava running off a rock shelf into the sea. Where it meets the water it boils it: a thick white plume of steam billows up off the shoreline, and the lava front chills black and glassy while the lava behind it keeps glowing. The hot air over the flow shimmers. |
 | <img src="../blackbody/assets/presets/lava_quench.png" width="200" alt=""> | **Water on lava**<br>1.5 m lava pool | A pool of lava fed from a vent, and a hose turned on it after a second: the water flashes to steam where it lands, drops skitter and sizzle away on the hot surface, and the lava chills black and glassy under the stream while the rest keeps glowing. |
 | <img src="../blackbody/assets/presets/lava_grass.png" width="200" alt=""> | **Lava into grass**<br>4 m flow | A lava flow creeping into dry grass. The air over the lava is hot enough to light the grass just ahead of the front, so a line of flame and smoke runs ahead of it and the lava rolls on over the burnt ground. Spreading fire is on: the ground is the grass. |
+| <img src="../blackbody/assets/presets/lava_raft.png" width="200" alt=""> | **Log on a lava flow**<br>3 m flow | A lava flow reaches a pine log and a steel block lying in its path. Lava is 2600 kg/m3, so the light log floats on it and is carried off at the front of the flow, while the heavy steel is half swallowed and shoved along. Both heat where the lava touches them and in its glow (Domain > Heat speed 8), and the air over the flow shimmers. |
 
 ## The sea
 

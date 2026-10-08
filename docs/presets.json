@@ -399,6 +399,13 @@
   "blurb": "Squares of chocolate dropped into a steel pan at 180 °C: they melt from the bottom where they touch it, slump into glossy pools and run together. Matter in Chocolate; the pan’s Temperature 180 °C; Heat speed 60 (it melts some sixty times quicker than for real)."
  },
  {
+  "key": "snow_drift",
+  "name": "Snow blowing off a heap",
+  "category": "Sand, snow and mud",
+  "size": "1 m heap, 15 m/s wind",
+  "blurb": "A gale over a heap of fresh powder snow. Its windward face wears down as the wind carries its surface off at the rate a wind that strong moves snow, the grains creeping over the crest and settling in its lee, and fine spindrift rises off it in a plume that streams downwind. Matter in Snow, Motion > Wind 15 m/s; the spindrift is the gas's smoke, coloured white (Shading > Smoke colour)."
+ },
+ {
   "key": "water_pour",
   "name": "Pouring water",
   "category": "Liquids",
@@ -726,6 +733,13 @@
   "category": "Fire and liquid",
   "size": "4 m flow",
   "blurb": "A lava flow creeping into dry grass. The air over the lava is hot enough to light the grass just ahead of the front, so a line of flame and smoke runs ahead of it and the lava rolls on over the burnt ground. Spreading fire is on: the ground is the grass."
+ },
+ {
+  "key": "lava_raft",
+  "name": "Log on a lava flow",
+  "category": "Fire and liquid",
+  "size": "3 m flow",
+  "blurb": "A lava flow reaches a pine log and a steel block lying in its path. Lava is 2600 kg/m3, so the light log floats on it and is carried off at the front of the flow, while the heavy steel is half swallowed and shoved along. Both heat where the lava touches them and in its glow (Domain > Heat speed 8), and the air over the flow shimmers."
  },
  {
   "key": "shooting_range",

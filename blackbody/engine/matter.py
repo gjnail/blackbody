@@ -776,17 +776,24 @@ class Matter:
         self._dust_ready = True
 
     def dust_hook(self, b, solver, dt, stage):
-        """Solver.cloth_hook: at the sources, the matter's dust from its last frame into the gas as smoke (mpm_dust.wgsl)."""
-        if stage != 'sources' or not getattr(self, '_dust_ready', False) or self._dust_u[7] < 0.5 or 'DUF' not in self._buf:
+        """Solver.cloth_hook: at the sources, the matter's dust from its last frame into the gas as smoke (mpm_dust.wgsl),
+        on the simulation grid and on its finer upres grid (what a final render draws)."""
+        if stage not in ('sources', 'sources_fine') or not getattr(self, '_dust_ready', False) or self._dust_u[7] < 0.5                 or 'DUF' not in self._buf:
             return
         dd = self._dust_dims
         if tuple(int(math.ceil(d / 2)) for d in solver.dims) != dd:
             return
         if 'dust' not in self._k:
             self._k['dust'] = self.gpu.kernel('mpm_dust.wgsl', ['utex3d', 'rbuf', 'st3d:rgba16float:w'], workgroup=(4, 4, 4))
-        u = Uniforms().v4(*solver.dims, solver.h).v4(*dd, 2.0 * solver.h).v4(dt / max(self._dust_fdt, 1e-6), self.DUST_SMOKE)
-        b.run(self._k['dust'], [solver.scal[0], self._buf['DUF'], solver.scal[1]], u, solver.dims)
-        solver.scal.reverse()
+        fine = stage == 'sources_fine'
+        if fine and solver.scal_fine is None:
+            return
+        scal = solver.scal_fine if fine else solver.scal
+        dims = solver.dims_fine if fine else solver.dims
+        h = solver.h / solver.upres if fine else solver.h
+        u = Uniforms().v4(*dims, h).v4(*dd, 2.0 * solver.h).v4(dt / max(self._dust_fdt, 1e-6), self.DUST_SMOKE)
+        b.run(self._k['dust'], [scal[0], self._buf['DUF'], scal[1]], u, dims)
+        scal.reverse()
 
     def _fabric(self):
         """The kernels' "fabric": 0 for none, else 1 + how long since its sheet was laid (s; mpm_common.wgsl SHEET_N)."""

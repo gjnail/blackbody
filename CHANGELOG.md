@@ -288,6 +288,8 @@ Notable changes to Blackbody. The format follows
 - Grass slows the wind blowing through it, by its blades' frontal area.
 - Lava (fire-and-liquid scenes) meets broken pieces and sand, snow and mud, floats or sinks objects by its density,
   heats matter and objects, and radiates its heat.
+- Presets: *Snow blowing off a heap* (a 15 m/s gale carrying powder snow off a heap's windward face in a plume)
+  and *Log on a lava flow* (a pine log riding high on the flow and carried off, a steel block half swallowed).
 - Cloth pushes water: the drag a sheet feels from water goes back into the water.
 - Lume, round 9:
   - Light passes (Lume › Light passes): a final render also writes the set's light split by where it comes from into
@@ -318,6 +320,8 @@ Notable changes to Blackbody. The format follows
 
 ### Fixed
 
+- Dust thrown up by the wind or a blast showed in previews but not in final renders: it went only into the coarse
+  smoke grid, and a final render draws the fine one.
 - Lume: coloured glass casts its shadow in its colour (its shadow rays carried the tint as grey); with a background
   colour backdrop, what is seen through water is the backdrop; a clear tank of water no longer glows with light trapped
   in it by total reflection (the least murk is for open water only).
