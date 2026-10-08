@@ -7,4 +7,6 @@
 #    and meshes share loads by area, standing meshes glued at their feet; panes hit at a corner keep no slivers
 # 2: several joints on an object, ropes over several posts and with weight, concave falling meshes as convex parts,
 #    hollow fixed cylinders and balls in the rigid world, chains that give way
-SIM_VERSION = 2
+# 3: smoke carried out of the way of moving objects, pieces and matter (not deleted), a burn that grows and shrinks
+#    with its object's keyed Size
+SIM_VERSION = 3

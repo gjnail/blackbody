@@ -12,7 +12,11 @@
 //
 // Colliders are real objects in the footage: seen directly they hold the liquid out (it does not
 // show through them), seen through or in the liquid they show their own pixels. For shots without
-// footage they can be drawn as grey stand-ins instead.
+// footage they can be drawn as grey stand-ins instead. Where a ray reaches the ground behind one (or
+// behind a real wall in the depth pass, or the matte), the footage at that place on screen shows the
+// object, so it is looked up in a copy with the object filled in from beside it (liq_clean.wgsl): the
+// water shows the ground behind it, not a ghost of it. So does a ray that leaves for the backdrop behind
+// a collider or the matte; behind a real wall it is left as it is (the wall may be what it would meet).
 //
 // Open water: with a water level, the liquid carries on past the open sides of the box as a flat
 // sheet out to the horizon, and rays that leave the box under water carry on through it.
@@ -126,6 +130,8 @@ struct Params {
 // makes (liq_lava.wgsl)
 @group(0) @binding(24) var cloth_t: texture_2d<f32>;   // fabric drawn before the march (cloth_layer.wgsl): colour,
                                                        // distance from where the ray starts (m; -1 none); 1x1 without
+@group(0) @binding(25) var clean_t: texture_2d<f32>;   // the footage with what stands in it filled in, a = its
+                                                       // distance (m) (liq_clean.wgsl); 1x1 without
 //!include ocn_sample.wgsl
 //!include ocn_shade.wgsl
 //!include liq_lava.wgsl
@@ -736,6 +742,17 @@ fn backdrop(uv: vec2<f32>) -> vec3<f32> {
   return U.back.rgb;
 }
 
+// The footage at screen position uv behind a point dist_m (m) from the camera: where the footage shows
+// something nearer there (an object standing in the liquid), the footage filled in from beside it.
+// objects: only where that is a collider or the matte, for a ray that leaves toward the backdrop
+// (env, the far branch of background): a surface of the depth pass there may be what it would reach.
+fn backdrop_behind(uv: vec2<f32>, dist_m: f32, objects: bool) -> vec3<f32> {
+  let c = textureSampleLevel(clean_t, lin, uv, 0.0);
+  let a = select(abs(c.a), c.a, objects);   // (a < 0: only the depth pass covers it there)
+  if (a >= 0.0 && a < dist_m * 0.97 - 0.02) { return c.rgb; }
+  return backdrop(uv);
+}
+
 // The HDRI (latitude-longitude) in world direction d.
 fn hdri(d: vec3<f32>) -> vec3<f32> {
   let c = cos(U.envp.y);
@@ -770,7 +787,7 @@ fn env(d: vec3<f32>) -> vec3<f32> {
       gain = 0.8;
     }
     let s = screen_of(U.scene.xyz + dd * 1000.0);
-    col = mix(col, backdrop(s.xy) * gain, a * s.z);
+    col = mix(col, backdrop_behind(s.xy, 1000.0, true) * gain, a * s.z);
   }
   return col;
 }
@@ -905,14 +922,14 @@ fn past(p: vec3<f32>, d: vec3<f32>, tg: f32, lg: vec3<f32>) -> vec3<f32> {
     let wg = to_world(pg);
     let s = screen_of(wg);
     let dw = to_world_dir(d);
-    var seen = backdrop(s.xy);
+    var seen = backdrop_behind(s.xy, length(wg - U.scene.xyz), false);
     if ((U.vp * vec4<f32>(wg, 1.0)).w <= 1e-4) { seen = sky(dw) * 0.35; }
     return seen * ground_shade(pg, lg);
   }
   let dw = to_world_dir(d);
   let far = to_world(p) + dw * U.scene.w;
   let s = screen_of(far);
-  return mix(env(dw), backdrop(s.xy), s.z);
+  return mix(env(dw), backdrop_behind(s.xy, length(far - U.scene.xyz), true), s.z);
 }
 
 // Height of q over the sea (cells), and far above it inside the box's footprint.

@@ -61,6 +61,7 @@ class BodyField:
         self._bufs = {}
         self.steps = []          # per substep: (first piece, first tile, pieces)
         self.owners = []         # per substep: (collider index, piece index) of each of its pieces (those reaching the grid)
+        self.speeds = []         # per substep: how fast (m/s) the surface of its fastest piece moves (see fastest)
         self.tiles = (1, 1, 1)
 
     def _buffer(self, name, data):
@@ -81,6 +82,7 @@ class BodyField:
         there are no pieces."""
         self.steps = []
         self.owners = []
+        self.speeds = []
         dims = np.asarray(dims, int)
         nt = np.maximum((dims + TILE - 1) // TILE, 1)
         self.tiles = tuple(int(x) for x in nt)
@@ -94,6 +96,7 @@ class BodyField:
             if rec is None:
                 self.owners.append(owners)
                 self.steps.append(None)
+                self.speeds.append(0.0)
                 continue
             P, planes, c, r = rec
             PL = planes if PL is None else PL
@@ -106,6 +109,8 @@ class BodyField:
             keep = np.nonzero(inside)[0]
             P, c, reach = P[keep], c[keep], reach[keep]
             self.owners.append([owners[k] for k in keep])
+            spin = np.linalg.norm(P[:, 3, :3], axis=1) * P[:, 4, 3]   # (spin times reach)
+            self.speeds.append(float(np.max(np.linalg.norm(P[:, 2, :3], axis=1) + spin)) if len(P) else 0.0)
             lists = [[] for _ in range(int(np.prod(nt)))]
             a = np.clip(np.floor((c - reach[:, None] - o) / (h * TILE)).astype(int), 0, nt - 1)
             b = np.clip(np.floor((c + reach[:, None] - o) / (h * TILE)).astype(int), 0, nt - 1)
@@ -132,6 +137,11 @@ class BodyField:
         self.TC = self._buffer('tiles', np.concatenate(TC_all))
         self.TL = self._buffer('list', np.concatenate(TL_all) if n_l else np.zeros(1, np.uint32))
         return True
+
+    def fastest(self, i):
+        """How fast (m/s) the surface of substep i's fastest piece moves: its speed and its spin times its reach (pieces
+        lying still jitter at about a millimetre a second)."""
+        return self.speeds[i] if i < len(self.speeds) else 0.0
 
     def bake(self, b, solver, i):
         """Record substep i's pieces into the solver's distance field and solid velocity (batch b). False if that

@@ -113,6 +113,26 @@ WALL = dict(name='Wall', shape='box', position=(0.0, 0.6, 0.0), size=(0.8, 0.6, 
             material='brick')
 
 
+def test_a_wall_of_pieces_left_standing_is_a_still_wall_to_the_smoke():
+    """A breakable's pieces are baked into the smoke's distance every substep. Standing glued they barely move (here
+    about 1e-11 m/s; a shed's planks settling on the ground move for their first two seconds or so): how fast the smoke
+    takes them to move (bodyfield.py, |v| + spin times reach, as Solver._motion reads it) stays under MOVING of a cell
+    a substep even on a fine grid, so the smoke goes round them as round a still wall. (Anything in the solid's
+    velocity once counted as moving, and a burning shed of glued planks lost half its smoke.)"""
+    from blackbody.engine.bodyfield import piece_records
+    from blackbody.engine.solver import MOVING
+    scene = scene_of(WALL)
+    S, moved = run(scene, 3.0)
+    assert max(float(m.max()) for m in moved.values()) < 0.005          # (standing whole)
+    f = scene.start + 1 + int(round(3.0 * scene.fps))
+    S.advance(scene, f, 1.0 / scene.fps, 4)
+    for poses in S.substep_pieces:
+        P = piece_records(scene, poses)[0]
+        fast = float(np.max(np.linalg.norm(P[:, 2, :3], axis=1) + np.linalg.norm(P[:, 3, :3], axis=1) * P[:, 4, 3]))
+        h, dt = 0.02, 1.0 / (scene.fps * 4)
+        assert fast * dt < MOVING * h, (fast, MOVING * h / dt)
+
+
 def ball(v):
     return dict(name='Ball', shape='sphere', position=(0.0, 0.6, -1.0), size=(0.2, 0.2, 0.2), dynamic=True, material='steel',
                 start_velocity=(0.0, 0.0, v))

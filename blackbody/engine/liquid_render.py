@@ -24,7 +24,7 @@ SLAB_NODES = 8 << 20   # surface-grid nodes per accumulation slab
 # kernel of the liquids)
 MARCH_BINDINGS = ['tex3d', 'tex2d', 'utex2d', 'smp', 'st2d:rgba16float:w', 'st2d:rgba16float:w', 'st2d:rgba16float:w',
                   'tex3d', 'utex3d', 'tex2d', 'tex2d', 'smp', 'st2d:rgba16float:w', 'tex3d', 'tex3d', 'tex2d', 'tex2d',
-                  'tex3d', 'tex3d', 'rbuf', 'rbuf', 'tex2d', 'buf', 'rbuf', 'utex2d']
+                  'tex3d', 'tex3d', 'rbuf', 'rbuf', 'tex2d', 'buf', 'rbuf', 'utex2d', 'tex2d']
 
 
 def march_spec():
@@ -274,6 +274,16 @@ class LiquidRenderer:
         self._k_march = None   # (compiled when the first frame is drawn: k_march)
         self._no_cloth = g.texture2d(1, 1, 'rgba16float', 'liq-no-cloth')   # (fabric: cloth.py layer)
         g.upload(self._no_cloth, np.full((1, 1, 4), -1.0, np.float16))
+        # the footage with what stands in it filled in from beside it, for rays that reach the ground behind it
+        # (liq_clean.wgsl); a 1x1 that covers nothing without footage or nothing standing in it
+        clean = ['tex2d', 'tex2d', 'utex3d', 'smp', 'utex2d', 'st2d:r32float:w', 'st2d:rgba16float:w']
+        self.k_clean_cover = g.kernel('liq_clean.wgsl', clean, 'cover', workgroup=(8, 8, 1))
+        self.k_clean_fill = g.kernel('liq_clean.wgsl', clean, 'fill', workgroup=(8, 8, 1))
+        self._no_clean = g.texture2d(1, 1, 'rgba16float', 'liq-no-clean')
+        g.upload(self._no_clean, np.full((1, 1, 4), 60000.0, np.float16))
+        self._no_near = g.texture2d(1, 1, 'r32float', 'liq-no-near')
+        g.upload(self._no_near, np.full((1, 1, 1), 60000.0, np.float32))
+        self._clean = None
         self.k_lens = g.kernel('liq_lens_drops.wgsl', ['tex2d', 'tex2d', 'smp', 'st2d:rgba8unorm:w', 'st2d:rgba16float:w'],
                                workgroup=(8, 8, 1))
         self._lens_tmp = None
@@ -964,13 +974,15 @@ class LiquidRenderer:
                 self.gbuf.destroy()
             self.gbuf = self.gpu.buffer(w * h * 48, 'liq-surface-hits')
         b.clear_buffer(self.gbuf, 0, w * h * 48)
+        clean = self._clean_plate(b, view, camstate, w2g, look, comp, size, plate, plate_fit, plate_transform, plate_gain,
+                                  fwd, ground)
         b.run(self.k_march, [self.surf, plate if plate is not None else self._black, view.wet, self.gpu.linear,
                              r.beauty, r.emit, r.aux, self.ww_tex, atlas, self.caus_tex,
                              self.env_tex if env_on else self._no_env, self.gpu.repeat, r.mask,
                              *self.ocean.textures(view.layer), self.heat_tex, self.dye_tex,
                              *(fire_lights if fire_lights is not None else (self._no_lights, self._no_count)),
                              hold_tex, self.gbuf,
-                             lava_map, cloth if cloth is not None else self._no_cloth],
+                             lava_map, cloth if cloth is not None else self._no_cloth, clean],
               u, (w, h, 1))
         if look.glow > 0.0:
             # the molten surface the march found, shaded (liq_lava_shade.wgsl)
@@ -995,6 +1007,34 @@ class LiquidRenderer:
                                       self.env_tex if env_on else self._no_env, self.gpu.repeat], ul, (w, h, 1))
         if look.ice and view.ice is not None and look.glow <= 0.0:
             self._ice_shade(b, view, look, w2g, sd, gain, (w, h), camstate)
+
+    def _clean_plate(self, b, view: LiquidView, camstate, w2g, look: WaterLook, comp, size, plate, plate_fit,
+                     plate_transform, plate_gain, fwd, ground):
+        """The footage with what stands in front of the ground filled in from beside it (liq_clean.wgsl), for the
+        march's rays that reach the ground or the backdrop behind it: the colliders drawn in the footage (not as
+        stand-ins), and the footage's matte and the surfaces of its depth pass. A 1x1 that covers nothing without."""
+        r = self.renderer
+        hold_tex, matte_on, depth_on, kind, scale = r.holdouts(comp)
+        objects = look.colliders_look != 'shaded' and any(c.holdout for c in list(view.colliders)[:MAX_COLLIDERS])
+        if plate is None or not (objects or matte_on or depth_on):
+            return self._no_clean
+        w, h = size
+        if self._clean is None or self._clean[0].size[:2] != (w, h):
+            for t in self._clean or ():
+                t.destroy()
+            self._clean = (self.gpu.texture2d(w, h, 'r32float', 'liq-near'), self.gpu.texture2d(w, h, 'rgba16float', 'liq-clean'))
+        near, clean = self._clean
+        u = (Uniforms().m4(camstate.inv_view_proj).m4(w2g)
+             .v4(*view.dims, view.h).v4(*view.origin, 1.0 if objects else 0.0).v4(w, h)
+             .v4(*camstate.eye, look.backdrop).v4(*fwd, 1.0 if ground else 0.0)
+             .v4(plate_transform, plate_gain, *plate_fit)
+             .v4(1.0 if matte_on else 0.0, 1.0 if depth_on else 0.0, kind, scale).v4(*plate_fit, 0.0, 0.0))
+        pack_colliders(u, view.colliders, view.meshes)
+        atlas = view.meshes.atlas if view.meshes is not None else self._no_atlas
+        res = [plate, hold_tex, atlas, self.gpu.linear]
+        b.run(self.k_clean_cover, res + [self._no_near, near, self._no_clean], u, (w, h, 1))
+        b.run(self.k_clean_fill, res + [near, self._no_near, clean], u, (w, h, 1))
+        return clean
 
     def _ice_shade(self, b, view: LiquidView, look: WaterLook, w2g, sd, gain, size, camstate):
         """Frost, rime and the sparkle of crystals over the ice the march found (liq_ice_shade.wgsl): it

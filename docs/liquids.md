@@ -128,6 +128,8 @@ Put the camera under the water level and the render looks out from inside: the s
 
 With a depth pass of the footage (Composite › *Holdouts from footage*), the liquid is hidden behind the footage's surfaces and shows in front of them, as the fire is. Tick *Liquid › Hits the footage* and it also collides with them: water splashes against a real wall and runs along a real kerb (a slab just behind each surface the camera sees is solid).
 
+The water shows the footage bent through it: what a ray through it reaches (the ground under it, the scene behind it) is looked up in the footage where that place is on screen. Where something stands in front of that place (a real rock that is a collider *In the footage*, an object drawn in CG on the set, a real wall in the depth pass, the matte), the footage there shows that thing, not the ground behind it, so the water would show a ghost of it beside it. Instead the footage there is filled in from beside the thing (the ground on either side of it carried on across it), and the water shows that. A ray that leaves the water for the backdrop rather than the ground (a reflection of the scene, or the scene seen through the water) gets the same for colliders and the matte, but a real wall in the depth pass is kept there: the ray may well meet it.
+
 ## Size, resolution and big shots
 
 ### Scale and resolution

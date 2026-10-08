@@ -1397,7 +1397,7 @@ fn surface_at(h: Hit, ro: vec3<f32>, rd: vec3<f32>, want: f32) -> Surf {
   if (U.bf2.z > 0.5 && i32(k.m2.w) >= 0) {
     // a burnable object: its spot just off the surface (its region of the object-burn atlas, in its own frame)
     let slot = slots[i32(k.m2.w)];
-    s = burnt(s, obj_burn_at(k, slot, s.p + s.n * (0.75 * slot.dims.w)));
+    s = burnt(s, obj_burn_on(k, slot, s.p, s.n, 0.75 * slot.dims.w));
   }
   if (F_HEAT) { s = hot_glow(s, h.id); }
   return s;

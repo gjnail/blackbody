@@ -71,7 +71,7 @@ Keyframe an emitter's *Position* to wave a torch, run a burning stuntman through
 
 ### Moving colliders
 
-Keyframe a collider's *Position*, *Size* or *Rotation*. It pushes the gas out of its way and drags it along: a car through smoke, a door swinging open.
+Keyframe a collider's *Position*, *Size* or *Rotation*. It pushes the gas out of its way and drags it along: a car through smoke, a door swinging open. The smoke, fuel and heat it runs into are shoved ahead of it and pressed together, then flow round it, and the air it leaves behind fills from beside it, so a car driven through a bank of smoke neither deletes the smoke in its way nor clears a tunnel through it. Something that moves less than a hundredth of a cell in a substep counts as still: broken pieces and sand lying where they fell jitter a little, and the gas goes round them as round any still wall.
 
 ### Rooms, walls and doors
 
@@ -110,7 +110,7 @@ Emitter › *Steam* releases water vapour (about 600 g/m³ for steam straight of
 
 ### Spreading fire
 
-Turn on *Spreading fire* (its own section in Settings) and fire spreads by itself over the ground and over any collider marked *Burnable*; a burnable collider can move or fall while it burns, and its fire goes with it. A spot catches after sitting in hot gas for the *Catch time*, flames for the *Burn time*, smoulders, then is burnt out for good. Light it with any emitter, even one that burns for only a moment. Wind-blown flames carry the front downwind; *Creep speed* spreads it in still air. *Coverage* leaves bare patches.
+Turn on *Spreading fire* (its own section in Settings) and fire spreads by itself over the ground and over any collider marked *Burnable*; a burnable collider can move or fall while it burns, and its fire goes with it. Its burn is kept in proportion to its size, so on an object whose *Size* is animated the burning and burnt patches grow and shrink with it and stay where they were on its surface. A spot catches after sitting in hot gas for the *Catch time*, flames for the *Burn time*, smoulders, then is burnt out for good. Light it with any emitter, even one that burns for only a moment. Wind-blown flames carry the front downwind; *Creep speed* spreads it in still air. *Coverage* leaves bare patches.
 
 ### Spot fires
 

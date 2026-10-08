@@ -585,7 +585,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       nrm = col_normal(k, ps, 0.5 * h);
       mask = vec4<f32>(0.0, clip.w, 1.0, 0.0);
       if (i32(k.m2.w) >= 0) {
-        let b = obj_burn_at(k, slots[i32(k.m2.w)], ps + nrm * (0.75 * h));
+        let b = obj_burn_on(k, slots[i32(k.m2.w)], ps, nrm, 0.75 * h);
         if (U.surf.w > 0.5) { mask.x = burn_char(b); }
         if (U.shad.z > 0.5) { surf.a = burn_wet(b); }
       }

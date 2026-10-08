@@ -41,6 +41,10 @@ class MatterField:
         self.ready = True
         return True
 
+    def fastest(self):
+        """How fast (m/s) its fastest particle moved at the end of the last frame (at least 5 cm/s: matter.py)."""
+        return float(self._matter.max_speed) if self.ready else 0.0
+
     def bake(self, b, solver, i, after=False):
         """Fold the matter into the solver's distance to solids and solid velocity for substep i. after: broken pieces
         were baked first this substep (their velocity stays where there is no matter)."""
@@ -60,6 +64,11 @@ class Fields:
 
     def __init__(self, pieces=None, matter=None):
         self.pieces, self.matter = pieces, matter
+
+    def fastest(self, i):
+        """How fast (m/s) the fastest surface folded in at substep i moves (solver.py: whether anything moves)."""
+        f = self.pieces.fastest(i) if self.pieces is not None else 0.0
+        return max(f, self.matter.fastest()) if self.matter is not None else f
 
     def bake(self, b, solver, i):
         on = bool(self.pieces.bake(b, solver, i)) if self.pieces is not None else False

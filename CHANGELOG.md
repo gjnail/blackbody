@@ -366,6 +366,11 @@ Notable changes to Blackbody. The format follows
 
 ### Fixed
 
+- Water no longer shows a ghost of an object standing in it: where the water reflects or shows the ground behind the
+  object, the footage is filled in from either side of it instead of the object's own pixels (about 90% of the ghost
+  gone on the measured pond). Objects moving through smoke push it aside instead of deleting it (a car through smoke
+  kept all but 0.03% of it, against 0.8%; a fast box through a closed room lost none of the smoke it covered, against
+  all of it), and a burnable object whose Size is keyed burns over its whole grown surface, its scorch where it was.
 - The first liquid scene no longer waits 8 to 20 minutes for its shaders: the liquid renderer's shader compiles cold
   in 20 to 55 s (and 1.8 GB of memory instead of up to 22 GB), and the app compiles it in the background as soon as
   it opens, so it is usually ready before a liquid is. The same picture draws faster too (the tsunami 181 to 64 ms a

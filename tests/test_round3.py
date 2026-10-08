@@ -761,6 +761,226 @@ def test_soot_grows_with_a_collider_whose_size_is_animated(engine):
     assert engine.aovs()['mask'][..., 3].astype(np.float32).max() > 0.05
 
 
+def test_a_burn_grows_with_a_collider_whose_size_is_animated(engine):
+    """A burning block that grows to twice its size keeps burning on its surface as it is now: its burn is laid out in
+    its own size, not round the size it had when it caught (where the grown block's surface no longer is)."""
+    sc = _quiet(presets.make('campfire'), 48)
+    sc.data['domain'].update(size_x=2.0, size_y=2.0, size_z=2.0)
+    sc.data['spread'].update(enabled=True, ground=False, coverage=1.0, burn_time=20.0, catch_time=0.1, creep=0.3)
+    sc.emitters = [_em(sc, shape='sphere', position=(0.0, 0.15, 0.0), size=(0.15, 0.08, 0.15), fuel=0.0, temperature=1.2,
+                       stop=0.8, fade_out=0.1, embers=False)]
+    sc.colliders = [_col(sc, 0, shape='box', position=(0.0, 0.55, 0.0), burnable=True,
+                         size=K((0.0, (0.25, 0.1, 0.25)), (1.0, (0.25, 0.1, 0.25)), (1.4, (0.5, 0.2, 0.5)), interp='linear'))]
+    engine.invalidate()
+    engine.prepare(sc)
+    s = engine.solver
+    engine.simulate_to(sc, sc.start + int(1.8 * sc.fps), cache=False)
+    atlas = s.read_burn_obj().astype(np.float32)
+    assert ((atlas[..., 2] > 0.5) & (atlas[..., 1] >= 1.0)).sum() > 10, 'the block caught fire'
+    slot = np.frombuffer(s.gpu.read_buffer(s.burn_slots), np.float32)[:16]   # (corner, z; dims, cell; cells; size)
+    lo, dims, cell, size = slot[0:3], slot[4:7], slot[8:11], slot[12:15]
+    assert np.all(lo < -size) and np.all(lo + dims * cell > size), 'the region covers the whole block at any size'
+    # its fuel comes off the grown block's surface: in the air just outside it
+    fuel = s.read_scalars()[..., 1].astype(np.float32)
+    nx, ny, nz = s.dims
+    xs, ys, zs = (s.origin[i] + (np.arange(n) + 0.5) * s.h for i, n in enumerate((nx, ny, nz)))
+    Z, Y, X = np.meshgrid(zs, ys, xs, indexing='ij')
+    q = np.maximum(np.abs(np.stack([X, Y - 0.55, Z], -1)) - np.array([0.5, 0.2, 0.5]), 0.0)
+    out = np.linalg.norm(q, axis=-1)
+    inside = (np.abs(X) < 0.5) & (np.abs(Y - 0.55) < 0.2) & (np.abs(Z) < 0.5)
+    shell = ~inside & (out < 2.0 * s.h)
+    assert fuel[shell].sum() > 50.0, f'fuel next to the grown block {fuel[shell].sum():.3f}'   # (before: 0.5; now about 2500)
+
+
+def test_a_grown_burnable_shows_its_burn_all_over(engine):
+    """The same block burnt through before it grows: seen at twice its size, all of it shows the char. The burn is looked
+    up three quarters of a cell off its surface, a cell at its size now; at a fixed distance off it (a cell at the size it
+    had) a fifth of the grown block looked unburnt, and before the burn grew with it none of it showed."""
+    sc = _quiet(presets.make('campfire'), 48)
+    sc.data['domain'].update(size_x=2.0, size_y=2.0, size_z=2.0)
+    sc.data['spread'].update(enabled=True, ground=False, coverage=1.0, burn_time=1.0, catch_time=0.1, creep=2.0)
+    sc.emitters = [_em(sc, shape='sphere', position=(0.0, 0.15, 0.0), size=(0.15, 0.08, 0.15), fuel=0.0, temperature=1.2,
+                       stop=0.8, fade_out=0.1, embers=False)]
+    sc.colliders = [_col(sc, 0, shape='box', position=(0.0, 0.55, 0.0), burnable=True,
+                         size=K((0.0, (0.25, 0.1, 0.25)), (1.0, (0.25, 0.1, 0.25)), (1.4, (0.5, 0.2, 0.5)), interp='linear'))]
+    engine.invalidate()
+    engine.prepare(sc)
+    f = sc.start + int(1.8 * sc.fps)
+    engine.simulate_to(sc, f, cache=True)
+    engine.render(sc, f, (320, 180), mode='composite')
+    mask = engine.aovs()['mask'].astype(np.float32)
+    block = mask[..., 2] > 0.5   # (the block is the only thing in the shot that holds the fire out)
+    for ax in (0, 1):
+        block &= np.roll(block, 1, axis=ax) & np.roll(block, -1, axis=ax)
+    assert block.sum() > 500
+    charred = float((mask[..., 0][block] > 0.0).mean())
+    assert charred > 0.97, f'{charred:.2f} of the grown block shows its burn'
+
+
+def _still_room(engine, dims, upres=1):
+    """A closed room of still air (h = 5 cm) with nothing to move the smoke but the colliders."""
+    from blackbody.engine.solver import Solver, SolverParams
+    s = Solver(engine.gpu)
+    s.configure(dims, 0.05, (-0.05 * dims[0] / 2, 0.0, -0.05 * dims[2] / 2), {}, upres=upres)
+    prm = SolverParams(buoyancy=0.0, soot_weight=0.0, damping=0.0, vorticity=0.0, vort_outside=0.0, turbulence=0.0,
+                       disturbance=0.0, smoke_dissipation=0.0, fuel_dissipation=0.0, cooling=0.0, expansion=0.0,
+                       air_mixing=0.0, upres_turbulence=0.0, open_sides=False, open_top=False)
+    return s, prm
+
+
+def _smoke_in(engine, s, tex, sdf, field):
+    """Put smoke `field` (z, y, x) into the free cells of scalar texture `tex`; the amount put in."""
+    free = engine.gpu.read(sdf)[..., 0] >= 0.0
+    a = np.zeros(free.shape + (4,), np.float16)
+    a[..., 2] = field * free
+    engine.gpu.upload(tex, a)
+    return float(a[..., 2].astype(np.float32).sum())
+
+
+def _smoke_free(engine, tex, sdf):
+    free = engine.gpu.read(sdf)[..., 0] >= 0.0
+    return float(engine.gpu.read(tex)[..., 2].astype(np.float32)[free].sum())
+
+
+def test_what_a_moving_collider_covers_is_pushed_out_of_its_way(engine):
+    """One step from still air, a box moving forward and a door swinging round: the cells they cover held smoke,
+    which the reaction pass empties. It is handed to the free cells just outside them first (sweep.wgsl): on the
+    simulation grid none is lost (before, all of it was). The upres grid is carried by the air just pushed, which
+    moves some of it on and leaves a little behind: about a tenth is lost there (before, two thirds)."""
+    from blackbody.engine.solver import ColliderGPU
+    s, prm = _still_room(engine, (40, 24, 24), upres=2)
+    dt = 1.0 / 96.0
+    cols = lambda t: [ColliderGPU(shape='box', pos=(-0.4 + 3.0 * t, 0.6, 0.0), size=(0.2, 0.2, 0.2), vel=(3.0, 0.0, 0.0)),
+                      ColliderGPU(shape='box', pos=(0.5, 0.5, 0.0), size=(0.25, 0.3, 0.03), rot_y=0.4 + 6.0 * t, spin=6.0)]
+    s.set_colliders(cols(0.0))
+    rng = np.random.default_rng(3)
+    grids = [(lambda: s.scal[0], lambda: s.sdf, s.dims), (lambda: s.scal_fine[0], lambda: s.sdf_fine, s.dims_fine)]
+    fields = [rng.uniform(0.2, 1.0, d[::-1]) for _, _, d in grids]
+    before = [_smoke_in(engine, s, tex(), sdf(), f) for (tex, sdf, _), f in zip(grids, fields)]
+    was = [engine.gpu.read(sdf())[..., 0] >= 0.0 for _, sdf, _ in grids]
+    with engine.gpu.batch() as b:
+        s.step(b, dt, prm, [], cols(dt))
+    for i, (tex, sdf, _) in enumerate(grids):
+        covered = was[i] & (engine.gpu.read(sdf())[..., 0] < 0.0)
+        held = float(fields[i].astype(np.float16).astype(np.float32)[covered].sum())   # what the covered cells held
+        assert covered.sum() > (40 if i == 0 else 300), f'the colliders cover cells as they move ({covered.sum()})'
+        lost = before[i] - _smoke_free(engine, tex(), sdf())
+        assert abs(lost) < (0.02 if i == 0 else 0.25) * held, f'grid {i}: {lost:.2f} of the {held:.2f} in the covered cells lost'
+
+
+def test_a_collider_driven_through_smoke_pushes_it_on(engine):
+    """A box driven through still smoke in a closed room: the smoke it meets is carried round it, not deleted, and no
+    tunnel of clean air is left behind it (the cells it leaves fill from beside them)."""
+    from blackbody.engine.solver import ColliderGPU
+    s, prm = _still_room(engine, (64, 32, 32))
+    dt, speed, x0 = 1.0 / 192.0, 4.0, -1.2
+    box = lambda x: ColliderGPU(shape='box', pos=(x, 0.6, 0.0), size=(0.2, 0.2, 0.2), vel=(speed, 0.0, 0.0))
+    s.set_colliders([box(x0)])
+    before = _smoke_in(engine, s, s.scal[0], s.sdf, 1.0)
+    n = int(2.4 / speed / dt)
+    for i in range(n):
+        with engine.gpu.batch() as b:
+            s.step(b, dt, prm, [], [box(x0 + speed * dt * (i + 1))])
+    smoke = s.read_scalars()[..., 2].astype(np.float32)
+    free = engine.gpu.read(s.sdf)[..., 0] >= 0.0
+    after = float(smoke[free].sum())
+    # (before: 1.2% gone, and an empty tunnel behind the box; now within 0.2%, the smoke it pushes up to twice as thick)
+    assert 0.995 * before < after < 1.01 * before, f'{(after / before - 1.0) * 100:+.2f}% of the smoke'
+    assert smoke[free].min() > 0.9, f'a hole of {smoke[free].min():.2f} behind the box'
+
+
+def test_a_puff_of_smoke_a_box_is_driven_through_keeps_its_smoke(engine):
+    """A soft puff of smoke as big as the box, which is driven straight through it (1.25 cells a step). The flow round
+    a box is not carried exactly (a puff beside its path changes by a few tenths of a percent), but what it drives into
+    is no longer deleted: before, 12% of the puff went; now about 4%."""
+    from blackbody.engine.solver import ColliderGPU
+    s, prm = _still_room(engine, (64, 32, 32))
+    dt, speed, x0 = 1.0 / 192.0, 12.0, -1.2
+    box = lambda x: ColliderGPU(shape='box', pos=(x, 0.6, 0.0), size=(0.2, 0.2, 0.2), vel=(speed, 0.0, 0.0))
+    s.set_colliders([box(x0)])
+    nx, ny, nz = s.dims
+    xs, ys, zs = (s.origin[i] + (np.arange(n) + 0.5) * s.h for i, n in enumerate((nx, ny, nz)))
+    Z, Y, X = np.meshgrid(zs, ys, xs, indexing='ij')
+    before = _smoke_in(engine, s, s.scal[0], s.sdf, np.exp(-(X ** 2 + (Y - 0.6) ** 2 + Z ** 2) / (2 * 0.2 ** 2)))
+    for i in range(int(2.4 / speed / dt)):
+        with engine.gpu.batch() as b:
+            s.step(b, dt, prm, [], [box(x0 + speed * dt * (i + 1))])
+    after = _smoke_free(engine, s.scal[0], s.sdf)
+    assert after > 0.92 * before, f'{(1.0 - after / before) * 100:.1f}% of the puff deleted'
+
+
+def test_a_resting_piece_is_a_still_wall_to_the_smoke(engine):
+    """A broken piece lying still is baked into the distance every substep and jitters at a few millimetres a second.
+    Warm smoke rising past it goes round it exactly as round the same box as a still collider, on its own and while
+    another box is driven through the room. (Before, anything with a velocity in it counted as moving: next to every
+    resting piece the correction was left out and the cells inside it were left out of the filter, and a burning shed
+    of fallen planks lost half its smoke.)"""
+    from blackbody.engine.solver import ColliderGPU, Solver, SolverParams
+
+    class Resting:   # (bodyfield.py's part: nothing new to bake, and how fast its surface moves)
+        def bake(self, b, solver, i):
+            return True
+
+        def fastest(self, i):
+            return 2.0 ** -8
+
+    def smoke(piece, driven):
+        s = Solver(engine.gpu)
+        s.configure((32, 40, 32), 0.05, (-0.8, 0.0, -0.8), {})
+        prm = SolverParams(open_sides=False, open_top=False, vorticity=0.0, turbulence=0.0, disturbance=0.0,
+                           smoke_dissipation=0.0, cooling=0.0, expansion=0.0)
+        box = ColliderGPU(shape='box', pos=(0.0, 0.8, 0.0), size=(0.3, 0.3, 0.3))
+        car = lambda t: ColliderGPU(shape='box', pos=(-0.5 + 2.0 * t, 1.6, 0.0), size=(0.1, 0.1, 0.1), vel=(2.0, 0.0, 0.0))
+        s.set_colliders([box, car(0.0)] if driven else [box])
+        nx, ny, nz = s.dims
+        xs, ys, zs = (s.origin[i] + (np.arange(n) + 0.5) * s.h for i, n in enumerate((nx, ny, nz)))
+        Z, Y, X = np.meshgrid(zs, ys, xs, indexing='ij')
+        sd = engine.gpu.read(s.sdf)[..., 0]
+        blob = np.exp(-((X - 0.42) ** 2 + (Y - 0.5) ** 2 + Z ** 2) / (2 * 0.15 ** 2))
+        a = np.zeros((nz, ny, nx, 4), np.float16)
+        a[..., 0] = 2.0 * blob * (sd >= 0.0)
+        a[..., 2] = (0.3 + blob + 0.2 * np.sin(9 * X) * np.cos(7 * Y)) * (sd >= 0.0)
+        engine.gpu.upload(s.scal[0], a)
+        if piece:
+            # the piece's velocity in the cells inside it (bodies_sdf.wgsl): its surface still, its inside jittering
+            v = np.zeros((nz, ny, nx, 4), np.float16)
+            v[..., 3] = (sd < 0.0) & (np.abs(Y - 0.8) < 0.5)
+            v[(sd < -1.0) & (v[..., 3] > 0), 0] = 2.0 ** -8
+            engine.gpu.upload(s.solid_vel(), v)
+            s.pieces_step = (Resting(), 0)
+        for i in range(24):
+            with engine.gpu.batch() as b:
+                s.step(b, 1.0 / 96, prm, [], [box, car((i + 1) / 96)] if driven else None)
+        return s.read_scalars()
+
+    for driven in (False, True):
+        still, resting = smoke(False, driven), smoke(True, driven)
+        assert np.array_equal(still, resting), f'{int((still != resting).any(axis=-1).sum())} cells differ (driven: {driven})'
+
+
+def test_a_still_burnable_keeps_its_burn_layout(engine):
+    """A burnable box whose size is not animated has the burn layer it always had: the cells of a grid laid out in metres
+    round it that are less than a cell and a half off it. Everything here is exact in binary, so that is exactly the
+    cells less than 1.5 cells off it in exact arithmetic. (Laid out in coordinates divided by its size, the rounding
+    moved the outermost cells of the layer in and out: 15% more of them here, 26% more on shed_fire's shed.)"""
+    from blackbody.engine.solver import ColliderGPU, Solver, SolverParams, collider_extent
+    h = 1.0 / 16
+    s = Solver(engine.gpu)
+    s.configure((32, 24, 32), h, (-1.0, 0.0, -1.0), {'burn': True})
+    box = ColliderGPU(shape='box', pos=(0.0, 0.875, 0.0), size=(13 / 32, 11 / 32, 19 / 32), burnable=True)
+    s.set_colliders([box])
+    with engine.gpu.batch() as b:
+        s.step(b, 1.0 / 96, SolverParams(), [], None)
+    burnable = int((s.read_burn_obj()[..., 2].astype(np.float32) > 0.5).sum())
+    lo, hi = collider_extent(box)
+    lo = lo - 2 * h
+    n = np.ceil((hi + 2 * h - lo) / h).astype(int)
+    q = lo + (np.stack(np.meshgrid(*(np.arange(k) for k in n), indexing='ij'), -1) + 0.5) * h
+    e = np.abs(q) - np.asarray(box.size)
+    d = (np.linalg.norm(np.maximum(e, 0.0), axis=-1) + np.minimum(e.max(axis=-1), 0.0)) / h
+    assert burnable == int(((d >= 0.0) & (d < 1.5)).sum())
+
+
 def test_deep_bins_for_a_wisp_only_a_later_pass_sees(engine):
     """Pass 0 sees only a far puff; pass 1 also sees a near wisp: the wisp gets its own deep sample."""
     from blackbody.engine import camera as cam

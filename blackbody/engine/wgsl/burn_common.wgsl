@@ -1,15 +1,36 @@
 // Burnable surfaces, shared by the floor (a layer of cells on the simulation grid) and objects (a
-// region of the object-burn atlas per burnable collider, in the collider's own frame, so the burn
-// moves with the object). Each spot: x = fuel left (1 = a full load), y = catching progress
-// (1 = alight; below 0: soaked, -1 = dripping wet), z = burnable (1, or 2 once it has burnt),
-// w = smoulder left (1 = just stopped flaming, 0 = burnt out).
+// region of the object-burn atlas per burnable collider, in the collider's own frame and in proportion
+// to its size, so the burn moves with the object and grows and shrinks with it). Each spot: x = fuel
+// left (1 = a full load), y = catching progress (1 = alight; below 0: soaked, -1 = dripping wet),
+// z = burnable (1, or 2 once it has burnt), w = smoulder left (1 = just stopped flaming, 0 = burnt out).
 // Needs colliders.wgsl for the object lookup; the includer declares `burn_obj` (texture_3d) and
 // `slots` (array<BurnSlot>) where it looks objects up.
 
+// A collider's region, as it was laid out (at the collider's size then; burn_from_layout carries it to its size now).
 struct BurnSlot {
   lo: vec4<f32>,    // the region's corner in the collider's frame (m); w = z offset in the atlas
-  dims: vec4<f32>,  // the region's size (cells); w = cell size (m)
+  dims: vec4<f32>,  // the region's size (cells); w = the largest cell's size (m)
+  cell: vec4<f32>,  // a cell's size along each axis (m: a simulation cell, or more along an axis the collider
+                    // is too big for)
+  size: vec4<f32>,  // what the collider was scaled by then (col_scale)
 };
+
+// Where point q of collider k's frame (m) at the region's layout lies on the collider at its scale sc now, and
+// back: in proportion to its size, and exactly q along an axis whose size has not changed (a still collider
+// keeps the layout and the fuel pattern it was given).
+fn burn_from_layout(q: vec3<f32>, sc: vec3<f32>, s: BurnSlot) -> vec3<f32> {
+  return select(q * (sc / s.size.xyz), q, sc == s.size.xyz);
+}
+fn burn_to_layout(q: vec3<f32>, sc: vec3<f32>, s: BurnSlot) -> vec3<f32> {
+  return select(q * (s.size.xyz / sc), q, sc == s.size.xyz);
+}
+
+// How much the collider (scale sc now) has grown since its region was laid out, the mean over its axes (exactly
+// 1 while it has not).
+fn burn_grown(sc: vec3<f32>, s: BurnSlot) -> f32 {
+  if (all(sc == s.size.xyz)) { return 1.0; }
+  return dot(sc / s.size.xyz, vec3<f32>(1.0 / 3.0));
+}
 
 fn burn_alight(b: vec4<f32>) -> bool { return b.z > 0.5 && b.y >= 1.0 && b.x > 0.0; }
 

@@ -1,9 +1,13 @@
-// Scalar advection (temperature, fuel, smoke, flame) with an optional MacCormack correction.
+// Scalar advection (temperature, fuel, smoke, flame) with an optional MacCormack correction. Next to a
+// moving collider the fields are filtered without the cells inside it behind and beside it, and without
+// the correction (free_samp.wgsl), so a collider moving through smoke leaves no tunnel of clean air;
+// sweep.wgsl then pushes what is left in the cells it has just covered out of its way.
 //!include common.wgsl
 
 struct Params {
   g: Grid,
-  a: vec4<f32>,  // x = MacCormack strength (0 = semi-Lagrangian, 1 = full correction)
+  a: vec4<f32>,  // x = MacCormack strength (0 = semi-Lagrangian, 1 = full correction); y = the slowest a collider
+                 // counts as moving at (m/s; above 1e29: none moves)
 };
 
 @group(0) @binding(0) var vel: texture_3d<f32>;
@@ -11,7 +15,12 @@ struct Params {
 @group(0) @binding(2) var fwd: texture_3d<f32>;
 @group(0) @binding(3) var dst: texture_storage_3d<rgba16float, write>;
 @group(0) @binding(4) var lin: sampler;
+@group(0) @binding(5) var sdf_was: texture_3d<f32>;   // the colliders' distance a step ago (cells; negative inside)
 @group(1) @binding(0) var<uniform> U: Params;
+//!include free_samp.wgsl
+
+fn solid_vel_in(c: vec3<i32>) -> vec3<f32> { return vel_centre(vel, c); }
+fn moving_speed() -> f32 { return U.a.y; }
 
 // Second-order Runge-Kutta trace; k = signed dt / h (negative traces backwards in time).
 fn trace(p: vec3<f32>, n: vec3<f32>, k: f32) -> vec3<f32> {
@@ -27,7 +36,7 @@ fn sl(@builtin(global_invocation_id) id: vec3<u32>) {
   if (any(c >= vec3<i32>(n))) { return; }
   let k = U.g.bc.w / U.g.n.w;
   let pb = trace(vec3<f32>(c) + 0.5, n, -k);
-  textureStore(dst, c, samp_c(src, lin, pb, n));
+  textureStore(dst, c, samp_free(src, lin, pb, n));
 }
 
 @compute @workgroup_size(8, 8, 4)
@@ -40,7 +49,12 @@ fn mc(@builtin(global_invocation_id) id: vec3<u32>) {
   let pb = trace(p, n, -k);
   let pf = trace(p, n, k);
   let ahead = textureLoad(fwd, c, 0);   // semi-Lagrangian result here
-  let back = samp_c(fwd, lin, pf, n);   // that result carried back again
+  if (near_moving(pb, n) || near_moving(pf, n)) {
+    // (no correction next to a moving collider: on the gas it shoves into a pile the correction makes smoke)
+    textureStore(dst, c, ahead);
+    return;
+  }
+  let back = samp_free(fwd, lin, pf, n);   // that result carried back again
   let phi = textureLoad(src, c, 0);
   let r = ahead + 0.5 * U.a.x * (phi - back);
   // limiter: stay within the values the backtrace interpolated between

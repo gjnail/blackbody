@@ -291,6 +291,131 @@ def test_the_footage_depth_stops_the_liquid(engine, tmp_path):
     assert fronts[1] < 0.15 + 0.03, f'with it the wall stops the water ({fronts[1]:.3f} m)'
 
 
+def _box_mask(sc, centre, half, W, H):
+    """Which pixels (H, W) see an upright box (fire-local centre and half size), and how far away it is there (m)."""
+    from blackbody.engine import camera as cam
+    spec, fire = sc.camera(sc.start)
+    cs = cam.compute(spec, W / H, fire)
+    ys, xs = np.mgrid[0:H, 0:W]
+    ndc = np.stack([(xs + 0.5) / W * 2 - 1, 1 - (ys + 0.5) / H * 2], -1).reshape(-1, 2)
+
+    def unproj(z):
+        p = np.concatenate([ndc, np.full((len(ndc), 1), z), np.ones((len(ndc), 1))], 1) @ cs.inv_view_proj.T
+        return p[:, :3] / p[:, 3:]
+    rd = unproj(1.0) - unproj(0.0)
+    rd /= np.linalg.norm(rd, axis=1, keepdims=True)
+    w2l = np.linalg.inv(fire.local_to_world())
+    ro = (np.concatenate([np.asarray(cs.eye, float), [1.0]]) @ w2l.T)[:3]
+    rl = rd @ w2l[:3, :3].T
+    inv = 1.0 / np.where(np.abs(rl) > 1e-9, rl, 1e-9)
+    ta = (np.asarray(centre) - np.asarray(half) - ro) * inv
+    tb = (np.asarray(centre) + np.asarray(half) - ro) * inv
+    t0, t1 = np.minimum(ta, tb).max(1), np.maximum(ta, tb).min(1)
+    hit = (t1 > np.maximum(t0, 0.0))
+    return hit.reshape(H, W), t0.reshape(H, W)
+
+
+def test_the_water_shows_the_ground_behind_a_rock_not_a_ghost_of_it(engine, monkeypatch):
+    """A rock standing in a pond, in the footage. Rays through the water that reach the floor behind it look the footage
+    up where that floor is on screen, which is where the rock is: they showed the rock's own pixels there, a ghost of it
+    on the water beside it. The footage there is filled in from beside the rock now (liq_clean.wgsl)."""
+    from blackbody.engine.liquid_render import LiquidRenderer
+    W, H = 320, 180
+    sc = _scene('floating', 64, W, H)
+    centre, half = (0.15, 0.25, 0.0), (0.15, 0.25, 0.15)
+    sc.colliders = sc.colliders[:1]
+    sc.colliders[0].update(shape='box', position=centre, size=half, yaw=0.0, floating=False, density=0.0)
+    sc.data['water'].update(colliders_look='holdout', ripple=0.0)
+    engine.invalidate()
+    engine.prepare(sc, final=False)
+    engine.simulate_to(sc, sc.start + 6, cache=True)
+    rock, _ = _box_mask(sc, centre, half, W, H)
+    assert 200 < rock.sum() < 0.3 * W * H
+    plate = np.full((H, W, 4), 110, np.uint8)
+    plate[rock] = (220, 30, 30, 255)   # (the rock is red in the footage)
+
+    def red_behind(clean):
+        if not clean:
+            monkeypatch.setattr(LiquidRenderer, '_clean_plate', lambda self, b, *a: self._no_clean)
+        engine.render(sc, sc.start + 6, (W, H), plate=plate)
+        monkeypatch.undo()
+        beauty = engine.aovs()['beauty'].astype(np.float32)
+        aux = engine.aovs()['aux'].astype(np.float32)
+        # the water behind the rock: above it on screen, where it shows the floor behind it (below and round it the
+        # water mirrors the rock and shows its foot under the surface: the rock's own red, rightly)
+        rows = np.arange(H)[:, None]
+        top = np.where(rock.any(0), np.argmax(rock, 0), -1)[None, :]
+        water = (aux[..., 3] > 0.5) & (rows < top - 2)
+        red = np.maximum(beauty[..., 0] - 0.5 * (beauty[..., 1] + beauty[..., 2]), 0.0)
+        return float(red[water].sum()), int(water.sum())
+    ghost, n0 = red_behind(clean=False)
+    fixed, n1 = red_behind(clean=True)
+    assert n0 > 300 and n1 == n0
+    assert ghost > 5.0, f'the scene shows the ghost without the fix ({ghost:.2f})'
+    assert fixed < 0.1 * ghost, f'red behind the rock: {fixed:.2f} (was {ghost:.2f})'
+    near, clean = (engine.gpu.read(t) for t in engine.liquid_r._clean)
+    covered = np.abs(near[..., 0]) < 60000.0
+    assert covered[rock].mean() > 0.9 and covered[~rock].mean() < 0.02, 'the rock is found where it is in the footage'
+
+
+def test_a_real_wall_behind_the_water_stays_in_its_reflection(engine, tmp_path, monkeypatch):
+    """A wall in the footage's depth pass standing behind a pond, seen from low down: the water mirrors it. A reflection
+    (or a ray that leaves the water for the backdrop) may well meet such a wall, so for those rays only the colliders and
+    the matte are filled in, not the depth pass's surfaces: the reflection is the same with the filled-in footage as
+    without it. (With the wall filled in for them too, a tenth of its blue went from the water.)"""
+    from blackbody.engine import camera as cam
+    from blackbody.engine.liquid_render import LiquidRenderer
+    from blackbody.io.images import write_exr
+    W, H = 320, 180
+    sc = _scene('floating', 64, W, H)
+    sc.data['camera']['pitch'] = 8.0
+    spec, fire = sc.camera(sc.start)
+    cs = cam.compute(spec, W / H, fire)
+    ys, xs = np.mgrid[0:H, 0:W]
+    ndc = np.stack([(xs + 0.5) / W * 2 - 1, 1 - (ys + 0.5) / H * 2], -1).reshape(-1, 2)
+
+    def unproj(z):
+        p = np.concatenate([ndc, np.full((len(ndc), 1), z), np.ones((len(ndc), 1))], 1) @ cs.inv_view_proj.T
+        return p[:, :3] / p[:, 3:]
+    rd = unproj(1.0) - unproj(0.0)
+    rd /= np.linalg.norm(rd, axis=1, keepdims=True)
+    w2l = np.linalg.inv(fire.local_to_world())
+    ro = (np.concatenate([np.asarray(cs.eye, float), [1.0]]) @ w2l.T)[:3]
+    rl = rd @ w2l[:3, :3].T
+    # a wall 4 m wide and 3 m high, upright and square to the view, a little past the far side of the box
+    half = np.array([sc.data['domain'][k] for k in ('size_x', 'size_y', 'size_z')]) * 0.5
+    fh = -ro * np.array([1.0, 0.0, 1.0])
+    fh /= np.linalg.norm(fh)
+    p0 = fh * (np.abs(fh) @ half + 0.3)
+    tw = ((p0 - ro) @ fh) / np.where(np.abs(rl @ fh) > 1e-9, rl @ fh, 1e-9)
+    pw = ro + rl * tw[:, None]
+    tg = -ro[1] / np.where(np.abs(rl[:, 1]) > 1e-9, rl[:, 1], 1e-9)
+    wall = ((tw > 0) & (pw[:, 1] > 0) & (pw[:, 1] < 3.0) & (np.abs((pw - p0) @ np.cross([0.0, 1.0, 0.0], fh)) < 2.0)
+            & ((tg <= 0) | (tw < tg)))
+    t = np.where(wall, tw, np.where(tg > 0, tg, 0.0)).reshape(H, W).astype(np.float32)
+    for f in range(1, 8):
+        write_exr(tmp_path / f'depth.{f:04d}.exr', {'R': t, 'G': t, 'B': t})
+    sc.data['composite'].update(holdout_depth=str(tmp_path / 'depth.####.exr'), depth_kind='distance', depth_scale=1.0)
+    wall = wall.reshape(H, W)
+    plate = np.full((H, W, 4), 110, np.uint8)
+    plate[wall] = (30, 30, 220, 255)   # (the wall is blue in the footage)
+    engine.invalidate()
+    engine.prepare(sc, final=False)
+    engine.simulate_to(sc, sc.start + 6, cache=True)
+
+    def blue(clean):
+        if not clean:
+            monkeypatch.setattr(LiquidRenderer, '_clean_plate', lambda self, b, *a: self._no_clean)
+        engine.render(sc, sc.start + 6, (W, H), plate=plate)
+        monkeypatch.undo()
+        beauty = engine.aovs()['beauty'].astype(np.float32)
+        water = (engine.aovs()['aux'][..., 3].astype(np.float32) > 0.5) & ~wall
+        return float(np.maximum(beauty[..., 2] - 0.5 * (beauty[..., 0] + beauty[..., 1]), 0.0)[water].sum())
+    plain, kept = blue(False), blue(True)
+    assert plain > 500.0, f'the water mirrors the wall ({plain:.1f})'
+    assert kept > 0.99 * plain, f'its reflection with the filled-in footage: {kept:.1f} of {plain:.1f}'
+
+
 # -- a box that follows --------------------------------------------------------------------------------
 
 def test_the_box_follows_the_boat(engine):

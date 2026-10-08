@@ -1,7 +1,9 @@
 // Burnable colliders. Every burnable collider owns a region of the object-burn atlas laid out in
 // its own frame (a grid of the simulation's cell size around it), so the burn travels with the
-// object when it moves or turns. `init` marks the cells just outside its surface and lays out
-// patchy fuel; `main` steps them (see burn_common.wgsl), sampling the gas where the cell is now.
+// object when it moves or turns, and grows or shrinks with it when its Size is animated (the region
+// is carried to its size now: burn_from_layout). `init` marks the cells just outside its surface
+// and lays out patchy fuel; `main` steps them (see burn_common.wgsl), sampling the gas where the
+// cell is now.
 // Hot embers that hit a burnable collider are counted per atlas cell (embers.wgsl, `spots`), and
 // each one can start a spot fire there.
 //!include common.wgsl
@@ -33,7 +35,8 @@ struct Params {
 @group(0) @binding(7) var<storage, read_write> spots: array<atomic<u32>>;  // embers landed per atlas cell
 @group(1) @binding(0) var<uniform> U: Params;
 
-// Which collider owns atlas cell c, and c's position in that collider's frame (m); ok = false if none.
+// Which collider owns atlas cell c, and c's position in that collider's frame (m, on it at its size now);
+// ok = false if none.
 struct Owner { k: i32, q: vec3<f32>, ok: bool };
 
 fn owner_of(c: vec3<i32>) -> Owner {
@@ -46,7 +49,8 @@ fn owner_of(c: vec3<i32>) -> Owner {
     let z0 = i32(s.lo.w);
     if (c.z >= z0 && c.z < z0 + i32(s.dims.z) && c.x < i32(s.dims.x) && c.y < i32(s.dims.y)) {
       o.k = i;
-      o.q = s.lo.xyz + (vec3<f32>(f32(c.x), f32(c.y), f32(c.z - z0)) + 0.5) * s.dims.w;
+      o.q = burn_from_layout(s.lo.xyz + (vec3<f32>(f32(c.x), f32(c.y), f32(c.z - z0)) + 0.5) * s.cell.xyz,
+                             col_scale(U.col[i]), s);
       o.ok = true;
       return o;
     }
@@ -134,5 +138,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (burn_alight(textureLoad(src, q, 0))) { nb = max(nb, 1.0 / length(vec3<f32>(off))); }
     }
   }
-  textureStore(dst, c, burn_step(b, T, nb, wet, U.g.bc.w, s.dims.w, U.sp, U.sp2.x, U.sp3.x));
+  let cell = s.dims.w * burn_grown(col_scale(k), s);   // (m, at its size now: the creep crosses it)
+  textureStore(dst, c, burn_step(b, T, nb, wet, U.g.bc.w, cell, U.sp, U.sp2.x, U.sp3.x));
 }

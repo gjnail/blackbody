@@ -367,7 +367,7 @@ def _reopened(sc, final=True, readonly=False):
     return SimCache(sc.cache_folder(final), sc.sim_signature(final), readonly=readonly, about=sc.cache_about(final))
 
 
-def test_a_disk_cache_survives_a_start_with_a_smaller_plan(card, tmp_path):
+def test_a_disk_cache_survives_a_start_with_a_smaller_plan(card, monkeypatch, tmp_path):
     """Simulated with room for upres 3 (Resolution from the shot), started again with a plan that would pick 2 but still
     holds 3: the layout, the signature and the frames are kept."""
     sc = presets.make('campfire')
@@ -376,7 +376,10 @@ def test_a_disk_cache_survives_a_start_with_a_smaller_plan(card, tmp_path):
     assert sc.memory_plan(True)[:2] == (184, 3)
     sig = sc.sim_signature(True)
     _cached(sc, tmp_path)
-    card(plan_gb=3.7, side=16384)                         # (a start with less: on its own the scene would take upres 2)
+    # (a start with less, where 3 still fits but on its own the scene would take upres 2: Resolution from the shot's
+    # share of the plan cut, as on a card where that share falls short of 3 while the plan holds it)
+    card(plan_gb=4.0, side=16384)
+    monkeypatch.setattr(model, 'AUTO_SHARE', 0.4)
     assert sc.auto_detail() == (184, 2) and sc.cache_fit(True) == (184, 3)
     assert sc.memory_plan(True)[:2] == (184, 3) and sc.memory_notes(True) == []
     assert sc.sim_signature(True) == sig and 5 in _reopened(sc), 'the cache is kept'

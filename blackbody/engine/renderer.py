@@ -253,7 +253,7 @@ class Renderer:
         self._lt_dims = None
         self.light_count = g.buffer(16, 'light-count')
         self.lights = None
-        self._no_slots = g.buffer(32, 'no-slots')
+        self._no_slots = g.buffer(64, 'no-slots')   # (one BurnSlot: burn_common.wgsl)
         self._empty_r32 = g.texture3d((1, 1, 1), 'r32float', 'empty-r32')
         g.upload(self._empty_r32, np.full((1, 1, 1, 1), 1.0e6, np.float32))
         self.k_down = g.kernel('bloom_down.wgsl', ['tex2d', 'smp', 'st2d:rgba16float:w'], workgroup=(8, 8, 1))

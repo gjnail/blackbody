@@ -2,7 +2,8 @@
 // simulated air (sampled from the simulation's velocity) plus small swirls whose strength follows
 // how much the air is spinning there. The reaction kernel then burns fuel on the fine grid too, so
 // flames get fine detail without a full-resolution pressure solve. Semi-Lagrangian with an
-// optional MacCormack correction, like adv_scalar.wgsl.
+// optional MacCormack correction, like adv_scalar.wgsl (and like it, next to a moving collider filtered
+// without the cells inside it behind and beside it: free_samp.wgsl; sweep.wgsl runs on the fine grid too).
 //!include common.wgsl
 //!include noise.wgsl
 
@@ -10,6 +11,7 @@ struct Params {
   g: Grid,          // the fine grid
   up: vec4<f32>,    // fine cells per simulation cell, turbulence strength, seed, MacCormack strength
   lo: vec4<f32>,    // simulation grid dims; w = simulation cell size (m)
+  mv: vec4<f32>,    // x = the slowest a collider counts as moving at (m/s; above 1e29: none moves)
 };
 
 @group(0) @binding(0) var vel: texture_3d<f32>;   // simulation grid, face velocities
@@ -18,7 +20,14 @@ struct Params {
 @group(0) @binding(3) var fwd: texture_3d<f32>;
 @group(0) @binding(4) var dst: texture_storage_3d<rgba16float, write>;
 @group(0) @binding(5) var lin: sampler;
+@group(0) @binding(6) var sdf_was: texture_3d<f32>;   // sl, mc: the colliders' distance on the fine grid a step ago (cells)
 @group(1) @binding(0) var<uniform> U: Params;
+//!include free_samp.wgsl
+
+fn solid_vel_in(c: vec3<i32>) -> vec3<f32> {
+  return vel_centre(vel, min(c / max(i32(U.up.x + 0.5), 1), vec3<i32>(U.lo.xyz) - vec3<i32>(1)));
+}
+fn moving_speed() -> f32 { return U.mv.x; }
 
 // Velocity (m/s) at fine-grid position p (cells).
 fn fine_vel(p: vec3<f32>) -> vec3<f32> {
@@ -56,7 +65,7 @@ fn sl(@builtin(global_invocation_id) id: vec3<u32>) {
   let c = vec3<i32>(id);
   if (any(c >= vec3<i32>(n))) { return; }
   let k = U.g.bc.w / U.g.n.w;
-  textureStore(dst, c, samp_c(src, lin, trace(vec3<f32>(c) + 0.5, -k), n));
+  textureStore(dst, c, samp_free(src, lin, trace(vec3<f32>(c) + 0.5, -k), n));
 }
 
 @compute @workgroup_size(8, 8, 4)
@@ -69,7 +78,11 @@ fn mc(@builtin(global_invocation_id) id: vec3<u32>) {
   let pb = trace(p, -k);
   let pf = trace(p, k);
   let ahead = textureLoad(fwd, c, 0);
-  let back = samp_c(fwd, lin, pf, n);
+  if (near_moving(pb, n) || near_moving(pf, n)) {
+    textureStore(dst, c, ahead);   // (as in adv_scalar.wgsl)
+    return;
+  }
+  let back = samp_free(fwd, lin, pf, n);
   let phi = textureLoad(src, c, 0);
   let r = ahead + 0.5 * U.up.w * (phi - back);
   let q = clamp(pb, vec3<f32>(0.5), n - vec3<f32>(0.5)) - vec3<f32>(0.5);

@@ -37,6 +37,10 @@ MAX_EMITTERS = 16   # matches MAX_EMITTERS in emitters.wgsl
 MAX_COLLIDERS = 16  # matches MAX_COLLIDERS in colliders.wgsl
 EMITTER_VEC4 = 14   # vec4s per Emitter struct (emitters.wgsl)
 COLLIDER_VEC4 = 11  # vec4s per Collider struct (colliders.wgsl)
+# The least share of a cell a collider's surface (or a broken piece's, or the matter's) moves in a substep for it to
+# count as moving when the gas is carried round it (free_samp.wgsl, sweep.wgsl). Pieces and sand lying still are baked
+# again every substep and jitter at about a millimetre a second, a few ten-thousandths of a cell.
+MOVING = 0.01
 # Latent heat of condensing water: 2.26 MJ/kg into air of about 1.2 kg/m^3 and 1005 J/(kg K)
 LATENT_K_PER_G = 2.26e6 / (1.2 * 1005.0) / 1000.0  # Kelvin per g/m^3 condensed
 # Water vapour is lighter than air (18 against 29 g/mol): lift per g/m^3 of vapour, taking pure
@@ -358,7 +362,7 @@ class Solver:
         for n in ('water', 'expo', 'stain'):
             self._dummy[n] = gpu.texture3d((1, 1, 1), 'r32float', f'unused-{n}')
             gpu.upload(self._dummy[n], np.zeros((1, 1, 1, 1), np.float32))
-        self._no_slots = gpu.buffer(32, 'no-burn-slots')
+        self._no_slots = gpu.buffer(64, 'no-burn-slots')
         self._no_spots = gpu.buffer(32, 'no-spots')
         self.stain = None
         self.stain_obj = None      # soot on colliders, each in its own frame (stain_obj.wgsl)
@@ -407,11 +411,11 @@ class Solver:
         faces = (nx + 1) * (ny + 1) * (nz + 1)
         levels = Solver.mg_levels((nx, ny, nz))
         mg = sum(8 * math.prod(d) for d in levels) + sum(4 * math.prod(d) for d in levels[:-1])   # p, rhs; res
-        per = 8 * 5 + 4 * 2                       # scal0, scal1, stmp, curl, force; expansion, sdf
+        per = 8 * 5 + 4 * 3                       # scal0, scal1, stmp, curl, force; expansion, sdf, sdf-was
         per += 16 * sum(int(bool(f.get(k))) for k in ('aux', 'chem', 'burn')) + 4 * int(bool(f.get('stain')))
         per += 8 * int(bool(f.get('water')))
         up = max(1, int(upres))
-        fine = 28 * up ** 3 * cells if up > 1 else 0   # scal-fine0, scal-fine1, stmp-fine; sdf-fine
+        fine = 32 * up ** 3 * cells if up > 1 else 0   # scal-fine0, scal-fine1, stmp-fine; sdf-fine, sdf-fine-was
         spots = nx * nz * 4 if f.get('burn') else 0
         groups = ceil_div(nx, 8) * ceil_div(ny, 8) * ceil_div(nz, 4)
         return int(faces * vel_bytes * 3 + cells * per + mg + fine + spots + 12 * groups + 96)
@@ -492,6 +496,8 @@ class Solver:
         self.force = self._t3(self.dims, 'rgba16float', 'force')
         self.expo = self._t3(self.dims, 'r32float', 'expansion')
         self.sdf = self._t3(self.dims, 'r32float', 'sdf')
+        self.sdf_was = self._t3(self.dims, 'r32float', 'sdf-was')   # as it was when the fields were made (see step)
+        self._sdf_same = False
         self.levels = self.mg_levels(self.dims)
         self.P = [self._t3(d, 'r32float', f'p{i}') for i, d in enumerate(self.levels)]
         self.RHS = [self._t3(d, 'r32float', f'rhs{i}') for i, d in enumerate(self.levels)]
@@ -514,6 +520,8 @@ class Solver:
         self.scal_fine = [mk('scal-fine0'), mk('scal-fine1')]
         self.stmp_fine = mk('stmp-fine')
         self.sdf_fine = mk('sdf-fine', 'r32float')
+        self.sdf_fine_was = mk('sdf-fine-was', 'r32float')
+        self._sdf_same = False
 
     def _allocate_optional(self):
         for t in self._opt:
@@ -544,8 +552,8 @@ class Solver:
         vf = g.vel_format
         V = {'VELFMT': vf}
         k = self._k
-        k['adv_s_sl'] = g.kernel('adv_scalar.wgsl', ['tex3d', 'tex3d', 'tex3d', 'st3d:rgba16float:w', 'smp'], 'sl')
-        k['adv_s_mc'] = g.kernel('adv_scalar.wgsl', ['tex3d', 'tex3d', 'tex3d', 'st3d:rgba16float:w', 'smp'], 'mc')
+        k['adv_s_sl'] = g.kernel('adv_scalar.wgsl', ['tex3d', 'tex3d', 'tex3d', 'st3d:rgba16float:w', 'smp', 'utex3d'], 'sl')
+        k['adv_s_mc'] = g.kernel('adv_scalar.wgsl', ['tex3d', 'tex3d', 'tex3d', 'st3d:rgba16float:w', 'smp', 'utex3d'], 'mc')
         k['adv_v_sl'] = g.kernel('adv_vel.wgsl', ['tex3d', 'tex3d', f'st3d:{vf}:w', 'smp'], 'sl', V)
         k['adv_v_mc'] = g.kernel('adv_vel.wgsl', ['tex3d', 'tex3d', f'st3d:{vf}:w', 'smp'], 'mc', V)
         k['react'] = g.kernel('react.wgsl', ['utex3d'] * 6 + ['st3d:rgba16float:w', 'st3d:r32float:w',
@@ -559,8 +567,8 @@ class Solver:
         burn_obj = ['tex3d', 'utex3d', 'utex3d', 'st3d:rgba16float:w', 'utex3d', 'rbuf', 'smp', 'buf']
         k['burn_obj'] = g.kernel('burn_obj.wgsl', burn_obj, 'main')
         k['burn_obj_init'] = g.kernel('burn_obj.wgsl', burn_obj, 'init')
-        k['up_sl'] = g.kernel('upres.wgsl', ['tex3d', 'tex3d', 'tex3d', 'tex3d', 'st3d:rgba16float:w', 'smp'], 'sl')
-        k['up_mc'] = g.kernel('upres.wgsl', ['tex3d', 'tex3d', 'tex3d', 'tex3d', 'st3d:rgba16float:w', 'smp'], 'mc')
+        k['up_sl'] = g.kernel('upres.wgsl', ['tex3d', 'tex3d', 'tex3d', 'tex3d', 'st3d:rgba16float:w', 'smp', 'utex3d'], 'sl')
+        k['up_mc'] = g.kernel('upres.wgsl', ['tex3d', 'tex3d', 'tex3d', 'tex3d', 'st3d:rgba16float:w', 'smp', 'utex3d'], 'mc')
         k['up_vel'] = g.kernel('upres.wgsl', ['tex3d', 'tex3d', 'tex3d', 'tex3d', 'st3d:rgba16float:w', 'smp'], 'velocity')
         k['rhs_partial'] = g.kernel('rhs_mean.wgsl', ['st3d:r32float:rw', 'utex3d', 'buf'], 'partial')
         k['rhs_total'] = g.kernel('rhs_mean.wgsl', ['st3d:r32float:rw', 'utex3d', 'buf'], 'total', workgroup=(256, 1, 1))
@@ -575,6 +583,7 @@ class Solver:
         k['prolong'] = g.kernel('mg_prolong.wgsl', ['st3d:r32float:rw', 'utex3d', 'utex3d'])
         k['project'] = g.kernel('project.wgsl', ['utex3d', 'utex3d', 'utex3d', f'st3d:{vf}:w'], 'main', V)
         k['sdf'] = g.kernel('sdf.wgsl', ['utex3d', 'st3d:r32float:w'])
+        k['sweep'] = g.kernel('sweep.wgsl', ['tex3d', 'tex3d', 'tex3d', 'st3d:rgba16float:w'])
         k['stats'] = g.kernel('stats.wgsl', ['utex3d', 'utex3d', 'buf'])
         for fmt in {vf, 'rgba16float', 'r32float'}:
             k['fill_' + fmt] = g.kernel('fill.wgsl', [f'st3d:{fmt}:w'], 'main', {'FMT': fmt})
@@ -653,6 +662,14 @@ class Solver:
         return self.svel
 
     def _write_sdf(self, b):
+        if not self._sdf_swapped:
+            # the distance the fields were made with is kept for carrying them (sdf_was), the new one written over the
+            # other texture: no copy while the colliders keep moving
+            self.sdf, self.sdf_was = self.sdf_was, self.sdf
+            if self.scal_fine is not None:
+                self.sdf_fine, self.sdf_fine_was = self.sdf_fine_was, self.sdf_fine
+            self._sdf_swapped = True
+        self._sdf_same = False
         u = pack_colliders(self._grid(0.0), self.colliders, self.meshes)
         b.run(self._k['sdf'], [self.meshes.atlas, self.sdf], u, self.dims)
         if self.scal_fine is not None:
@@ -676,6 +693,11 @@ class Solver:
                 .v4(1.0 if p.open_sides else 0.0, 1.0 if p.open_top else 0.0, 0.0 if p.ground else 1.0, dt))
 
     _prm = SolverParams()
+    _push = 0              # this step's reach for pushing gas out of what the colliders cover (0: none of them moves)
+    _fast = 0.0            # how fast (m/s) the fastest collider surface moves this step (see _motion)
+    _moving_v = 1e30       # the slowest a collider counts as moving at (m/s; 1e30: none moves this step)
+    _sdf_swapped = False   # the distance has been rewritten this step (see _write_sdf)
+    _sdf_same = False      # sdf_was holds what sdf does
     cloth_hook = None   # engine.Cloth.hook: fabric feeding the fire and holding the air (set by the engine)
 
     # -- stepping ------------------------------------------------------------------------------
@@ -683,12 +705,47 @@ class Solver:
     def _advect(self, b, pair, dims, ga, mc):
         k = self._k
         lin = self.gpu.linear
+        mv = self._moving_v
         if mc > 0:
-            b.run(k['adv_s_sl'], [self.vel[0], pair[0], pair[0], self.stmp, lin], ga().v4(mc), dims)
-            b.run(k['adv_s_mc'], [self.vel[0], pair[0], self.stmp, pair[1], lin], ga().v4(mc), dims)
+            b.run(k['adv_s_sl'], [self.vel[0], pair[0], pair[0], self.stmp, lin, self.sdf_was], ga().v4(mc, mv), dims)
+            b.run(k['adv_s_mc'], [self.vel[0], pair[0], self.stmp, pair[1], lin, self.sdf_was], ga().v4(mc, mv), dims)
         else:
-            b.run(k['adv_s_sl'], [self.vel[0], pair[0], pair[0], pair[1], lin], ga().v4(0), dims)
+            b.run(k['adv_s_sl'], [self.vel[0], pair[0], pair[0], pair[1], lin, self.sdf_was], ga().v4(0, mv), dims)
         pair.reverse()
+        if self._push:
+            # what the colliders have just covered, pushed out of their way (sweep.wgsl)
+            b.run(k['sweep'], [pair[0], self.sdf_was, self.sdf, pair[1]], ga().v4(self._push, MOVING), dims)
+            pair.reverse()
+
+    def _motion(self, dt, was, folded):
+        """Whether anything moves this step, for carrying the gas round it: how fast (m/s) the fastest collider surface
+        moves (its speed, its spin times its reach, and how fast it grows since `was`, the colliders a step ago; folded:
+        the broken pieces' and the matter's, bodyfield.py), and from that the reach of sweep.wgsl and the slowest speed
+        free_samp.wgsl counts as moving. Nothing moving MOVING of a cell in the step (or the distance not rewritten): no
+        sweep, and the fields are carried as round still walls."""
+        fast = folded
+        for i, c in enumerate(self.colliders):
+            grow = 0.0
+            if i < len(was) and tuple(c.size) != tuple(was[i].size):
+                (lo, hi), (lo0, hi0) = collider_extent(c, self.meshes), collider_extent(was[i], self.meshes)
+                grow = float(np.max(np.maximum(np.abs(lo - lo0), np.abs(hi - hi0)))) / dt
+            if not c.moving and grow == 0.0:
+                continue
+            lo, hi = collider_extent(c, self.meshes)
+            r = float(np.linalg.norm(np.maximum(np.abs(lo), np.abs(hi))))
+            spin = abs(c.spin) + float(np.linalg.norm(c.omega[:3]))
+            fast = max(fast, float(np.linalg.norm(c.vel)) + spin * r + grow)
+            if c.mesh_frame is not None:
+                fast = max(fast, 1.5 * self.h / dt)   # (a deforming mesh: how fast its surface moves is not known here)
+        self._fast = fast
+        on = self._sdf_swapped and fast * dt >= MOVING * self.h
+        self._push = self._sweep_reach(dt, self.h) if on else 0
+        self._moving_v = MOVING * self.h / dt if on else 1e30
+
+    def _sweep_reach(self, dt, cell):
+        """How far (cells of size `cell`) sweep.wgsl looks for the cells the colliders have covered in a step of dt:
+        a cell and a half past the furthest their surfaces move (2 to 4)."""
+        return int(min(4, max(2, math.ceil(self._fast * dt / cell + 1.5))))
 
     def _vapour_on(self, prm):
         """Water vapour is carried when the scene asks for it, and always when liquid water shares the box."""
@@ -714,8 +771,9 @@ class Solver:
         self._burn_dirty = False
 
     def _layout_burn_obj(self):
-        """Give every burnable collider a region of the object-burn atlas: a grid of the simulation's
-        cell size around it, in its own frame, stacked along z."""
+        """Give every burnable collider a region of the object-burn atlas: a grid of the simulation's cell size around it
+        in its own frame (coarser along an axis it is too big for), stacked along z. Its size then is kept with the region,
+        so the burn grows and shrinks with it when its Size is animated (burn_common.wgsl burn_from_layout)."""
         for t in self.burn_obj or []:
             t.destroy()
         self.burn_obj = None
@@ -727,10 +785,16 @@ class Solver:
         for c in self.colliders:
             if c.burn_slot < 0:
                 continue
-            lo, hi = collider_extent(c, self.meshes)
-            lo = lo - 2 * self.h
-            dims = np.minimum(np.ceil((hi + 2 * self.h - lo) / self.h).astype(int), 384)
-            meta.append((lo, dims, z))
+            lo0, hi = collider_extent(c, self.meshes)
+            lo = lo0 - 2 * self.h
+            dims = np.ceil((hi + 2 * self.h - lo) / self.h).astype(int)
+            cell = np.full(3, float(self.h))
+            big = dims > 384
+            # (too big for 384 cells along an axis: coarser cells along it, with two of margin each side still)
+            cell[big] = (hi - lo0)[big] / 380.0
+            lo[big] = lo0[big] - 2 * cell[big]
+            dims[big] = 384
+            meta.append((lo, dims, z, cell, collider_scale(c)))
             z += int(dims[2])
         if not meta:
             return
@@ -742,12 +806,12 @@ class Solver:
             self.spots_obj.destroy()
         self.spots_obj = self.gpu.buffer(max(32, w * hgt * z * 4), 'ember-spots-obj')
         self.gpu.write_buffer(self.spots_obj, np.zeros(max(8, w * hgt * z), np.uint32))
-        data = np.zeros((len(meta), 8), np.float32)
-        for i, (lo, dims, z0) in enumerate(meta):
-            data[i] = (*lo, z0, *dims, self.h)
+        data = np.zeros((len(meta), 16), np.float32)
+        for i, (lo, dims, z0, cell, sc) in enumerate(meta):
+            data[i] = (*lo, z0, *dims, cell.max(), *cell, 0.0, *sc, 0.0)
         if self.burn_slots is not None:
             self.burn_slots.destroy()
-        self.burn_slots = self.gpu.buffer(max(32, data.nbytes), 'burn-slots')
+        self.burn_slots = self.gpu.buffer(max(64, data.nbytes), 'burn-slots')
         self.gpu.write_buffer(self.burn_slots, data)
 
     def _layout_stain_obj(self):
@@ -860,15 +924,21 @@ class Solver:
         k = self._k
         mc = float(prm.maccormack)
         u = (self._grid_fine(dt, prm).v4(self.upres, prm.upres_turbulence, prm.seed * 3.71, mc)
-             .v4(*self.dims, self.h))
+             .v4(*self.dims, self.h).v4(self._moving_v))
         lin = self.gpu.linear
         f = self.scal_fine
+        sd = self.sdf_fine_was
         if mc > 0:
-            b.run(k['up_sl'], [self.vel[0], self.curl, f[0], f[0], self.stmp_fine, lin], u, self.dims_fine)
-            b.run(k['up_mc'], [self.vel[0], self.curl, f[0], self.stmp_fine, f[1], lin], u, self.dims_fine)
+            b.run(k['up_sl'], [self.vel[0], self.curl, f[0], f[0], self.stmp_fine, lin, sd], u, self.dims_fine)
+            b.run(k['up_mc'], [self.vel[0], self.curl, f[0], self.stmp_fine, f[1], lin, sd], u, self.dims_fine)
         else:
-            b.run(k['up_sl'], [self.vel[0], self.curl, f[0], f[0], f[1], lin], u, self.dims_fine)
+            b.run(k['up_sl'], [self.vel[0], self.curl, f[0], f[0], f[1], lin, sd], u, self.dims_fine)
         f.reverse()
+        if self._push:
+            fine = self.h / self.upres
+            b.run(k['sweep'], [f[0], sd, self.sdf_fine, f[1]],
+                  self._grid_fine(dt, prm).v4(self._sweep_reach(dt, fine), MOVING * self.upres), self.dims_fine)
+            f.reverse()
         self._react(b, dt, prm, ems, fine=True)
         if self.cloth_hook is not None:
             self.cloth_hook(b, self, dt, 'sources_fine')
@@ -889,17 +959,28 @@ class Solver:
         f = self.features
         atlas = self.meshes.atlas
         ems = list(emitters)[:MAX_EMITTERS]
+        self._sdf_swapped = False
+        was = self.colliders
         if colliders is not None:
             self.update_colliders(b, colliders)
         # broken pieces: folded into the colliders' distance (rewritten first, so last substep's are gone)
         self._pieces_on = False
+        folded = 0.0
         if self.pieces_step is not None:
             field, i = self.pieces_step
             self._write_sdf(b)
             self._pieces_on = field.bake(b, self, i)
+            folded = field.fastest(i) if self._pieces_on else 0.0
         elif self._had_pieces:
             self._write_sdf(b)
         self._had_pieces = self._pieces_on
+        if not self._sdf_swapped and not self._sdf_same:
+            # (still now: the distance the fields are carried with is the one they were made with, as it is now)
+            b.copy_texture(self.sdf, self.sdf_was)
+            if self.scal_fine is not None:
+                b.copy_texture(self.sdf_fine, self.sdf_fine_was)
+            self._sdf_same = True
+        self._motion(dt, was, folded)
         if f['burn'] and self._burn_dirty:
             self._init_burn(b, prm)
         if f.get('stain') and self._stain_dirty:
@@ -1083,7 +1164,7 @@ class Solver:
         if self.scal_fine is None:
             return self.read_velocity_centres()
         u = (self._grid_fine(0.0).v4(self.upres, self._prm.upres_turbulence, self._prm.seed * 3.71, 0.0)
-             .v4(*self.dims, self.h))
+             .v4(*self.dims, self.h).v4(1e30))
         f = self.scal_fine
         with self.gpu.batch() as b:
             b.run(self._k['up_vel'], [self.vel[0], self.curl, f[0], f[0], self.stmp_fine, self.gpu.linear], u,
