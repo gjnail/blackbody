@@ -21,7 +21,7 @@
 <p align="center">
   <a href="https://ko-fi.com/gnail"><img src="https://img.shields.io/badge/Ko--fi-support%20Blackbody-FF5E5B?logo=ko-fi&logoColor=white" alt="Support Blackbody on Ko-fi"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-ff8a28" alt="MIT license"></a>
-  <img src="https://img.shields.io/badge/python-3.10%2B-ff8a28" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/python-3.12%20%C2%B7%203.13-ff8a28" alt="Python 3.12 or 3.13">
   <img src="https://img.shields.io/badge/GPU-Vulkan%20%C2%B7%20D3D12%20%C2%B7%20Metal-ff8a28" alt="GPU: Vulkan, Direct3D 12, Metal">
   <img src="https://img.shields.io/badge/platform-Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-ff8a28" alt="Windows, macOS, Linux">
 </p>
@@ -242,14 +242,14 @@ A camera solve from your matchmover (.chan), or a whole USD scene with its camer
 
 ## Get started
 
-You need Python 3.10 or newer and a GPU with Vulkan, Direct3D 12 or Metal (most cards from the last eight years).
+You need Python 3.12 or 3.13 and a GPU with Vulkan, Direct3D 12 or Metal (most cards from the last eight years).
 
 ```bash
 git clone https://github.com/gjnail/blackbody.git
 cd blackbody
 ```
 
-Then double-click `Blackbody.bat` on Windows, or run `./blackbody.sh` on macOS or Linux. The first run creates a private Python environment and installs the dependencies (about 400 MB). [Install and first steps](docs/getting-started.md) has the details, including how to build a standalone Windows app.
+Then double-click `Blackbody.bat` on Windows, or run `./blackbody.sh` on macOS or Linux. The first run creates a private Python environment and installs the dependencies (about 400 MB), USD and OpenColorIO among them; if that fails or is interrupted, the next run tries again. [Install and first steps](docs/getting-started.md) has the details, including how to build a standalone Windows app.
 
 **Build something:** put a thing in from the card on the empty stage or from Create, move it with the gizmo, right-click it to make it do something, press Space to play. **Or put an effect in your footage:**
 

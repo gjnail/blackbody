@@ -7,7 +7,8 @@ Install Blackbody, find your way around the window, and put an effect into your 
 - A GPU with Vulkan, Direct3D 12 or Metal. Most cards from the last eight years qualify: NVIDIA, AMD, Intel, and Apple Silicon.
 - 4 GB of GPU memory for everyday work; 8 GB or more for high-resolution final renders and big liquid shots.
 - Windows 10/11. macOS 12+ and Linux run from source too, but have not been tested yet (see [limitations](troubleshooting.md#limitations)).
-- Python 3.10 or newer, to run from source.
+- 64-bit Python 3.12 or 3.13, to run from source. Newer versions are not supported yet, as some of the packages Blackbody uses have no builds for them.
+- On Linux on ARM, USD import and export are not available, as the usd-core package has no build for it.
 
 ## Install and run
 
@@ -25,12 +26,14 @@ Then start it:
 - **Windows:** double-click `Blackbody.bat`.
 - **macOS and Linux:** run `./blackbody.sh`.
 
-The first run creates a private Python environment in `.venv` and installs the dependencies into it (about 400 MB, a few minutes). After that it starts straight away. The first time each kind of simulation runs, its GPU shaders are compiled, which takes a moment for fire and a few minutes for liquids; a card in the viewer says what it is doing.
+The first run creates a private Python environment in `.venv` and installs the dependencies into it (about 400 MB, a few minutes), USD and OpenColorIO among them. After that it starts straight away. The first time each kind of simulation runs, its GPU shaders are compiled, which takes a moment for fire and a few minutes for liquids; a card in the viewer says what it is doing.
+
+The launcher uses Python 3.13 or 3.12, whichever is installed, and says what to get if neither is. If the install fails or is interrupted (no network, a full disk), the next start tries again, and after an update that changes `requirements.txt` it installs what changed. On Windows, problems are shown in the console window, which stays open until you press a key. Commands such as `Blackbody.bat render ...` print there too.
 
 Or set it up yourself:
 
 ```bash
-python -m venv .venv
+python3.12 -m venv .venv                    # or 3.13; Windows: py -3.12 -m venv .venv
 .venv/bin/pip install -r requirements.txt   # Windows: .venv\Scripts\pip ...
 .venv/bin/python -m blackbody               # the app
 .venv/bin/python -m blackbody render --help # the command line

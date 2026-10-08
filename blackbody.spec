@@ -9,9 +9,11 @@ datas = [
     ('blackbody/assets/blackbody.png', 'blackbody/assets'),
 ]
 datas += collect_data_files('wgpu')
+datas += collect_data_files('pxr')  # (USD's plugInfo files and libraries, found at run time)
 binaries = (collect_dynamic_libs('wgpu') + collect_dynamic_libs('av') + collect_dynamic_libs('OpenEXR')
             + collect_dynamic_libs('mujoco'))
 hidden = collect_submodules('blackbody') + collect_submodules('wgpu.backends') + ['OpenEXR', 'mujoco']
+hidden += collect_submodules('pxr')  # (USD imports its compiled modules at run time, which the scan misses)
 excludes = ['tkinter', 'matplotlib', 'scipy', 'pandas', 'IPython', 'pytest']
 
 a = Analysis(['tools/launch_gui.py'], pathex=['.'], binaries=binaries, datas=datas, hiddenimports=hidden,

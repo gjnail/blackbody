@@ -32,7 +32,7 @@ to every change to a solver, a renderer or a preset:
 
 ## Building and testing
 
-You need Python 3.10 or newer and a GPU with Vulkan, Direct3D 12 or Metal.
+You need Python 3.12 or 3.13 and a GPU with Vulkan, Direct3D 12 or Metal.
 
 ```bash
 python -m venv .venv

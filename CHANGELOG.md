@@ -320,6 +320,11 @@ Notable changes to Blackbody. The format follows
 
 ### Fixed
 
+- A clean install works: USD (usd-core) and OCIO (opencolorio) are installed with Blackbody, so USD import and colour
+  management no longer go missing on a new machine (and in the standalone build). Python 3.12 or 3.13 is required and
+  the launchers check for it, saying what to get. A failed or interrupted install is retried on the next launch, a
+  changed requirements list installs what changed, and on Windows the launcher shows what went wrong and waits
+  instead of doing nothing; every command-line command now runs in the console with its exit code.
 - Bottles, vases and other brittle vessels burst when shot. A hollow object's wall was counted thin twice, so a .22
   left too little of itself in a 3 mm bottle wall to break it, and only the shards in its path came away: the rest
   stood on in a bottle's shape. Panes and plates keep their holed web as before.

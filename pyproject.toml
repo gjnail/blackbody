@@ -7,7 +7,7 @@ name = "blackbody"
 version = "1.0.0"
 description = "GPU fire, smoke and liquid simulation for compositing into live-action footage"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 license = { text = "MIT" }
 dependencies = [
     "numpy>=1.26",
@@ -17,6 +17,8 @@ dependencies = [
     "OpenEXR>=3.3",
     "pillow>=10",
     "mujoco>=3.3",
+    "usd-core>=26.8; platform_machine != 'aarch64'",
+    "opencolorio>=2.5",
 ]
 
 [project.optional-dependencies]
