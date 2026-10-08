@@ -202,7 +202,7 @@ SECTIONS = {
           'up into the sky: 0.1 forest, 0.3 fields, 0.8 fresh snow.', group='Sky'),
         F('altitude', 'Altitude', 0.0, 0.0, 6000.0, 'm', 0, tip='The height above the sea: higher up, the sky is a deeper '
           'blue and the sun whiter.', group='Sky'),
-        B('ambient_from_footage', 'Match ambient to footage', True, tip='Light the smoke with the average colour and brightness of the footage, so it sits in the scene. Ambient intensity scales it.', group='Ambient'),
+        B('ambient_from_footage', 'Match ambient to footage', True, tip='Light the smoke with the average colour and brightness of the footage, so it sits in the scene. Ambient intensity scales it. An Environment (HDRI) file takes its place.', group='Ambient'),
         B('sun_on', 'Key light', False, tip='A directional light (sun, moon, lamp) that lights and shadows the smoke.', group='Key light'),
         F('sun_azimuth', 'Key azimuth', 35.0, -180.0, 180.0, '°', 0, anim=True, group='Key light'),
         F('sun_elevation', 'Key elevation', 40.0, -10.0, 90.0, '°', 0, anim=True, group='Key light'),
@@ -210,10 +210,10 @@ SECTIONS = {
         F('sun_intensity', 'Key intensity', 3.0, 0.0, 20.0, '×', 2, anim=True, group='Key light'),
         F('shadow', 'Shadow density', 1.0, 0.0, 4.0, '×', 2, group='Key light'),
         F('fire_scatter', 'Fire lights smoke', 1.0, 0.0, 5.0, '×', 2, tip='How brightly the flames light the smoke around them.', group='Fire light'),
-        Param('environment', 'Environment (HDRI)', 'file', '', tip='A panoramic HDR image of the set (latitude-longitude .hdr or .exr), shot where the effect sits. Liquids reflect and refract it; empty uses the footage and the ambient colour.', group='Environment'),
+        Param('environment', 'Environment (HDRI)', 'file', '', tip='A panoramic HDR image of the set (latitude-longitude .hdr or .exr), shot where the effect sits: the light all round it. Its average lights the smoke and the liquid, the CG set is lit by it and reflects it, and liquids refract it; empty uses the footage and the ambient colour (or the physical sky).', group='Environment'),
         F('env_rotation', 'Environment rotation', 0.0, -180.0, 180.0, '°', 1, tip='Turns the environment around the vertical axis to line it up with the set.', group='Environment'),
         F('env_strength', 'Environment strength', 1.0, 0.0, 10.0, '×', 2, tip='Brightness of the environment.', group='Environment', log=True),
-        B('env_sun', 'Key light from environment', False, tip='Aim the key light at the brightest spot of the environment (the sun), with its colour.', group='Environment'),
+        B('env_sun', 'Key light from environment', False, tip='Aim the key light at the brightest spot of the environment (the sun), with its colour: the HDRI\'s, or the footage\'s with Environment from the footage. Key intensity sets its strength (3 with the key light off).', group='Environment'),
         B('env_from_footage', 'Environment from the footage', False, tip='With no HDRI file, light the CG set by the footage '
           'itself: what the camera sees, as a panorama round the set (past the frame\'s edges, the footage\'s own light at '
           'each height: its sky above, its ground below), so a CG object takes the colours and the light of the shot it is '
@@ -293,7 +293,7 @@ SECTIONS = {
         F('freeze_point', 'Freezing point', 0.0, -30.0, 30.0, '°C', 1, tip='Temperature the liquid freezes at. Fresh water 0, sea water -1.9, brine lower.', group='Heat', advanced=True),
         F('boil_point', 'Boiling point', 100.0, 50.0, 200.0, '°C', 1, tip='Temperature the liquid boils at. Water 100 at sea level, 93 at 2000 m, 120 in a pressure cooker.', group='Heat', advanced=True),
         F('bubble_size', 'Steam bubble size', 2.5, 0.5, 10.0, 'mm', 1, tip='Diameter of the steam bubbles boiling water sends up from a hot surface. Hard boiling merges them into bigger ones.', group='Heat', advanced=True),
-        B('footage_collide', 'Hits the footage', False, tip='The liquid collides with the scene in your footage, using its depth pass (Composite › Holdout depth): water splashes against real walls, runs down real steps. Needs a depth pass of the footage; a matte alone does not tell how far things are.', group='Behaviour'),
+        B('footage_collide', 'Hits the footage', False, tip='The liquid collides with the scene in your footage, using its depth pass (Composite › Depth pass): water splashes against real walls, runs down real steps. Needs a depth pass of the footage; a matte alone does not tell how far things are.', group='Behaviour'),
         F('rain', 'Rain', 0.0, 0.0, 200.0, 'mm/h', 1, anim=True, tip='Rain falling on the scene: streaks through the air, and ring ripples and splashes where drops hit water. Drizzle 1, steady rain 5, heavy 20, a downpour 50 and up.', group='Rain'),
         F('rain_drop', 'Raindrop size', 2.5, 0.5, 6.0, 'mm', 1, tip='Typical raindrop diameter. Drizzle 0.5, rain 2 to 3, a thunderstorm 4 to 5.', group='Rain', advanced=True),
         F('water_level', 'Water level', 0.0, 0.0, 40.0, 'm', 3, anim=True, tip='Water that carries on past the open sides of the box up to this height (a pond, a flooded street, the sea). It fills the box to this level at the start, keeps it topped up at the sides, lets waves run out, and is drawn out to the horizon. Keyframe it for a tide (slowly: a fast rise is a bore, see Surge). 0 is off.', group='Open water'),
@@ -405,8 +405,9 @@ SECTIONS = {
                                                ('sky', 'From the temperatures aloft')),
           tip='What falls on the scene, simulated piece by piece: it melts, refreezes and evaporates on its way down as the air makes it, '
               'is blown about by the wind, settles on the ground and the colliders, and falls into the liquid. What arrives depends on the air '
-              'too: snow falling through air above freezing (Liquid › Air temperature) arrives wet or as rain; sleet and freezing rain are '
-              'snow melted in warmer air aloft, and need air below freezing at the ground. "From the temperatures aloft" melts snow in the '
+              'too: snow falling through air above freezing (Liquid › Air temperature; with fire, Shading › Air temperature) arrives '
+              'wet or as rain; sleet and freezing rain are snow melted in warmer air aloft, and need air below freezing at the '
+              'ground. "From the temperatures aloft" melts snow in the '
               'layer of warm air given below.', group='Precipitation'),
         F('rate', 'Rate', 2.0, 0.05, 150.0, 'mm/h', 1, anim=True, log=True,
           tip='How much falls, as the water it holds: light snow 0.5 (about 5 mm of snow an hour), heavy snow 3, a downpour 30, a hailstorm 20 to 80.',
@@ -584,10 +585,10 @@ SECTIONS = {
         F('scorch', 'Scorch', 0.8, 0.0, 1.0, '', 2, tip='With Spreading fire: how dark the burnt ground and burnt objects go in the composite.', group='Interaction'),
         F('soot', 'Soot', 0.8, 0.0, 1.0, '', 2, tip='With Combustion › Soot stains: how dark the soot left on walls, ceilings and the ground goes in the composite.', group='Interaction'),
         F('wet', 'Wet surfaces', 0.5, 0.0, 1.0, '', 2, tip='With Spreading fire: how much darker surfaces soaked by a hose or a liquid look while they dry.', group='Interaction'),
-        Param('holdout_matte', 'Holdout matte', 'file', '', tip='An image sequence (name.####.png or .exr, numbered like the footage) with a matte of the objects in front of the fire: the fire, smoke and embers go behind them. Any roto or keyed matte works.', group='Holdouts from footage'),
+        Param('holdout_matte', 'Holdout matte', 'file', '', tip='An image sequence (name.####.png or .exr, numbered like the footage) with a matte of the objects in front of the effect: the fire, smoke, embers and liquid go behind them. Any roto or keyed matte works.', group='Holdouts from footage'),
         E('matte_channel', 'Matte channel', 'alpha', (('alpha', 'Alpha'), ('luma', 'Brightness'), ('red', 'Red'), ('green', 'Green'), ('blue', 'Blue')), tip='Which channel of the matte holds the objects.', group='Holdouts from footage'),
         B('matte_invert', 'Invert matte', False, group='Holdouts from footage'),
-        Param('holdout_depth', 'Depth pass', 'file', '', tip='An EXR sequence with the depth of the footage (from a 3D scene, a depth estimator, or a lidar camera): fire behind a surface in the depth pass is hidden, fire in front of it stays, so it can burn around objects.', group='Holdouts from footage'),
+        Param('holdout_depth', 'Depth pass', 'file', '', tip='An EXR sequence with the depth of the footage (from a 3D scene, a depth estimator, or a lidar camera): fire or liquid behind a surface in the depth pass is hidden and in front of it stays, so fire can burn around objects and water pour past them.', group='Holdouts from footage'),
         E('depth_kind', 'Depth is', 'z', (('z', 'Distance along the view axis (Z)'), ('distance', 'Distance from the camera'), ('inverse', 'Inverse depth (1/Z)')), tip='What the depth pass stores. Renderers usually write Z; depth estimators often write inverse depth.', group='Holdouts from footage'),
         F('depth_scale', 'Depth units', 1.0, 0.0001, 1000.0, 'm', 4, tip='Metres per unit of the depth pass: 1 for metres, 0.01 for centimetres, 0.3048 for feet.', group='Holdouts from footage', log=True, hard_lo=1e-6),
         F('haze', 'Heat haze', 1.0, 0.0, 5.0, '', 2, anim=True, tip='Shimmer of the hot air bending the light from the footage behind it, traced through the simulated heat so it rises with the plume and ends where the hot air ends; over a molten liquid, the air its surface heats (bending the liquid seen through it too). 1 is its physical strength: stronger with long lenses and small eddies.', group='Interaction'),
@@ -971,16 +972,20 @@ KIND_SECTIONS = {'fire': ('combustion', 'motion', 'shading', 'embers', 'spread')
                  'both': ('lava',), 'cloud': ('atmosphere', 'sky')}
 FIRE_ONLY_KEYS = {
     'domain': {'sponge', 'sponge_strength', 'mg_cycles', 'maccormack', 'maccormack_vel'},
-    'composite': {'smoke_opacity', 'saturation', 'tint', 'light_cast', 'haze', 'haze_freq', 'haze_speed', 'surface_shadows', 'soot',
-                  'wet', 'holdout_matte', 'matte_channel', 'matte_invert', 'holdout_depth', 'depth_kind', 'depth_scale'},
+    'composite': {'smoke_opacity', 'saturation', 'tint', 'light_cast', 'surface_shadows', 'soot', 'wet'},
     'emitter': {'fuel', 'temperature', 'smoke', 'swirl', 'swirl_width', 'douse', 'vapour', 'color_amount', 'color', 'noise',
                 'noise_freq', 'noise_rise', 'contrast', 'seed', 'fade_in', 'fade_out', 'embers'},
     'collider': {'burnable'},
 }
 LIQUID_ONLY_KEYS = {'emitter': {'liquid_mode', 'flow', 'jitter', 'dye', 'dye_amount', 'dye_cloud', 'liquid_density', 'temp_own',
                                 'liquid_temp'},
-                    'collider': {'floating', 'density', 'temperature'},
-                    'lighting': {'environment', 'env_rotation', 'env_strength', 'env_sun'}}
+                    'collider': {'floating', 'density', 'temperature'}}
+# Settings a sky scene has no use for: its renderer draws no set to light (the environment, the physical sky) and
+# nothing goes behind the footage's holdouts. (The heat haze is a fire's or a molten liquid's.)
+NOT_CLOUD_KEYS = {'lighting': {'environment', 'env_rotation', 'env_strength', 'env_sun', 'env_from_footage', 'sky', 'haze',
+                               'ground_albedo', 'altitude'},
+                  'composite': {'holdout_matte', 'matte_channel', 'matte_invert', 'holdout_depth', 'depth_kind', 'depth_scale',
+                                'haze', 'haze_freq', 'haze_speed'}}
 BOTH_ONLY_KEYS = {'emitter': {'emits'}, 'combustion': {'water_douse', 'soak', 'ember_heat', 'rekindle', 'steam_expansion'}}
 
 
@@ -1000,6 +1005,8 @@ def applies(section, key, kind):
     if key is None:
         return True
     if kind in ('liquid', 'cloud') and key in FIRE_ONLY_KEYS.get(section, ()):
+        return False
+    if kind == 'cloud' and key in NOT_CLOUD_KEYS.get(section, ()):
         return False
     if kind != 'liquid' and key in LIQUID_ONLY_KEYS.get(section, ()):
         return False

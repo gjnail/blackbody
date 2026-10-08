@@ -91,3 +91,32 @@ def image(plate, kind, view_proj, exposure=1.0, width=WIDTH, plate_fit=(1.0, 1.0
     val = (lin[y0, x0] * (1 - fx) * (1 - fy) + lin[y0, x1] * fx * (1 - fy) + lin[y1, x0] * (1 - fx) * fy + lin[y1, x1] * fx * fy)
     out = _fill(np.where(seen[..., None], val, 0.0), seen, sigma=w / 64.0)
     return (np.maximum(out, 0.0) * float(exposure)).astype(np.float32)
+
+
+_last = None     # (the last (key, HDRI): a render asks for it for its key light, then for its set)
+
+
+def applies(scene, plate, view_proj):
+    """Whether the footage is a scene's environment: Lighting › Environment from the footage, with no HDRI file and
+    footage to take it from."""
+    lt = scene.data['lighting']
+    return bool(lt.get('env_from_footage')) and not lt.get('environment') and plate is not None and view_proj is not None
+
+
+def of_scene(scene, frame, plate, view_proj, plate_fit=(1.0, 1.0)):
+    """The footage as a scene's environment at a frame (where it applies), or None: (key, HDRI), at the plate's exposure
+    times Environment strength (so drawn at strength 1, unrotated: it is in the world's frame already). Fire scenes
+    (Engine._environment) and liquid ones (LiquidEngine._footage_env) take it alike."""
+    global _last
+    if not applies(scene, plate, view_proj):
+        return None
+    lt, comp = scene.data['lighting'], scene.data['composite']
+    gain = 2.0 ** float(comp.get('plate_exposure', 0.0)) * float(lt.get('env_strength', 1.0))
+    kind = comp.get('plate_transform', 'srgb')
+    p = np.asarray(plate)
+    key = ('footage-env', frame, p.shape, float(p[::64, ::64].astype(np.float32).sum()),
+           bytes(np.asarray(view_proj, np.float32).tobytes()), gain, kind, tuple(float(x) for x in plate_fit))
+    got = _last     # (read once: the viewer and a render job may both be asking, each for its own)
+    if got is None or got[0] != key:
+        got = _last = key, image(plate, kind, view_proj, exposure=gain, plate_fit=plate_fit)
+    return got

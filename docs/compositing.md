@@ -17,7 +17,7 @@ A collider marked *Hides fire* (on by default) hides the fire, smoke and embers 
 
 ### Holdouts from the footage
 
-Composite › *Holdout matte* takes a matte sequence of whatever is in front of the fire (any roto or keyed matte, numbered like the footage): the fire, smoke and embers go behind it. *Depth pass* takes the footage's depth (from a 3D scene, a lidar camera or a depth estimator; Z, distance or inverse depth, in any units): the fire is hidden only behind the footage's surfaces, so it can burn in front of an object and behind it, and the fire light lands on the footage's own surfaces, shaped from the depth pass.
+Composite › *Holdout matte* takes a matte sequence of whatever is in front of the fire (any roto or keyed matte, numbered like the footage): the fire, smoke, embers and liquid go behind it. *Depth pass* takes the footage's depth (from a 3D scene, a lidar camera or a depth estimator; Z, distance or inverse depth, in any units): the fire (or the liquid) is hidden only behind the footage's surfaces, so it can burn in front of an object and behind it, and the fire light lands on the footage's own surfaces, shaped from the depth pass.
 
 ### Roto
 
@@ -27,7 +27,7 @@ For something in front of the effect that you have no matte for, draw one: click
 - Ctrl+click an edge to add a point; right-click a point to remove it. Delete removes the selected shape.
 - The bar over the viewer picks the shape, softens its edge (*Feather*, in pixels of the output frame), turns it off, or inverts it (the effect then shows only inside it).
 
-Roto shapes are saved with the scene and work in renders and on the command line, alongside a holdout matte if you also have one. They hide fire and smoke; in a liquid scene, put a collider over the object instead (with *In the shot* on).
+Roto shapes are saved with the scene and work in renders and on the command line, alongside a holdout matte if you also have one. They hide fire, smoke and liquid alike.
 
 ## Light from the fire
 
@@ -48,7 +48,7 @@ With spreading fire, Composite › *Scorch* darkens the ground and objects where
 - *In the footage* (on) is for a real light on the set. The footage already shows its light on the real ground and objects, so Blackbody only takes away the light the simulated smoke shadows: the ground darkens under smoke that drifts in front of a street lamp.
 - Turn it off for a light added in CG. It then lights the ground, the colliders in the shot and (with a depth pass) the footage's own surfaces too, shadowed by colliders and smoke.
 
-*Lighting › Environment from the footage* lights the CG objects by the footage itself, as a panorama round the set seen through the camera (with Lume: each side of an object takes the light of the footage on that side, and shiny ones reflect it; see [Lume](lume.md)).
+*Lighting › Environment from the footage* lights the CG objects by the footage itself, as a panorama round the set seen through the camera (with Lume: each side of an object takes the light of the footage on that side, and shiny ones reflect it; see [Lume](lume.md)). *Lighting › Environment (HDRI)* takes an HDR panorama shot on the set instead, in fire scenes as in liquid ones: its average lights the smoke and the liquid, the CG objects are lit by it and reflect it, and with *Key light from environment* the key light comes from its sun (the brightest spot; with Environment from the footage, the footage's).
 
 Blackbody judges how much a light changes the footage against the light the footage already has there, the key light and sky from Lighting, so set those to match the shot. EXRs get a `lamps` layer (multiply the plate by 1 + lamps). Lights can be keyframed, and USD lights come in as lights (see [Scene import](scene-import.md#scene-import-usd)).
 

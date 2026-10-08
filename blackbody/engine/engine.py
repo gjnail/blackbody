@@ -771,6 +771,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
         self._carried_lamps(scene, frame, look)
         if plate is not None and scene.data['lighting'].get('ambient_from_footage', True):
             look.ambient = self.footage_ambient(plate, scene, frame)
+        self._env_look(scene, look, frame, plate=plate, cs=cs, plate_fit=plate_fit)
         comp = scene.comp(frame, mode)
         self._set_ocio(scene, comp)
         ep = scene.ember_params(frame)
@@ -934,34 +935,82 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
             self._stage = stage_mod.Stage(self.gpu)
         return self._stage
 
-    def _stage_env(self, scene, light, frame=None, plate=None, cs=None, plate_fit=(1.0, 1.0)):
-        """The environment HDRI (Lighting) behind the stage, and its light as the sky's; or the physical sky's; or, with
-        Environment from the footage, the footage's (footage_env.py)."""
-        lt = scene.data['lighting']
-        if lt.get('env_from_footage') and not lt.get('environment') and plate is not None and cs is not None:
-            from . import footage_env as FE
-            comp = scene.data['composite']
-            gain = 2.0 ** float(comp.get('plate_exposure', 0.0)) * float(lt.get('env_strength', 1.0))
-            key = ('footage-env', frame, np.asarray(plate).shape, float(np.asarray(plate)[::64, ::64].astype(np.float32).sum()),
-                   bytes(np.asarray(cs.view_proj, np.float32).tobytes()), gain)
-            img = FE.image(plate, comp.get('plate_transform', 'srgb'), cs.view_proj, exposure=gain, plate_fit=plate_fit)
-            light.env, light.env_rotation, light.env_strength = self.stage.environment_image(key, img), 0.0, 1.0
-            light.env_image = (key, img)
-            light.sky = tuple(self.stage.env_sky)
-            return
+    def _environment(self, scene, frame=None, plate=None, cs=None, plate_fit=(1.0, 1.0)):
+        """The environment round the set this render, or None: (what, key, HDRI image, rotation in degrees, strength), what
+        being 'footage' (Environment from the footage: footage_env.py), 'sky' (the physical sky: sky.py) or 'file' (the
+        Environment (HDRI), its image kept while the file stays the same)."""
+        import os
+        from . import footage_env as FE
+        fe = FE.of_scene(scene, frame, plate, cs.view_proj if cs is not None else None, plate_fit)
+        if fe is not None:
+            return 'footage', fe[0], fe[1], 0.0, 1.0
         from . import sky as sky_mod
         phys = sky_mod.of_scene(scene, frame if frame is not None else scene.start)
         if phys is not None:
-            key, _amb, _sun, img, k = phys
-            light.env, light.env_rotation, light.env_strength = self.stage.environment_image(key, img), 0.0, k
-            light.env_image = (key, img)
-            light.sky = tuple(c * k for c in self.stage.env_sky)
+            return 'sky', phys[0], phys[3], 0.0, phys[4]
+        lt = scene.data['lighting']
+        path = scene.mesh_path(lt.get('environment', ''))   # (relative to the project, as the liquid engine has it)
+        try:
+            key = (path, os.path.getmtime(path)) if path else None
+        except OSError:
+            key = None
+        if key is None:
+            return None
+        hdri = getattr(self, '_hdri', None)
+        if hdri is None or hdri[0] != key:
+            from ..io.hdri import load_hdri
+            try:
+                img = load_hdri(path)
+            except Exception as ex:   # (a file it cannot read: lit as with none)
+                log.warning('Environment %s unavailable: %s', path, ex)
+                img = None
+            hdri = self._hdri = (key, img)
+        if hdri[1] is None:
+            return None
+        return 'file', key, hdri[1], float(lt.get('env_rotation', 0.0)), float(lt.get('env_strength', 1.0))
+
+    def _env_light(self, env):
+        """(its average light on an upward surface, (azimuth with its rotation, elevation, colour) of its brightest spot: the
+        sun) of an environment from _environment, kept while its key is the same."""
+        got = getattr(self, '_env_stats', None)
+        if got is None or got[0] != env[1]:
+            from ..io.hdri import brightest, sky_average
+            got = self._env_stats = (env[1], sky_average(env[2]), brightest(env[2]))
+        az, el, colour = got[2]
+        return got[1], (az + env[3], el, colour)
+
+    def _env_look(self, scene, look, frame, plate=None, cs=None, plate_fit=(1.0, 1.0)):
+        """The environment's light on the smoke, as the liquid engine has it on the liquid: an HDRI file's average is the
+        ambient (it is the set's sky too: _stage_env); with Key light from environment, the key light comes from its
+        brightest spot (the sun), in its colour. (The physical sky's light is the look's already: Scene.look; the footage's
+        leaves the ambient to Match ambient to footage.)"""
+        lt = scene.data['lighting']
+        if not (lt.get('environment') or lt.get('env_sun')):
+            return      # (nothing in it for the smoke: the footage's HDRI is then built only for the set)
+        env = self._environment(scene, frame, plate, cs, plate_fit)
+        if env is None or env[0] == 'sky':
             return
-        tex = self.stage.environment(lt.get('environment', ''))
-        if tex is None:
+        sky, (az, el, colour) = self._env_light(env)
+        if env[0] == 'file':
+            look.ambient = tuple(float(c) * env[4] for c in sky)
+        if lt.get('env_sun'):
+            strength = float(look.sun_intensity) * max(look.sun_color) or 3.0
+            look.sun_azimuth, look.sun_elevation = az, el
+            look.sun_color, look.sun_intensity = tuple(colour), strength
+
+    def _stage_env(self, scene, light, frame=None, plate=None, cs=None, plate_fit=(1.0, 1.0)):
+        """The environment (_environment) behind the stage, and its light as the sky's: its average from _env_light (kept
+        by its key here; the stage keeps only its texture through a render without one)."""
+        env = self._environment(scene, frame, plate, cs, plate_fit)
+        if env is None:
+            self.stage.env_sky = None
             return
-        light.env, light.env_rotation, light.env_strength = tex, float(lt.get('env_rotation', 0.0)), float(lt.get('env_strength', 1.0))
-        light.sky = tuple(c * light.env_strength for c in self.stage.env_sky)
+        _what, key, img, rot, k = env
+        sky, _sun = self._env_light(env)
+        light.env, light.env_rotation, light.env_strength = self.stage.environment_image(key, img), rot, k
+        light.env_image = (key, img)   # (Lume's too: a file as found, not as typed)
+        self.stage.env_sky = tuple(float(c) for c in sky)   # (for Lume's pick of it among the lights)
+        light.sky = tuple(c * k for c in self.stage.env_sky)
 
     def display_image(self):
         return self.renderer.read_display()

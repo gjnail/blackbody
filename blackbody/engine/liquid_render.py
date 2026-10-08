@@ -655,14 +655,14 @@ class LiquidRenderer:
         if not path and look.sky_image is not None:
             key, img = look.sky_image
         elif not path:
-            self.env_info = None
+            self.env_info = self._env_key = None   # (loaded and measured again when it is back)
             return None
         else:
             import os
             try:
                 key = (path, os.path.getmtime(path))
             except OSError:
-                self.env_info = None
+                self.env_info = self._env_key = None
                 return None
         if key != self._env_key:
             from ..io.hdri import brightest, load_hdri, sky_average

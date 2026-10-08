@@ -326,6 +326,10 @@ Notable changes to Blackbody. The format follows
 
 ### Fixed
 
+- Environment (HDRI), its rotation and strength, and Key light from environment can be set and work in fire scenes;
+  Environment from the footage works in liquid and fire-and-liquid scenes; liquid scenes show the holdout matte and
+  depth pass settings their engine already reads. Turning an environment off and on again no longer breaks every
+  later render, and Lume no longer drops the HDRI's light after that.
 - Final renders with motion blur no longer show a fine diagonal hatching: each pixel's shutter offset is hashed
   instead of taken from a lattice noise (the hatching's peak fell from about 250 to 11 times the background, the
   grain unchanged). Sand, snow and mud push the right broken piece past 2047 pieces (piece ids were half floats).

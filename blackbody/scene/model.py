@@ -1185,7 +1185,8 @@ class Scene:
             foam_color=tuple(w['foam_color']), step_out=w['step'], step_in=max(w['step'], 0.5),
             foam_scale=w['foam_scale'], foam_lace=w['foam_lace'], droplets=w['droplets'], droplet_size=w['droplet_size'],
             sheets=w['sheets'], caustics=w['caustics'], colliders_look=w['colliders_look'],
-            environment=self.mesh_path(l['environment']) if l['environment'] else '', env_rotation=l['env_rotation'],
+            environment=self.mesh_path(l['environment']) if l['environment'] else '',
+            env_rotation=l['env_rotation'] if sky_image is None else 0.0,   # (the sky's image is the world's way round)
             env_strength=env_strength, env_sun=bool(l['env_sun']) and sky_image is None, wind=self.liquid_wind(frame),
             sky_image=sky_image,
             glow=w.get('glow', 0.0), glow_temp=w.get('glow_temp', 1300.0), crust=w.get('crust', 0.7),

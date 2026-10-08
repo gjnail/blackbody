@@ -369,17 +369,19 @@ class LiquidEngine:
         return dx, dz
 
     def _footage_holdout(self, scene):
-        """The scene's holdout matte / depth pass reader (io/holdout.py), kept while they stay the same;
+        """The scene's holdout matte / depth pass / roto shapes reader (io/holdout.py), kept while they stay the same;
         None without them."""
+        import json
         c = scene.data['composite']
+        roto = getattr(scene, 'roto', None) or []
         key = (id(scene), c.get('holdout_matte', ''), c.get('holdout_depth', ''), c.get('matte_channel'),
-               c.get('matte_invert'), int((scene.footage or {}).get('offset', 0)))
+               c.get('matte_invert'), int((scene.footage or {}).get('offset', 0)), json.dumps(roto, sort_keys=True))
         if getattr(self, '_fh_key', None) != key:
             old = getattr(self, '_fh', None)
             if old is not None:
                 old.close()
             self._fh = None
-            if key[1] or key[2]:
+            if key[1] or key[2] or roto:
                 from ..io.holdout import FootageHoldout
                 fh = FootageHoldout(scene)
                 self._fh = fh if fh.active else None
@@ -396,6 +398,19 @@ class LiquidEngine:
             except Exception as ex:   # a missing frame of the pass: render without it
                 log.warning('Holdout frame %s unavailable: %s', frame, ex)
         self.renderer.set_holdout(*hold)
+
+    def _footage_env(self, scene, wlook, frame, plate, cs, plate_fit, wanted=True):
+        """With Lighting › Environment from the footage, the footage as the environment round the set (footage_env.py) in
+        the water look, in place of the physical sky, as a fire scene has it (Engine._environment). True when it is. Its
+        HDRI is built only when it is `wanted` (the set is drawn) or the key light comes from it; else the look has none
+        (its light on the liquid is Match ambient to footage's either way)."""
+        from . import footage_env as FE
+        if not FE.applies(scene, plate, cs.view_proj):
+            return False
+        wlook.env_sun = bool(scene.data['lighting'].get('env_sun'))
+        wlook.sky_image = FE.of_scene(scene, frame, plate, cs.view_proj, plate_fit) if (wanted or wlook.env_sun) else None
+        wlook.env_strength, wlook.env_rotation = 1.0, 0.0   # (its strength in it, in the world's frame already)
+        return True
 
     def _footage_solid(self, b, scene, frame):
         """With Hits the footage on, make the footage's surfaces (its depth pass) solid for the liquid."""
@@ -563,14 +578,6 @@ class LiquidEngine:
         look.rain, look.rain_drop = self._rain(scene, frame)
         if plate is not None and scene.data['lighting'].get('ambient_from_footage', True):
             look.sky = self.footage_ambient(plate, scene, frame)
-        env = self.liquid_r.environment(look)
-        if env is not None:
-            # the HDRI is the set's own light: its sky for the ambient, its sun for the key light
-            look.sky = env[0]
-            if look.env_sun:
-                strength = max(look.sun) or 3.0
-                look.sun_azimuth, look.sun_elevation = env[1], env[2]
-                look.sun = tuple(c * strength for c in env[3])
         comp = scene.comp(frame, mode)
         shutter = 0.0
         if motion_blur:
@@ -597,6 +604,18 @@ class LiquidEngine:
         shots = self.shot_view(frame) if mode == 'composite' else None    # (bullets: debris, sparks, holes)
         stage_on = (stage_mod.wanted(scene, footage, mode, objects=objects) or bool(pieces) or bool(ropes)
                     or matter is not None or bool(bolts) or bool(shots))
+        # (the footage's HDRI only for a set drawn round the liquid: Lume's water, below, is never over footage)
+        footage_env = self._footage_env(scene, look, frame, plate, cs, plate_fit, wanted=stage_on)
+        env = LR.environment(look)
+        if env is not None:
+            # the HDRI is the set's own light: its sky for the ambient, its sun for the key light (the footage's leaves
+            # the ambient to Match ambient to footage, as on the smoke)
+            if not footage_env:
+                look.sky = env[0]
+            if look.env_sun:
+                strength = max(look.sun) or 3.0
+                look.sun_azimuth, look.sun_elevation = env[1], env[2]
+                look.sun = tuple(c * strength for c in env[3])
         r.hold_stage = None
         p_transform, p_gain = INPUT_TRANSFORMS.get(comp.plate_transform, 0), comp.plate_gain
         standins = stage_mod.standin_colours(scene)
@@ -663,10 +682,13 @@ class LiquidEngine:
             if stage_on:
                 light = stage_mod.water_light(look, comp)
                 light.lamps = r.pack_lamps(lamps)
-                if LR.env_tex is not None and (look.environment or look.sky_image is not None):
+                if env is not None:   # (this render's: not a texture left from an earlier one)
                     light.env, light.env_rotation = LR.env_tex, float(look.env_rotation)
                     light.env_strength = float(look.env_strength) * 2.0 ** float(look.exposure)
                     light.env_image = look.sky_image if not look.environment else None
+                    self.stage.env_sky = tuple(float(c) for c in LR.env_info[0])   # (for Lume's pick of it)
+                    if footage_env:   # (the set's sky is the footage's light, as in a fire scene)
+                        light.sky = tuple(float(c) * 2.0 ** float(look.exposure) for c in env[0])
                 size = r.plate_size if footage else (W, H)
                 self.stage.heat = self._stage_heat(frame, vol.colliders)   # (hot objects glow: objheat_engine.py)
                 stage = ptex = self.stage.draw(b, r, scene, cs, fire, vol.colliders, vol.meshes, light, comp, size,

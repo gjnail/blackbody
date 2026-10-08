@@ -241,12 +241,12 @@ class Lume:
     def environment(self, path):
         """The brightness map of the HDRI at path (cached), or None."""
         if not path:
-            self.env_dims = (0, 0)
+            self.env_dims, self._env_key = (0, 0), None   # (its map made again when it is back)
             return None
         try:
             key = (path, os.path.getmtime(path))
         except OSError:
-            self.env_dims = (0, 0)
+            self.env_dims, self._env_key = (0, 0), None
             return None
         if key != self._env_key:
             from ..io.hdri import load_hdri

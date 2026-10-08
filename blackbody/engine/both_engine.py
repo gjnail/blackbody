@@ -557,18 +557,6 @@ class BothEngine:
             wlook.sky = look.ambient
             if klook is not None:
                 klook.sky = look.ambient
-        env = self.liquid_r.environment(wlook)
-        if env is not None:
-            wlook.sky = env[0]
-            if wlook.env_sun:
-                strength = max(wlook.sun) or 3.0
-                wlook.sun_azimuth, wlook.sun_elevation = env[1], env[2]
-                wlook.sun = tuple(c * strength for c in env[3])
-            if klook is not None:
-                klook.sky, klook.sun_azimuth, klook.sun_elevation, klook.sun = wlook.sky, wlook.sun_azimuth, wlook.sun_elevation, wlook.sun
-        VR = self._lava_renderer() if kv is not None else None
-        if VR is not None:
-            VR.environment(klook)
         comp = scene.comp(frame, mode)
         ep = scene.ember_params(frame)
         t = vol.time
@@ -613,6 +601,25 @@ class BothEngine:
         shots = self.shot_view(frame) if mode == 'composite' else None    # (bullets: debris, sparks, holes)
         stage_on = (stage_mod.wanted(scene, footage, mode, objects=objects) or bool(pieces) or bool(ropes)
                     or matter is not None or bool(bolts) or bool(shots))
+        footage_env = self._footage_env(scene, wlook, frame, plate, cs, plate_fit, wanted=stage_on)
+        env = LR.environment(wlook)
+        if env is not None:
+            # (the smoke lit by it as the liquid is, and as in a fire scene: Engine._env_look)
+            if not footage_env:
+                wlook.sky = env[0]
+                if wlook.environment:
+                    look.ambient = wlook.sky
+            if wlook.env_sun:
+                strength = max(wlook.sun) or 3.0
+                wlook.sun_azimuth, wlook.sun_elevation = env[1], env[2]
+                wlook.sun = tuple(c * strength for c in env[3])
+                look.sun_azimuth, look.sun_elevation = env[1], env[2]
+                look.sun_color, look.sun_intensity = tuple(env[3]), strength
+            if klook is not None:
+                klook.sky, klook.sun_azimuth, klook.sun_elevation, klook.sun = wlook.sky, wlook.sun_azimuth, wlook.sun_elevation, wlook.sun
+        VR = self._lava_renderer() if kv is not None else None
+        if VR is not None:
+            VR.environment(klook)
         r.hold_stage = None
         p_transform, p_gain = INPUT_TRANSFORMS.get(comp.plate_transform, 0), comp.plate_gain
         if stage_on:
@@ -703,10 +710,13 @@ class BothEngine:
             if stage_on:
                 light = stage_mod.water_light(wlook, comp, look)
                 light.lamps = r._lamps_on
-                if LR.env_tex is not None and (wlook.environment or wlook.sky_image is not None):
+                if env is not None:   # (this render's: not a texture left from an earlier one)
                     light.env, light.env_rotation = LR.env_tex, float(wlook.env_rotation)
                     light.env_strength = float(wlook.env_strength) * 2.0 ** float(wlook.exposure)
                     light.env_image = wlook.sky_image if not wlook.environment else None
+                    self.stage.env_sky = tuple(float(c) for c in LR.env_info[0])   # (for Lume's pick of it)
+                    if footage_env:   # (the set's sky is the footage's light, as in a fire scene)
+                        light.sky = tuple(float(c) * 2.0 ** float(wlook.exposure) for c in env[0])
                 ssize = r.plate_size if footage else (W, H)
                 self.stage.heat = self._stage_heat(frame, surfaces.colliders)   # (hot objects glow: objheat_engine.py)
                 stage = ptex = self.stage.draw(b, r, scene, cs, fire, surfaces.colliders, surfaces.meshes, light, comp, ssize,
