@@ -8,6 +8,8 @@
   blackbody render shot.bbfire -o renders/fire.deep.####.exr          deep EXR (a name with .deep.)
   blackbody render pond.bbfire -o mesh/pond.usdc                     a liquid's surface as a USD mesh (or .####.obj)
   blackbody render flag.bbfire -o mesh/flag.usdc                     the fabric as a USD mesh (or .####.obj)
+  blackbody render shot.bbfire -o usd/shot.scene.usdc                camera, objects, pieces, sand, grass, embers
+  blackbody render shot.bbfire -o cam/shot.chan                      the camera for Nuke (or cam.camera.usda: USD)
   blackbody render --preset campfire --usd shot.usd -o fire.####.exr  camera and objects from USD
 
 Render farms: simulate once into a shared disk cache (resuming from the last checkpoint if it was
@@ -176,7 +178,7 @@ def cmd_render(args):
     from .engine.engine import Engine
     from .io.footage import Footage
     from .io.video import PROFILES, available_profiles
-    from .render.job import RenderJob, check_outputs, infer_output, output_notes
+    from .render.job import DATA_KINDS, RenderJob, check_outputs, infer_output, liquid_layers, output_notes
     from .scene import Scene, presets
 
     if args.scene:
@@ -253,9 +255,9 @@ def cmd_render(args):
             o.half = False
         if o.kind == 'deep' and args.deep_samples:
             o.deep_samples = args.deep_samples
-        if o.kind == 'mesh' and scene.kind not in ('liquid', 'both'):
-            o.content = 'fabric'   # (no liquid: the mesh is the fabric)
-        if o.content == 'composite' and footage is None and o.kind not in ('vdb', 'mesh'):
+        if o.kind == 'mesh' and not liquid_layers(scene):
+            o.content = 'fabric'   # (no liquid in any layer: the mesh is the fabric)
+        if o.content == 'composite' and footage is None and o.kind not in DATA_KINDS:
             print(f'Note: {path} is a composite but there is no footage; the fire is composited over the background colour.')
         outputs.append(o)
     problems = check_outputs(scene, outputs)
@@ -294,6 +296,8 @@ def cmd_render(args):
         return _fail(f'Render failed: {ex}')
     finally:
         _notices(order, engines, said)     # (and what the simulation said as it ran)
+        for n in job.notes:                # (and what the writers could not write as it is)
+            print(f'Note: {n}')
     if not args.quiet:
         n = last - first + 1
         dt = time.perf_counter() - t0
@@ -462,11 +466,14 @@ def main(argv=None):
     r.add_argument('scene', nargs='?', help='.bbfire project file')
     r.add_argument('--preset', help='start from a built-in preset instead of a project')
     r.add_argument('-o', '--output', action='append', help='output path; #### is the frame number. .exr .png .vdb .mov .mp4 .webm, '
-                                                           'and for liquids and fabric .obj (per frame) or .usd/.usdc/.usda '
+                                                           'for liquids and fabric .obj (per frame) or .usd/.usdc/.usda, '
+                                                           'name.scene.usdc for the shot as a USD scene (camera, objects, '
+                                                           'pieces, sand, grass, embers), .chan for the camera '
                                                            '(repeatable)')
     r.add_argument('--format', help='video profile: prores4444, prores422hq, dnxhr_hq, dnxhr_444, h264, h265, vp9_alpha')
-    r.add_argument('--content', choices=('element', 'composite', 'deep'),
-                   help='the fire with alpha, the fire composited over the footage, or (for .exr) deep samples')
+    r.add_argument('--content', choices=('element', 'composite', 'deep', 'scene', 'camera'),
+                   help='the fire with alpha, the fire composited over the footage, (for .exr) deep samples, or (for '
+                        '.usd) the shot as a USD scene or its camera alone')
     r.add_argument('--footage', help='footage to composite over (sets size, frame rate and length)')
     r.add_argument('--frames', help='frame range, e.g. 1-120 or 1001-1100')
     r.add_argument('--size', help='output size, e.g. 1920x1080')

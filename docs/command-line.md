@@ -10,6 +10,7 @@ blackbody render shot.bbfire -o vdb/fire.####.vdb --frames 1001-1100 --res 256
 blackbody render shot.bbfire -o fire.####.exr --set motion.wind_speed=3 --set shading.exposure=-0.5
 blackbody render shot.bbfire -o wedge/fuel20.####.exr --set emitter.0.fuel=20
 blackbody render shot.bbfire -o deep/fire.deep.####.exr
+blackbody render shot.bbfire -o usd/shot.scene.usdc -o cam/shot.chan
 blackbody render --preset campfire --usd shot.usd -o fire.####.exr
 blackbody simulate shot.bbfire --cache //server/cache/shot
 blackbody render shot.bbfire --from-cache //server/cache/shot --frames 1001-1050 -o fire.####.exr
@@ -18,7 +19,7 @@ blackbody settings motion
 blackbody info
 ```
 
-- `####` is the frame number. The output type follows the extension: `.exr` `.png` `.vdb` `.mov` `.mp4` `.webm`.
+- `####` is the frame number. The output type follows the extension: `.exr` `.png` `.vdb` `.mov` `.mp4` `.webm`; `.obj` or `.usd` (`.usdc`, `.usda`) for the liquid's surface and the fabric; a `.usd` name with `.scene.` in it (or `--content scene`) for the shot as a USD scene, and with `.camera.` (or `--content camera`) for its camera alone; `.chan` for the camera as Nuke reads it. See [Outputs](outputs.md).
 
 - `--set section.key=value` overrides any setting; `emitter.N.key`, `collider.N.key`, `light.N.key` and `fabric.N.key` reach one emitter, collider, light or fabric (numbered from 0). `blackbody settings` lists every name with its default and range. Values are checked before anything renders: a typo stops the job instead of rendering with a default.
 

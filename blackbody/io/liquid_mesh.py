@@ -12,7 +12,8 @@ Writers:
   USD   one file for the whole shot (.usd, .usdc or .usda): a mesh whose points, faces, normals and
         velocities are sampled per frame, plus the spray, foam and bubbles as point clouds (widths
         from the droplet size). Opens in Houdini (Solaris), Blender, Maya, Omniverse.
-Coordinates are the scene's world metres, y up, as the camera export uses.
+Coordinates are the scene's world metres, y up, as the camera export (io/camera_out.py) and the USD scene
+(io/scene_usd.py) use, so the surface lines up with them.
 """
 from __future__ import annotations
 

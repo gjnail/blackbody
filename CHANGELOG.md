@@ -8,6 +8,12 @@ Notable changes to Blackbody. The format follows
 
 ### Added
 
+- Export the shot to other programs: a USD scene of the whole shot (the camera, every object moving frame by frame,
+  broken pieces, people's and cars' parts, ropes, sand, snow and mud as points, grass as curves, embers as points),
+  and the camera alone as USD or a Nuke .chan. Every EXR now carries the camera in its header (worldToCamera,
+  worldToNDC). VDB, mesh and scene outputs cover every layer of a shot (each other layer's files beside the base
+  layer's); before, only the base layer's were written. What an output leaves out (bullet debris, hollow shapes, the
+  .chan's slide off centre, the lens distortion) is said before the render.
 - Notices: what the engine leaves out or cuts short is now shown in the app and printed by the command line, instead
   of being dropped silently. Objects past 16 (not drawn either), sources past 16 (counting the water level's and
   lightning's slots), set lights past 8 (a lightning bolt takes 4 while it flashes), fabrics past 16, grass patches

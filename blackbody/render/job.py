@@ -12,6 +12,13 @@ Outputs:
             a liquid: the surface as density, velocity, and the spray, foam and bubble densities; for a
             sky: its cloud water, ice, rain, snow and hail), live or from the disk cache
   mesh      the liquid's surface and the fabric as meshes (one .obj per frame, or one .usd)
+  scene     the shot as a USD scene (io/scene_usd.py): its camera, the objects as they move and break, the
+            ropes, the sand, snow and mud, the grass and the embers; content 'camera': the camera alone
+  camera    the shot's camera as a Nuke .chan file (io/camera_out.py)
+
+In a shot with layers, VDB, mesh and scene outputs hold every layer: the base layer's VDB and meshes go to
+the path given and each other layer's beside it (name.<layer>.####.vdb), and a USD scene puts each other
+layer under /World/<layer>. EXRs and deep EXRs carry the camera in their headers (worldToCamera, worldToNDC).
 
 A liquid element is rendered against the footage: the liquid refracts what is behind it, so its
 pixels carry the footage as seen through the liquid (alpha 1 where there is liquid). Its 'heat'
@@ -44,15 +51,18 @@ DEEP_SAMPLES = 8
 DEEP_MAX = 16                     # the most samples per pixel the march gathers (raymarch.wgsl)
 DEEP_KINDS = ('fire', 'liquid')   # the simulations deep samples are made for
 FABRIC_KINDS = ('fire', 'liquid', 'both')
+DATA_KINDS = ('vdb', 'mesh', 'scene', 'camera')   # outputs that are not pictures: no element or composite is rendered for them
 KIND_NAMES = {'fire': 'a fire scene', 'liquid': 'a liquid scene', 'both': 'a fire-and-liquid scene', 'cloud': 'a sky scene'}
 
 
 @dataclass
 class Output:
     kind: str = 'exr'                 # exr | png | video | vdb | deep | mesh (liquid surface or fabric: .obj per frame, or one .usd)
+                                      # | scene (a USD scene) | camera (a .chan file)
     path: str = 'renders/fire.####.exr'
     content: str = 'element'          # element (fire with alpha) | composite (over the footage); a mesh: liquid, fabric,
-                                      # or element (the liquid's surface, with the fabric beside it as name.fabric.*)
+                                      # or element (the liquid's surface, with the fabric beside it as name.fabric.*);
+                                      # a scene: scene (everything) or camera (the camera alone)
     profile: str = 'prores4444'       # video profile key
     layers: tuple = ('emission', 'glow', 'heat', 'depth', 'surface')
     compression: str = 'zip'
@@ -64,6 +74,10 @@ class Output:
     deep_samples: int = DEEP_SAMPLES  # deep: samples per pixel (up to DEEP_MAX)
 
     def label(self):
+        if self.kind == 'scene':
+            return 'Camera · USD' if self.content == 'camera' else 'Scene · USD (camera, objects, particles)'
+        if self.kind == 'camera':
+            return 'Camera · Nuke .chan'
         if self.kind == 'mesh':
             what = 'Fabric' if self.content == 'fabric' else 'Liquid surface'
             return what + ' · ' + ('USD' if Path(self.path).suffix.lower().startswith('.usd') else 'OBJ sequence')
@@ -88,24 +102,35 @@ def frame_path(pattern, frame):
     return str(p.with_name(f'{p.stem}.{frame:04d}{p.suffix}'))
 
 
+USD_EXTS = ('.usd', '.usdc', '.usda')
+
+
 def infer_output(path, content=None, profile=None):
+    """The output a path asks for, by its extension (and `content`, or a name with .deep., .scene. or .camera. in it)."""
     ext = Path(path).suffix.lower()
-    if ext == '.exr' and (content == 'deep' or '.deep.' in Path(path).name.lower()):
+    name = Path(path).name.lower()
+    if content in ('scene', 'camera', 'deep') and ext not in ('.exr',) + USD_EXTS:
+        content = None          # (meant for another output on the same command line)
+    if ext == '.exr' and (content == 'deep' or '.deep.' in name):
         return Output('deep', path, 'element')
     if ext == '.exr':
-        return Output('exr', path, content or 'element')
+        return Output('exr', path, content if content in CONTENT else 'element')
     if ext in ('.png',):
         return Output('png', path, content or 'element')
     if ext == '.vdb':
         return Output('vdb', path)
-    if ext in ('.obj', '.usd', '.usdc', '.usda'):
+    if ext == '.chan':
+        return Output('camera', path, 'camera')
+    if ext in USD_EXTS and (content in ('scene', 'camera') or '.scene.' in name or '.camera.' in name):
+        return Output('scene', path, 'camera' if (content == 'camera' or ('.camera.' in name and content != 'scene')) else 'scene')
+    if ext in ('.obj',) + USD_EXTS:
         return Output('mesh', path)
     if ext in ('.mov', '.mp4', '.webm', '.mxf'):
         c = content or ('element' if ext in ('.mov', '.webm') else 'composite')
         if profile is None:
             profile = {'.mp4': 'h264', '.webm': 'vp9_alpha'}.get(ext, 'prores4444' if c == 'element' else 'prores422hq')
         return Output('video', path, c, profile)
-    raise ValueError(f'Cannot tell the output type from "{path}". Use .exr, .png, .vdb, .obj, .usd, .mov, .mp4 or .webm.')
+    raise ValueError(f'Cannot tell the output type from "{path}". Use .exr, .png, .vdb, .obj, .usd, .chan, .mov, .mp4 or .webm.')
 
 
 def _order(scene):
@@ -124,40 +149,192 @@ def has_fabric(scene):
     return scene.kind in FABRIC_KINDS and bool(scene.fabric_specs())
 
 
+def liquid_layers(scene):
+    """The shot's layers [(uid, scene)] with a liquid (whose surface a mesh output holds)."""
+    return [(u, s) for u, s in _order(scene)[0] if s.kind in ('liquid', 'both')]
+
+
+def fabric_layers(scene):
+    """The shot's layers [(uid, scene)] with fabric."""
+    return [(u, s) for u, s in _order(scene)[0] if has_fabric(s)]
+
+
+def layer_tags(order):
+    """{uid: what goes into a file's name for that layer}: '' for the base layer (its files are named as asked), and
+    '.<its name>' for each other (name.<layer>.####.vdb), every one different, and never the tag of a file the base
+    layer writes beside its own (name.liquid.####.vdb beside a fire-and-liquid VDB, name.fabric.* beside a liquid mesh)."""
+    out, seen = {}, {'liquid', 'fabric', 'deep'}
+    for uid, s in order:
+        if uid == 'base':
+            out[uid] = ''
+            continue
+        t = re.sub(r'[^A-Za-z0-9_-]+', '_', s.name or str(uid)).strip('_').lower() or str(uid)
+        while t in seen:
+            t += '_' + re.sub(r'[^A-Za-z0-9_-]+', '_', str(uid))
+        seen.add(t)
+        out[uid] = '.' + t
+    return out
+
+
+def layer_roots(order):
+    """{uid: where a layer's prims go in a USD scene}: /World for the base layer, /World/<its name> for each other."""
+    from ..io.scene_usd import prim_name
+    taken = {'Camera', 'Objects', 'Pieces', 'Ropes', 'Matter', 'Grass', 'Embers'}
+    return {uid: '/World' if uid == 'base' else '/World/' + prim_name(s.name or uid, taken, 'Layer') for uid, s in order}
+
+
+def tagged(pattern, tag):
+    """A path pattern with `tag` put in before its frame number: name.####.vdb -> name.<tag>.####.vdb, and
+    name.usdc -> name.<tag>.usdc."""
+    if not tag:
+        return pattern
+    p = Path(pattern)
+    m = re.search(r'[._]?(#+|%0?\d*d)', p.name)
+    if m is not None:
+        return str(p.with_name(p.name[:m.start()] + tag + p.name[m.start():]))
+    return str(p.with_name(p.stem + tag + p.suffix))
+
+
+def same_camera(a, b, frames, size):
+    """Whether two layers of a shot see it through the same camera (their placements can differ: each effect's own)."""
+    from ..io.camera_out import camera_at
+    return all(np.allclose(camera_at(a, f, size).view_proj, camera_at(b, f, size).view_proj, rtol=1e-6, atol=1e-9)
+               for f in frames)
+
+
+def _shot_frames(scene):
+    return sorted({scene.start, (scene.start + scene.end) // 2, scene.end})
+
+
+def own_cameras(scene, size=None):
+    """The layers [(uid, scene)] whose camera is not the shot's (the base layer's)."""
+    order, layered = _order(scene)
+    if not layered:
+        return []
+    size = size or scene.output_size()
+    return [(u, s) for u, s in order if u != 'base' and not same_camera(s, scene, _shot_frames(scene), size)]
+
+
+def scene_contents(scene):
+    """What a USD scene of this shot holds, in words (for the Render window)."""
+    from ..engine.solids import breaks, joined, kind_of
+    order = _order(scene)[0]
+    words = ['camera']
+    cols = [c for _, s in order for c in s.colliders if c['enabled']]
+    if cols:
+        words.append('objects')
+    if any(breaks(c) or kind_of(c) for c in cols):
+        words.append('pieces')
+    if any(joined(c) in ('rope', 'spring') for c in cols):
+        words.append('ropes')
+    if any(s.kind != 'cloud' and s.matter_specs() for _, s in order):
+        words.append('matter')
+    if any(s.kind != 'cloud' and s.strand_specs() for _, s in order):
+        words.append('grass')
+    if any(s.kind in ('fire', 'both') and s.data['embers'].get('enabled') for _, s in order):
+        words.append('embers')
+    return words
+
+
 def check_outputs(scene, outputs):
     """Why these outputs cannot be written for this scene (or shot): a message for each, none when they can."""
     out = []
     kind = KIND_NAMES.get(scene.kind, 'this kind of scene')
+    layered = _order(scene)[1]
     for o in outputs:
         if o.kind == 'deep':
             if not deep_layers(scene):
-                if _order(scene)[1]:
+                if layered:
                     out.append(f'{o.path}: deep EXRs are made of fire and liquid layers, and this shot has none.')
                 else:
                     out.append(f'{o.path}: deep EXRs are made for fire scenes and liquid scenes, and this is {kind}.')
             elif not 1 <= int(o.deep_samples) <= DEEP_MAX:
                 out.append(f'{o.path}: a deep EXR holds 1 to {DEEP_MAX} samples per pixel, not {o.deep_samples}.')
         elif o.kind == 'mesh':
-            liquid, fabric = scene.kind in ('liquid', 'both'), has_fabric(scene)
+            liquid, fabric = bool(liquid_layers(scene)), bool(fabric_layers(scene))
+            what = 'this shot' if layered else 'this scene'
             if o.content == 'fabric' and not fabric:
-                out.append(f'{o.path}: there is no fabric in this scene to write as a mesh.')
+                out.append(f'{o.path}: there is no fabric in {what} to write as a mesh.')
             elif o.content == 'liquid' and not liquid:
-                out.append(f'{o.path}: there is no liquid to write as a mesh: this is {kind}.')
+                out.append(f'{o.path}: there is no liquid to write as a mesh: ' +
+                           ('no layer of the shot has one.' if layered else f'this is {kind}.'))
             elif not (liquid or fabric):
-                out.append(f'{o.path}: a mesh holds a liquid\'s surface or fabric, and this scene has neither.')
+                out.append(f'{o.path}: a mesh holds a liquid\'s surface or fabric, and {what} has neither (for the '
+                           'camera, the objects and the particles, write a USD scene: name.scene.usdc).')
+        elif o.kind == 'scene' and Path(o.path).suffix.lower() not in USD_EXTS:
+            out.append(f'{o.path}: a USD scene is a .usd, .usdc or .usda file.')
     return out
 
 
 def output_notes(scene, outputs):
-    """What these outputs leave out of this shot, to say before it renders."""
+    """What these outputs leave out of this shot, or where they put each layer, to say before it renders."""
     notes = []
     order, layered = _order(scene)
     left = [s.name or 'a layer' for u, s in order if s.kind not in DEEP_KINDS]
+    tags = layer_tags(order)
+    others = [(u, s) for u, s in order if u != 'base']
+    own = None
     for o in outputs:
         if o.kind == 'deep' and left and layered and deep_layers(scene):
             notes.append(f'{o.path} holds the fire and liquid layers; {", ".join(left)} '
                          f'{"is" if len(left) == 1 else "are"} not in it.')
+        if o.kind in ('vdb', 'mesh') and layered:
+            if o.kind == 'mesh':
+                has = {u for u, _ in (liquid_layers(scene) if o.content != 'fabric' else [])}
+                has |= {u for u, _ in (fabric_layers(scene) if o.content != 'liquid' else [])}
+            else:
+                has = {u for u, _ in order}
+            beside = [f'{s.name or u}: {Path(tagged(o.path, tags[u])).name}' for u, s in others if u in has]
+            if beside and 'base' in has:
+                notes.append(f'{o.path} holds the base layer\'s; the other layers\' go beside it ({"; ".join(beside)}).')
+            elif beside:
+                notes.append(f'{o.path}: the base layer has nothing for it, so only the layers that have go beside it '
+                             f'({"; ".join(beside)}).')
+        if o.kind in ('scene', 'camera'):
+            if own is None:
+                own = own_cameras(scene)
+            if own:
+                names = ', '.join(s.name or u for u, s in own)
+                notes.append(f'{o.path}: {names} {"has a camera" if len(own) == 1 else "have cameras"} of '
+                             f'{"its" if len(own) == 1 else "their"} own (placed by {"its" if len(own) == 1 else "their"} '
+                             f'Anchor): ' + ('written under /World/<layer>/Camera.' if o.kind == 'scene' else
+                                             'the .chan holds the shot\'s (the base layer\'s); a USD scene holds them all.'))
+        if o.kind == 'camera':
+            from ..io.camera_out import slide_note, slide_px
+            px = slide_px(scene, _shot_frames(scene))
+            if px > 0.5:
+                notes.append(slide_note(o.path, px))     # (a larger slide between these frames is said after the render)
+        if o.kind in ('scene', 'camera'):
+            from ..io.camera_out import lens_k1
+            k1 = lens_k1(scene)
+            if k1 != 0.0:
+                notes.append(f'{o.path}: the element is bent by the footage\'s Lens distortion ({k1:+.3f}), which a camera '
+                             'cannot hold: CG rendered through it lines up at the centre of the frame but less and less '
+                             'toward the edges. Distort it the same way in the comp: x_d = x_u (1 + k1 r²), r from the '
+                             'centre in half-diagonals' + (' (blackbody:lens_k1 on the USD camera).' if o.kind == 'scene'
+                                                           else '.'))
+        if o.kind == 'scene' and o.content != 'camera':
+            notes += _scene_notes(o, order)
     return notes
+
+
+def _scene_notes(o, order):
+    """What a USD scene leaves out of these layers."""
+    from ..engine.ballistics import Ballistics
+    out = []
+    hollow = [c.get('name') or 'an object' for _, s in order for i, c in enumerate(s.colliders) if c['enabled'] and (
+        float(s.get(('collider', i, 'hollow'), s.start)) > 0.0
+        or all(float(x) > 0.0 for x in s.get(('collider', i, 'opening'), s.start)))]
+    if hollow:
+        out.append(f'{o.path}: {", ".join(dict.fromkeys(hollow))} {"is" if len(hollow) == 1 else "are"} hollow or cut '
+                   'open: the USD scene holds the outer shape.')
+    if any(Ballistics.wanted(s) for _, s in order):
+        out.append(f'{o.path}: what bullets throw up (debris, sparks, tracers) and the holes they leave are not in the '
+                   'USD scene.')
+    if any(s.kind in ('liquid', 'both') or has_fabric(s) for _, s in order):
+        out.append(f'{o.path}: the liquid and the fabric are not in the USD scene: write them with their own outputs '
+                   '(Liquid surface · USD, Fabric · USD).')
+    return out
 
 
 class RenderJob:
@@ -179,6 +356,8 @@ class RenderJob:
         self.from_cache = from_cache   # render frames already in the disk cache instead of simulating them
         self.holdout = None
         self._no_cached_vel = False
+        self._cam_attrs = None         # the frame's camera for the EXRs' headers (io/camera_out.py exr_attrs)
+        self.notes = []                # what the writers could not write as it is (a USD scene's), said after the run
 
     def _plate(self, frame):
         if self.footage is None:
@@ -212,24 +391,31 @@ class RenderJob:
                                    f'buffer, more than this GPU allows ({min(lim) / 2 ** 30:.1f} GB): use fewer '
                                    'samples or a smaller size.')
         eng.cache_readonly = bool(self.from_cache)
-        eng.prepare(sc, final=self.final)
+        # (the camera alone needs nothing simulated)
+        camera_only = all(o.kind == 'camera' or (o.kind == 'scene' and o.content == 'camera') for o in self.outputs)
+        if not camera_only:
+            eng.prepare(sc, final=self.final)
         writers = {}
-        need_elem = any(o.content == 'element' and o.kind not in ('vdb', 'mesh') for o in self.outputs)
+        need_elem = any(o.content == 'element' and o.kind not in DATA_KINDS for o in self.outputs)
         from ..io.holdout import FootageHoldout
         self.holdout = FootageHoldout(sc) if sc.kind != 'liquid' else None
         hold = self.holdout if (self.holdout is not None and self.holdout.active) else None
-        need_comp = any(o.content == 'composite' and o.kind != 'vdb' for o in self.outputs)
+        need_comp = any(o.content == 'composite' and o.kind not in DATA_KINDS for o in self.outputs)
         need_vdb = [o for o in self.outputs if o.kind == 'vdb']
         mesh_out = [o for o in self.outputs if o.kind == 'mesh']
-        # a mesh output holds the liquid's surface, the fabric, or (content 'element') both, the fabric beside it
-        need_mesh = [o for o in mesh_out if o.content != 'fabric'] if sc.kind in ('liquid', 'both') else []
-        need_fabric = [o for o in mesh_out if o.content != 'liquid'] if has_fabric(sc) else []
+        scene_out = [o for o in self.outputs if o.kind == 'scene']
+        chan_out = [o for o in self.outputs if o.kind == 'camera']
         audio_src = sc.footage['path'] if (sc.footage and self.footage is not None and self.footage.audio) else None
         total = self.last - self.first + 1
         from .layers import LayerEngines, merge_elements, render as render_layers, simulate as simulate_layers
         order = sc.layer_order() or [('base', sc)]
         layered = [x for x in order if x[0] != 'base']   # the shot's other layers, each its own simulation
         LE = self.engines if (self.engines is not None and self.engines.base is eng) else LayerEngines(eng)
+        # (VDB, mesh and scene outputs hold every layer: each other layer's files beside the base layer's, its prims
+        # under /World/<layer>; a layer placed by an Anchor of its own has its own camera there)
+        tags, roots = layer_tags(order), layer_roots(order)
+        own_cam = {u for u, _ in own_cameras(sc, (W, H))} if (scene_out and layered) else set()
+        cam_attrs = any(o.kind in ('exr', 'deep') for o in self.outputs)
         try:
             for i, frame in enumerate(range(self.first, self.last + 1)):
                 if (cancelled and cancelled()) or self.cancelled:
@@ -240,16 +426,23 @@ class RenderJob:
                     if progress:
                         progress((_i + 0.5 * frac) / total, f'Simulating frame {f}')
 
-                if self.from_cache and frame in eng.cache:
+                if camera_only:
+                    pass
+                elif self.from_cache and frame in eng.cache:
                     pass   # simulated already (another machine, or an earlier run): render it from the disk cache
                 elif self.from_cache:
                     raise RuntimeError(f'Frame {frame} is not in the disk cache; simulate it first (blackbody simulate).')
                 else:
                     eng.simulate_to(sc, frame, progress=sim_progress if i == 0 else None, cancelled=cancelled,
                                     cache=eng.cache.disk is not None)
-                if layered and not simulate_layers(LE, layered, frame, final=self.final, cancelled=cancelled):
+                if layered and not camera_only and not simulate_layers(LE, layered, frame, final=self.final,
+                                                                       cancelled=cancelled):
                     self.cancelled = True
                     break
+                if cam_attrs:
+                    # the camera in the EXRs' headers (the shot's: the base layer's)
+                    from ..io.camera_out import camera_at, exr_attrs
+                    self._cam_attrs = exr_attrs(camera_at(sc, frame, (W, H)))
                 holdout = hold.read(frame) if hold is not None else None
                 if need_elem and layered:
                     # each layer's element, merged back to front; the extra passes are the base layer's, and the
@@ -273,7 +466,7 @@ class RenderJob:
                     for o in self.outputs:
                         if o.kind == 'deep':
                             self._write_deep(o, frame, np.concatenate(dparts, axis=2))
-                        elif o.content == 'element' and o.kind not in ('vdb', 'mesh'):
+                        elif o.content == 'element' and o.kind not in DATA_KINDS:
                             self._write_element(o, frame, aov, aov['beauty'], None, writers, audio_src)
                 elif need_elem:
                     liquid = sc.kind == 'liquid'
@@ -290,7 +483,7 @@ class RenderJob:
                     for o in self.outputs:
                         if o.kind == 'deep':
                             self._write_deep(o, frame, dsamples)
-                        elif o.content == 'element' and o.kind not in ('vdb', 'mesh'):
+                        elif o.content == 'element' and o.kind not in DATA_KINDS:
                             self._write_element(o, frame, aov, elem_lin, glow, writers, audio_src)
                 if need_comp:
                     front = render_layers(LE, order, frame, (W, H), mode='composite', final=self.final, samples=self.samples,
@@ -299,54 +492,41 @@ class RenderJob:
                     comp_lin = front.linear_comp()
                     lpass = _light_passes(front, self.scene, comp_lin.shape[:2])
                     for o in self.outputs:
-                        if o.content == 'composite' and o.kind not in ('vdb', 'mesh'):
+                        if o.content == 'composite' and o.kind not in DATA_KINDS:
                             self._write_comp(o, frame, comp_lin, writers, audio_src, lpass)
-                for o in need_vdb:
-                    from ..io.vdb import write_liquid_vdb_frame, write_vdb_frame
-                    p = frame_path(o.path, frame)
-                    if sc.kind == 'liquid':
-                        write_liquid_vdb_frame(p, eng, sc, frame)
-                    elif sc.kind == 'cloud':
-                        write_cloud_vdb_frame(p, eng, sc, frame)
-                    else:
-                        write_vdb_frame(p, self._fire_fields(frame), sc, frame)
-                    self.written.append(p)
-                    if sc.kind == 'both':
-                        # the liquid alongside the fire: name.liquid.####.vdb
-                        pl = str(Path(p).with_name(Path(p).stem + '.liquid' + Path(p).suffix))
-                        write_liquid_vdb_frame(pl, eng, sc, frame)
-                        self.written.append(pl)
-                if need_mesh:
-                    from ..io.liquid_mesh import UsdWriter, liquid_surface_mesh, write_obj
-                    mesh = liquid_surface_mesh(eng, sc, frame)
-                    for o in need_mesh:
-                        if Path(o.path).suffix.lower().startswith('.usd'):
-                            w = writers.get(id(o))
-                            if w is None:
-                                w = writers[id(o)] = UsdWriter(o.path, sc.fps, sc.data['water']['droplet_size'])
-                            w.add(frame, mesh)
-                        else:
-                            p = frame_path(o.path, frame)
-                            write_obj(p, mesh)
-                            self.written.append(p)
-                if need_fabric:
-                    from ..io import fabric_mesh as FM
-                    meshes = FM.fabric_meshes(eng, sc, frame)
-                    for o in need_fabric:
-                        # beside a liquid's surface, the fabric goes to name.fabric.####.obj (or name.fabric.usd)
-                        path = o.path
-                        if any(o is m for m in need_mesh):
-                            q = Path(o.path)
-                            path = str(q.with_name(q.stem + '.fabric' + q.suffix))
-                        if Path(path).suffix.lower().startswith('.usd'):
-                            w = writers.get((id(o), 'fabric'))
-                            if w is None:
-                                w = writers[(id(o), 'fabric')] = FM.UsdWriter(path, sc.fps)
-                            w.add(frame, meshes)
-                        else:
-                            p = frame_path(path, frame)
-                            FM.write_obj(p, meshes)
-                            self.written.append(p)
+                for uid, lay in order:
+                    e = LE.get(uid)
+                    for o in need_vdb:
+                        self._write_vdb(o, frame, e, lay, tags[uid])
+                    if mesh_out:
+                        self._write_meshes(mesh_out, frame, e, lay, uid, tags[uid], writers)
+                if scene_out:
+                    from ..io.camera_out import camera_at
+                    from ..io.scene_usd import SceneWriter, frame_data
+                    data = {}
+                    for o in scene_out:
+                        w = writers.get(id(o))
+                        if w is None:
+                            w = writers[id(o)] = SceneWriter(o.path, sc.fps)
+                        for uid, lay in order:
+                            cf = camera_at(lay, frame, (W, H)) if (uid == 'base' or uid in own_cam) else None
+                            if o.content == 'camera':
+                                if cf is not None:
+                                    w.add(frame, None, roots[uid], camera=cf)
+                                continue
+                            if uid not in data:   # (once a frame, whatever the number of scene outputs)
+                                data[uid] = frame_data(LE.get(uid), lay, frame)
+                            w.add(frame, data[uid], roots[uid], camera=cf)
+                if chan_out:
+                    from ..io.camera_out import ChanWriter, camera_at, slide_px
+                    cf = camera_at(sc, frame, (W, H))
+                    for o in chan_out:
+                        w = writers.get(id(o))
+                        if w is None:
+                            # (output_notes said the slide of a few frames before the render: a larger one over every
+                            # frame is said again at the end)
+                            w = writers[id(o)] = ChanWriter(o.path, said=slide_px(sc, _shot_frames(sc), (W, H)))
+                        w.add(frame, cf)
                 if progress:
                     progress((i + 1) / total, f'Frame {frame} of {self.last}')
         finally:
@@ -357,6 +537,10 @@ class RenderJob:
             for w in writers.values():
                 try:
                     self.written.append(str(w.close()))
+                    self.written += [str(p) for p in getattr(w, 'extra', [])]
+                    for n in getattr(w, 'notes', []):
+                        if n not in self.notes:
+                            self.notes.append(n)
                 except Exception as ex:
                     log.error('Closing %s failed: %s', w.path, ex)
         self._sidecar(time.perf_counter() - t_start)
@@ -364,10 +548,62 @@ class RenderJob:
 
     # -- writers ---------------------------------------------------------------------------------
 
-    def _fire_fields(self, frame):
+    def _write_vdb(self, o, frame, eng, sc, tag):
+        """A frame of one layer (`sc`, simulated by `eng`) as a VDB: the base layer's at the path given, another's
+        beside it (tag: '.<layer>'); a fire-and-liquid one's liquid beside its fire (name.liquid.####.vdb)."""
+        from ..io.vdb import write_liquid_vdb_frame, write_vdb_frame
+        p = frame_path(tagged(o.path, tag), frame)
+        if sc.kind == 'liquid':
+            write_liquid_vdb_frame(p, eng, sc, frame)
+        elif sc.kind == 'cloud':
+            write_cloud_vdb_frame(p, eng, sc, frame)
+        else:
+            write_vdb_frame(p, self._fire_fields(frame, eng), sc, frame)
+        self.written.append(p)
+        if sc.kind == 'both':
+            pl = frame_path(tagged(o.path, tag + '.liquid'), frame)
+            write_liquid_vdb_frame(pl, eng, sc, frame)
+            self.written.append(pl)
+
+    def _write_meshes(self, mesh_out, frame, eng, sc, uid, tag, writers):
+        """A frame of one layer's liquid surface and fabric for the mesh outputs: a mesh output holds the liquid's
+        surface, the fabric, or (content 'element') both, the fabric beside it (name.fabric.####.obj or name.fabric.usd);
+        another layer's beside the base layer's (tag: '.<layer>')."""
+        liquid = [o for o in mesh_out if o.content != 'fabric'] if sc.kind in ('liquid', 'both') else []
+        fabric = [o for o in mesh_out if o.content != 'liquid'] if has_fabric(sc) else []
+        if liquid:
+            from ..io.liquid_mesh import UsdWriter, liquid_surface_mesh, write_obj
+            mesh = liquid_surface_mesh(eng, sc, frame)
+            for o in liquid:
+                path = tagged(o.path, tag)
+                if Path(path).suffix.lower().startswith('.usd'):
+                    w = writers.get((id(o), uid, 'liquid'))
+                    if w is None:
+                        w = writers[(id(o), uid, 'liquid')] = UsdWriter(path, sc.fps, sc.data['water']['droplet_size'])
+                    w.add(frame, mesh)
+                else:
+                    p = frame_path(path, frame)
+                    write_obj(p, mesh)
+                    self.written.append(p)
+        if fabric:
+            from ..io import fabric_mesh as FM
+            meshes = FM.fabric_meshes(eng, sc, frame)
+            for o in fabric:
+                path = tagged(o.path, tag + ('.fabric' if any(o is m for m in liquid) else ''))
+                if Path(path).suffix.lower().startswith('.usd'):
+                    w = writers.get((id(o), uid, 'fabric'))
+                    if w is None:
+                        w = writers[(id(o), uid, 'fabric')] = FM.UsdWriter(path, sc.fps)
+                    w.add(frame, meshes)
+                else:
+                    p = frame_path(path, frame)
+                    FM.write_obj(p, meshes)
+                    self.written.append(p)
+
+    def _fire_fields(self, frame, eng=None):
         """What a fire VDB is written from: the solver when it holds `frame`, else the frame from the cache (a
         render from the disk cache never steps the solver, which holds only its start)."""
-        eng = self.engine
+        eng = eng or self.engine
         if eng.sim_frame == frame:
             return eng.solver
         entry = eng.cache.get(frame)
@@ -429,7 +665,7 @@ class RenderJob:
                     ch['speed.Y'] = x[..., 2] * 10.0
                 else:
                     ch['temperature.Y'] = x[..., 2] * 1000.0
-            attrs = {'software': f'{blackbody.APP_NAME} {blackbody.__version__}'}
+            attrs = {'software': f'{blackbody.APP_NAME} {blackbody.__version__}', **(self._cam_attrs or {})}
             space = self._exr_space()
             if space:
                 ch = self._to_space(ch, space)
@@ -503,7 +739,7 @@ class RenderJob:
                 samples = samples.copy()
                 samples[..., :3] = pipe.to_space(samples[..., :3], space)
         p = frame_path(o.path, frame)
-        write_deep_exr(p, samples, {'software': f'{blackbody.APP_NAME} {blackbody.__version__}'})
+        write_deep_exr(p, samples, {'software': f'{blackbody.APP_NAME} {blackbody.__version__}', **(self._cam_attrs or {})})
         self.written.append(p)
 
     def _liquid_deep(self, sc, frame, aov):
@@ -560,11 +796,11 @@ class RenderJob:
         if o.kind == 'exr':
             ch = {'R': comp_lin[..., 0], 'G': comp_lin[..., 1], 'B': comp_lin[..., 2]}
             ch.update(lpass or {})          # (Lume's per-light passes of the set)
-            attrs = None
+            attrs = dict(self._cam_attrs or {})
             space = self._exr_space()
             if space:
                 ch = self._to_space({k: v.astype(np.float32) for k, v in ch.items()}, space)
-                attrs = {'colorspace': space}
+                attrs['colorspace'] = space
             dt = np.float16 if o.half else np.float32
             p = frame_path(o.path, frame)
             write_exr(p, {k: v.astype(dt) for k, v in ch.items()}, o.compression, attrs)

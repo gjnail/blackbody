@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDoubleSpinBox, QF
                                QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
 from ..io.video import available_profiles
-from ..render.job import DEEP_SAMPLES, Output, deep_layers, has_fabric, output_notes
+from ..render.job import DEEP_SAMPLES, Output, deep_layers, fabric_layers, liquid_layers, output_notes, scene_contents
 from . import theme
 
 COMP_PROFILES = ['prores422hq', 'h264', 'h265', 'dnxhr_hq', 'prores4444']
@@ -131,6 +131,22 @@ class ExportDialog(QDialog):
                                'fabric\'s mesh (points, normals, velocities for motion blur) on every frame, its burnt-through '
                                'holes left out, its weave as UVs and a burn value on every point for shading the char.')
         row(self.fabric, QLabel('mesh · velocities · UVs · burn'))
+
+        self.scene_usd = QCheckBox('Scene · USD')
+        self.scene_usd.setToolTip('The shot for lighting and rendering in Houdini, Blender, Maya, Nuke or Unreal beside the '
+                                  'elements: its camera (lined up with the render exactly), every object as it falls, floats '
+                                  'and breaks (and its pieces), the ropes, the sand, snow and mud as points, the grass as '
+                                  'curves and the embers as points, frame by frame, in metres with y up. The points go in a '
+                                  'file a frame beside it, which the scene reads (USD value clips).')
+        self.scene_what = QLabel()
+        row(self.scene_usd, self.scene_what)
+
+        self.camera = QCheckBox('Camera · USD and Nuke .chan')
+        self.camera.setToolTip("The shot's camera on its own: a USD camera (its picture lines up with the render exactly, "
+                               "the Anchor's placement held as a roll, a zoom and a film offset) and a .chan file for "
+                               "Nuke's Camera › Import chan file (it has no film offset). Nothing is simulated for it. "
+                               'The EXRs carry it too, in their headers (worldToCamera, worldToNDC).')
+        row(self.camera, QLabel('name_camera.usda · name_camera.chan'))
         v.addWidget(box)
 
         # where -----------------------------------------------------------------------------------------
@@ -230,17 +246,31 @@ class ExportDialog(QDialog):
         if deep and all(lay.kind == 'liquid' for _, lay in deep):
             self.deep.setText('Liquid element · deep EXR sequence')
         self.deep.setToolTip(self._deep_tip(sc, deep))
-        self.mesh.setChecked(s.value('export/mesh', False, type=bool) and sc.kind in ('liquid', 'both'))
-        self.mesh.setEnabled(sc.kind in ('liquid', 'both'))
-        fabric = has_fabric(sc)
+        liquid = bool(liquid_layers(sc))
+        self.mesh.setChecked(s.value('export/mesh', False, type=bool) and liquid)
+        self.mesh.setEnabled(liquid)
+        fabric = bool(fabric_layers(sc))
         self.fabric.setChecked(s.value('export/fabric', False, type=bool) and fabric)
         self.fabric.setEnabled(fabric)
         if not fabric:
             self.fabric.setToolTip(self.fabric.toolTip() + ' (There is no fabric in this scene.)')
+        layered = any(u != 'base' for u, _ in (sc.layer_order() or []))
+        if layered:
+            beside = (" In a shot with layers, the base layer's goes to the file named here and each other layer's "
+                      'beside it (name.<layer>.####.vdb).')
+            self.vdb.setToolTip("Every layer's simulation as OpenVDB volumes (a fire's density, temperature, flame, fuel "
+                                "and vel; a liquid's surface, spray, foam and bubbles; a sky's water), for Blender, Houdini, "
+                                'Maya, Unreal…')
+            for w in (self.vdb, self.mesh, self.fabric):
+                w.setToolTip(w.toolTip() + beside)
+            self.scene_usd.setToolTip(self.scene_usd.toolTip() + ' Each other layer goes under /World/<layer>.')
+        self.scene_what.setText(' · '.join(scene_contents(sc)))
+        self.scene_usd.setChecked(s.value('export/scene', False, type=bool))
+        self.camera.setChecked(s.value('export/camera', False, type=bool))
         i = self.comp_profile.findData(s.value('export/comp_profile', 'prores422hq'))
         self.comp_profile.setCurrentIndex(max(0, i))
         for w in (self.exr, self.deep, self.png, self.mov, self.comp, self.comp_exr, self.vdb, self.mesh, self.fabric,
-                  self.folder, self.name):
+                  self.scene_usd, self.camera, self.folder, self.name):
             (w.toggled if isinstance(w, QCheckBox) else w.textChanged).connect(self._update_labels)
         self.comp_profile.currentIndexChanged.connect(self._update_labels)
         self.deep_n.currentIndexChanged.connect(self._update_labels)
@@ -305,13 +335,19 @@ class ExportDialog(QDialog):
             out.append(Output('mesh', str(folder / f'{name}_liquid.usdc'), 'liquid'))
         if self.fabric.isChecked() and self.fabric.isEnabled():
             out.append(Output('mesh', str(folder / f'{name}_fabric.usdc'), 'fabric'))
+        if self.scene_usd.isChecked():
+            out.append(Output('scene', str(folder / f'{name}_scene.usdc'), 'scene'))
+        if self.camera.isChecked():
+            out.append(Output('scene', str(folder / f'{name}_camera.usda'), 'camera'))
+            out.append(Output('camera', str(folder / f'{name}_camera.chan'), 'camera'))
         return out
 
     def _accept(self):
         s = QSettings()
         s.setValue('export/folder', self.folder.text())
         for k, w in (('exr', self.exr), ('deep', self.deep), ('png', self.png), ('mov', self.mov), ('comp', self.comp),
-                     ('comp_exr', self.comp_exr), ('vdb', self.vdb), ('mesh', self.mesh), ('fabric', self.fabric)):
+                     ('comp_exr', self.comp_exr), ('vdb', self.vdb), ('mesh', self.mesh), ('fabric', self.fabric),
+                     ('scene', self.scene_usd), ('camera', self.camera)):
             s.setValue(f'export/{k}', w.isChecked())
         s.setValue('export/comp_profile', self.comp_profile.currentData())
         s.setValue('export/deep_samples', self.deep_n.currentData())
