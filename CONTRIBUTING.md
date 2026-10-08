@@ -21,7 +21,11 @@ to every change to a solver, a renderer or a preset:
    same frames on the same machine, because render farms render frame ranges
    of one simulation on several machines. Avoid results that depend on GPU
    thread order; the particle transfers use fixed-point atomics for this
-   reason.
+   reason. Nothing that shapes a simulation may depend on how fast the
+   machine is (stop on steps or work done, never on elapsed time). When a
+   change makes a scene simulate differently, bump `SIM_VERSION` in
+   `blackbody/engine/__init__.py`: disk caches simulated by older code are
+   then simulated again rather than shown.
 4. Mind memory and speed. A scene should only pay for the features it uses.
    Say what a new feature costs (`python tools/benchmark.py --features`
    measures it), and keep big allocations behind the setting that needs them.

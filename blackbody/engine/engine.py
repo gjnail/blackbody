@@ -216,6 +216,10 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
         from ..io.simcache import SimCache, default_root
         folder = (Path(d['cache_dir']) if d.get('cache_dir') else default_root(scene.path)) / ('final' if final else 'preview')
         sig = scene.sim_signature(final)
+        if self.solids.active:
+            # (and the bodies as built: cut into other pieces since, or round another hit, the frames are another
+            # simulation's, and drawn with these pieces they would be wrong)
+            sig = f'{sig}-{self.solids.fingerprint()}'
         key = (str(folder), sig, self.cache_readonly)
         if key != self._disk_key or self.cache.disk is None:
             try:
@@ -534,12 +538,17 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
         disk = self.cache.disk
         if disk is None:
             return False
+        touched = False
         for c in reversed(disk.checkpoints()):
             if c > frame or c < scene.start:
                 continue
             entry = disk.get(c)
             if not entry or 'state' not in entry:
                 continue
+            # (the objects changed since: this checkpoint cannot carry on. Asked before the solver is set up for it)
+            if self.solids.active and not self.solids.fits(entry.get('solids')):
+                continue
+            touched = True
             st = entry['state']
             s = self.solver
             s._prm = scene.solver_params(c)
@@ -552,7 +561,7 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
             s.set_meshes(scene.mesh_items(c), scene.data['domain']['mesh_resolution'])
             s.colliders = []
             if self.solids.active and not self.solids.load_state(entry.get('solids')):
-                continue   # the objects changed since: this checkpoint cannot carry on
+                continue
             s.set_colliders(scene.colliders_gpu(c, self.solids.overrides() if self.solids.active else None))
             s.load_state(st)
             if 'ember_state' in entry:
@@ -564,6 +573,12 @@ class Engine(LiquidEngine, BothEngine, CloudEngine, MatterEngine, StrandsEngine,
             self.sim_frame = c
             log.info('Resumed the simulation from the checkpoint at frame %d', c)
             return True
+        if touched:
+            # (none carried on, but one was partly loaded, and the solver set up for it: back to the start, as if none
+            # had been tried)
+            first = self.sim_frame
+            self.reset()
+            self.sim_frame = first
         return False
 
     # -- rendering -------------------------------------------------------------------------------

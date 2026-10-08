@@ -385,6 +385,51 @@ def test_disk_cache_resumes_from_a_checkpoint(engine, tmp_path):
     other.cache.attach(None)
 
 
+def test_the_disk_cache_keeps_to_the_code_and_the_objects_it_was_simulated_with(engine, tmp_path, monkeypatch):
+    # (bottle_shoot's frames cached before its bottles burst still showed them standing: the signature had no version of
+    # the code, nor of the objects as built; and a checkpoint the objects refused was refused after the solver was set up
+    # for it)
+    from blackbody.engine.engine import Engine
+    from blackbody.engine.solids import Solids
+    from blackbody.scene import model
+    sc = _plain(presets.make('campfire'))
+    sc.data['domain'].update(resolution=40, preroll=0.0, disk_cache=True, cache_dir=str(tmp_path), checkpoint_every=4)
+    sc.add_collider(name='Box', shape='box', position=(0.5, 0.4, 0.0), size=(0.08, 0.08, 0.08), dynamic=True, material='wood')
+    engine.invalidate()
+    engine.prepare(sc)
+    assert engine.solids.active
+    engine.simulate_to(sc, sc.start + 8)
+    disk = engine.cache.disk
+    disk.flush()
+    assert disk.checkpoints() == [sc.start, sc.start + 4, sc.start + 8]
+    engine.cache.attach(None)
+    for c in disk.checkpoints():            # (objects that no longer fit them: another number of bodies)
+        e = disk.get(c)
+        e['solids']['qpos'] = np.zeros(3)
+        disk.put(c, e, wait=True)
+    other = Engine(engine.gpu)
+    other.prepare(sc)
+    assert sc.start + 4 in other.cache.disk, 'the same scene and code: its frames are kept'
+    seen = []
+    monkeypatch.setattr(other.solver, 'set_meshes', lambda *a, **k: seen.append('meshes'))
+    monkeypatch.setattr(other.solver, 'load_state', lambda *a, **k: seen.append('state'))
+    other.sim_frame = sc.start - 1
+    assert not other._resume(sc, sc.start + 8)
+    assert not seen, 'nothing set up for a checkpoint the objects refuse'
+    monkeypatch.undo()
+    # frames simulated by older code, or with the objects as built otherwise, are simulated again
+    monkeypatch.setattr(model, 'SIM_VERSION', model.SIM_VERSION + 1)
+    other.prepare(sc)
+    assert not other.cache.disk.frames()
+    other.simulate_to(sc, sc.start + 2)
+    other.cache.disk.flush()
+    assert other.cache.disk.frames()
+    monkeypatch.setattr(Solids, 'fingerprint', lambda self: 'cut otherwise')
+    other.prepare(sc)
+    assert not other.cache.disk.frames()
+    other.cache.attach(None)
+
+
 def test_surface_shadows_and_footage_holdouts(engine):
     from blackbody.engine import camera as cam
     sc = _plain(presets.make('campfire'))

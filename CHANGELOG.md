@@ -361,6 +361,22 @@ Notable changes to Blackbody. The format follows
   rest and showed its cut seams before the bullet came.
 - A cached frame saved before a breakable object's welds changed no longer loads (it re-armed broken welds among
   scattered pieces and threw them apart); the frame is simulated again.
+- The disk cache is kept only for the version of the physics that simulated it and the objects as they were built:
+  frames simulated before an update that changes how things move or break (Bottle shoot's standing bottles) are
+  simulated again instead of shown. A checkpoint the objects no longer fit is passed over before anything is set up
+  for it.
+- Things broken into chunks (stone, concrete, pottery) and breakable meshes stand whole until they are hit. Every
+  joint was loaded alike whatever its glued area, so where two chunks barely met it gave way as the shot began (the
+  Concrete pillar dropped three joints and an anchor, puffing dust); joints now take their share by area. A standing
+  mesh was glued to the ground by every piece face that looked down (under a chair's seat as well as its feet), its
+  pieces reached 0.6 mm past the mesh, so set on the ground they started in it, and pieces filling in its hollows
+  started inside each other and pushed it apart. Of 289 objects left at rest, standing or lying, 264 broke joints
+  before (9,385 in all); 14 do now (43: a loose pile of logs settling, two ice balls).
+- A pane hit near a corner no longer fails to simulate: the hit cut wedges a tenth of a millimetre thin against the
+  frame, and small splinters came out as thin once their cut faces were moved in, which the physics refuses.
+- Where a breakable is hit, which its cracks crowd round, is the same on every machine: the run that finds it stopped
+  after 15 s of the machine's time as well, so on a slow or busy one Bottle shoot's last bottle was never hit in it and
+  broke differently from run to run. It now stops on the work done, and takes about half as long as before.
 - Dust thrown up by the wind or a blast showed in previews but not in final renders: it went only into the coarse
   smoke grid, and a final render draws the fine one.
 - Lume: coloured glass casts its shadow in its colour (its shadow rays carried the tint as grey); with a background

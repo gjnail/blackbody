@@ -271,13 +271,24 @@ def voronoi(planes, seeds, stretch=None, neighbours=26):
     return frac
 
 
+INSET_THIN = 2.5e-4  # m: the thinnest a piece comes out once its cut faces are moved in (inset)
+
+
 def inset(piece, gap):
     """The piece's corners with its cut faces moved in by `gap` (its own frame): welded neighbours then do not
-    touch, so they do not collide while they are glued."""
-    pl = piece.planes.copy()
-    pl[piece.inner, 3] -= gap
-    v = polyhedron(pl)
-    return v if len(v) >= 4 else piece.verts
+    touch, so they do not collide while they are glued. One the whole gap would leave thinner than INSET_THIN (or half
+    its own thickness; thickness here its volume over its largest face) is moved in by less, the gap halving until it
+    is not: a splinter a millimetre or two wide at a pane's edge came out a sliver a tenth of a millimetre thick, too
+    light for the physics to take (MuJoCo's mjMINVAL)."""
+    least = min(INSET_THIN, 0.5 * piece.volume / float(piece.face_area.max()))
+    for _ in range(6):
+        pl = piece.planes.copy()
+        pl[piece.inner, 3] -= gap
+        p, _faces = make_piece(pl, piece.inner)
+        if p is not None and p.volume >= least * float(p.face_area.max()):
+            return p.verts
+        gap *= 0.5
+    return piece.verts
 
 
 def bricks(size, brick=BRICK, joint=JOINT):
@@ -464,17 +475,18 @@ def mesh_pieces(v, t, n, rng, impact=None, near=16):
                   for g in range(int(part.max()) + 1)]
         groups = _separate(groups, surf, v, cell)
         for gr in groups:
-            frac.pieces.extend(_mesh_split(gr['cuts'], gr['vox'], surf[gr['s']], surf_n[gr['s']], surf_a[gr['s']], v[gr['v']], cell))
+            frac.pieces.extend(_mesh_split(gr['cuts'], gr['vox'], surf[gr['s']], surf_n[gr['s']], surf_a[gr['s']], v[gr['v']],
+                                           cell, box=(lo, hi)))
     frac.bonds = touching_bonds(frac.pieces)
     return frac
 
 
-def _mesh_split(cuts, vox, sp, sn, sa, vp, cell, depth=1):
+def _mesh_split(cuts, vox, sp, sn, sa, vp, cell, depth=1, box=None):
     """The pieces of one part of a broken mesh (its inside cells vox, surface points sp with their facing sn and area
     sa, its vertices vp) within cuts: one convex piece, or, where that would fill in much more than the part (an L of a
     chair's seat and arm), the part split in two across the line between its two halves (a plane both halves share,
     so they glue)."""
-    piece = _mesh_piece(np.asarray(cuts, float), np.concatenate([sp, vp, vox]), sn, sa, cell)
+    piece = _mesh_piece(np.asarray(cuts, float), np.concatenate([sp, vp, vox]), sn, sa, cell, box)
     if piece is None:
         return []
     if depth <= 0 or len(vox) < 16 or piece.volume <= 1.5 * len(vox) * cell ** 3:
@@ -497,7 +509,7 @@ def _mesh_split(cuts, vox, sp, sn, sa, vp, cell, depth=1):
     for sign in (1.0, -1.0):     # (the half on the c0 side: n.x <= d; the other: -n.x <= -d)
         keep = lambda x: sign * (x @ nrm) <= sign * d
         out += _mesh_split(cuts + [np.append(sign * nrm, sign * d)], vox[keep(vox)], sp[keep(sp)], sn[keep(sp)], sa[keep(sp)],
-                           vp[keep(vp)], cell, depth - 1)
+                           vp[keep(vp)], cell, depth - 1, box)
     return out
 
 
@@ -558,7 +570,7 @@ def _parts(ijk):
     return part
 
 
-def _mesh_piece(cuts, pts, sn, sa, cell):
+def _mesh_piece(cuts, pts, sn, sa, cell, box=None):
     """One piece of a broken mesh: its cell's cuts, and round its points planes along the cube's 26 directions and the
     few its surface faces most."""
     if len(pts) < 4:
@@ -577,6 +589,9 @@ def _mesh_piece(cuts, pts, sn, sa, cell):
         sn, sa = sn[keep], sa[keep]
     dirs = np.concatenate(dirs)
     h = (pts @ dirs.T).max(0) + 0.05 * cell
+    if box is not None:      # (never past the mesh's own box: set on the ground by its feet, it would start in the ground)
+        corners = np.stack(np.meshgrid(*zip(box[0], box[1]), indexing='ij'), -1).reshape(-1, 3)
+        h = np.minimum(h, (corners @ dirs.T).max(0))
     bound = np.concatenate([dirs, h[:, None]], 1)
     pl = np.concatenate([cuts, bound])
     inner = np.concatenate([np.ones(len(cuts), bool), np.zeros(len(bound), bool)])
@@ -661,10 +676,15 @@ def web(size, n, rng, impact=None):
                 pl.append(plane(-cm, -(float(cm @ q0) + rr[j - 1] * math.cos(half))))
                 inner.append(True)
             piece, _ = make_piece(np.asarray(pl, float), inner)
-            if piece is not None:
+            # (a chip thinner than WEB_CHIP, its volume over its largest face, is left out: a wedge cut off against
+            # the frame by a hit near it. Nobody sees it, and the physics cannot take a body so light: MuJoCo's mjMINVAL)
+            if piece is not None and piece.volume >= min(WEB_CHIP, float(s[thin])) * float(piece.face_area.max()):
                 frac.pieces.append(piece)
     frac.bonds = touching_bonds(frac.pieces, slivers=True)
     return frac
+
+
+WEB_CHIP = 5e-4     # m: the thinnest shard a web keeps (web)
 
 
 def _cells_2d(seeds, box):

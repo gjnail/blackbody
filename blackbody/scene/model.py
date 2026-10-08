@@ -10,6 +10,7 @@ from pathlib import Path
 
 import numpy as np
 
+from ..engine import SIM_VERSION
 from ..engine import camera as cam
 from ..engine.lut import flame_ev
 from ..engine.embers import EmberParams
@@ -1417,6 +1418,7 @@ class Scene:
             'steam': ([round(self.boil_temp(), 5)] + [self.data['shading'][k] for k in ('ambient_k', 'flame_k', 'humidity')]
                       if self.features()['vapour'] else None),
             'upres': self.upres_for(final),
+            'engine': SIM_VERSION,     # (frames simulated by older code are another simulation's)
         }
         return hashlib.sha1(json.dumps(blob, sort_keys=True, default=str).encode()).hexdigest()[:16]
 

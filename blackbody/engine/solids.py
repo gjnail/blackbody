@@ -144,10 +144,19 @@ CHAIN_KG_M2 = 20000.0   # kg/m per square metre of its wire: a chain's weight (1
 WELD_SOLIMP = (0.99, 0.999, 0.001)   # how hard a weld holds its pose (MuJoCo's impedance): MuJoCo's own 0.9-0.95 gives
                         # as the inertia of a small piece, so a post of steel segments whipped a metre either way like a
                         # fishing rod and a wall swayed; 0.999-0.9999 goes unstable
+SHARE_POWER = 1.5       # a solid's weld smaller than its median bond is held looser by (median / area) to this power
+                        # (_share_by_area): pulled, its share of a load then goes with what it holds, its area, and bent,
+                        # with its section's, area^1.5
+BASE_BAND = 0.02        # a standing mesh is glued to the ground by its pieces' faces within this share of its height of
+                        # its lowest point (its feet), not by every face that looks down
 IMPACT_FLOOR = 0.5      # m/s: a piece stopped by less than this never breaks by impact (contacts at rest chatter)
 IMPACT_KEEP = 0.5       # of a piece's stop so far, what carries to the next step (a hit lasts a few steps)
 REHEARSE_S = 20.0       # s: the longest a rehearsal (where things are hit, _rehearse) runs the shot for
-REHEARSE_WALL = 15.0    # s: and the longest it may take
+REHEARSE_WORK = 3.0e6   # and the most it may do: each step counts REHEARSE_STEP, and one for each body and each contact (a
+                        # few microseconds each; bottle_shoot's whole 5.5 s, five bottles of a hundred pieces on a rail, is
+                        # 1.7 million). Counted, not timed: on a slower machine a cap on the time it takes stopped it before
+                        # the last bottle was hit, and that bottle's cracks no longer crowded round its hole
+REHEARSE_STEP = 10      # a step's own cost, in contacts
 
 
 @dataclass
@@ -199,6 +208,17 @@ class PieceSet:
     yields: float = 0.0         # Pa: its joints bend and stay bent past this (materials x Strength); 0: they never bend
     ductility: float = 0.0      # radians: how far a joint bends in all before it tears
     bent: bool = False          # a joint of it has bent (it is drawn as its pieces from then on)
+    by_area: bool = False       # its welds share a load by their areas (by_area, _share_by_area)
+
+
+def by_area(c, hollow=0.0):
+    """Whether breakable c's welds share a load by their areas (Solids._share_by_area): a solid cut into chunks (its
+    own Voronoi cells) or a mesh. Not a pane's web, a shell, bricks, metal's bends nor wood: those keep rules tuned of
+    their own (fracture.touching_bonds' slivers, wood.bend_welds)."""
+    if c['shape'] == 'mesh':
+        return True
+    return (c.get('fracture', 'voronoi') == 'voronoi' and not float(hollow or 0.0) > 0.0
+            and not WF.is_wood(str(c.get('material', 'wood'))))
 
 
 ROPE_BOUNCE = 0.3       # the share of its speed a falling thing keeps when its rope snaps taut
@@ -267,6 +287,16 @@ _HITS = {}          # rehearsals (_rehearse) kept: scene -> {collider index: whe
 def breaks(c):
     """Whether collider c is breakable (not a person or a car: those are their parts)."""
     return bool(c.get('breakable')) and kind_of(c) is None
+
+
+def _plain(v):
+    """A setting as JSON, for a key: an animated one by its keys (not by the curve holding them, which keeps its
+    identity when a key is moved: the model, and a rehearsal, were then kept for the old keys)."""
+    if hasattr(v, 'to_json'):
+        return v.to_json()
+    if isinstance(v, tuple):
+        return list(v)
+    return v if v is None or isinstance(v, (int, float, bool, str)) else str(v)
 
 
 def kind_of(c):
@@ -496,8 +526,10 @@ class Solids:
         self._mocap_vel = {}       # mocap id -> its keys' velocity now (how fast a keyed thing hits)
         self._btab = None          # per body, for how fast contacts close (_bodies_table)
         self.rehearsal = False     # a rehearsal (_rehearse): nothing breaks; where each breakable is hit is noted (hits)
+        self.work = 0              # what a rehearsal has done so far (REHEARSE_WORK)
         self.hits = {}             # collider index -> [its own frame point, how fast it closed, (unused)]
         self._reh_geom = {}        # a rehearsal's geoms of breakables -> collider index
+        self._reh_tab = None       # the same per geom id (-1: not one of them)
         self._reh_frame = {}       # collider index -> (position, rotation) of a standing one's frame; (None, None) falling
         self._hit_at = {}          # collider index -> where the rehearsal found it hit (the pieces cut round it)
         self.joints: list[Joint] = []   # ropes, springs, hinges and ball joints
@@ -559,14 +591,12 @@ class Solids:
     @staticmethod
     def _key(scene, idx, layout):
         import json
-        cols = [{k: (list(v) if isinstance(v, tuple) else (str(v) if not isinstance(v, (int, float, bool, str)) else v))
-                 for k, v in c.items() if k != 'name'} for c in scene.colliders]
+        cols = [{k: _plain(v) for k, v in c.items() if k != 'name'} for c in scene.colliders]
         d = scene.data['domain']
         blob = dict(idx=idx, cols=cols, ground=bool(d['ground']), sides=bool(d['open_sides']), kind=scene.kind,
                     layout=[list(map(float, x)) if hasattr(x, '__len__') else float(x) for x in layout],
                     g=float(scene.data['liquid']['gravity']) if scene.kind in ('liquid', 'both') else G,
-                    shots=[{k: (list(v) if isinstance(v, tuple) else str(v)) for k, v in sh.items() if k != 'name'}
-                           for sh in getattr(scene, 'shots', None) or []])
+                    shots=[{k: _plain(v) for k, v in sh.items() if k != 'name'} for sh in getattr(scene, 'shots', None) or []])
         return json.dumps(blob, sort_keys=True, default=str)
 
     def _mesh_points(self, scene, c):
@@ -608,7 +638,7 @@ class Solids:
                           ductility=float(r.get('ductility', 0.0)),
                           throw=np.asarray(c.get('start_velocity', (0.0, 0.0, 0.0)), float) if dynamic else np.zeros(3),
                           spin=np.radians(np.asarray(c.get('start_spin', (0.0, 0.0, 0.0)), float)) if dynamic else np.zeros(3),
-                          dynamic=dynamic,
+                          dynamic=dynamic, by_area=by_area(c, cg.hollow),
                           release=scene.start + float(c.get('release', 0.0)) * scene.fps if dynamic else None)
             for n, p in enumerate(frac.pieces):
                 b = w.add_body()
@@ -648,7 +678,15 @@ class Solids:
             self._reset_fire(ps)
             # the bonds: welds between pieces that share a cut
             stiff = [-k, -2.0 * math.sqrt(k)]
-            for n, bond in enumerate(frac.bonds):
+            bonds = list(enumerate(frac.bonds))
+            if ps.by_area:
+                # (sharing by area, a sliver of a bond carries next to nothing, and holds less: any load at all broke it
+                # and the object, no longer whole, showed its cuts. Dropped where the rest holds it together, as a
+                # pane's web drops its own: fracture.touching_bonds)
+                from .fracture import _drop_slivers
+                kept = {id(b) for b in _drop_slivers(frac.bonds)}
+                bonds = [(n, b) for n, b in bonds if id(b) in kept]
+            for n, bond in bonds:
                 e = spec.add_equality()
                 e.type = mujoco.mjtEq.mjEQ_WELD
                 e.objtype = mujoco.mjtObj.mjOBJ_BODY
@@ -669,16 +707,33 @@ class Solids:
                 # (its edges: the faces round its rim, not the broad faces of a pane or a wall, and not its top)
                 sz = np.abs(np.asarray(cg.size, float))
                 thin = np.eye(3)[int(np.argmin(sz))] if c['shape'] == 'box' else np.zeros(3)
+                # (a mesh's pieces face down under its seat and its arms as well as under its feet: only those at its foot
+                # are on the ground)
+                foot = None
+                if c['shape'] == 'mesh':
+                    lo = min(float(p.verts[:, 1].min()) for p in frac.pieces)
+                    foot = lo + BASE_BAND * (max(float(p.verts[:, 1].max()) for p in frac.pieces) - lo)
+                glued = []
                 for n, p in enumerate(frac.pieces):
                     outer = ~p.inner
                     ny = p.planes[:, 1]
                     if held == 'base' or c['shape'] != 'box':
                         face = outer & (ny < -0.9)
+                        if foot is not None:
+                            face &= p.face_centre[:, 1] < foot
                     else:
                         face = outer & (ny < 0.1) & (np.abs(p.planes[:, :3] @ thin) < 0.5)
                     area = float(p.face_area[face].sum()) if face.any() else 0.0
-                    if area <= 0.0:
-                        continue
+                    if area > 0.0:
+                        glued.append((n, p, face, area))
+                if ps.by_area and glued and frac.bonds:
+                    # (nor by a corner of a piece just touching the ground: a sliver of an anchor holds nothing, and any
+                    # load at all broke it as the shot began. The largest is kept whatever its size)
+                    from .fracture import SLIVER_BOND
+                    least = SLIVER_BOND * float(np.median([b.area for b in frac.bonds]))
+                    big = max(a for _n, _p, _f, a in glued)
+                    glued = [g for g in glued if g[3] >= least or g[3] == big]
+                for n, p, face, area in glued:
                     nrm = (p.planes[face, :3] * p.face_area[face, None]).sum(0)
                     nrm /= max(float(np.linalg.norm(nrm)), 1e-12)
                     fc = (p.face_centre[face] * p.face_area[face, None]).sum(0) / area
@@ -697,6 +752,64 @@ class Solids:
             if len(frac.pieces) > 150:
                 self.warnings.append(f'{c["name"]}: {len(frac.pieces)} pieces take a while to simulate')
         return sets
+
+    def _unoverlap(self, spec, sets):
+        """Pieces of one breakable (a mesh's, by_area) that start inside each other do not collide. Each piece of a mesh
+        is convex, filling in the hollows of the part it is cut from (under a chair's arm, inside a ring, between two
+        logs), and two such can fill each other's: they pushed each other apart as the shot began, against the welds,
+        and burst it (a 48-piece armchair lost most of its 270 welds lying still). Their contacts are excluded (welded
+        neighbours, their cut faces moved apart by GAP, never touch). True if any were: the model is compiled again."""
+        import mujoco
+        mine = {}
+        for si, ps in enumerate(sets):
+            if ps.by_area:
+                mine.update((nm, si) for nm in ps.names)
+        if not mine:
+            return False
+        m = self.model
+        d = mujoco.MjData(m)
+        mujoco.mj_forward(m, d)       # (as built: every free body where it starts)
+        nc = int(d.ncon)
+        if nc == 0:
+            return False
+        name = lambda b: mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, int(b))
+        pairs = set()
+        for b1, b2 in zip(m.geom_bodyid[d.contact.geom1[:nc]], m.geom_bodyid[d.contact.geom2[:nc]]):
+            n1, n2 = name(b1), name(b2)
+            if n1 in mine and mine.get(n2) == mine[n1]:
+                pairs.add((min(n1, n2), max(n1, n2)))
+        for n1, n2 in sorted(pairs):
+            e = spec.add_exclude()
+            e.bodyname1, e.bodyname2 = n1, n2
+        return bool(pairs)
+
+    def _share_by_area(self):
+        """A solid's welds (one cut into its own Voronoi cells, or a mesh) take their shares of a load as their bonds'
+        areas, as the glue across a real crack would. The solver otherwise loads every weld about alike, while what a
+        weld holds goes with its area (bent, with its section's, area^1.5): a sliver of a bond, two cells all but missing
+        each other, broke as the shot began (the Concrete pillar lost three welds and an anchor at rest, a stone
+        armchair most of its own). Each weld smaller than the object's median bond is held looser, the give of its
+        impedance, (1 - d) / d, raised by (median / area)^SHARE_POWER: that is how much of a load the solver puts on a
+        constraint from the first step (its regularisation, R = (1 - d) / d x its inverse mass), as well as at rest,
+        where a softer spring alone would only share it once settled. Run once the model is compiled."""
+        import mujoco
+        m = self.model
+        for ps in self.sets:
+            if not ps.by_area:
+                continue
+            areas = np.array([w[3] for w in ps.welds], float)
+            bond = np.array([w[5] >= 0 for w in ps.welds], bool)
+            if not bond.any():
+                continue
+            ref = float(np.median(areas[bond]))
+            for (name, *_rest), a in zip(ps.welds, areas):
+                s = min(1.0, a / ref) ** SHARE_POWER
+                if s >= 1.0:
+                    continue
+                e = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_EQUALITY, name)
+                for col in (0, 1):
+                    d = float(m.eq_solimp[e, col])
+                    m.eq_solimp[e, col] = 1.0 / (1.0 + (1.0 - d) / (d * s))
 
     def _index_welds(self):
         """The welds of every breakable, flattened into arrays for the per-step check (_break)."""
@@ -779,28 +892,33 @@ class Solids:
         closed fastest (the two things' speeds toward each other there, just before), in its own frame."""
         d, m = self.data, self.model
         nc = int(d.ncon)
-        if nc == 0 or not self._reh_geom:
+        if nc == 0 or self._reh_tab is None:
             return
-        ks = [k for k in range(nc) if int(d.contact.geom1[k]) in self._reh_geom or int(d.contact.geom2[k]) in self._reh_geom]
-        if not ks:
+        # (every contact's fields read once: d.contact.geom1[k] copies the whole list each time, which was most of what a
+        # rehearsal of bottles standing on a rail cost)
+        con = d.contact
+        g1, g2 = np.asarray(con.geom1[:nc], np.int64), np.asarray(con.geom2[:nc], np.int64)
+        i1, i2 = self._reh_tab[g1], self._reh_tab[g2]
+        ks = np.nonzero((i1 >= 0) | (i2 >= 0))[0]
+        if not len(ks):
             return
-        ks = np.asarray(ks, np.int64)
-        speeds = self._closing(before, np.asarray(m.geom_bodyid[d.contact.geom1[ks]], np.int64),
-                               np.asarray(m.geom_bodyid[d.contact.geom2[ks]], np.int64), np.asarray(d.contact.pos[ks], float),
-                               np.asarray(d.contact.frame[ks, :3], float))
+        pos = np.asarray(con.pos[:nc], float)
+        speeds = self._closing(before, np.asarray(m.geom_bodyid[g1[ks]], np.int64), np.asarray(m.geom_bodyid[g2[ks]], np.int64),
+                               pos[ks], np.asarray(con.frame[:nc, :3], float)[ks])
         for k, closing in zip(ks, speeds):
-            g1, g2 = int(d.contact.geom1[k]), int(d.contact.geom2[k])
-            i = self._reh_geom.get(g1, self._reh_geom.get(g2))
-            p = np.asarray(d.contact.pos[k], float)
             closing = float(closing)
-            got = self.hits.get(i)
-            if closing <= 0.5 * IMPACT_FLOOR or (got is not None and closing <= got[1]):
+            if closing <= 0.5 * IMPACT_FLOOR:
                 continue
-            pos, R = self._reh_frame[i]
-            if pos is None:            # (it falls: its body's frame is its own)
-                bid = int(m.geom_bodyid[g1] if g1 in self._reh_geom else m.geom_bodyid[g2])
-                pos, R = d.xpos[bid], d.xmat[bid].reshape(3, 3)
-            self.hits[i] = [np.round(R.T @ (p - pos), 4), closing, False]
+            first = i1[k] >= 0
+            i = int(i1[k] if first else i2[k])
+            got = self.hits.get(i)
+            if got is not None and closing <= got[1]:
+                continue
+            o, R = self._reh_frame[i]
+            if o is None:              # (it falls: its body's frame is its own)
+                bid = int(m.geom_bodyid[g1[k] if first else g2[k]])
+                o, R = d.xpos[bid], d.xmat[bid].reshape(3, 3)
+            self.hits[i] = [np.round(R.T @ (pos[k] - o), 4), closing, False]
 
     def _build_assemblies(self, scene, spec, w, idx, by_index, contact):
         """People and cars: each its parts as MuJoCo bodies in a tree (the root on a free joint), on ball joints,
@@ -1073,14 +1191,17 @@ class Solids:
         breakable one rigid body of all its pieces, or fixed where it stands): its own frame, {collider index: point}.
         Its cracks then crowd round where it is really hit: a pot dropped on its rim shatters at the rim, a pane where
         the ball strikes it. Kept, for the same scene. (Only the bodies: what a liquid, sand or a fire does to them is
-        not rehearsed.)"""
+        not rehearsed.) It runs for REHEARSE_S of the shot at most, and REHEARSE_WORK: counted, not timed, so a scene is
+        rehearsed the same on any machine, however busy."""
         want = [i for i in idx if breaks(scene.colliders[i]) and uses_impact(scene.colliders[i])]
         if not want:
             return {}
-        import time as _time
+        import json
         dd = scene.data['domain']
         key = (self._key(scene, idx, layout), scene.start, scene.end, float(scene.fps), float(dd['preroll']),
-               str(dd.get('time_scale')))
+               json.dumps(_plain(dd.get('time_scale'))),
+               json.dumps(scene.blasts() if hasattr(scene, 'blasts') else [], default=str),
+               REHEARSE_S, REHEARSE_WORK, REHEARSE_STEP)
         got = _HITS.get(key)
         if got is not None:
             return dict(got)
@@ -1091,12 +1212,12 @@ class Solids:
             r._build(scene, idx, layout)
             fps = scene.fps
             first = scene.start - int(round(float(dd['preroll']) * fps))
-            t_wall, t_sim = _time.perf_counter(), 0.0
+            t_sim = 0.0
             for frame in range(first, scene.end + 1):
                 fdt = float(scene.v('domain', 'time_scale', frame)) / fps
                 r.advance(scene, frame, fdt, 1)
                 t_sim += fdt
-                if t_sim > REHEARSE_S or _time.perf_counter() - t_wall > REHEARSE_WALL:
+                if t_sim > REHEARSE_S or r.work > REHEARSE_WORK:
                     break
             out = {i: np.asarray(v[0], float) for i, v in r.hits.items()}
         except Exception as ex:     # (a rehearsal that fails only loses where things are hit)
@@ -2401,10 +2522,15 @@ class Solids:
         sets = [] if self.rehearsal else self._build_pieces(scene, spec, w, idx, by_index, contact, fixed_geom, k)
         joints = self._build_joints(scene, spec, by_index, bodies, sets, mocap, k, dt)
         self.model = spec.compile()
+        if self._unoverlap(spec, sets):
+            self.model = spec.compile()
         self.data = mujoco.MjData(self.model)
         m = self.model
         if self._reh_geom:     # (geom names -> ids)
             self._reh_geom = {mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, nm): i for nm, i in self._reh_geom.items()}
+            self._reh_tab = np.full(m.ngeom, -1, np.int64)
+            for g, i in self._reh_geom.items():
+                self._reh_tab[g] = i
         for jt in joints:
             jt.bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, jt.body)
             jt.oid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, jt.other) if jt.other else 0
@@ -2439,6 +2565,7 @@ class Solids:
         self.breaks = []
         from .wood import Cleaver, bend_welds
         bend_welds(self)      # (wood bends before it breaks: its welds as stiff as the wood is)
+        self._share_by_area()
         self._index_welds()
         self._cleaver = Cleaver.of(self)    # (an edge driven into wood's end grain splits it: wood.py)
         from .ballistics import Ballistics
@@ -3018,6 +3145,7 @@ class Solids:
             mujoco.mj_step(m, d)
             self._keep_in_box()
             if self.rehearsal:
+                self.work += REHEARSE_STEP + m.nbody + int(d.ncon)
                 self._note_hits(v0)
             self._impact(v0, h)
             self._assemblies_hit(v0)
@@ -3159,13 +3287,12 @@ class Solids:
                     shots_view=None if self.shots is None else self.shots.view(self),
                     limp=[bool(a['limp']) for a in self.asms])
 
-    def load_state(self, st):
-        """Carry on from a saved state (state()). False if it does not fit the current model."""
-        import mujoco
-        if st is None or self.data is None:
+    def fits(self, st):
+        """Whether a saved state (state()) fits the current model, so load_state would carry on from it. Changes
+        nothing: a checkpoint is asked first, before anything else is set up for it."""
+        if not isinstance(st, dict) or 'qpos' not in st or self.data is None:     # (an older cache's: poses only)
             return False
-        q, v = np.asarray(st['qpos'], float), np.asarray(st['qvel'], float)
-        if q.shape != self.data.qpos.shape or v.shape != self.data.qvel.shape:
+        if np.shape(st['qpos']) != self.data.qpos.shape or np.shape(st['qvel']) != self.data.qvel.shape:
             return False
         # (nor one whose welds are not the model's: cut differently since, every weld it broke would hold again among
         # pieces already flung apart)
@@ -3174,6 +3301,29 @@ class Solids:
             return False
         if self._w is not None and st.get('over') is not None and np.shape(st['over']) != self._w['over'].shape:
             return False
+        return True
+
+    def fingerprint(self):
+        """What the model is made of: its bodies, welds and joints, and the point each breakable was cut round (the
+        rehearsal's). Part of the disk cache's signature (engine.py): frames simulated with a model cut otherwise (by
+        older code, or round another hit) are another simulation's, and their pieces are not these. None: no model."""
+        if self.model is None:
+            return None
+        import hashlib
+        import json
+        m = self.model
+        blob = [int(m.nbody), int(m.ngeom), int(m.njnt), int(m.neq), int(m.ntendon), int(m.nexclude), len(self.joints),
+                len(self.asms),
+                [[int(ps.index), len(ps.names), len(ps.welds), None if ps.impact is None else np.round(ps.impact, 4).tolist()]
+                 for ps in self.sets]]
+        return hashlib.sha1(json.dumps(blob).encode()).hexdigest()[:8]
+
+    def load_state(self, st):
+        """Carry on from a saved state (state()). False if it does not fit the current model (fits)."""
+        import mujoco
+        if not self.fits(st):
+            return False
+        q, v = np.asarray(st['qpos'], float), np.asarray(st['qvel'], float)
         self.data.qpos[:] = q
         self.data.qvel[:] = v
         mujoco.mj_forward(self.model, self.data)

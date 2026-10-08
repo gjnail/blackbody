@@ -204,11 +204,143 @@ def test_a_mesh_breaks_into_pieces_that_glue_and_do_not_overlap():
     assert len(S.breaks) > 20 and not S.whole(0)                     # dropped 2.5 m, a stone chair shatters
 
 
+def test_chunks_stand_whole_at_rest_and_break_when_hit():
+    # (every weld was as stiff as the next, so the solver loaded a sliver of a bond as much as any, past what its area
+    # holds: the Concrete pillar dropped three welds and an anchor as the shot began, puffing dust, nothing near it)
+    pillar = dict(name='Concrete pillar', shape='box', position=(0.0, 1.0, 0.0), size=(0.15, 1.0, 0.15), material='concrete',
+                  breakable=True, pieces=30)
+    S, moved = run(scene_of(pillar), 1.5)
+    assert not S.breaks and moved[0].max() < 0.002
+    ball = dict(name='Ball', shape='sphere', position=(-1.0, 1.4, 0.0), size=(0.2, 0.2, 0.2), dynamic=True, material='steel',
+                start_velocity=(8.0, 0.0, 0.0))
+    S, moved = run(scene_of(pillar, ball), 1.5)
+    assert len(S.breaks) > 15 and (moved[0] > 0.1).sum() > 5          # (hit hard, it breaks into chunks)
+
+
+def test_a_stone_mesh_stands_and_lies_whole():
+    # (a mesh's welds too; and standing, it was glued to the ground by every face of its pieces that looked down, under
+    # its seat and its arms as well as its feet, each a sliver)
+    import os
+    path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'blackbody', 'assets', 'meshes', 'armchair.obj'))
+    from blackbody.engine.mesh import load_mesh
+    v, _t = load_mesh(path)
+    low = float(np.asarray(v, float)[:, 1].min()) * 0.6
+    chair = dict(name='Chair', shape='mesh', mesh=path, size=(0.6, 0.6, 0.6), material='stone', breakable=True, pieces=24)
+    S, _ = run(scene_of(dict(chair, position=(0.0, -low + 0.001, 0.0), dynamic=True)), 1.0)
+    assert not S.breaks
+    S, _ = run(scene_of(dict(chair, position=(0.0, -low, 0.0))), 1.0)
+    assert not S.breaks
+
+
+def test_a_pane_hit_at_its_corner_is_cut_into_pieces_the_physics_takes():
+    # (a hit near a corner cut wedges against the frame a tenth of a millimetre thin, and moved in by the whole gap for
+    # the physics, small splinters came out as thin: MuJoCo refused the model, mjMINVAL)
+    from blackbody.engine.fracture import inset, web
+    from blackbody.engine.solids import GAP
+    for size, n, at in (((0.5, 0.5, 0.004), 40, (-0.995, -0.95)), ((0.08, 0.1, 0.002), 40, (0.995, 0.95)),
+                        ((0.3, 0.4, 0.003), 60, (-0.9, 0.98))):
+        hit = np.round([at[0] * size[0], at[1] * size[1], 0.0], 4)
+        f = web(size, n, np.random.default_rng(7919), hit)
+        assert all(p.volume >= 4e-4 * p.face_area.max() for p in f.pieces)
+        assert connected(f)
+        for p in f.pieces:
+            pl = p.planes.copy()
+            pl[p.inner, 3] -= GAP
+            q, _ = make_piece(pl, p.inner)
+            v = inset(p, GAP)
+            if q is not None and q.volume >= min(2.5e-4, 0.5 * p.volume / p.face_area.max()) * q.face_area.max():
+                assert np.array_equal(v, q.verts)            # (one the whole gap leaves thick enough is moved in by all of it)
+            else:
+                assert len(v) >= 4
+        sc = scene_of(dict(name='Pane', shape='box', position=(0.0, 1.2, 0.0), size=size, material='glass', breakable=True,
+                           fracture='shards', pieces=n, held='edges'))
+        S = Solids()
+        S._rehearse = lambda scene, idx, layout, hit=hit: {0: hit}
+        S.configure(sc, ((96, 96, 96), 12.0 / 96, (-6.0, 0.0, -6.0)))     # (MuJoCo takes it)
+        assert len(S.sets[0].bodies) == len(f.pieces)
+
+
 def test_breaking_is_deterministic():
     S1, m1 = run(scene_of(WALL, ball(4.0)), 1.0)
     S2, m2 = run(scene_of(WALL, ball(4.0)), 1.0)
     assert len(S1.breaks) == len(S2.breaks)
     assert np.array_equal(m1[0], m2[0])
+
+
+LAYOUT = ((96, 96, 96), 12.0 / 96, (-6.0, 0.0, -6.0))
+PANE = dict(name='Pane', shape='box', position=(0.0, 0.9, 0.0), size=(0.5, 0.5, 0.004), breakable=True, fracture='shards',
+            material='glass', pieces=40, held='edges')
+THROWN = dict(name='Stone', shape='sphere', position=(0.25, 0.9, -1.8), size=(0.04, 0.04, 0.04), dynamic=True,
+              material='stone', start_velocity=(0.0, 1.0, 9.0))       # (it strikes the pane off centre at frame 6)
+
+
+def test_where_a_thing_is_hit_does_not_depend_on_how_fast_the_machine_is(monkeypatch):
+    # (the rehearsal that finds where a breakable is hit, which its cracks crowd round, stopped after 15 s of the
+    # machine's time as well: on a slow or busy machine bottle_shoot's last bottle was never hit in it, and broke
+    # differently from one run to the next)
+    import time
+    from blackbody.engine import solids as SO
+    sc = scene_of(PANE, THROWN)
+    idx = Solids.wanted(sc)
+    SO._HITS.clear()
+    hit = Solids()._rehearse(sc, idx, LAYOUT)
+    assert list(hit) == [0] and abs(hit[0][0] - 0.25) < 0.02 and abs(hit[0][1]) < 0.03
+    clock = [0.0]
+
+    def slow():                     # a machine a thousand times slower
+        clock[0] += 1000.0
+        return clock[0]
+    monkeypatch.setattr(time, 'perf_counter', slow)
+    SO._HITS.clear()
+    again = Solids()._rehearse(sc, idx, LAYOUT)
+    assert list(again) == [0] and np.array_equal(again[0], hit[0])
+
+
+def test_a_rehearsal_is_bounded_by_its_work_and_kept_for_its_scene(monkeypatch):
+    from blackbody.engine import solids as SO
+    from blackbody.engine.solids import _HITS
+    sc = scene_of(PANE, THROWN)
+    idx = Solids.wanted(sc)
+    _HITS.clear()
+    full = Solids()._rehearse(sc, idx, LAYOUT)
+    work = SO.REHEARSE_WORK
+    monkeypatch.setattr(SO, 'REHEARSE_WORK', 3000)   # (a big scene's worth: it stops before the stone arrives)
+    assert Solids()._rehearse(sc, idx, LAYOUT) == {}
+    monkeypatch.setattr(SO, 'REHEARSE_WORK', work)
+    back = Solids()._rehearse(sc, idx, LAYOUT)
+    assert len(_HITS) == 2 and np.array_equal(back[0], full[0])     # (each kept by what it ran to)
+    # a curve's key moved is another scene: the model, and where things are hit, are not kept for the old keys
+    k = Solids._key(sc, idx, LAYOUT)
+    sc.set_key(('collider', 1, 'position'), sc.start, (0.25, 0.9, -1.8))
+    k1 = Solids._key(sc, idx, LAYOUT)
+    sc.set_key(('collider', 1, 'position'), sc.start, (-0.25, 0.9, -1.8))     # (the same curve, changed in place)
+    assert len({k, k1, Solids._key(sc, idx, LAYOUT)}) == 3
+    moved = Solids()._rehearse(sc, idx, LAYOUT)
+    assert abs(moved[0][0] + 0.25) < 0.02
+
+
+def test_a_model_cut_otherwise_has_another_fingerprint(monkeypatch):
+    # (the disk cache's signature carries it: frames simulated with the objects cut otherwise, by older code or round
+    # another hit, are simulated again rather than shown with these pieces)
+    from blackbody.engine import fracture as F
+    from blackbody.engine import solids as SO
+
+    def fingerprint():
+        SO._HITS.clear()
+        SO._FRACTURES.clear()
+        S = Solids()
+        S.configure(scene_of(PANE, THROWN), LAYOUT)
+        return S.fingerprint()
+    a = fingerprint()
+    assert fingerprint() == a
+    monkeypatch.setattr(F, 'SLIVER_BOND', 0.0)        # (as before slivers of contact were dropped: more welds)
+    b = fingerprint()
+    monkeypatch.undo()
+    monkeypatch.setattr(SO, 'REHEARSE_WORK', 3000)    # (a rehearsal stopped before the stone came: cut round nothing)
+    c = fingerprint()
+    monkeypatch.undo()
+    SO._FRACTURES.clear()                             # (none of these cuts kept for other tests)
+    assert len({a, b, c}) == 3
 
 
 # ---- breaking and burning (Breakable and Burnable: each piece burns on its own) ----------------------------------------

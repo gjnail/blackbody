@@ -38,7 +38,7 @@ Domain › *Grow to fit* starts the box small around the fire and grows it, keep
 
 ### Disk cache
 
-Domain › *Disk cache* keeps every simulated frame on disk next to the project (`NAME.bbcache`), with the whole simulation saved every *Checkpoint every* frames: frames survive closing the app, and a stopped simulation resumes from its last checkpoint. The cache belongs to the settings it was simulated with; changing the simulation starts it afresh. Render farms: see [Command line and render farms](command-line.md).
+Domain › *Disk cache* keeps every simulated frame on disk next to the project (`NAME.bbcache`), with the whole simulation saved every *Checkpoint every* frames: frames survive closing the app, and a stopped simulation resumes from its last checkpoint. The cache belongs to the settings it was simulated with, and to the version of the physics: changing the simulation, or updating to a Blackbody that simulates it differently, starts it afresh. Render farms: see [Command line and render farms](command-line.md).
 
 ## Detail for final renders
 
