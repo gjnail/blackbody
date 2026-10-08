@@ -239,7 +239,7 @@ def ocean_presets(K):
                           _building('Block', 38.0, 20.0, 6.0, 10.0, 7.0),
                           _palm('Palm', 14.0, -26.0), _palm('Palm 2', 14.5, -6.0), _palm('Palm 3', 14.0, 14.0),
                           _palm('Palm 4', 14.5, 27.0),
-                          _car('Car', 16.0, -12.0, 5.0), _car('Car 2', 16.5, 0.0, -8.0), _car('Car 3', 16.0, 10.0, 2.0),
+                          _car('Car', 16.0, -12.0, 5.0), _car('Car 2', 16.5, 0.0, -8.0), _car('Car 3', 15.5, 10.0, 2.0),
                           _car('Car 4', 30.0, 2.0, 90.0),
                           dict(name='Boat', shape='box', size=(3.0, 0.8, 1.2), position=(-12.0, 6.2, -6.0), yaw=20.0,
                                floating=True, density=300.0)],

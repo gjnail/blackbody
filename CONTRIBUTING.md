@@ -47,11 +47,20 @@ setup on first run. `python -m blackbody info` lists the GPUs Blackbody can
 see. `BLACKBODY_GPU` (part of a GPU's name) and `BLACKBODY_BACKEND` (`Vulkan`,
 `D3D12` or `Metal`) pick one.
 
-Most tests need a GPU. Without one they skip, and the rest still run, which is
-what CI does on GitHub's machines. Liquid and fabric tests can take several
-minutes, and the first run of each kind of simulation compiles its shaders,
-which can take a few minutes more. Run a single file while you work
-(`pytest -q tests/test_liquid.py`), and the whole suite before a pull request.
+About half the tests need a GPU, and `tests/conftest.py` marks them `gpu`. On a
+machine without one, run `pytest -m "not gpu"`, which is what CI does on
+GitHub's machines. Elsewhere a GPU test whose engine cannot start fails rather
+than skips (set `BLACKBODY_ALLOW_NO_GPU=1` to skip them). Liquid and fabric
+tests can take several minutes, and the first run of each kind of simulation
+compiles its shaders, which can take a few minutes more. While you work, run a
+single file (`pytest -q tests/test_liquid.py`) or the quick tier
+(`pytest -m quick`: the tests that need no GPU, and the GPU tests that took
+under 10 s when they last ran on your machine). Run the whole suite
+(`pytest -q`) before a pull request, and the slow tier (`pytest -m slow`: a few
+frames of every preset, about five minutes, and the command-line renderer)
+before a release. A test that runs for more than 10 minutes, shader compiles
+aside, stops the run and shows where it was stuck (not while a debugger has
+stopped it).
 
 Useful tools:
 
@@ -109,7 +118,7 @@ blackbody/
   scene/                 the scene model, settings, keyframes, presets, and Create's building blocks
   ui/                    the Qt (PySide6) app
   assets/                preset pictures, meshes and seabeds, the icon
-tests/                   pytest suite (GPU tests skip without a GPU)
+tests/                   pytest suite (GPU tests are marked gpu: pytest -m "not gpu" runs the rest)
 tools/                   checks, benchmarks, thumbnails, screenshots, docs media, the website build
 docs/                    the guides (Markdown) and their media
 site/                    the website's landing page, styles and scripts

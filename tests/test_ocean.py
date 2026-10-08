@@ -9,12 +9,8 @@ from blackbody.engine.ocean import OceanSpec
 
 
 @pytest.fixture(scope='module')
-def gpu():
-    try:
-        from blackbody.engine.gpu import GPU
-        return GPU()
-    except Exception as ex:  # no GPU on this machine
-        pytest.skip(f'GPU unavailable: {ex}')
+def gpu(engine):
+    return engine.gpu   # (the engine fixture fails, or skips where BLACKBODY_ALLOW_NO_GPU=1, when there is no GPU)
 
 
 SEA = OceanSpec(height=0.35, length=5.0, direction=60.0, spread=0.35, chop=0.8, wind=5.0, depth=1.3, cap_depth=1.3)

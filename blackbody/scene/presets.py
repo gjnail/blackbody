@@ -1003,7 +1003,7 @@ PRESETS = {
                      'sun_color': (1.0, 0.9, 0.78), 'ambient': (0.55, 0.62, 0.76), 'ambient_intensity': 0.9},
         'camera': {'distance': 2.4, 'target_y': 0.2, 'pitch': 10, 'yaw': -35, 'focal_mm': 35},
         'emitters': [],
-        'matter': [dict(name='Heap', material='snow', shape='pile', position=(-0.6, 0.0, 0.0), size=(0.35, 0.28, 0.55))],
+        'matter': [dict(name='Heap', material='snow', shape='pile', position=(-0.6, 0.14, 0.0), size=(0.175, 0.14, 0.175))],
     },
     'yard_blast': {
         'name': 'Blast in a yard', 'category': 'Things that fall', 'size': '2 kg charge',

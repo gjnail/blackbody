@@ -947,10 +947,9 @@ def test_vdb_reader_reads_other_writers_files(tmp_path, comp, half, active_only)
     assert dense[0:8, 8:16, 0:8].max() == 0.0, 'the background elsewhere'
 
 
-def test_usd_curves_points_volumes_nested_instancers_and_lights(tmp_path):
+def test_usd_curves_points_volumes_nested_instancers_and_lights(tmp_path, engine):
     pytest.importorskip('pxr')
     from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux, UsdVol
-    from blackbody.engine.gpu import GPU
     from blackbody.engine.mesh import bake
     from blackbody.io import usd as U
     vdb = tmp_path / 'puff.vdb'
@@ -1023,7 +1022,7 @@ def test_usd_curves_points_volumes_nested_instancers_and_lights(tmp_path):
     v, t = U.load_usd_mesh(path, '/Set/Puff?world')
     assert v.min(0) == pytest.approx([-2.0 + 0.15, 0.15, 0.15], abs=1e-6), 'the VDB voxels, placed by the prim'
     assert v.max(0) == pytest.approx([-2.0 + 0.55, 0.55, 0.55], abs=1e-6)
-    sdf = bake(GPU(), v - v.mean(0), t, 24)
+    sdf = bake(engine.gpu, v - v.mean(0), t, 24)
     d = sdf.data
     assert float(d[d.shape[0] // 2, d.shape[1] // 2, d.shape[2] // 2]) < 0, 'a closed solid'
     sc = presets.make('campfire')

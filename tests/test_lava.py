@@ -1,7 +1,6 @@
 """GPU tests for molten liquids: the crust field carried along by the flow (liq_crust_adv.wgsl), the crust and
 glow drawn on the surface (liq_lava_shade.wgsl), and the light the glow casts on the footage around it."""
 import numpy as np
-import pytest
 
 from blackbody.engine.liquid import LiquidParams, LiquidSolver, crust_restarts, source
 from blackbody.engine.liquid_render import lava_table
@@ -126,9 +125,8 @@ def test_the_crust_survives_the_cache(engine):
     engine.invalidate()
     engine.prepare(sc, final=False)
     engine.simulate_to(sc, sc.start + 30, cache=True)
-    entry = engine.cache.get(sc.start + 20) if engine.cache is not None else None
-    if entry is None:
-        pytest.skip('no frame cache in this engine')
+    entry = engine.cache.get(sc.start + 20)
+    assert entry is not None, 'the frame should be in the frame cache'
     assert np.ndim(entry['crust']) == 4 and entry['crust'].shape[-1] == 4
     engine.render(sc, sc.start + 20, (160, 90))      # a cached frame, drawn from its own crust field
     assert np.isfinite(engine.aovs()['beauty'].astype(np.float32)).all()

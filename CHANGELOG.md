@@ -333,6 +333,8 @@ Notable changes to Blackbody. The format follows
 
 ### Fixed
 
+- Two presets fixed, found by the new test of every preset: one of the tsunami's cars started inside the house, and
+  Snow blowing off a heap made most of its snow below the ground (its heap was centred on it) and threw it away.
 - Environment (HDRI), its rotation and strength, and Key light from environment can be set and work in fire scenes;
   Environment from the footage works in liquid and fire-and-liquid scenes; liquid scenes show the holdout matte and
   depth pass settings their engine already reads. Turning an environment off and on again no longer breaks every
