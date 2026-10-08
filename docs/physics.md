@@ -33,7 +33,7 @@ The numbers are handbook values. Friction is the Coulomb coefficient: a block on
 
 ## What moves them
 
-- **Each other and the ground.** Things stack and stand in towers, slide and roll, and knock each other over. Objects that stay put hold them up; keyframed ones push them (a door swinging into a pile of boxes, a car through crates). A fixed mesh holds them on its real shape (things rest between the logs of a pile, on stairs); a falling mesh collides as its outline (its convex hull). An image heightfield is terrain they land and roll on.
+- **Each other and the ground.** Things stack and stand in towers, slide and roll, and knock each other over. Objects that stay put hold them up; keyframed ones push them (a door swinging into a pile of boxes, a car through crates). A fixed mesh holds them on its real shape (things rest between the logs of a pile, on stairs); a falling mesh collides as its shape cut into convex parts, so a bowl or a cup holds what is put in it (one that is convex, or nearly, and an open mesh, one with holes in its surface, as its outline: its convex hull). It weighs what its own volume does, the shells it is modelled as counted once where they overlap. A hollow cylinder or ball that stays put (a barrel, a pipe, a tank) holds them in its walls, and its opening lets them in and out, a hatch a few centimetres across as well as an open top. An image heightfield is terrain they land and roll on.
 - **The air.** The gas pushes them with its drag, measured around each one every frame: a blast blows light things away, a fire's updraft lifts paper, wind slides a cardboard box. They push the gas back as they move, as every moving object does: a falling crate shoves the smoke aside.
 - **Water.** In a liquid scene they float or sink by their density, bob, drift with the flow and tip, as *Floats* objects do (*Falls* also lets them fall through the air first).
 - **Fire.** A *Burnable* one with Spreading fire on catches where flames touch it and keeps burning as it tumbles: its fire is in its own frame.
@@ -90,10 +90,11 @@ Preset: *Shed on fire*, a pile of rubbish burning in the back corner of a pine s
 
 ## Joints and ropes
 
-*Joined by* (Properties › *Joint*) holds an object to another object or to a fixed point. An object with a joint falls (it needs no *Falls*).
+*Joined by* (Properties › *Joint*) holds an object to another object or to a fixed point. An object with a joint falls (it needs no *Falls*). An object can have more than one joint: a plank seat on two ropes, a plank of a rope bridge tied to the planks either side of it, a lid on a hinge with a spring to hold it up. On an object that has a joint, *Hang it on another rope* and *Tie it with another rope to* (and *Hinge it to*) in the viewer's menus add one beside it: its further joints are its *More joints*, each with the same settings as the first (*Joined by*, *Joined to*, *Joint on it* and the rest), and any it does not give its own are the first's. A second rope or spring goes from the other end of its longest side from its last one (one tied at its middle is moved to one end), a third from a free corner, each tied straight above on what it hangs from. Setting *Joined by* to *Nothing* takes them all off; only the first has a keyed *Motor speed* (a further hinge turns at the speed it gives, if any).
 
-- **A rope** holds it at its length: it hangs and swings, goes slack when it is thrown up or knocked toward where it hangs from, and is caught again with a jolt. *Rope length* is how long it is (0: as long as it is at the start). *Rope is* draws it as a rope or a steel cable, hanging in a curve when it is slack, and *Thickness* is how thick. A rope goes round a post or a ball in its way (a cylinder or a sphere between its ends): thrown over a beam, a crate hangs from it and swings under it, the rope drawn over the top.
-- **A chain** (*Rope is* › *Chain*) is steel links that are links: it weighs what a chain of its *Thickness* does (12 mm: about 3 kg a metre), hangs in its own curve, catches on and drapes over what it meets and piles up where it lands, and holds what hangs from it, a couple of hundred kilograms on a 12 mm chain.
+- **A rope** holds it at its length: it hangs and swings, goes slack when it is thrown up or knocked toward where it hangs from, and is caught again with a jolt. *Rope length* is how long it is (0: as long as it is at the start). *Rope is* draws it as a rope or a steel cable, hanging in a curve when it is slack, and *Thickness* is how thick. A rope goes over the posts and balls in its way that it hangs over (fixed or keyed cylinders lying about level, and balls, between its ends and above it, that it is long enough to reach over, taut, but not one it is tied right against), as many as it meets, sliding over them as over a pulley: thrown over a beam, a crate hangs from it and swings under it, the rope drawn over the top; over two bars, a counterweight on one side lifts a crate on the other. It swings past a post beside it or a bar under it, through them. *Goes over* names the posts it goes round, in order from the object (separated by commas), when it should not find them itself, and *none* keeps it off them all. Tied at its middle, it is tied where the object faces the first post it goes over, so a crate hangs level under its pulley.
+- **A rope with weight** (*Has weight*) is links of rope, as a chain is links of steel: a 25 mm rope weighs about 0.4 kg a metre, a 10 mm steel cable as much. It hangs in its own curve, drapes over and catches on whatever it meets (not only round posts and balls) and lies over what it goes over with the friction of rope on wood, so it holds on a post where a weightless one would slide.
+- **A chain** (*Rope is* › *Chain*) is steel links that are links: it weighs what a chain of its *Thickness* does (12 mm: about 3 kg a metre), hangs in its own curve, catches on and drapes over what it meets and piles up where it lands, and holds what hangs from it, a couple of hundred kilograms on a 12 mm chain. A chain and a rope with weight give way at the object they hold when they are pulled there harder than *Breaks at*, and go on hanging from where they are tied.
 - **A spring** pulls it back toward its length at rest (*Rope length*) with *Spring stiffness* newtons for every metre it is stretched. A weight on a spring bounces with the period 2π√(m/k) and settles stretched by its weight over the stiffness.
 - **A hinge** lets it turn about one line only (*Hinge axis*, in its own frame, through *Joint on it*): a door, a gate, a lid, a seesaw, a wheel on its axle.
 - **A ball joint** lets it turn any way about one point (*Joint on it*): a pendulum on a rod, a sign hanging from a bracket.
@@ -106,7 +107,7 @@ Where it is held:
 - *Joint friction* slows a hinge or a ball joint down: at 0 it swings for ever, at 0.5 a door settles in a couple of seconds.
 - *Breaks at* is the force it gives way at. A rope snaps when it is jerked harder than that (a weight that falls before its rope catches it pulls several times its weight), and a hinge tears out of a door too heavy for it.
 
-The *Ropes and hinges* blocks are a wrecking ball on a crane, a rope swing, a door on hinges in its frame, a hanging lamp (its light swings with it), a weight on a spring and a seesaw that flips a ball into the air. Preset: *Wrecking ball*, through a brick wall.
+The *Ropes and hinges* blocks are a wrecking ball on a crane, a rope swing, a swing on two ropes (a plank seat that stays level from end to end), a counterweight that lifts a crate on a rope over two pulleys, a rope bridge of six planks each tied to the next by two ropes (it sags about a thirteenth of its span), a door on hinges in its frame, a hanging lamp (its light swings with it), a weight on a spring and a seesaw that flips a ball into the air. Preset: *Wrecking ball*, through a brick wall.
 
 ![Wrecking ball](media/gif/wrecking_ball.gif "Wrecking ball: a 900 kg ball on a crane's cable swings down into a brick wall at 6 m/s and bursts through it.")
 
@@ -192,20 +193,41 @@ CG objects go over the footage lit by the shot's light, and their shadows darken
 
 - A scene holds up to 16 objects in all, falling or not (a broken one's pieces do not count: there can be hundreds).
 - A broken mesh's pieces are convex, so a hollow or a dent in one is filled in (whole, it is drawn as itself).
-- A rope or a steel cable goes round at most one post or ball in its way (the one nearest its line between its ends),
-  passes through anything else, and weighs nothing; a chain catches on everything but does not snap. Each object has
-  one joint.
+- A weightless rope or steel cable goes round cylinders and spheres only (up to 8, frictionless, as pulleys), not
+  boxes or meshes or hollow things, and passes through anything else. Found by itself, it goes only over those it
+  hangs over (the side it goes round faces at most 60 degrees from straight up), so it passes through a bar above it
+  where it runs steeper than 60 degrees unless the bar is named in *Goes over* (a hoist, its rope tied off above the
+  pulley to one side, is such a case), and it never finds by itself a falling one or a bar sloping more than 15
+  degrees. Named, those are gone round, but MuJoCo takes a cylinder as endless, so a rope can slide off the end of a
+  sloping bar, and the side a falling one is gone round turns with it: either can fling what hangs on the rope. One
+  named that it goes round beside or under it is held round that side, and swung across the post it can jump round it
+  and fling what hangs on it (MuJoCo wraps a rope round the named side wherever its straight line passes the post). It
+  is drawn straight between the posts it goes round, taut, even while it is slack. A rope with weight catches on
+  everything but is at most 60 links long (on a long thin rope each link is longer than it is thick), and a chain or a
+  rope with weight gives way only where it is tied to the object. The viewer draws only an object's first joint before
+  the shot is simulated, and *More joints* are made by joining it again, not edited in Properties.
 - A person's and a car's parts are rigid: a car crumples only as far as its body is one piece (it does not dent), and a
   person does not grab or step.
 - The strengths are effective ones, set so that things hold and give way under steady loads as they look like they
   should (pottery's and glass's near a handbook's, the rest lower); hits break things by their speed (above).
-- A falling mesh collides as its convex hull: its hollows and dents are filled in.
+- A falling mesh collides as up to 128 convex parts cut on a grid 32 cells across it: its hollows and dents are kept to
+  within about half a cell (4 mm on a 30 cm bowl), a hollow or a dent smaller than a cell or two is filled in, and a mesh
+  too intricate for 128 parts has some of its smaller hollows filled in (the viewer's notices say which). Cutting one
+  takes about half a second to a second the first time it is simulated (a 30 cm bowl of 5,000 triangles 0.6 s, of
+  100,000 triangles 1.1 s and about 120 MB), and its parts are kept with the baked meshes for next time. A mesh that
+  fills its hull all but 3%, and an open mesh, fall as their convex hull. A hollow mesh that stays put is not in the
+  rigid world (only its walls are, for the smoke and the water), and a hollow thing that falls falls as a solid one of
+  its weight.
+- A hollow cylinder's or ball's opening is cut out of its walls in tiles down to a quarter of its size (1 cm at least),
+  so its edge is ragged by up to half a tile: a small hatch is mostly open (8 cm across in the top of a 1 m tank 95%,
+  10 cm in its side 70%), and the wall beside it is open a little past its edge.
 - Contacts are slightly soft, so bounces are within about 0.05 of a material's bounce, and the least a thing bounces is about 0.2. Things that start inside each other are thrown apart when they are let go (the viewer's notices say which).
 - In a liquid scene with grey stand-ins (Water › *Colliders*), things that fall or float are drawn as stand-ins in their material's colour.
 - A motor holds its speed, not its angle: things on separate motors drift a little out of step when their loads differ. Give one balanced part one motor (the windmill's sails are two bars crossed on its hub).
 - An emitter attached to a fixed object keeps its own turn (only fire shaped like the object, such as burning letters, tips with it); one on a falling object turns with it whichever way it tumbles. The pins of a fabric on a falling object still turn only about the vertical.
 - Things that fall come to rest on cloth but do not bounce off it (a trampoline does not throw a ball back up): the two
   meet once a frame, the things against the cloth as it was at the frame's start. A broken object's pieces pass
-  through cloth, and a falling mesh meets it as its hull's box.
+  through cloth. A falling mesh meets it by its convex parts (cloth lies in a bowl), a little short of their edges and
+  corners.
 
 Under the hood, MuJoCo (Apache-2.0) integrates the bodies: their contacts, friction and stacking, with the time step their size needs. The gas, the water and the cloth see them as moving objects every substep. In each of their steps the cloth's vertices, as they were at the frame's start, hold them off with a stiff, damped contact (by their mass and their bounce), and the cloth takes what it gave them in the same frame, with their weight's worth of mass riding on it.

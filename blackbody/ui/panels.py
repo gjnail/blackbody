@@ -895,7 +895,8 @@ class Inspector(QWidget):
                 hide |= {'flow', 'vel_blend', 'stop'}
             return worded('emitter', [p for p in params if p.key not in hide], ekind)
         if kind_o == 'collider':
-            params = [p for p in COLLIDER_PARAMS if p.key not in ('name', 'enabled') and applies('collider', p.key, kind)]
+            # (not More joints: a list of settings, made by Join it to..., not edited here)
+            params = [p for p in COLLIDER_PARAMS if p.key not in ('name', 'enabled') and p.kind != 'list' and applies('collider', p.key, kind)]
             c = sc.colliders[i]
             if c['shape'] != 'mesh':
                 params = [p for p in params if p.key != 'mesh']

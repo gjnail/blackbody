@@ -66,6 +66,27 @@ def _G(**kw):
     return ('shot', kw)
 
 
+def _rope_bridge(n=6, w=0.15, gap=0.04, y=1.2, half=0.4):
+    """A rope bridge: n planks 2w along it, gap apart, each tied by two ropes (its own joint and one of its More joints)
+    to the one before, the first to one post and the last to the other post too, y up; each rope 5 mm longer than its
+    gap, so it sags about a thirteenth of its span."""
+    x0 = -0.5 * (n * (2.0 * w + gap) - gap)
+    out = [_C(name='Bridge post 1', shape='box', position=(x0 - 0.1, 0.5 * y, 0.0), size=(0.05, 0.5 * y, half + 0.1), material='wood'),
+           _C(name='Bridge post 2', shape='box', position=(-x0 + 0.1, 0.5 * y, 0.0), size=(0.05, 0.5 * y, half + 0.1), material='wood')]
+    for k in range(n):
+        prev = 'Bridge post 1' if k == 0 else f'Bridge plank {k}'
+        at = (0.05, 0.5 * y, 0.0) if k == 0 else (w, 0.0, 0.0)          # (on the post's face, or the last plank's end)
+        more = [{'joint': 'rope', 'joint_at': (-w, 0.0, half), 'joint_to_at': (at[0], at[1], half)}]
+        if k == n - 1:
+            more += [{'joint': 'rope', 'joint_to': 'Bridge post 2', 'joint_at': (w, 0.0, z), 'joint_to_at': (-0.05, 0.5 * y, z),
+                      'rope_length': 0.05 + 0.005} for z in (-half, half)]
+        out.append(_C(name=f'Bridge plank {k + 1}', shape='box', position=(x0 + w + k * (2.0 * w + gap), y, 0.0),
+                      size=(w, 0.02, half + 0.05), material='wood', joint='rope', joint_to=prev, joint_at=(-w, 0.0, -half),
+                      joint_to_at=(at[0], at[1], -half), rope_length=(0.05 if k == 0 else gap) + 0.005, rope_thickness=0.015,
+                      joints=tuple(more)))
+    return out
+
+
 SPARKS = {'embers': {'enabled': True, 'rate': 1500.0, 'count': 32768, 'lifetime': 0.9, 'life_jitter': 0.7, 'launch': 14.0,
                      'spread': 1.2, 'direction': (1.0, -0.2, 0.0), 'cone': 12.0, 'drag': 0.35, 'gravity': 9.81, 'turbulence': 0.5,
                      'temperature': 2300.0, 'cooling': 1.6, 'size_min': 0.0006, 'size_max': 0.0025, 'brightness': 1.8,
@@ -369,6 +390,29 @@ COMPONENTS = [
               objects=[_C(name='Branch', shape='box', position=(0.0, 3.2, 0.0), size=(0.9, 0.07, 0.07), material='wood'),
                        _C(name='Swing seat', shape='cylinder', position=(-1.3125, 0.857, 0.0), size=(0.18, 0.025, 0.18), material='wood',
                           joint='rope', joint_to='Branch', joint_to_at=(0.0, -0.07, 0.0), rope_length=2.6, rope_thickness=0.03)]),
+    Component('plank_swing', 'Swing on two ropes', 'Ropes and hinges', 'A plank seat hung from a beam on two 2 m ropes (More '
+              'joints), pushed: it swings to and fro, level from end to end.', 'ball', room=(1.0, 2.7, 0.9),
+              objects=[_C(name='Swing beam', shape='box', position=(0.0, 2.6, 0.0), size=(0.6, 0.05, 0.05), material='wood'),
+                       _C(name='Swing plank', shape='box', position=(0.0, 0.5, 0.0), size=(0.4, 0.02, 0.12), material='wood',
+                          joint='rope', joint_to='Swing beam', joint_at=(-0.35, 0.02, 0.0), joint_to_at=(-0.35, -0.05, 0.0),
+                          rope_thickness=0.02, start_velocity=(0.0, 0.0, 1.5),
+                          joints=({'joint': 'rope', 'joint_at': (0.35, 0.02, 0.0), 'joint_to_at': (0.35, -0.05, 0.0)},))]),
+    Component('pulleys', 'Rope over two pulleys', 'Ropes and hinges', 'A 30 kg steel counterweight lifts a 20 kg crate on a '
+              'rope over two bars (Goes over): it sinks to the ground, the crate rises and swings.', 'ball', room=(1.2, 2.6, 0.4),
+              objects=[_C(name='Pulley 1', shape='cylinder', position=(-0.5, 2.4, 0.0), size=(0.06, 0.2, 0.06), pitch=90.0,
+                          material='steel'),
+                       _C(name='Pulley 2', shape='cylinder', position=(0.5, 2.4, 0.0), size=(0.06, 0.2, 0.06), pitch=90.0,
+                          material='steel'),
+                       _C(name='Pulley post 1', shape='box', position=(-0.5, 1.2, -0.25), size=(0.04, 1.2, 0.04), material='steel'),
+                       _C(name='Pulley post 2', shape='box', position=(0.5, 1.2, -0.25), size=(0.04, 1.2, 0.04), material='steel'),
+                       _C(name='Crate on the pulleys', shape='box', position=(-0.56, 0.5, 0.0), size=(0.15, 0.15, 0.15),
+                          material='wood', density=740.0, joint='rope', joint_to='Counterweight', joint_to_at=(0.0, 0.1, 0.0),
+                          rope_over='Pulley 1, Pulley 2', rope_thickness=0.015),
+                       _C(name='Counterweight', shape='box', position=(0.56, 1.6, 0.0), size=(0.1, 0.1, 0.1), material='steel',
+                          density=3750.0, dynamic=True)]),
+    Component('rope_bridge', 'Rope bridge', 'Ropes and hinges', 'Six planks between two posts, each tied to the next by two '
+              'ropes (More joints): it sags under its weight and sways under what crosses it.', 'wall', room=(1.4, 1.3, 0.6),
+              objects=_rope_bridge()),
     Component('door_hinged', 'Door on hinges', 'Ropes and hinges', 'A door in its frame, pushed open: it swings on its hinges and '
               'slows to a stop. Smoke and water push it; a blast slams it.', 'wall', room=(0.6, 2.2, 1.0),
               objects=[_C(name='Door', shape='box', position=(0.0, 1.015, 0.0), size=(0.44, 1.0, 0.02), material='painted',
@@ -1057,6 +1101,21 @@ def add(scene: Scene, key, at=None, mesh=None):
                     d[k] = Curve([[fr, (x[0] * f + dx, x[1] * f + dy, x[2] * f + dz), it] for fr, x, it in v.keys])
                 else:
                     d[k] = (v[0] * f + dx, v[1] * f + dy, v[2] * f + dz)
+        if kind == 'collider' and d.get('joints'):   # (its More joints: placed and scaled as its own)
+            more = []
+            for e in d['joints']:
+                e = dict(e)
+                if 'joint_anchor' in e:
+                    v = e['joint_anchor']
+                    e['joint_anchor'] = (v[0] * f + dx, v[1] * f + dy, v[2] * f + dz)
+                for k in ('joint_at', 'joint_to_at'):
+                    if k in e:
+                        e[k] = tuple(x * f for x in e[k])
+                for k in ('rope_length', 'rope_thickness'):
+                    if k in e:
+                        e[k] = e[k] * f
+                more.append(e)
+            d['joints'] = tuple(more)
         if f != 1.0:
             if 'size' in d and not (d.get('shape') == 'mesh'):
                 d['size'] = tuple(x * f for x in d['size'])
@@ -1107,10 +1166,10 @@ def add(scene: Scene, key, at=None, mesh=None):
              'strands': scene.add_strands, 'shot': scene.add_shot}[kind](**{k: v for k, v in d.items() if k not in curves})
         lists[kind][i].update(curves)
         added.append((kind, i))
-    for kind, i in added:   # its joints, to its objects as they are named here
+    for kind, i in added:   # its joints, to its objects as they are named here (and what its ropes go over)
         c = lists[kind][i]
-        if kind == 'collider' and c.get('joint_to') and ('collider', c['joint_to']) in renamed:
-            c['joint_to'] = renamed[('collider', c['joint_to'])]
+        if kind == 'collider':
+            rename_in_joints(c, {old: new for (k, old), new in renamed.items() if k == 'collider'})
     for l in comp.links:   # its attachments, between the objects as they are named here
         c, p = tuple(l['child']), tuple(l['parent'])
         if c in renamed and p in renamed:
@@ -1198,14 +1257,16 @@ def make_dynamic(scene: Scene, i, on=True, release=0.0):
     c['dynamic'] = bool(on)
     if not on:
         c['floating'] = False
-        if c.get('joint', 'none') != 'none':
+        if c.get('joint', 'none') != 'none' or c.get('joints'):
             c['joint'] = 'none'
+            c['joints'] = ()
             notes.append(f'{c["name"]} is no longer joined to anything.')
         return notes
     c['release'] = float(release)
     c['holdout'] = True   # it is a real thing in the shot
     if c['shape'] == 'mesh':
-        notes.append(f'{c["name"]} falls as its convex hull: hollows and dents in it do not catch on things.')
+        notes.append(f'{c["name"]} falls as its shape cut into convex parts (a bowl holds what is put in it); an open mesh, '
+                     'one with holes in its surface, falls as its convex hull.')
     if float(c.get('hollow', 0.0) or 0.0) > 0.0:
         notes.append(f'{c["name"]} falls as a solid: a hollow thing falls like a full one of its weight (lower its density).')
     from ..engine.solver import MAX_COLLIDERS
@@ -1218,22 +1279,60 @@ def make_dynamic(scene: Scene, i, on=True, release=0.0):
 JOINTS = [('rope', 'A rope'), ('spring', 'A spring'), ('hinge', 'A hinge'), ('ball', 'A ball joint')]
 
 
-def add_joint(scene: Scene, i, kind='rope', to=None, on=True):
+def rename_in_joints(c, names, others=()):
+    """Collider c's joints (its own and its More joints), and the posts its ropes go over, to the objects renamed
+    {old name: new name}. Names are matched as the physics finds them, whatever their case, but for one that is
+    exactly the name of another object (`others`: the scene's other objects' names)."""
+    low = {str(k).strip().lower(): v for k, v in names.items()}
+    others = set(others) - set(names)
+
+    def new(x):
+        x = str(x or '').strip()
+        if x in names:
+            return names[x]
+        return low.get(x.lower(), x) if x not in others else x
+
+    def over(v):
+        return ', '.join(new(x) for x in str(v or '').split(',') if x.strip())
+    if c.get('joint_to'):
+        c['joint_to'] = new(c['joint_to'])
+    if c.get('rope_over'):
+        c['rope_over'] = over(c['rope_over'])
+    if c.get('joints'):
+        more = []
+        for e in c['joints']:
+            e = dict(e)
+            if e.get('joint_to'):
+                e['joint_to'] = new(e['joint_to'])
+            if e.get('rope_over'):
+                e['rope_over'] = over(e['rope_over'])
+            more.append(e)
+        c['joints'] = tuple(more)
+
+
+def add_joint(scene: Scene, i, kind='rope', to=None, on=True, more=False):
     """Hang object (collider) i on a rope or a spring, or put it on a hinge or a ball joint (Hang it on a rope, Hinge it,
     Join it to..., in the viewer's menus): to object `to` (an index) or, without one, to a fixed point. It falls from
     then on, held by its joint. A rope or a spring goes up 1.5 m from its top; a hinge goes along a box's side (a
     door) or its back edge if it is flat (a lid), through the middle of anything else (a wheel); a ball joint is at
-    its top. on=False takes the joint away (it still falls). Returns notes for the user."""
+    its top; it replaces every joint it had. more=True adds it beside the joints it has (More joints): a rope or a
+    spring then goes from the other end of its longest side from its last one (a swing's seat on two ropes), its last
+    one moved to its own end if it was tied at its middle, or from a free corner or end if that is taken; a hinge or a
+    ball joint opposite its last one. on=False takes every joint away (it still falls). Returns notes for the user."""
     import numpy as np
-    from ..engine.solids import surface_toward
+    from ..engine.solids import mesh_of, surface_toward
     c = scene.colliders[i]
     if not on or kind in (None, 'none'):
         c['joint'] = 'none'
+        c['joints'] = ()
         return [f'{c["name"]} is no longer joined to anything: it falls freely.']
     if kind not in dict(JOINTS):
         raise ValueError(f'No such joint: {kind}')
+    if more and c.get('joint', 'none') != 'none':
+        return _more_joint(scene, i, kind, to)
     notes = []
     c['joint'] = kind
+    c['joints'] = ()
     c['dynamic'] = True
     c['holdout'] = True
     c.setdefault('release', 0.0)
@@ -1256,7 +1355,9 @@ def add_joint(scene: Scene, i, kind='rope', to=None, on=True):
             osz = np.abs(np.asarray(scene.get(('collider', to, 'size'), scene.start), float))
             u = scene.turn(to, scene.start).T @ (pos - op)          # (into its own frame)
             n = float(np.linalg.norm(u))
-            c['joint_to_at'] = tuple(float(x) for x in (surface_toward(other['shape'], osz, u / n) if n > 1e-9 else np.zeros(3)))
+            mesh = mesh_of(scene, other, osz)[0] if other['shape'] == 'mesh' else None     # (a mesh: by its own points)
+            c['joint_to_at'] = tuple(float(x) for x in (surface_toward(other['shape'], osz, u / n, mesh[0] if mesh else None)
+                                                        if n > 1e-9 else np.zeros(3)))
             notes.append(f'{c["name"]} hangs on a {kind} from {other["name"]}.')
         else:
             c['joint_anchor'] = (float(pos[0]), float(pos[1] + top + 1.5), float(pos[2]))
@@ -1275,6 +1376,82 @@ def add_joint(scene: Scene, i, kind='rope', to=None, on=True):
     else:
         c['joint_at'] = (0.0, top, 0.0)
         notes.append(f'{c["name"]} swings on a ball joint at its top{" on " + other["name"] if other is not None else ""}.')
+    pace(scene, notes)
+    return notes
+
+
+def _more_joint(scene: Scene, i, kind, to):
+    """add_joint(more=True): object i's next joint, beside those it has (its More joints)."""
+    import numpy as np
+    from ..engine.solids import joint_specs, mesh_of, more_joints, shape_distance
+    c = scene.colliders[i]
+    pos = np.asarray(scene.get(('collider', i, 'position'), scene.start), float)
+    size = np.abs(np.asarray(scene.get(('collider', i, 'size'), scene.start), float))
+    R = scene.turn(i, scene.start)
+    entries = more_joints(c)
+    last_kind, last = joint_specs(c)[-1] if joint_specs(c) else (None, c)
+    other = scene.colliders[to] if to is not None and 0 <= to < len(scene.colliders) and to != i else None
+
+    def tied(at, to_name):
+        """Where a rope or a spring from point `at` (its own frame) is tied: {joint_to_at} on the object named (the
+        nearest point of its surface; a mesh's by the box round it) or {joint_anchor} at a fixed point straight above."""
+        P = pos + R @ np.asarray(at, float)
+        nm = str(to_name or '').strip()
+        j = None
+        if nm:     # (by its name as the physics finds it, whatever its case)
+            j = next((n for n, d in enumerate(scene.colliders) if d['name'] == nm),
+                     next((n for n, d in enumerate(scene.colliders) if d['name'].strip().lower() == nm.lower()), None))
+        if j is None:
+            hold = np.asarray(last.get('joint_anchor', (0.0, 0.0, 0.0)), float) if last_kind in ('rope', 'spring') else None
+            high = float(hold[1]) if hold is not None and hold[1] > P[1] else float(P[1] + 1.5)
+            return {'joint_anchor': (float(P[0]), high, float(P[2]))}
+        op = np.asarray(scene.get(('collider', j, 'position'), scene.start), float)
+        osz = np.abs(np.asarray(scene.get(('collider', j, 'size'), scene.start), float))
+        q = scene.turn(j, scene.start).T @ (P - op)
+        sh = scene.colliders[j]['shape']
+        mesh = mesh_of(scene, scene.colliders[j], osz)[0] if sh == 'mesh' else None
+        d, n = shape_distance(sh if sh in ('sphere', 'cylinder') or mesh is not None else 'box', osz, q[None],
+                              mesh[0] if mesh is not None else None)
+        return {'joint_to_at': tuple(float(x) for x in q - d[0] * n[0])}
+
+    e = {'joint': kind, 'joint_to': other['name'] if other is not None else ''}
+    at_last = np.asarray(last.get('joint_at', (0.0, 0.0, 0.0)), float)
+    if kind in ('rope', 'spring'):
+        top = float(size[0]) if c['shape'] == 'sphere' else float(size[1]) * (0.5 if c['shape'] == 'mesh' else 1.0)
+        half = size * (0.5 if c['shape'] == 'mesh' else 1.0)
+        if last_kind in ('rope', 'spring') and np.allclose(at_last, 0.0):
+            # (its last rope was tied at its middle: now at one end of its longest side, the new one at the other)
+            ax = 0 if c['shape'] in ('sphere', 'cylinder') or size[0] >= size[2] else 2
+            at_last = np.zeros(3)
+            at_last[ax] = -float(half[ax])
+            at_last[1] = top
+            moved = dict(joint_at=tuple(float(x) for x in at_last), **tied(at_last, last.get('joint_to', '')))
+            if entries:
+                entries[-1].update(moved)
+            else:
+                c.update(moved)
+        # opposite its last one; if a rope is tied there already (a third rope), the corner or end furthest from them all
+        taken = [np.asarray(cj.get('joint_at', (0.0, 0.0, 0.0)), float) for k_, cj in joint_specs(c) if k_ in ('rope', 'spring')]
+        at = at_last * (-1.0, 1.0, -1.0)
+        if any(np.linalg.norm(at - x) < 0.2 * float(max(half[0], half[2])) for x in taken):
+            if c['shape'] in ('sphere', 'cylinder'):     # (round its rim)
+                spots = [(half[0] * math.cos(a), top, half[0] * math.sin(a)) for a in np.radians(np.arange(0.0, 360.0, 45.0))]
+            else:
+                spots = [(half[0] * u, top, half[2] * w) for u in (-1, 0, 1) for w in (-1, 0, 1) if u or w]
+            at = np.asarray(max(spots, key=lambda q: min(float(np.linalg.norm(np.asarray(q) - x)) for x in taken)), float)
+        e['joint_at'] = tuple(float(x) for x in at)
+        e.update(tied(e['joint_at'], e['joint_to']))
+        e['rope_length'] = 0.0
+        note = f'{c["name"]} now hangs on another {kind} too{" from " + other["name"] if other is not None else ""}, at its other end.'
+    else:
+        e['joint_at'] = (tuple(float(x) for x in at_last * (-1.0, 1.0, -1.0)) if last_kind == kind
+                         else tuple(last.get('joint_at', (0.0, 0.0, 0.0))))
+        e['joint_axis'] = tuple(last.get('joint_axis', (0.0, 1.0, 0.0)))
+        note = f'{c["name"]} has another {"hinge" if kind == "hinge" else "ball joint"} too, opposite its last one.'
+    c['joints'] = tuple(entries + [e])
+    c['dynamic'] = True
+    c['holdout'] = True
+    notes = [note]
     pace(scene, notes)
     return notes
 

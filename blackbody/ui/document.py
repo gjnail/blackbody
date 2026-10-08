@@ -484,8 +484,15 @@ class Document(QObject):
         from ..scene import components
         paced = (path[0], path[-1]) in components.PACED   # (Falls, Floats, Rain...: the fire's Time scale may go)
         notes = []
+        # (Joined by None takes its More joints off with it, rather than leaving them hidden)
+        unjoined = (len(path) == 3 and path[0] == 'collider' and path[2] == 'joint' and value in (None, 'none')
+                    and bool(self.scene.colliders[path[1]].get('joints')))
 
         def fn(s):
+            if unjoined:
+                c = s.colliders[path[1]]
+                c['joints'] = ()
+                notes.append(f'{c["name"]} is no longer joined to anything: its More joints went with its first.')
             puffed = components.puffing_fire(s) if paced else None
             if link is not None:   # an attached object moved by hand: it keeps the new place relative to its parent
                 pi, parent = s.find_object(*link['parent'])
@@ -810,10 +817,11 @@ class Document(QObject):
                 for end in ('child', 'parent'):
                     if list(l[end]) == [kind, old]:
                         l[end] = [kind, name]
-            if kind == 'collider':   # and so do joints (a rope tied to it, a door hinged to it)
+            if kind == 'collider':   # and so do joints (a rope tied to it, a door hinged to it, the posts a rope goes over)
+                from ..scene.components import rename_in_joints
+                names = [c['name'] for c in s.colliders]
                 for c in s.colliders:
-                    if c.get('joint_to') == old:
-                        c['joint_to'] = name
+                    rename_in_joints(c, {old: name}, names)
         self.edit('Rename', fn, structure=True)
 
     def select(self, sel, force=False):

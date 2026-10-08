@@ -112,6 +112,9 @@ class Body:
     volume: float
     area: float                 # surface area (m^2), for drag in the air
     hull: np.ndarray = None     # a mesh's vertices in its own frame (m), for its convex hull
+    parts: list = None          # a mesh's convex parts (convex_parts: points whose hulls they are), or None: its hull
+    mesh_volume: float = 0.0    # and the space the mesh itself takes up (m^3), what it weighs by (its parts overlap a little)
+    planes: tuple = None        # and its parts' faces as planes in its own frame (parts_distance), once built
     body_id: int = -1           # MuJoCo body id
     qadr: int = -1              # its free joint's qpos address
     vadr: int = -1              # and qvel address
@@ -244,16 +247,31 @@ SPRING_DAMPING = 0.05   # a spring's damping ratio (with the object on its end)
 HINGE_SPAN = 0.05       # m: a hinge's two pins are at least this far apart
 MOTOR_STEPS = 4         # a motor closes the gap to its speed over about this many steps (fewer would overshoot)
 RPM = 2.0 * math.pi / 60.0
+JOINT_KINDS = ('rope', 'spring', 'hinge', 'ball')
+JOINT_SLOT = 1 << 16    # rope_poses: a further joint's rope is keyed by its object's index plus this times its place
+MAX_POSTS = 8           # the most posts and balls a weightless rope goes round
+POST_REACH = 0.02       # m: a rope goes round a post in its way if it is this little short of reaching round it, at most
+POST_TIED = 0.02        # m: a rope tied this close to a post or a ball is tied to it, not thrown round it
+POST_LEVEL = 0.26       # a post a rope finds by itself is fixed (or keyed), and a cylinder lies within 15 degrees of
+                        # level (the sine): MuJoCo takes a cylinder as endless, so a rope over a sloping bar slid off its
+                        # end and round its far side, and a falling one turned the side it goes round (both flung the load)
+POST_OVER = 0.5         # a post a rope finds by itself is one it hangs over: the side it goes round faces at most 60
+                        # degrees from straight up (not one beside or under it, which its load swings it off: see _posts_for)
+ROPE_KG_M3 = {'rope': 850.0, 'cable': 5100.0}   # a rope with weight: kg per cubic metre its thickness fills (fibre rope
+                        # about 0.4 kg a metre at 25 mm; steel wire rope about 0.4 kg a metre at 10 mm)
+ROPE_FRICTION = 0.5     # a rope with weight on what it lies over (fibre rope on wood or steel)
 
 
 @dataclass
 class Joint:
     """A rope, spring, hinge or ball joint holding an object that falls (Properties › Joint): a MuJoCo tendon between
     two sites (a rope: a limit on its length; a spring: its stiffness), or connect constraints (a ball joint: one at
-    its pivot; a hinge: two, at its pins along its axis)."""
+    its pivot; a hinge: two, at its pins along its axis). An object has as many as it has joints: its own and each
+    of its More joints."""
     index: int                  # the collider it holds
     kind: str                   # rope, spring, hinge, ball
     body: str                   # the MuJoCo body it is on (the object, or the piece of a breakable it is tied to)
+    slot: int = 0               # which of the object's joints it is (0: its own, Joined by; 1 on: its More joints)
     other: str = ''             # and the one at its other end ('': the world)
     sites: tuple = ()           # its sites: (on it, on the other) for a rope, spring or ball joint, two such pairs for a hinge
     eqs: tuple = ()             # its connect constraints (hinge, ball)
@@ -268,8 +286,8 @@ class Joint:
     radius: float = 0.0125      # the rope's (or the spring's wire's) radius, for drawing (m)
     look: int = 0               # ropes.ROPE, CABLE or SPRING
     broken: bool = False
-    post: tuple = None          # a rope: the post or ball it may wrap round (geom name, centre, axis, radius)
-    links: list = None          # a chain: its links' body names, from the far end to the object
+    posts: tuple = ()           # a weightless rope: the posts and balls it goes round (their geoms' names), in order
+    links: list = None          # a chain or a rope with weight: its links' body names, from the far end to the object
     link_ids: np.ndarray = None
     link_half: np.ndarray = None   # each link's start (toward the far end) from its middle, in its own frame
     bid: int = -1               # MuJoCo ids, once compiled: its body, the other's (0: the world), sites, constraints, tendon
@@ -305,10 +323,37 @@ def kind_of(c):
     return k(c)
 
 
+def more_joints(c):
+    """Collider c's More joints: [dict of the settings each gives] (a list of dicts, or one written as JSON)."""
+    v = c.get('joints') or ()
+    if isinstance(v, str):
+        import json
+        try:
+            v = json.loads(v)
+        except ValueError:
+            return []
+    return [dict(e) for e in v if isinstance(e, dict)] if isinstance(v, (list, tuple)) else []
+
+
+def joint_specs(c):
+    """Every joint collider c has, in order: [(kind, settings)]. Its own (Joined by) first; then each of its More joints,
+    whose settings are the ones it gives over the object's own (a second rope of a swing gives where it is tied and
+    takes the rope's look and thickness from the first), but for a motor's speed: its own, 0 unless it gives one (the
+    object's is keyable, for its first joint). None at all if Joined by is None: that takes them all off."""
+    if c.get('joint', 'none') not in JOINT_KINDS:
+        return []
+    out = [(c['joint'], c)]
+    own = {k: v for k, v in c.items() if k != 'motor_speed'}
+    for e in more_joints(c):
+        if e.get('joint') in JOINT_KINDS:
+            out.append((e['joint'], {**own, **e}))
+    return out
+
+
 def joined(c):
-    """Collider c's joint kind ('rope', 'spring', 'hinge', 'ball'), or None."""
+    """Collider c's (first) joint kind ('rope', 'spring', 'hinge', 'ball'), or None."""
     k = c.get('joint', 'none')
-    return k if k in ('rope', 'spring', 'hinge', 'ball') else None
+    return k if k in JOINT_KINDS else None
 
 
 def falls(c):
@@ -400,6 +445,121 @@ def joint_ends(c, cg, other=None, hull=None):
         if nu > 1e-9:
             at = surface_toward(c['shape'], cg.size, u / nu, hull)
     return pos + R @ at, B
+
+
+def wrapped_way(P, B, route, extra=0.0):
+    """A taut rope's way from P to B round the posts and balls of `route` (Solids._posts_for: each with its centre,
+    axis (None: a ball), radius, the side it is gone round and where), `extra` clear of their surfaces: straight to where it
+    meets each one, round it, straight on from where it leaves it. Returns (points (n, 3), [(meets, leaves)] at each,
+    which of the n - 1 stretches between the points are straight, not round a post). Its length is how long the rope
+    is round them, as MuJoCo's tendon wraps them."""
+    P, B = np.asarray(P, float), np.asarray(B, float)
+    if not route:
+        return np.stack([P, B]), [], np.array([True])
+    posts = []
+    for k, (_nm, ctr, ax, rad, _b, away, _R, over) in enumerate(route):
+        # (round a post across its axis from where the rope goes over it: _posts_for)
+        ctr = np.asarray(ctr, float) if ax is None else np.asarray(over, float) - np.asarray(away, float) * float(rad)
+        posts.append((ctr, ax, float(rad) + extra, np.asarray(away, float)))
+
+    def tangent(Q, post):
+        """Where a line from Q touches a post on its side (in the plane across its axis)."""
+        c, ax, rr, away = post
+        v = Q - c
+        if ax is not None:
+            v = v - ax * float(v @ ax)
+        D = float(np.linalg.norm(v))
+        if D <= rr * 1.0001:
+            return c + away * rr
+        vh = v / D
+        w = away - vh * float(away @ vh)
+        if ax is not None:
+            w = w - ax * float(w @ ax)
+        if float(np.linalg.norm(w)) < 1e-9:
+            w = np.cross(vh, ax if ax is not None else np.array([0.0, 0.0, 1.0]))
+        w = w / max(float(np.linalg.norm(w)), 1e-12)
+        a = math.acos(min(1.0, rr / D))
+        return c + rr * (math.cos(a) * vh + math.sin(a) * w)
+
+    meets = [p[0] + p[3] * p[2] for p in posts]
+    leaves = [m.copy() for m in meets]
+    for _ in range(8):     # (each straight stretch touching both its ends' posts: a few rounds settle it)
+        for k, post in enumerate(posts):
+            meets[k] = tangent(P if k == 0 else leaves[k - 1], post)
+            leaves[k] = tangent(B if k == len(posts) - 1 else meets[k + 1], post)
+    out, free = [P], [True]
+    for (c, ax, rr, _away), m, l in zip(posts, meets, leaves):
+        a1, a2 = m - c, l - c
+        n1, n2 = a1 / max(float(np.linalg.norm(a1)), 1e-12), a2 / max(float(np.linalg.norm(a2)), 1e-12)
+        ang = math.acos(float(np.clip(n1 @ n2, -1.0, 1.0)))
+        steps = max(1, int(math.ceil(ang / 0.15)))
+        for s in np.linspace(0.0, 1.0, steps + 1):
+            w = (math.sin((1 - s) * ang) / max(math.sin(ang), 1e-9), math.sin(s * ang) / max(math.sin(ang), 1e-9)) \
+                if ang > 1e-4 else (1.0 - s, s)
+            dirn = n1 * w[0] + n2 * w[1]
+            out.append(c + dirn / max(float(np.linalg.norm(dirn)), 1e-12) * rr)
+        free += [False] * steps + [True]
+    out.append(B)
+    return np.asarray(out), list(zip(meets, leaves)), np.asarray(free)
+
+
+def near_parts(planes, q, reach=np.inf):
+    """Which of a body's convex parts (planes: Solids._part_planes) points q (n, 3: its own frame) are within `reach`
+    of (m), by the parts' boxes: (the points' indices, the parts', both (k,), in order of the points)."""
+    lo, hi = planes[3], planes[4]
+    q = np.asarray(q, np.float32)
+    if not np.isfinite(reach):
+        return np.repeat(np.arange(len(q)), len(lo)), np.tile(np.arange(len(lo)), len(q))
+    # (first by the spheres round the boxes, a product of matrices; then by the boxes)
+    mid, rad = 0.5 * (lo + hi), 0.5 * np.linalg.norm(hi - lo, axis=1) + reach
+    out_i, out_p = [], []
+    step = max(1, 4000000 // max(len(lo), 1))      # (a few MB at a time)
+    for a in range(0, len(q), step):
+        qa = q[a:a + step]
+        d2 = (qa * qa).sum(1)[:, None] - 2.0 * (qa @ mid.T) + (mid * mid).sum(1)[None]
+        i, p = np.nonzero(d2 < rad * rad)
+        gap = np.maximum(np.maximum(lo[p] - qa[i], qa[i] - hi[p]), 0.0)
+        ok = np.einsum('ij,ij->i', gap, gap) < reach * reach
+        out_i.append(i[ok] + a)
+        out_p.append(p[ok])
+    return np.concatenate(out_i), np.concatenate(out_p)
+
+
+def parts_distance(planes, q, reach=np.inf):
+    """Signed distance (m, negative inside) from points q (n, 3: a body's own frame) to the union of its convex parts
+    (planes: Solids._part_planes), and the outward normal there (n, 3): the part they are nearest, by its farthest face
+    (exact inside a part and off its faces, a little short off its edges and corners). Only the parts whose boxes are
+    within `reach` of a point are measured (cloth near a bowl of a hundred parts meets a few of them); a point beyond
+    reach of all of them is `reach` away, facing up."""
+    N, D, starts, _lo, _hi, ends = planes
+    q = np.asarray(q, np.float32)
+    n = len(q)
+    dist = np.full(n, reach if np.isfinite(reach) else np.inf, np.float64)
+    nrm = np.zeros((n, 3))
+    nrm[:, 1] = 1.0
+    pi, pp = near_parts(planes, q, reach)
+    if not len(pi):
+        return dist, nrm
+    # each pair's farthest face (how far the point is outside that part), a part at a time
+    per = np.empty(len(pi), np.float32)
+    face = np.empty(len(pi), np.int64)
+    order = np.argsort(pp, kind='stable')
+    cut = np.searchsorted(pp[order], np.arange(len(starts) + 1))
+    for p in np.flatnonzero(np.diff(cut)):
+        rows = order[cut[p]:cut[p + 1]]
+        s = q[pi[rows]] @ N[starts[p]:ends[p]].T - D[starts[p]:ends[p]]
+        f = s.argmax(1)
+        per[rows] = s[np.arange(len(rows)), f]
+        face[rows] = starts[p] + f
+    # each point's nearest part (the pairs are in order of the points)
+    first = np.flatnonzero(np.r_[True, pi[1:] != pi[:-1]])
+    near = np.minimum.reduceat(per, first)
+    hit = np.flatnonzero(per == np.repeat(near, np.diff(np.r_[first, len(pi)])))
+    best = hit[np.searchsorted(hit, first)]
+    who = pi[first]
+    dist[who] = near
+    nrm[who] = N[face[best]]
+    return dist, nrm
 
 
 def extent_along(shape, size, axis, hull=None):
@@ -1119,55 +1279,164 @@ class Solids:
                                    size=np.asarray(a['size'], float), hollow=np.float32(0.0))
         return out
 
-    @staticmethod
-    def _post_for(scene, by_index, free, i, j, P, B, L):
-        """A post or a ball a rope from P to B (L long) may wrap round: the cylinder or sphere (not either end's
-        object) whose middle passes nearest its line, within its radius and the rope's slack: (geom name, centre, axis,
-        radius) or None. (MuJoCo's tendon goes round it only while it is in the way.)"""
-        d = B - P
-        ln = float(np.linalg.norm(d))
-        if ln < 1e-6:
-            return None
-        u = d / ln
-        slack = 0.5 * max(L - ln, 0.0) + 0.05
-        best = None
-        up = np.array([0.0, 1.0, 0.0])
+    def _posts_for(self, scene, by_index, free, mocap, i, j, P, B, L, over='', who='', tie=None):
+        """The posts and balls (cylinders and spheres, not either end's object) a rope from P to B, L long, goes round,
+        in order from P: those named in Goes over (`over`, names separated by commas), in that order, or none for
+        'none'; or else those in its way that it hangs over: each one its line passes under, between its ends, that the
+        rope, as long as it is, reaches over taut, the side it goes round facing up (POST_OVER) (the nearest its line
+        first, then the same along each part of the rope between them; at most MAX_POSTS). Each goes round on the side
+        away from the straight line between its neighbours on the rope (over the top of a post a rope is draped over),
+        where along a cylinder the line between them crosses it. (MuJoCo wraps a rope round that side wherever the line
+        passes, even clear of the post on its other side: round one beside or under the rope, its load swung across it,
+        the rope jumps round and flings the load. A rope hanging over a post stays on that side.) tie: where on the
+        object the rope is tied when it goes first toward a point (an object tied at its middle: where it faces its
+        first post), or None (at P). Returns ([(geom name, centre, axis (None: a ball), radius, its body ('': fixed),
+        the side it goes round (a unit vector from its centre), its rotation, where it goes over it (on its side, across
+        its axis from that point))], where it is tied)."""
+        def warn(msg):
+            if msg not in self.warnings:
+                self.warnings.append(msg)
+
+        posts = {}
         for n, c in enumerate(scene.colliders):
             if n in (i, j) or not c['enabled'] or n not in by_index or c['shape'] not in ('cylinder', 'sphere'):
                 continue
             if float(c.get('hollow', 0.0) or 0.0) > 0.0 or breaks(c) or kind_of(c):
                 continue
             cg = by_index[n]
-            ctr = np.asarray(cg.pos, float)
-            rad = float(abs(cg.size[0]))
-            ax = q_rot(xyzw(turn_wxyz(cg))) @ np.array([0.0, 1.0, 0.0])
-            t = float((ctr - P) @ u)
+            R = q_rot(xyzw(turn_wxyz(cg)))
+            posts[n] = (f'bodygeom{n}' if n in free else f'fixed{n}_0', np.asarray(cg.pos, float),
+                        R @ np.array([0.0, 1.0, 0.0]) if c['shape'] == 'cylinder' else None, float(abs(cg.size[0])),
+                        free[n][0] if n in free else (f'mocap{n}' if n in mocap else ''), R, float(abs(cg.size[1])))
+        up = np.array([0.0, 1.0, 0.0])
+
+        def off_line(n, a, b):
+            """From post n's middle to the nearest point of the line from a to b (across its axis), and whether that is
+            between the ends (along the line or across the ground) and along the post (a cylinder's length)."""
+            _nm, ctr, ax, _r, _b, _R, half = posts[n]
+            d = b - a
+            ln = float(np.linalg.norm(d))
+            if ln < 1e-6:
+                return None, False
+            u = d / ln
+            t = float((ctr - a) @ u)
             dh = np.array([d[0], 0.0, d[2]])
-            th = float((ctr - P) @ dh) / max(float(dh @ dh), 1e-12) if float(np.linalg.norm(dh)) > 0.2 * ln else -1.0
-            if not (0.05 * ln < t < 0.95 * ln or 0.05 < th < 0.95):     # (between its ends, along it or across the ground)
-                continue
-            t = float(np.clip(t, 0.0, ln))
-            off = P + u * t - ctr
-            if c['shape'] == 'cylinder':
-                off = off - ax * float(off @ ax)
-                if abs(float((P + u * t - ctr) @ ax)) > abs(float(cg.size[1])):
+            th = float((ctr - a) @ dh) / max(float(dh @ dh), 1e-12) if float(np.linalg.norm(dh)) > 0.2 * ln else -1.0
+            # (across the ground a little past either end too: a crate hangs straight under the pulley it hangs from)
+            ok = 0.05 * ln < t < 0.95 * ln or -0.25 < th < 1.25
+            q = a + u * float(np.clip(t, 0.0, ln)) - ctr
+            off = q - ax * float(q @ ax) if ax is not None else q
+            if ax is not None and abs(float(q @ ax)) > half:
+                ok = False
+            return off, ok
+
+        def against(n, x):
+            """Whether point x is against post n (within POST_TIED of its surface): a rope tied there is tied to it."""
+            _nm, ctr, ax, rad, _b, _R, half = posts[n]
+            v = np.asarray(x, float) - ctr
+            if ax is None:
+                return float(np.linalg.norm(v)) - rad < POST_TIED
+            along = float(v @ ax)
+            return math.hypot(max(float(np.linalg.norm(v - ax * along)) - rad, 0.0), max(abs(along) - half, 0.0)) < POST_TIED
+
+        def side(n, a, b):
+            """The side post n is gone round on between a and b: away from their line (through it: over its top)."""
+            off, _ok = off_line(n, a, b)
+            ax, rad = posts[n][2], posts[n][3]
+            away = -off if off is not None else np.zeros(3)
+            if np.linalg.norm(away) < 1e-3 * rad:
+                away = up - (ax * float(up @ ax) if ax is not None else 0.0)
+                if np.linalg.norm(away) < 1e-3:
+                    away = np.cross(ax, b - a)
+            return away / max(float(np.linalg.norm(away)), 1e-12)
+
+        def at(n, away, a, b):
+            """Where the rope goes over post n on its side `away`, between a and b: on a cylinder where their line
+            crosses its axis (a rope over a beam away from its middle goes over it there, not at its middle)."""
+            ctr, ax, rad, half = posts[n][1], posts[n][2], posts[n][3], posts[n][6]
+            h = 0.0 if ax is None else float(np.clip((0.5 * (a + b) - ctr) @ ax, -half, half))
+            return ctr + (ax * h if ax is not None else 0.0) + away * rad
+
+        def ends(route):
+            """Where the rope is tied, and where it goes over each post of `route` between its neighbours (a few times
+            round: they move each other)."""
+            p0, pts = P, [at(n, aw, P, B) for n, aw in route]
+            for _ in range(3):
+                if tie is not None and route:
+                    p0 = tie(pts[0])
+                pts = [at(n, aw, p0 if k == 0 else pts[k - 1], B if k == len(route) - 1 else pts[k + 1])
+                       for k, (n, aw) in enumerate(route)]
+            return p0, pts
+
+        def settle(route):
+            """`route` with each post's side between its neighbours as they are."""
+            for _ in range(2):
+                p0, pts = ends(route)
+                route = [(n, side(n, p0 if k == 0 else pts[k - 1], B if k == len(route) - 1 else pts[k + 1]))
+                         for k, (n, _aw) in enumerate(route)]
+            return route
+
+        def full(route):
+            p0, pts = ends(route)
+            return p0, [(*posts[n][:5], aw, posts[n][5], x) for (n, aw), x in zip(route, pts)]
+
+        def length(route):
+            """How long the rope is round the posts of `route`, taut (wrapped_way: as MuJoCo's tendon wraps them)."""
+            p0, way = full(route)
+            return float(np.linalg.norm(np.diff(wrapped_way(p0, B, way)[0], axis=0), axis=1).sum())
+
+        route = []
+        names = {}
+        for n, c in enumerate(scene.colliders):
+            names.setdefault(c['name'].strip().lower(), n)
+        over = str(over or '').strip()
+        if over.lower() == 'none' and 'none' not in names:
+            pass        # (told to go over none: straight past whatever is in its way)
+        elif over:
+            for nm in (x.strip() for x in over.split(',')):
+                n = names.get(nm.lower())
+                if not nm:
                     continue
-            gap = float(np.linalg.norm(off)) - rad
-            if gap < slack and (best is None or gap < best[0]):
-                name = f'bodygeom{n}' if n in free else f'fixed{n}_0'
-                # the side it goes round: away from the line (a line through it: over its top, or any way round)
-                away = -off
-                if c['shape'] == 'cylinder':
-                    away = away - ax * float(away @ ax)
-                if np.linalg.norm(away) < 1e-3 * rad:
-                    away = up - (ax * float(up @ ax) if c['shape'] == 'cylinder' else 0.0)
-                    if np.linalg.norm(away) < 1e-3:
-                        away = np.cross(ax, u)
-                away = away / max(float(np.linalg.norm(away)), 1e-12)
-                R = q_rot(xyzw(turn_wxyz(cg)))
-                best = (gap, (name, ctr, ax if c['shape'] == 'cylinder' else None, rad, free[n][0] if n in free else None,
-                              away, R))
-        return None if best is None else best[1]
+                if n is None or n not in posts:
+                    why = 'there is no such object' if n is None else 'only a fixed or falling cylinder or ball, not hollow, can be'
+                    warn(f'{who}: its rope cannot go over {nm} ({why}); it goes straight past it.')
+                    continue
+                if n not in (r[0] for r in route):
+                    route.append((n, up))
+        else:
+            # (not one it is tied against, a chain hung from just under a beam; nor a falling one or a sloping bar,
+            # POST_LEVEL: those only named in Goes over)
+            posts = {n: p for n, p in posts.items() if not (against(n, P) or against(n, B)) and n not in free
+                     and (p[2] is None or abs(float(p[2] @ up)) < POST_LEVEL)}
+            for _ in range(MAX_POSTS + 1):
+                p0, mids = ends(route)
+                pts = [p0] + mids + [B]
+                best = None
+                for k in range(len(pts) - 1):
+                    a, b = pts[k], pts[k + 1]
+                    for n in posts:
+                        if any(n == r[0] for r in route):
+                            continue
+                        off, ok = off_line(n, a, b)
+                        if not ok:
+                            continue
+                        gap = float(np.linalg.norm(off)) - posts[n][3]
+                        if best is not None and gap >= best[0]:
+                            continue
+                        # (the rope does not reach round it, taut round it and the rest: it is not in its way; or it
+                        # would go round it, or another, beside or under it rather than over it)
+                        trial = settle(route[:k] + [(n, side(n, a, b))] + route[k:])
+                        if any(float(aw @ up) < POST_OVER for _n, aw in trial) or length(trial) > L + POST_REACH:
+                            continue
+                        best = (gap, trial)
+                if best is None:
+                    break
+                if len(route) == MAX_POSTS:
+                    warn(f'{who}: its rope goes round only the first {MAX_POSTS} posts in its way, and through the rest.')
+                    break
+                route = best[1]
+        p0, way = full(settle(route))
+        return way, p0
 
     def _rehearsal_parts(self, spec, i, c, cg):
         """A breakable's pieces as one thing's shapes (a rehearsal): (shape, half size, centre, mesh) in its own frame."""
@@ -1383,10 +1652,11 @@ class Solids:
                 self.breaks.append((self.time, d.xpos[W['body'][r]].copy(), float(W['area'][r]), int(W['collider'][r])))
 
     def _build_joints(self, scene, spec, by_index, bodies, sets, mocap, k, dt):
-        """The objects' ropes, springs, hinges and ball joints (Properties › Joint): sites on the two bodies, and a
-        tendon or connect constraints between them. Returns the Joints (their MuJoCo ids are found once compiled)."""
+        """The objects' ropes, springs, hinges and ball joints (Properties › Joint, and More joints): sites on the two
+        bodies, and a tendon or connect constraints between them; a chain or a rope with weight, links. Returns the
+        Joints (their MuJoCo ids are found once compiled)."""
         import mujoco
-        from .ropes import CABLE, CHAIN, ROPE, SPRING, rope_curve
+        from .ropes import CABLE, CHAIN, ROPE, SPRING
         out = []
         free = {bd.index: (f'body{n}', bd) for n, bd in enumerate(bodies)}
         pieces = {ps.index: ps for ps in sets}
@@ -1431,178 +1701,242 @@ class Solids:
 
         for i in sorted(set(free) | set(pieces)):
             c = scene.colliders[i]
-            kind = joined(c)
-            if kind is None or i not in by_index:
+            if i not in by_index:
                 continue
             cg = by_index[i]
             R = turn(cg)
-            to = str(c.get('joint_to', '') or '').strip()
-            j = None
-            if to:
-                j = by_name.get(to, by_name.get(to.lower()))
-                if j is None or j == i or not scene.colliders[j]['enabled'] or j not in by_index:
-                    why = 'itself' if j == i else (f'{to}, which is turned off' if j is not None else f'{to}: there is no such object')
-                    self.warnings.append(f'{c["name"]} is joined to {why}; it is held by a fixed point instead.')
-                    j = None
             hull = free[i][1].hull if i in free else None
-            P, B = joint_ends(c, cg, by_index[j] if j is not None else None, hull)
-            me = carrier(i, P)
-            ot = carrier(j, B) if j is not None else world
-            if kind in ('hinge', 'ball') and i in free and not ot[1]:
-                free[i][1].pivot = P.copy()
-            tag = f'joint{i}'
-            jt = Joint(index=i, kind=kind, body=me[0], other=ot[0], other_free=ot[1],
-                       strength=float(c.get('joint_break', 0.0) or 0.0), friction=float(c.get('joint_friction', 0.2)),
-                       motor=float(scene.get(('collider', i, 'motor_speed'), scene.start)) * RPM if kind == 'hinge' else 0.0,
-                       torque=float(c.get('motor_torque', 0.0) or 0.0),
-                       keyed=kind == 'hinge' and scene.curve(('collider', i, 'motor_speed')) is not None,
-                       radius=0.5 * float(c.get('rope_thickness', 0.025)),
-                       look=SPRING if kind == 'spring' else {'cable': CABLE, 'chain': CHAIN}.get(c.get('rope_look'), ROPE))
-            if kind == 'rope' and jt.look == CHAIN:
-                # a chain: steel links, each a body on a ball joint to the last, from the far end (held there) to it
-                dist = float(np.linalg.norm(B - P))
-                L = float(c.get('rope_length', 0.0) or 0.0) or dist
-                wire = 2.0 * jt.radius
-                n_links = int(np.clip(round(L / (5.0 * wire)), 4, 60))
-                pts = rope_curve(B, P, L, n_links)
-                per_m = CHAIN_KG_M2 * wire * wire
-                load = mass(i) + (mass(j) if j is not None and ot[1] else 0.0)
-                prev, names, halves = None, [], []
-                for kl in range(n_links):
-                    a_, b_ = pts[kl], pts[kl + 1]
-                    seg = float(np.linalg.norm(b_ - a_))
-                    mid = 0.5 * (a_ + b_)
-                    parent = spec.worldbody if prev is None else prev
-                    lb = parent.add_body()
-                    lb.name = f'{tag}_link{kl}'
-                    lb.pos = list(map(float, mid if prev is None else mid - prev_mid))
-                    j_ = lb.add_joint() if (prev is not None or not ot[1] and not ot[0]) else None
-                    if prev is None and j_ is None:
-                        lb.add_freejoint()
-                    if j_ is not None:
-                        j_.type = mujoco.mjtJoint.mjJNT_BALL
-                        j_.pos = list(map(float, a_ - mid))
-                        j_.damping = [0.002 * per_m * seg, 0.0, 0.0]
-                        # (a light link between heavy ends blows up in MuJoCo: rotational inertia in proportion to
-                        # what it carries keeps it in hand; a 200 kg weight on 12 mm chain was unstable at once)
-                        j_.armature = max(1e-4, 0.6 * load * seg * seg)
-                    g_ = lb.add_geom()
-                    g_.type = mujoco.mjtGeom.mjGEOM_CAPSULE
-                    g_.fromto = [*map(float, a_ - mid), *map(float, b_ - mid)]
-                    g_.size = [1.6 * wire, 0.0, 0.0]
-                    g_.mass = max(per_m * seg, 1e-3)
-                    g_.priority = 1
-                    g_.friction = [0.5, 0.005, 0.0001]                  # (steel links: as contact() sets a body's)
-                    g_.solref = [-k, -2.0 * damping_ratio(0.1) * math.sqrt(k)]
-                    prev, prev_mid = lb, mid
-                    names.append(lb.name)
-                    halves.append(a_ - mid)
-                # held at the far end (on another thing: glued to it there) and at this end to the object
-                e1 = spec.add_equality()
-                e1.type = mujoco.mjtEq.mjEQ_CONNECT
-                e1.objtype = mujoco.mjtObj.mjOBJ_BODY
-                e1.name1 = names[-1]
-                e1.name2 = me[0]
-                d1 = np.array(e1.data, float)
-                d1[0:3] = pts[-1] - 0.5 * (pts[-2] + pts[-1])
-                e1.data = d1
-                e1.name = f'{tag}_end'
-                if me[0]:
-                    ex = spec.add_exclude()
-                    ex.bodyname1, ex.bodyname2 = names[-1], me[0]
-                if ot[0]:
-                    ex = spec.add_exclude()
-                    ex.bodyname1, ex.bodyname2 = names[0], ot[0]
-                    e2 = spec.add_equality()
-                    e2.type = mujoco.mjtEq.mjEQ_CONNECT
-                    e2.objtype = mujoco.mjtObj.mjOBJ_BODY
-                    e2.name1 = names[0]
-                    e2.name2 = ot[0]
-                    d2 = np.array(e2.data, float)
-                    d2[0:3] = pts[0] - 0.5 * (pts[0] + pts[1])
-                    e2.data = d2
-                    e2.name = f'{tag}_start'
-
-                jt.links, jt.length, jt.link_half = names, L, np.asarray(halves, float)
-                out.append(jt)
-                continue
-            if kind in ('rope', 'spring'):
-                sa, sb = site(me, P, f'{tag}a'), site(ot, B, f'{tag}b')
-                dist = float(np.linalg.norm(B - P))
-                L = float(c.get('rope_length', 0.0) or 0.0)
-                L = L if L > 0.0 else dist
-                t = spec.add_tendon()
-                t.name = tag
-                t.wrap_site(sa)
-                reach = float(c.get('rope_length', 0.0) or 0.0) or float(np.linalg.norm(B - P))
-                post = self._post_for(scene, by_index, free, i, j, P, B, max(reach, 1e-3))
-                if kind == 'rope' and post is not None:
-                    # round a post or a ball in its way, on the side away from the straight line between its ends
-                    # (over the top of a post it is draped over): a side site there, on the post's body
-                    side = spec.worldbody if post[4] is None else spec.body(post[4])
-                    ss = side.add_site()
-                    ss.name = f'{tag}side'
-                    at = post[1] + post[5] * (1.5 * post[3])
-                    ss.pos = list(map(float, at if post[4] is None else post[6].T @ (at - post[1])))
-                    t.wrap_geom(post[0], ss.name)
-                    jt.post = post[:4]
-                t.wrap_site(sb)
-                if kind == 'rope':
-                    t.limited = mujoco.mjtLimited.mjLIMITED_TRUE
-                    t.range = [0.0, max(L, 1e-4)]
-                    t.solref_limit = [-k, -2.0 * damping_ratio(ROPE_BOUNCE) * math.sqrt(k)]
-                    if L < 0.98 * dist:
-                        self.warnings.append(f'{c["name"]}: its rope ({L:.2f} m) is shorter than the {dist:.2f} m to where it is '
-                                             f'tied: it is yanked in at the start.')
-                else:
-                    m1 = mass(i)
-                    mu = m1 * mass(j) / (m1 + mass(j)) if (j is not None and ot[1]) else m1
-                    ks = float(c.get('spring_k', 500.0))
-                    most = mu * (0.5 / dt) ** 2       # (stiffer than the step can follow)
-                    if ks > most:
-                        self.warnings.append(f'{c["name"]}: its spring is too stiff for something so light; it is '
-                                             f'{most:.0f} N/m instead.')
-                        ks = most
-                    t.stiffness = [ks, 0.0, 0.0]
-                    t.springlength = [L, L]
-                    t.damping = [2.0 * SPRING_DAMPING * math.sqrt(ks * mu), 0.0, 0.0]
-                jt.sites, jt.tendon, jt.length = (sa, sb), tag, L
-            else:
-                pins = [P]
+            for slot, (kind, cj) in enumerate(joint_specs(c)):
+                to = str(cj.get('joint_to', '') or '').strip()
+                j = None
+                if to:
+                    j = by_name.get(to, by_name.get(to.lower()))
+                    if j is None or j == i or not scene.colliders[j]['enabled'] or j not in by_index:
+                        why = 'itself' if j == i else (f'{to}, which is turned off' if j is not None else f'{to}: there is no such object')
+                        self.warnings.append(f'{c["name"]} is joined to {why}; it is held by a fixed point instead.')
+                        j = None
+                P, B = joint_ends(cj, cg, by_index[j] if j is not None else None, hull)
+                me = carrier(i, P)
+                ot = carrier(j, B) if j is not None else world
+                if kind in ('hinge', 'ball') and i in free and not ot[1] and free[i][1].pivot is None:
+                    free[i][1].pivot = P.copy()
+                tag = f'joint{i}' if slot == 0 else f'joint{i}_{slot}'
+                # (a hinge's motor: the object's own speed, keyable, for its first joint; a further one's as it gives it)
+                speed = 0.0
                 if kind == 'hinge':
-                    ax = np.asarray(c.get('joint_axis', (0.0, 1.0, 0.0)), float)
-                    na = float(np.linalg.norm(ax))
-                    ax = ax / na if na > 1e-9 else np.array([0.0, 1.0, 0.0])
-                    half = max(extent_along(c['shape'], cg.size, ax, hull), HINGE_SPAN)
-                    axw = R @ ax
-                    pins = [P + half * axw, P - half * axw]
-                    jt.axis = me[3].T @ axw
-                sites, eqs = [], []
-                for n, Q in enumerate(pins):
-                    s1, s2 = site(me, Q, f'{tag}p{n}'), site(ot, Q, f'{tag}q{n}')
-                    e = spec.add_equality()
-                    e.type = mujoco.mjtEq.mjEQ_CONNECT
-                    e.objtype = mujoco.mjtObj.mjOBJ_SITE
-                    e.name = f'{tag}e{n}'
-                    e.name1, e.name2 = s1, s2
-                    e.solref = [-k, -2.0 * math.sqrt(k)]
-                    sites += [s1, s2]
-                    eqs.append(e.name)
-                jt.sites, jt.eqs = tuple(sites), tuple(eqs)
-            out.append(jt)
+                    speed = (float(scene.get(('collider', i, 'motor_speed'), scene.start)) if slot == 0
+                             else float(cj.get('motor_speed', 0.0) or 0.0))
+                jt = Joint(index=i, slot=slot, kind=kind, body=me[0], other=ot[0], other_free=ot[1],
+                           strength=float(cj.get('joint_break', 0.0) or 0.0), friction=float(cj.get('joint_friction', 0.2)),
+                           motor=speed * RPM if kind == 'hinge' else 0.0,
+                           torque=float(cj.get('motor_torque', 0.0) or 0.0),
+                           keyed=kind == 'hinge' and slot == 0 and scene.curve(('collider', i, 'motor_speed')) is not None,
+                           radius=0.5 * float(cj.get('rope_thickness', 0.025)),
+                           look=SPRING if kind == 'spring' else {'cable': CABLE, 'chain': CHAIN}.get(cj.get('rope_look'), ROPE))
+                if kind in ('rope', 'spring'):
+                    dist = float(np.linalg.norm(B - P))
+                    L = float(cj.get('rope_length', 0.0) or 0.0)
+                    route = []
+                    if kind == 'rope':
+                        tie = None
+                        if np.allclose(np.asarray(cj.get('joint_at', (0.0, 0.0, 0.0)), float), 0.0):
+                            def tie(x, P=P, cg=cg, R=R, c=c, hull=hull):
+                                """Tied where its surface faces x, the first post it goes round, not its far end (a
+                                crate hangs level under a pulley)."""
+                                u = R.T @ (np.asarray(x, float) - np.asarray(cg.pos, float))
+                                nu = float(np.linalg.norm(u))
+                                return P if nu <= 1e-9 else np.asarray(cg.pos, float) + R @ surface_toward(c['shape'], cg.size,
+                                                                                                         u / nu, hull)
+                        route, P = self._posts_for(scene, by_index, free, mocap, i, j, P, B, max(L or dist, 1e-3),
+                                                   cj.get('rope_over', ''), c['name'], tie)
+                        me = carrier(i, P)
+                        # (as far as it goes at the start: round its posts)
+                        way, touch, _free = wrapped_way(P, B, route)
+                        dist = float(np.linalg.norm(np.diff(way, axis=0), axis=1).sum())
+                    L = L if L > 0.0 else dist
+                if kind == 'rope' and (jt.look == CHAIN or cj.get('rope_heavy')):
+                    # a chain (steel links), or a rope with weight (links of rope): bodies end to end
+                    wire = 2.0 * jt.radius
+                    if jt.look == CHAIN:
+                        per_m = CHAIN_KG_M2 * wire * wire
+                    else:
+                        per_m = ROPE_KG_M3['cable' if jt.look == CABLE else 'rope'] * math.pi * jt.radius ** 2
+                    load = mass(i) + (mass(j) if j is not None and ot[1] else 0.0)
+                    self._links(spec, jt, tag, P, B, L, route, per_m, load, me, ot, k)
+                    out.append(jt)
+                    continue
+                if kind in ('rope', 'spring'):
+                    sa, sb = site(me, P, f'{tag}a'), site(ot, B, f'{tag}b')
+                    t = spec.add_tendon()
+                    t.name = tag
+                    t.wrap_site(sa)
+                    # round the posts and balls in its way (or those it is told to go over), each on the side away from
+                    # the line between its neighbours: a side site there, on the post's body. (MuJoCo's tendon passes a
+                    # site between any two things it goes round: one between their sides, where the rope crosses.)
+                    for kp, post in enumerate(route):
+                        name, ctr, _ax, rad, body, away, Rp, over_at = post
+                        if kp:
+                            prev = route[kp - 1]
+                            mid = 0.5 * (touch[kp - 1][1] + touch[kp][0])      # (on the stretch between them)
+                            holder = prev if prev[4] else post
+                            ms = (spec.body(holder[4]) if holder[4] else spec.worldbody).add_site()
+                            ms.name = f'{tag}m{kp}'
+                            ms.pos = list(map(float, holder[6].T @ (mid - holder[1]) if holder[4] else mid))
+                            t.wrap_site(ms.name)
+                        ss = (spec.body(body) if body else spec.worldbody).add_site()
+                        ss.name = f'{tag}side{kp}'
+                        s_at = over_at + away * (0.5 * rad)      # (off its side where the rope goes over it)
+                        ss.pos = list(map(float, Rp.T @ (s_at - ctr) if body else s_at))
+                        t.wrap_geom(name, ss.name)
+                    jt.posts = tuple(p[0] for p in route)
+                    t.wrap_site(sb)
+                    if kind == 'rope':
+                        t.limited = mujoco.mjtLimited.mjLIMITED_TRUE
+                        t.range = [0.0, max(L, 1e-4)]
+                        t.solref_limit = [-k, -2.0 * damping_ratio(ROPE_BOUNCE) * math.sqrt(k)]
+                        if L < 0.98 * dist and not (route and dist - L <= POST_REACH):   # (round posts: as they were found)
+                            self.warnings.append(f'{c["name"]}: its rope ({L:.2f} m) is shorter than the {dist:.2f} m to where it is '
+                                                 f'tied{" round its posts" if route else ""}: it is yanked in at the start.')
+                    else:
+                        m1 = mass(i)
+                        mu = m1 * mass(j) / (m1 + mass(j)) if (j is not None and ot[1]) else m1
+                        ks = float(cj.get('spring_k', 500.0))
+                        most = mu * (0.5 / dt) ** 2       # (stiffer than the step can follow)
+                        if ks > most:
+                            self.warnings.append(f'{c["name"]}: its spring is too stiff for something so light; it is '
+                                                 f'{most:.0f} N/m instead.')
+                            ks = most
+                        t.stiffness = [ks, 0.0, 0.0]
+                        t.springlength = [L, L]
+                        t.damping = [2.0 * SPRING_DAMPING * math.sqrt(ks * mu), 0.0, 0.0]
+                    jt.sites, jt.tendon, jt.length = (sa, sb), tag, L
+                else:
+                    pins = [P]
+                    if kind == 'hinge':
+                        ax = np.asarray(cj.get('joint_axis', (0.0, 1.0, 0.0)), float)
+                        na = float(np.linalg.norm(ax))
+                        ax = ax / na if na > 1e-9 else np.array([0.0, 1.0, 0.0])
+                        half = max(extent_along(c['shape'], cg.size, ax, hull), HINGE_SPAN)
+                        axw = R @ ax
+                        pins = [P + half * axw, P - half * axw]
+                        jt.axis = me[3].T @ axw
+                    sites, eqs = [], []
+                    for n, Q in enumerate(pins):
+                        s1, s2 = site(me, Q, f'{tag}p{n}'), site(ot, Q, f'{tag}q{n}')
+                        e = spec.add_equality()
+                        e.type = mujoco.mjtEq.mjEQ_CONNECT
+                        e.objtype = mujoco.mjtObj.mjOBJ_SITE
+                        e.name = f'{tag}e{n}'
+                        e.name1, e.name2 = s1, s2
+                        e.solref = [-k, -2.0 * math.sqrt(k)]
+                        sites += [s1, s2]
+                        eqs.append(e.name)
+                    jt.sites, jt.eqs = tuple(sites), tuple(eqs)
+                out.append(jt)
         return out
 
-    def _break_joints(self):
-        """Snap the ropes and springs pulled, and tear out the hinges and ball joints loaded, past their Breaks at."""
+    def _links(self, spec, jt, tag, P, B, L, route, per_m, load, me, ot, k):
+        """A chain's or a rope with weight's links, for joint jt: bodies end to end, each on a ball joint to the last,
+        from the far end B (held there: on a ball joint to the world, or glued to what it is tied to) to P on the object
+        (glued there), laid along its way (over the posts and balls in `route`, _posts_for) and hanging in a curve where
+        it is slack. per_m: its weight a metre (kg); load: what hangs on it (kg)."""
         import mujoco
-        live = [jt for jt in self.joints if jt.strength > 0.0 and not jt.broken and not jt.links]   # (a chain does not snap)
+        from .ropes import CHAIN, rope_curve
+        wire = 2.0 * jt.radius
+        n_links = int(np.clip(round(L / (5.0 * wire)), 4, 60))
+        if route:
+            # (over the posts: round their sides, just clear of them (a link's chord across a post's curve too), its
+            # slack shared out among the straight stretches)
+            seg = L / n_links
+            rr = min(float(p[3]) for p in route) + jt.radius + 0.002
+            sag = rr - math.sqrt(max(rr * rr - 0.25 * seg * seg, 0.0)) if seg < 2.0 * rr else rr
+            way, _touch, free = wrapped_way(P, B, route, jt.radius + 0.002 + sag)
+            way, free = way[::-1], free[::-1]
+            spans = np.linalg.norm(np.diff(way, axis=0), axis=1)
+            extra = max(L - float(spans.sum()), 0.0)
+            loose = max(float(spans[free].sum()), 1e-9)
+            pts = [np.asarray(way[0], float)[None]]
+            for a_, b_, s, f_ in zip(way[:-1], way[1:], spans, free):
+                share = s + extra * s / loose if f_ else s
+                pts.append(rope_curve(a_, b_, share, max(1, int(math.ceil(4 * n_links * s / max(float(spans.sum()), 1e-9)))))[1:])
+            pts = np.concatenate(pts)
+            # the same number of links of one length along it
+            along = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))])
+            u = np.linspace(0.0, along[-1], n_links + 1)
+            pts = np.stack([np.interp(u, along, pts[:, a]) for a in range(3)], 1)
+        else:
+            pts = rope_curve(B, P, L, n_links)
+        chain = jt.look == CHAIN
+        prev, names, halves = None, [], []
+        for kl in range(n_links):
+            a_, b_ = pts[kl], pts[kl + 1]
+            seg = float(np.linalg.norm(b_ - a_))
+            mid = 0.5 * (a_ + b_)
+            parent = spec.worldbody if prev is None else prev
+            lb = parent.add_body()
+            lb.name = f'{tag}_link{kl}'
+            lb.pos = list(map(float, mid if prev is None else mid - prev_mid))
+            j_ = lb.add_joint() if (prev is not None or not ot[1] and not ot[0]) else None
+            if prev is None and j_ is None:
+                lb.add_freejoint()
+            if j_ is not None:
+                j_.type = mujoco.mjtJoint.mjJNT_BALL
+                j_.pos = list(map(float, a_ - mid))
+                j_.damping = [0.002 * per_m * seg, 0.0, 0.0]
+                # (a light link between heavy ends blows up in MuJoCo: rotational inertia in proportion to
+                # what it carries keeps it in hand; a 200 kg weight on 12 mm chain was unstable at once)
+                j_.armature = max(1e-4, 0.6 * load * seg * seg)
+            g_ = lb.add_geom()
+            g_.type = mujoco.mjtGeom.mjGEOM_CAPSULE
+            g_.fromto = [*map(float, a_ - mid), *map(float, b_ - mid)]
+            g_.size = [1.6 * wire if chain else jt.radius, 0.0, 0.0]     # (a chain's links are rings round it)
+            g_.mass = max(per_m * seg, 1e-3)
+            g_.priority = 1
+            g_.friction = [0.5 if chain else ROPE_FRICTION, 0.005, 0.0001]   # (as contact() sets a body's)
+            g_.solref = [-k, -2.0 * damping_ratio(0.1) * math.sqrt(k)]
+            prev, prev_mid = lb, mid
+            names.append(lb.name)
+            halves.append(a_ - mid)
+        # held at the far end (on another thing: glued to it there) and at this end to the object
+        e1 = spec.add_equality()
+        e1.type = mujoco.mjtEq.mjEQ_CONNECT
+        e1.objtype = mujoco.mjtObj.mjOBJ_BODY
+        e1.name1 = names[-1]
+        e1.name2 = me[0]
+        d1 = np.array(e1.data, float)
+        d1[0:3] = pts[-1] - 0.5 * (pts[-2] + pts[-1])
+        e1.data = d1
+        e1.name = f'{tag}_end'
+        if me[0]:
+            ex = spec.add_exclude()
+            ex.bodyname1, ex.bodyname2 = names[-1], me[0]
+        if ot[0]:
+            ex = spec.add_exclude()
+            ex.bodyname1, ex.bodyname2 = names[0], ot[0]
+            e2 = spec.add_equality()
+            e2.type = mujoco.mjtEq.mjEQ_CONNECT
+            e2.objtype = mujoco.mjtObj.mjOBJ_BODY
+            e2.name1 = names[0]
+            e2.name2 = ot[0]
+            d2 = np.array(e2.data, float)
+            d2[0:3] = pts[0] - 0.5 * (pts[0] + pts[1])
+            e2.data = d2
+            e2.name = f'{tag}_start'
+        # (it gives way where it is tied to the object, pulled harder there than its Breaks at: _break_joints)
+        jt.links, jt.length, jt.link_half, jt.eqs = names, L, np.asarray(halves, float), (e1.name,)
+
+    def _break_joints(self):
+        """Snap the ropes and springs pulled, and tear out the hinges and ball joints loaded, past their Breaks at. A
+        chain or a rope with weight gives way where it is tied to the object."""
+        import mujoco
+        live = [jt for jt in self.joints if jt.strength > 0.0 and not jt.broken]
         if not live:
             return
         m, d = self.model, self.data
         n = d.nefc
         typ, ids, F = d.efc_type[:n], d.efc_id[:n], d.efc_force[:n]
         for jt in live:
-            if jt.kind == 'rope':
+            if jt.kind == 'rope' and not jt.links:
                 f = float(F[(typ == mujoco.mjtConstraint.mjCNSTR_LIMIT_TENDON) & (ids == jt.tid)].sum())
             elif jt.kind == 'spring':
                 f = abs(float(m.tendon_stiffness[jt.tid]) * (float(d.ten_length[jt.tid]) - jt.length))
@@ -1616,7 +1950,7 @@ class Solids:
     def _snap(self, jt):
         """Joint jt is broken from now on."""
         m, d = self.model, self.data
-        if jt.kind == 'rope':
+        if jt.kind == 'rope' and not jt.links:
             m.tendon_limited[jt.tid] = 0
         elif jt.kind == 'spring':
             m.tendon_stiffness[jt.tid] = 0.0
@@ -1634,9 +1968,11 @@ class Solids:
             jt.broken = False
 
     def rope_poses(self):
-        """The ropes and springs as they are now, for drawing (ropes.rope_points): {collider index: dict(a, b (3,): its
-        ends, on the object and at the other end, va, vb (3,): their velocities, length (m; a spring's at rest),
-        radius (m), look (ropes.ROPE, CABLE, SPRING), broken (0 or 1))}."""
+        """The ropes and springs as they are now, for drawing (ropes.rope_points): {key: dict(a, b (3,): its ends, on
+        the object and at the other end, va, vb (3,): their velocities, length (m; a spring's at rest), radius (m), look
+        (ropes.ROPE, CABLE, SPRING, CHAIN), broken (0 or 1), and path (m, 3): its way round the posts it goes round, or a
+        chain's or a rope with weight's links)}. The key is the object's (collider) index for its own joint, and that
+        plus JOINT_SLOT times its place for each of its More joints."""
         import mujoco
         out = {}
         if self.data is None:
@@ -1646,61 +1982,71 @@ class Solids:
         for jt in self.joints:
             if jt.kind not in ('rope', 'spring'):
                 continue
+            key = jt.index + JOINT_SLOT * jt.slot
             if jt.links:
-                # (its links end to end, from the far end to the object: where each starts, and where the last ends)
+                # (its links end to end, from the far end to the object: where each starts, and where the last ends;
+                # drawn as they are, whole or given way at the object)
                 ids = jt.link_ids
                 R = d.xmat[ids].reshape(-1, 3, 3)
                 h = np.einsum('bij,bj->bi', R, jt.link_half)
                 path = np.concatenate([d.xpos[ids] + h, (d.xpos[ids[-1]] - h[-1])[None]])
                 still = np.zeros(3)
-                out[jt.index] = dict(a=path[-1].copy(), va=still, b=path[0].copy(), vb=still, length=np.float32(jt.length),
-                                     radius=np.float32(jt.radius), look=np.float32(jt.look), broken=np.float32(jt.broken),
-                                     path=path[::-1].copy())
+                out[key] = dict(a=path[-1].copy(), va=still, b=path[0].copy(), vb=still, length=np.float32(jt.length),
+                                radius=np.float32(jt.radius), look=np.float32(jt.look), broken=np.float32(0.0),
+                                path=path[::-1].copy())
                 continue
             ends = []
             for s in jt.sids[:2]:
                 mujoco.mj_objectVelocity(m, d, mujoco.mjtObj.mjOBJ_SITE, s, v6, 0)
                 ends += [d.site_xpos[s].copy(), v6[3:].copy()]
-            out[jt.index] = dict(a=ends[0], va=ends[1], b=ends[2], vb=ends[3], length=np.float32(jt.length),
-                                 radius=np.float32(jt.radius), look=np.float32(jt.look), broken=np.float32(jt.broken))
-            if getattr(jt, 'post', None) is not None and jt.tid >= 0 and not jt.broken:
+            out[key] = dict(a=ends[0], va=ends[1], b=ends[2], vb=ends[3], length=np.float32(jt.length),
+                            radius=np.float32(jt.radius), look=np.float32(jt.look), broken=np.float32(jt.broken))
+            if jt.posts and jt.tid >= 0 and not jt.broken:
                 path = self._wrapped(jt)
                 if path is not None:
-                    out[jt.index]['path'] = path
+                    out[key]['path'] = path
         return out
 
     def _wrapped(self, jt):
-        """A rope's path round the post it wraps (MuJoCo's tendon path: its ends and where it meets and leaves the
-        post), the arc between those drawn round the post's side: points (m, 3), or None while it runs straight."""
+        """A rope's path round the posts and balls it goes round (MuJoCo's tendon path: its ends, where it meets and
+        leaves each one, and the sites between them), the arc between where it meets and leaves one drawn round its side:
+        points (m, 3), or None while it goes round none of them."""
+        import mujoco
         m, d = self.model, self.data
         adr, num = int(d.ten_wrapadr[jt.tid]), int(d.ten_wrapnum[jt.tid])
         pts = np.asarray(d.wrap_xpos[adr:adr + num], float).reshape(-1, 3)
-        if num < 4:
-            return None
-        # (the tendon's points: an end, the post's two tangent points, the other end; bodies move the post)
-        _name, ctr0, ax0, rad = jt.post
-        gid = int(m.geom(_name).id)
-        ctr = d.geom_xpos[gid].copy()
-        ax = d.geom_xmat[gid].reshape(3, 3)[:, 2] if ax0 is not None else None
-        p1, p2 = pts[1], pts[2]
-        r = rad + jt.radius
-        a1, a2 = p1 - ctr, p2 - ctr
-        if ax is not None:
-            h1, h2 = float(a1 @ ax), float(a2 @ ax)
-            a1, a2 = a1 - ax * h1, a2 - ax * h2
-        n1, n2 = a1 / max(np.linalg.norm(a1), 1e-9), a2 / max(np.linalg.norm(a2), 1e-9)
-        ang = math.acos(float(np.clip(n1 @ n2, -1.0, 1.0)))
-        k = max(2, int(math.ceil(ang / 0.15)))
-        arc = []
-        for s in np.linspace(0.0, 1.0, k + 1):
-            # (slerp round the post, the height along a cylinder's axis going linearly)
-            w = math.sin((1 - s) * ang) / max(math.sin(ang), 1e-9), math.sin(s * ang) / max(math.sin(ang), 1e-9)
-            dirn = n1 * w[0] + n2 * w[1] if ang > 1e-4 else n1
-            q = ctr + dirn / max(np.linalg.norm(dirn), 1e-9) * r
+        obj = np.asarray(d.wrap_obj[adr:adr + num], np.int64).ravel()
+        out, round_one, k = [pts[0]], False, 1
+        while k < num:
+            g = int(obj[k])
+            if g < 0 or k + 1 >= num or int(obj[k + 1]) != g:
+                out.append(pts[k])         # (a site: an end, or between two posts)
+                k += 1
+                continue
+            # (where it meets and leaves geom g: the arc between round its side; bodies move it)
+            round_one = True
+            ctr = d.geom_xpos[g].copy()
+            cyl = int(m.geom_type[g]) == mujoco.mjtGeom.mjGEOM_CYLINDER
+            ax = d.geom_xmat[g].reshape(3, 3)[:, 2] if cyl else None
+            r = float(m.geom_size[g][0]) + jt.radius
+            a1, a2 = pts[k] - ctr, pts[k + 1] - ctr
+            h1 = h2 = 0.0
             if ax is not None:
-                q = q + ax * ((1 - s) * h1 + s * h2)
-            arc.append(q)
-        return np.concatenate([pts[:1], np.asarray(arc), pts[3:4]])
+                h1, h2 = float(a1 @ ax), float(a2 @ ax)
+                a1, a2 = a1 - ax * h1, a2 - ax * h2
+            n1, n2 = a1 / max(np.linalg.norm(a1), 1e-9), a2 / max(np.linalg.norm(a2), 1e-9)
+            ang = math.acos(float(np.clip(n1 @ n2, -1.0, 1.0)))
+            steps = max(2, int(math.ceil(ang / 0.15)))
+            for s in np.linspace(0.0, 1.0, steps + 1):
+                # (slerp round the post, the height along a cylinder's axis going linearly)
+                w = math.sin((1 - s) * ang) / max(math.sin(ang), 1e-9), math.sin(s * ang) / max(math.sin(ang), 1e-9)
+                dirn = n1 * w[0] + n2 * w[1] if ang > 1e-4 else n1
+                q = ctr + dirn / max(np.linalg.norm(dirn), 1e-9) * r
+                if ax is not None:
+                    q = q + ax * ((1 - s) * h1 + s * h2)
+                out.append(q)
+            k += 2
+        return np.asarray(out) if round_one else None
 
     def _break(self):
         """Break the welds whose joint is overloaded (BREAK_STEPS steps running): pulled apart harder than its strength over
@@ -2343,11 +2689,19 @@ class Solids:
                 r['density'] = float(c['density'])
             shape = c['shape']
             size = np.abs(np.asarray(c['size'], float))
-            hull = None
+            hull = parts = None
             if shape == 'mesh':
                 hull = self._mesh_points(scene, c)
                 if hull is None or len(hull) < 4:
                     continue
+                # (as convex parts, so a bowl or a cup holds what is put in it; one that is convex, or nearly, as its hull)
+                parts, how, true_vol = mesh_parts(scene, c, size, hull) if not breaks(c) else (None, 'convex', 0.0)
+                if how == 'open':
+                    self.warnings.append(f'{c["name"]}: its mesh is not closed, so it falls as its convex hull (its outline '
+                                         'with its hollows filled in).')
+                elif how == 'filled':
+                    self.warnings.append(f'{c["name"]}: it is cut into {DECOMP_MOST} convex parts at most for the physics, so '
+                                         'some of its smaller hollows and dents are filled in.')
                 lo, hi = hull.min(0), hull.max(0)
                 vol = float(np.prod(hi - lo)) * 0.6
                 area = shape_area('box', 0.5 * (hi - lo))
@@ -2360,7 +2714,8 @@ class Solids:
             # that gets a fire going does not drop them); floating objects of older scenes are free from the start
             release = scene.start + float(c.get('release', 0.0)) * scene.fps if falls(c) else None
             bodies.append(Body(index=i, shape=shape, size=size, density=r['density'], friction=r['friction'],
-                               bounce=r['bounce'], volume=max(vol, 1e-9), area=area, hull=hull, release=release))
+                               bounce=r['bounce'], volume=max(vol, 1e-9), area=area, hull=hull, release=release, parts=parts,
+                               mesh_volume=true_vol if parts else 0.0))
         for i in idx:
             c = scene.colliders[i]
             if breaks(c) and i in by_index:
@@ -2372,10 +2727,10 @@ class Solids:
         dt = min(max(0.1 * smallest, MIN_DT), MAX_DT)
         # a spring's swing takes a dozen steps at least (its stiffness is integrated explicitly)
         for bd in bodies:
-            c = scene.colliders[bd.index]
-            if joined(c) == 'spring':
-                w_n = math.sqrt(max(float(c.get('spring_k', 500.0)), 1e-6) / max(bd.density * bd.volume, 1e-6))
-                dt = max(min(dt, 0.5 / w_n), MIN_DT)
+            for kind, cj in joint_specs(scene.colliders[bd.index]):
+                if kind == 'spring':
+                    w_n = math.sqrt(max(float(cj.get('spring_k', 500.0)), 1e-6) / max(bd.density * bd.volume, 1e-6))
+                    dt = max(min(dt, 0.5 / w_n), MIN_DT)
         spec.option.timestep = dt
         k = (0.6 / dt) ** 2   # as stiff as the step allows (about 0.6 radian of the contact's spring per step)
 
@@ -2443,8 +2798,16 @@ class Solids:
             elif cg.hollow > 0.0 and cg.shape == 'box':
                 parts = [('box', hs, p, None) for p, hs in self._hollow_slabs(size, float(cg.hollow), np.asarray(cg.opening, float),
                                                                             np.asarray(cg.opening_at, float))]
+            elif cg.hollow > 0.0 and cg.shape in ('cylinder', 'sphere'):
+                # a hollow cylinder or ball (a barrel, a pipe, a tank): its walls as convex tiles, its opening left open
+                for k_, pts in enumerate(self._hollow_tiles(cg.shape, size, float(cg.hollow), np.asarray(cg.opening, float),
+                                                            np.asarray(cg.opening_at, float))):
+                    ma = spec.add_mesh()
+                    ma.name = f'hollow{i}_{k_}'
+                    ma.uservert = pts.ravel().tolist()
+                    parts.append(('mesh', size, np.zeros(3), ma.name))
             elif cg.hollow > 0.0:
-                continue   # a hollow sphere or cylinder: only its walls for the fluids matter
+                continue   # a hollow mesh: only its walls for the fluids matter
             elif cg.shape == 'mesh':
                 src = scene.mesh_path(c['mesh'])
                 if src.split('#')[0].lower().endswith(('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.exr', '.bmp')) and i not in moving:
@@ -2506,17 +2869,19 @@ class Solids:
                     self._reh_geom[g.name] = bd.index
                 self._reh_frame[bd.index] = (None, None)
                 continue
-            mesh = None
-            if bd.shape == 'mesh':
-                mesh = f'body{n}'
-                ma = spec.add_mesh()
-                ma.name = mesh
-                ma.uservert = bd.hull.ravel().tolist()
-            g = fixed_geom(b, bd.shape, bd.size, mesh)
-            g.name = f'bodygeom{bd.index}'
-            g.density = float(bd.density)
-            g.priority = 1
-            contact(g, bd.friction, bd.bounce, roll=bd.shape in ('sphere', 'cylinder'))
+            # (a mesh: its convex parts, or its hull)
+            shapes = ([(f'body{n}_{kp}', pts) for kp, pts in enumerate(bd.parts)] if bd.parts else
+                      [(f'body{n}', bd.hull)] if bd.shape == 'mesh' else [(None, None)])
+            for kp, (mesh, pts) in enumerate(shapes):
+                if mesh is not None:
+                    ma = spec.add_mesh()
+                    ma.name = mesh
+                    ma.uservert = np.asarray(pts, float).ravel().tolist()
+                g = fixed_geom(b, bd.shape, bd.size, mesh)
+                g.name = f'bodygeom{bd.index}' if kp == 0 else f'bodygeom{bd.index}_{kp}'
+                g.density = float(bd.density)
+                g.priority = 1
+                contact(g, bd.friction, bd.bounce, roll=bd.shape in ('sphere', 'cylinder'))
             bd.fb = self._float_body(bd, cg)
         asms = self._build_assemblies(scene, spec, w, idx, by_index, contact)
         sets = [] if self.rehearsal else self._build_pieces(scene, spec, w, idx, by_index, contact, fixed_geom, k)
@@ -2543,14 +2908,26 @@ class Solids:
         self.snaps = []
         self._tendon0 = (m.tendon_limited.copy(), m.tendon_stiffness.copy(), m.tendon_damping.copy())
         self._contype0, self._conaff0 = m.geom_contype.copy(), m.geom_conaffinity.copy()   # (a piece burnt to ash meets nothing)
+        reweighed = False
         for n, bd in enumerate(bodies):
             bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, f'body{n}')
             bd.body_id = bid
             j = m.body_jntadr[bid]
             bd.qadr, bd.vadr = int(m.jnt_qposadr[j]), int(m.jnt_dofadr[j])
+            if bd.parts:
+                bd.planes = self._part_planes(bid)
+            ratio = bd.density * bd.mesh_volume / max(float(m.body_mass[bid]), 1e-12)
+            if MIN_REWEIGH <= ratio < 1.0:
+                # (a mesh in convex parts weighs what the mesh does: its parts overlap where they meet. Never more than
+                # they do, and a mesh measured as next to nothing (its faces wound every which way) as they do)
+                m.body_mass[bid] *= ratio
+                m.body_inertia[bid] *= ratio
+                reweighed = True
             bd.volume = max(float(m.body_mass[bid]) / max(bd.density, 1e-6), 1e-9)
             if bd.fb is not None:
                 bd.fb.volume = bd.volume
+        if reweighed:
+            mujoco.mj_setConst(m, self.data)
         # mocap ids follow the order the mocap bodies were added
         self.mocap = [(i, n) for n, i in enumerate(mocap)]
         self.bodies = bodies
@@ -2643,6 +3020,129 @@ class Solids:
         ax /= np.linalg.norm(ax)
         a = math.acos(c)
         return [math.cos(0.5 * a), *(ax * math.sin(0.5 * a))]
+
+    def _part_planes(self, bid):
+        """Body bid's convex parts (its mesh geoms, as MuJoCo hulls them) as planes in its own frame, for parts_distance:
+        (outward normals (k, 3), offsets (k,), where each part's planes start (p,), its box's low and high corners
+        (p, 3), and where its planes end (p,)), float32."""
+        import mujoco
+        m = self.model
+        N, D, starts, lo, hi = [], [], [], [], []
+        Rg = np.zeros(9)
+        for g in range(int(m.body_geomadr[bid]), int(m.body_geomadr[bid] + m.body_geomnum[bid])):
+            if int(m.geom_type[g]) != mujoco.mjtGeom.mjGEOM_MESH:
+                continue
+            mid = int(m.geom_dataid[g])
+            v = np.asarray(m.mesh_vert[m.mesh_vertadr[mid]:m.mesh_vertadr[mid] + m.mesh_vertnum[mid]], float)
+            f = np.asarray(m.mesh_face[m.mesh_faceadr[mid]:m.mesh_faceadr[mid] + m.mesh_facenum[mid]], np.int64)
+            mujoco.mju_quat2Mat(Rg, m.geom_quat[g])
+            v = v @ Rg.reshape(3, 3).T + m.geom_pos[g]
+            a, b, c = v[f[:, 0]], v[f[:, 1]], v[f[:, 2]]
+            n = np.cross(b - a, c - a)
+            ln = np.linalg.norm(n, axis=1)
+            keep = ln > 1e-12
+            n, a = n[keep] / ln[keep, None], a[keep]
+            n *= np.where(np.einsum('ij,ij->i', n, v[np.unique(f)].mean(0) - a) > 0.0, -1.0, 1.0)[:, None]   # (outward)
+            pl = np.unique(np.round(np.c_[n, np.einsum('ij,ij->i', n, a)], 7), axis=0)   # (a face of several triangles: once)
+            starts.append(sum(len(x) for x in N))
+            N.append(pl[:, :3])
+            D.append(pl[:, 3])
+            used = v[np.unique(f)]
+            lo.append(used.min(0))
+            hi.append(used.max(0))
+        starts = np.asarray(starts, np.int64)
+        return (np.concatenate(N).astype(np.float32), np.concatenate(D).astype(np.float32), starts,
+                np.asarray(lo, np.float32), np.asarray(hi, np.float32), np.append(starts[1:], sum(len(x) for x in N)))
+
+    @staticmethod
+    def _hollow_tiles(shape, size, t, opening, at):
+        """A hollow cylinder's or ball's walls (t thick inside its surface, as the fluids see it) as convex tiles in its
+        own frame: [points (k, 3)], each the corners of a tile (MuJoCo meets each as their hull). A cylinder: staves
+        round its side and wedges in its two ends; a ball: tiles of its shell between parallels and meridians. Their
+        facets are within a quarter of the wall's thickness of its curve (2 mm at least). Its opening is cut out of
+        them: staves are cut at its top and bottom, a tile its edge runs across is halved (round, along or both) until
+        it is no bigger than a quarter of the opening (1 cm at least), and those whose middle is in it are left out, so
+        a hatch smaller than a tile still opens, its edge within that of where it is."""
+        R = float(size[0])
+        t = float(np.clip(t, 1e-3, R))
+        o, at = np.abs(np.asarray(opening, float)), np.asarray(at, float)
+        has = bool(np.all(o > 1e-6))
+        tol = max(0.25 * t, 0.002)
+        n = int(np.clip(math.ceil(math.pi / math.acos(max(1.0 - tol / R, -1.0))), 12, 64))
+        lim = max(0.5 * float(np.sort(o)[1]), 0.01)
+
+        def touches(lo, hi):          # (the opening reaches into this box of its own frame)
+            return has and bool(np.all(at + o > lo) and np.all(at - o < hi))
+
+        def opened(q):
+            return np.all(np.abs(np.asarray(q, float) - at) < o, axis=-1)
+        out = []
+
+        def tiles(make, mid, u0, u1, v0, v1, depth=0):
+            """A patch of the wall between u0..u1 and v0..v1 (make: its tile's corners; mid: points of the wall's
+            middle there): halved where the opening's edge runs across it, else one tile (none if it is in it)."""
+            pts = np.unique(np.round(np.asarray(make(u0, u1, v0, v1), float), 9), axis=0)
+            if has and depth < 5 and touches(pts.min(0), pts.max(0)):
+                us, vs = np.linspace(u0, u1, 3), np.linspace(v0, v1, 3)
+                g = np.asarray([[mid(u, v) for v in vs] for u in us], float)
+                ins = opened(g)
+                # (halved across the opening's edge, each way it runs across it while the tile is longer that way than
+                # lim; a hole inside it, between where it was looked at: both ways)
+                long_u, long_v = float(np.linalg.norm(g[2, 1] - g[0, 1])) > lim, float(np.linalg.norm(g[1, 2] - g[1, 0])) > lim
+                edge_u, edge_v = bool(np.any(ins.min(0) != ins.max(0))), bool(np.any(ins.min(1) != ins.max(1)))
+                cut_u, cut_v = (long_u and edge_u, long_v and edge_v) if edge_u or edge_v else (long_u, long_v)
+                if not ins.all() and (cut_u or cut_v):
+                    for a_, b_ in ((u0, 0.5 * (u0 + u1)), (0.5 * (u0 + u1), u1)) if cut_u else ((u0, u1),):
+                        for c_, d_ in ((v0, 0.5 * (v0 + v1)), (0.5 * (v0 + v1), v1)) if cut_v else ((v0, v1),):
+                            tiles(make, mid, a_, b_, c_, d_, depth + 1)
+                    return
+            if len(pts) >= 4 and not (has and bool(opened(pts.mean(0)))):
+                out.append(pts)
+        th = 2.0 * math.pi * np.arange(n + 1) / n
+        if shape == 'cylinder':
+            H = float(size[1])
+            t_end = min(t, H)
+            side = touches(np.array([-R, -H, -R]), np.array([R, H, R])) and not np.all(np.abs(at[[0, 2]]) + o[[0, 2]] < R - t)
+            # (staves cut where the opening's top and bottom are, so a door in its side is a door)
+            ys = np.unique(np.clip([-H, H] + ([at[1] - o[1], at[1] + o[1]] if side else []), -H, H))
+
+            def stave(a0, a1, y0, y1):
+                am = 0.5 * (a0 + a1)
+                return ([(r * math.cos(a), y, r * math.sin(a)) for r in (R - t, R) for a in (a0, a1) for y in (y0, y1)]
+                        + [(R * math.cos(am), y, R * math.sin(am)) for y in (y0, y1)])
+
+            def on_side(a, y):
+                return ((R - 0.5 * t) * math.cos(a), y, (R - 0.5 * t) * math.sin(a))
+            for j in range(n):
+                for k in range(len(ys) - 1):
+                    tiles(stave, on_side, th[j], th[j + 1], ys[k], ys[k + 1])
+            for y0, y1 in ((-H, -H + t_end), (H - t_end, H)):
+                def wedge(a0, a1, r0, r1, y0=y0, y1=y1):
+                    am = 0.5 * (a0 + a1)
+                    return ([(r * math.cos(a), y, r * math.sin(a)) for r in (r0, r1) for a in (a0, a1) for y in (y0, y1)]
+                            + [(r1 * math.cos(am), y, r1 * math.sin(am)) for y in (y0, y1)])
+
+                def on_end(a, r, y=0.5 * (y0 + y1)):
+                    return (r * math.cos(a), y, r * math.sin(a))
+                for j in range(n):
+                    tiles(wedge, on_end, th[j], th[j + 1], 0.0, R)
+        else:
+            m_ = max(6, n // 2)
+            ph = np.linspace(-0.5 * math.pi, 0.5 * math.pi, m_ + 1)
+
+            def shell(a0, a1, p0, p1):
+                am, pm = 0.5 * (a0 + a1), 0.5 * (p0 + p1)
+                return ([(r * math.cos(p) * math.cos(a), r * math.sin(p), r * math.cos(p) * math.sin(a))
+                         for r in (R - t, R) for p in (p0, p1) for a in (a0, a1)]
+                        + [(R * math.cos(pm) * math.cos(am), R * math.sin(pm), R * math.cos(pm) * math.sin(am))])
+
+            def on_shell(a, p):
+                r = R - 0.5 * t
+                return (r * math.cos(p) * math.cos(a), r * math.sin(p), r * math.cos(p) * math.sin(a))
+            for i_ in range(m_):
+                for j in range(n):
+                    tiles(shell, on_shell, th[j], th[j + 1], ph[i_], ph[i_ + 1])
+        return out
 
     @staticmethod
     def _hollow_slabs(size, t, opening, at):
@@ -2985,7 +3485,10 @@ class Solids:
         d = self.data
         R = d.xmat[bid].reshape(3, 3)
         x = self._cloth['x'][idx]
-        dist, nl = shape_distance(bd.shape, bd.size, (x - d.xpos[bid]) @ R, bd.hull)
+        q = (x - d.xpos[bid]) @ R
+        # (a mesh in convex parts by those near each vertex, so cloth lies in a bowl; anything else by its shape)
+        dist, nl = (parts_distance(bd.planes, q, CLOTH_MARGIN) if bd.planes is not None else
+                    shape_distance(bd.shape, bd.size, q, bd.hull))
         pen = CLOTH_MARGIN - dist
         on = pen > 0.0
         if not on.any():
@@ -3459,10 +3962,13 @@ def attached(scene, kind, poses):
     return out
 
 
-def mesh_occupancy(v, t, lo, hi, cell):
+def mesh_occupancy(v, t, lo, hi, cell, shell=None):
     """Which cells of a grid over [lo, hi] (cells of `cell` m) are inside a closed triangle mesh: (nx, ny, nz) bools,
     from how many times a ray along z through each column crosses it below each cell's centre. None if the mesh
-    is open (a ray crosses it an odd number of times)."""
+    is open (a ray crosses it an odd number of times). With `shell` (each triangle's shell, _shells): the cells inside
+    any of its shells, each crossed by the ray its own number of times (a chair modelled as boxes that overlap is
+    inside where two do, where a ray through both crosses an even number of times), and how many cells are inside
+    each shell, summed (more than are inside any where they overlap): (occupancy, that count)."""
     dims = np.maximum(np.ceil((hi - lo) / cell - 1e-9).astype(int), 1)
     nx, ny, nz = (int(x) for x in dims)
     # (the rays pass a hair off the columns' centres, so none goes exactly through an edge or a corner)
@@ -3473,15 +3979,20 @@ def mesh_occupancy(v, t, lo, hi, cell):
     d = (b[:, 1] - c[:, 1]) * (a[:, 0] - c[:, 0]) + (c[:, 0] - b[:, 0]) * (a[:, 1] - c[:, 1])
     keep = np.abs(d) > 1e-18
     a, b, c, d = a[keep], b[keep], c[keep], d[keep]
+    lab = np.zeros(len(a), np.int64) if shell is None else np.asarray(shell, np.int64)[keep]
+    n_sh = int(lab.max()) + 1 if len(lab) else 1
+    span = (nz + 1) * cell
+    zn = (zs - lo[2]) / span
     x0, x1 = np.minimum(np.minimum(a[:, 0], b[:, 0]), c[:, 0]), np.maximum(np.maximum(a[:, 0], b[:, 0]), c[:, 0])
     y0, y1 = np.minimum(np.minimum(a[:, 1], b[:, 1]), c[:, 1]), np.maximum(np.maximum(a[:, 1], b[:, 1]), c[:, 1])
     occ = np.zeros((nx, ny, nz), bool)
-    odd = 0
+    odd = np.zeros(n_sh, np.int64)
+    counted = 0
     for ix, x in enumerate(xs):
         sx = (x0 <= x) & (x1 >= x)
         if not sx.any():
             continue
-        A, B, C, D, Y0, Y1 = a[sx], b[sx], c[sx], d[sx], y0[sx], y1[sx]
+        A, B, C, D, Y0, Y1, Lx = a[sx], b[sx], c[sx], d[sx], y0[sx], y1[sx], lab[sx]
         for iy, y in enumerate(ys):
             sy = (Y0 <= y) & (Y1 >= y)
             if not sy.any():
@@ -3493,12 +4004,25 @@ def mesh_occupancy(v, t, lo, hi, cell):
             hit = (l1 >= 0.0) & (l2 >= 0.0) & (l3 >= 0.0)
             if not hit.any():
                 continue
-            z = np.sort(l1[hit] * Ai[hit, 2] + l2[hit] * Bi[hit, 2] + l3[hit] * Ci[hit, 2])
-            odd += len(z) % 2
-            occ[ix, iy] = (np.searchsorted(z, zs) % 2) == 1
-    if odd > 0.02 * nx * ny + 2:
+            z = l1[hit] * Ai[hit, 2] + l2[hit] * Bi[hit, 2] + l3[hit] * Ci[hit, 2]
+            L = Lx[sy][hit]
+            if n_sh == 1:
+                z.sort()
+                odd[0] += len(z) % 2
+                occ[ix, iy] = (np.searchsorted(z, zs) % 2) == 1
+                continue
+            # (each shell's crossings in order, the shells one after another: how many of its own are below each cell)
+            key = np.sort(L + np.clip((z - lo[2]) / span, 0.0, 1.0 - 1e-9))
+            Ls, n_per = np.unique(L, return_counts=True)
+            odd[Ls] += n_per % 2
+            ins = (np.searchsorted(key, Ls[:, None] + zn[None]) - np.searchsorted(key, Ls)[:, None]) % 2 == 1
+            occ[ix, iy] = ins.any(0)
+            counted += int(np.count_nonzero(ins))
+    if (odd > 0.02 * nx * ny + 2).any():
         return None
-    return occ
+    if shell is None:
+        return occ
+    return occ, (counted if n_sh > 1 else int(np.count_nonzero(occ)))
 
 
 def greedy_boxes(occ):
@@ -3527,3 +4051,336 @@ def greedy_boxes(occ):
                 occ[x:x1 + 1, y:y1 + 1, z:z1 + 1] = False
                 out.append((int(x), y, z, int(x1), y1, z1))
     return out
+
+
+def _fibonacci_dirs(n):
+    """n directions spread evenly over a half sphere (+y side; a direction and its opposite are one plane pair)."""
+    k = np.arange(n) + 0.5
+    phi = np.arccos(1.0 - k / n)
+    theta = math.pi * (1.0 + 5.0 ** 0.5) * k
+    return np.stack([np.cos(theta) * np.sin(phi), np.cos(phi), np.sin(theta) * np.sin(phi)], -1)
+
+
+DECOMP_CELLS = 32       # a falling mesh is cut into convex parts on a grid this many cells across its longest side
+DECOMP_MOST = 128       # into at most this many (MuJoCo meets each as its convex hull: a 30 cm bowl takes about 120)
+DECOMP_EMPTY = 0.05     # a part's outline may take in empty cells up to this share of its own cells (and DECOMP_SLACK):
+DECOMP_SLACK = 2        # what it bridges of the mesh's hollows and dents
+_KDOP = np.array([(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0), (1, -1, 0), (1, 0, 1), (1, 0, -1), (0, 1, 1), (0, 1, -1),
+                  (1, 1, 1), (1, 1, -1), (1, -1, 1), (-1, 1, 1)], float)
+_KDOP /= np.linalg.norm(_KDOP, axis=1)[:, None]
+_KDOP = np.concatenate([_KDOP, _fibonacci_dirs(64)])     # (and 64 more, so an outline hugs a curved part: 154 planes)
+_PARTS = {}
+PARTS_VERSION = 1       # the disk cache of convex parts: raise when convex_parts cuts differently
+MIN_REWEIGH = 0.1       # a mesh in convex parts weighs its own volume's worth if that is at least this share of theirs
+DECOMP_CONVEX = 0.97    # a mesh of one shell that fills this share of its hull at least falls as its hull, uncut
+
+
+def _shells(t):
+    """Which shell (triangles that share vertices, apart from the rest) each of a mesh's triangles t (k, 3) is in:
+    (k,) ints counting from 0."""
+    t = np.asarray(t, np.int64).reshape(-1, 3)
+    if not len(t):
+        return np.zeros(0, np.int64)
+    root = np.arange(int(t.max()) + 1)
+    e = np.concatenate([t[:, :2], t[:, 1:]])
+    while True:
+        # (each root hooked onto the least root it shares an edge with, then every vertex pointed straight at its root)
+        a, b = root[e[:, 0]], root[e[:, 1]]
+        if np.array_equal(a, b):
+            break
+        least = np.minimum(a, b)
+        np.minimum.at(root, a, least)
+        np.minimum.at(root, b, least)
+        while True:
+            nxt = root[root]
+            if np.array_equal(nxt, root):
+                break
+            root = nxt
+    return np.unique(root[t[:, 0]], return_inverse=True)[1].ravel()
+
+
+def mesh_volume(v, t, shell=None):
+    """The space a closed mesh takes up (m^3): each shell's own (however its faces are wound: one inside out counts as
+    much as the right way out), summed."""
+    v = np.asarray(v, float)
+    t = np.asarray(t, np.int64).reshape(-1, 3)
+    if not len(t):
+        return 0.0
+    signed = np.einsum('ij,ij->i', v[t[:, 0]], np.cross(v[t[:, 1]], v[t[:, 2]]))
+    shell = np.zeros(len(t), np.int64) if shell is None else shell
+    return float(np.abs(np.bincount(shell, weights=signed)).sum()) / 6.0
+
+
+def hull_volume(points):
+    """The volume of points' convex hull (m^3), as MuJoCo hulls a mesh."""
+    import mujoco
+    spec = mujoco.MjSpec()
+    me = spec.add_mesh()
+    me.name = 'hull'
+    me.uservert = np.asarray(points, float).ravel().tolist()
+    g = spec.worldbody.add_body().add_geom()
+    g.type = mujoco.mjtGeom.mjGEOM_MESH
+    g.meshname = 'hull'
+    g.density = 1.0
+    try:
+        return float(spec.compile().body_mass[1])
+    except ValueError:
+        return 0.0
+
+
+def convex_parts(v, t, cells=DECOMP_CELLS, most=DECOMP_MOST, shell=None):
+    """A closed mesh (vertices v, triangles t, its own frame, m) as convex parts that together are its shape with its
+    hollows open (a bowl's inside, a cup's, the gap between a chair's legs), as V-HACD cuts one: on a grid of `cells`
+    across, the cells inside it and those its surface runs through, merged into boxes (greedy_boxes), then neighbouring
+    parts merged, the cheapest first, while the outline of the two together (154 planes round them) takes in next to no
+    empty cells. shell: each triangle's shell (_shells), if known. Returns ([points (k, 3) whose convex hull is each
+    part], whether it took more than `most` parts and had to fill some hollows in, the space the mesh takes up (m^3):
+    each shell's, less what they share), or (None, False, 0.0) if the mesh is open (a ray through it crosses it an odd
+    number of times)."""
+    import heapq
+    v = np.asarray(v, float)
+    t = np.asarray(t, np.int64).reshape(-1, 3)
+    if len(t) == 0:
+        return None, False, 0.0
+    lo, hi = v.min(0), v.max(0)
+    cell = float(np.max(hi - lo)) / cells
+    if cell <= 0.0:
+        return None, False, 0.0
+    # (inside any of its closed shells: a chair modelled as boxes that overlap is inside where two do)
+    shell = _shells(t) if shell is None else shell
+    got = mesh_occupancy(v, t, lo, hi, cell, shell)
+    if got is None or not got[0].any():
+        return None, False, 0.0
+    inside, counted = got
+    volume = max(mesh_volume(v, t, shell) - (counted - int(np.count_nonzero(inside))) * cell ** 3, 0.0)
+    dims = np.array(inside.shape)
+    # its surface: points over every triangle a third of a cell apart at most, marking the cells it runs through (a
+    # triangle smaller than that, as in a detailed mesh: its corners, the vertices, once each, and its middle, which
+    # faces the way it does)
+    a, b, c = v[t[:, 0]], v[t[:, 1]], v[t[:, 2]]
+    edge = np.max(np.stack([np.linalg.norm(b - a, axis=1), np.linalg.norm(c - b, axis=1), np.linalg.norm(a - c, axis=1)]), 0)
+    m_ = np.clip(np.ceil(edge / (cell / 3.0)), 1, 64).astype(int)
+    nrm = np.cross(b - a, c - a)
+    nrm /= np.maximum(np.linalg.norm(nrm, axis=1), 1e-18)[:, None]
+    surf, surf_n = [v], [np.zeros_like(v)]
+    for mm in np.unique(m_[m_ > 1]):
+        sel = m_ == mm
+        i_, j_ = np.nonzero(np.add.outer(np.arange(mm + 1), np.arange(mm + 1)) <= mm)
+        u, w = i_ / mm, j_ / mm
+        surf.append((a[sel, None] * (1.0 - u - w)[None, :, None] + b[sel, None] * u[None, :, None]
+                     + c[sel, None] * w[None, :, None]).reshape(-1, 3))
+        surf_n.append(np.repeat(nrm[sel], len(u), axis=0))
+    one = m_ == 1
+    surf.append((a[one] + b[one] + c[one]) / 3.0)
+    surf_n.append(nrm[one])
+    surf, surf_n = np.concatenate(surf), np.concatenate(surf_n)
+    del a, b, c, nrm
+    s_ijk = np.clip(np.floor((surf - lo) / cell).astype(int), 0, dims - 1)
+    occ = inside.copy()
+    occ[s_ijk[:, 0], s_ijk[:, 1], s_ijk[:, 2]] = True
+    ids = np.full(occ.shape, -1, np.int64)
+    cells_ijk = np.argwhere(occ)
+    ids[tuple(cells_ijk.T)] = np.arange(len(cells_ijk))
+    # each cell's points: its corners if it is deep inside (its six neighbours' middles inside too), its middle if it is
+    # inside, and the surface's points in it (so a part reaches the mesh's surface, not past it to its cells' corners)
+    pad = np.pad(inside, 1)
+    deep = inside & pad[2:, 1:-1, 1:-1] & pad[:-2, 1:-1, 1:-1] & pad[1:-1, 2:, 1:-1] & pad[1:-1, :-2, 1:-1] \
+        & pad[1:-1, 1:-1, 2:] & pad[1:-1, 1:-1, :-2]
+    corners = np.array([(x, y, z) for x in (0, 1) for y in (0, 1) for z in (0, 1)], float)
+    d_ijk = np.argwhere(deep)
+    mid_ijk = np.argwhere(inside & ~deep)
+    pts = np.concatenate([(lo + (d_ijk[:, None, :] + corners[None]) * cell).reshape(-1, 3), lo + (mid_ijk + 0.5) * cell, surf])
+    owner = np.concatenate([np.repeat(ids[tuple(d_ijk.T)], 8), ids[tuple(mid_ijk.T)], ids[tuple(s_ijk.T)]])
+    n = len(cells_ijk)
+    order = np.argsort(owner, kind='stable')         # (each cell's points together: every cell has one at least)
+    pts, owner = pts[order], owner[order]
+    starts = np.searchsorted(owner, np.arange(n + 1))
+    # how far each cell's points reach along the directions (an outline's planes), a few thousand points at a time;
+    # and of its points only those furthest out along one of them, all any outline of them needs
+    kdop = _KDOP.T.astype(np.float32)
+    kmin, kmax = np.empty((n, len(_KDOP)), np.float32), np.empty((n, len(_KDOP)), np.float32)
+    keep = np.zeros(len(pts), bool)
+    c0 = 0
+    while c0 < n:
+        c1 = min(max(int(np.searchsorted(starts, starts[c0] + 20000, 'right')) - 1, c0 + 1), n)
+        p0, p1 = starts[c0], starts[c1]
+        proj = pts[p0:p1].astype(np.float32) @ kdop
+        cnt = np.diff(starts[c0:c1 + 1])
+        kmin[c0:c1] = np.minimum.reduceat(proj, starts[c0:c1] - p0)
+        kmax[c0:c1] = np.maximum.reduceat(proj, starts[c0:c1] - p0)
+        keep[p0:p1] = ((proj == np.repeat(kmin[c0:c1], cnt, 0)) | (proj == np.repeat(kmax[c0:c1], cnt, 0))).any(1)
+        c0 = c1
+    pts, owner = pts[keep], owner[keep]
+    starts = np.searchsorted(owner, np.arange(n + 1))
+    centre_proj = ((lo + (np.argwhere(np.ones(occ.shape, bool)) + 0.5) * cell).astype(np.float32) @ kdop)
+    centre_proj = centre_proj.reshape(*occ.shape, len(_KDOP))
+    margin = 0.25 * cell
+    # just outside the surface, half a cell off it (one point for each cell it runs through, on the side whose cells
+    # are not inside): an outline that takes one in reaches that far past the surface, as an empty cell's middle does
+    # (one for every cell, however finely the mesh is cut: as detailed a bowl is cut into as many parts)
+    wn = np.flatnonzero(np.linalg.norm(surf_n, axis=1) > 0.5)
+    first = wn[np.unique(np.ravel_multi_index(tuple(s_ijk[wn].T), occ.shape), return_index=True)[1]]
+
+    def is_in(q):
+        k = np.floor((q - lo) / cell).astype(int)
+        ok = np.all((k >= 0) & (k < dims), axis=1)
+        out = np.zeros(len(q), bool)
+        out[ok] = inside[tuple(np.clip(k[ok], 0, dims - 1).T)]
+        return out
+    sp, sn = surf[first], surf_n[first]
+    up_in, down_in = is_in(sp + 0.75 * cell * sn), is_in(sp - 0.75 * cell * sn)
+    side = np.where(down_in & ~up_in, 1.0, np.where(up_in & ~down_in, -1.0, 0.0))
+    probe = (sp + (side * cell / 2.0)[:, None] * sn)[side != 0.0]
+    probe_proj = (probe @ _KDOP.T).astype(np.float32)
+
+    def empty_in(mn, mx):
+        """How many empty cells' middles, and points just outside the surface, lie inside the outline (154 planes) mn, mx."""
+        i0 = np.clip(np.floor((mn[:3] - lo) / cell).astype(int), 0, dims - 1)
+        i1 = np.clip(np.floor((mx[:3] - lo) / cell).astype(int), 0, dims - 1)
+        reg = tuple(slice(int(p), int(q) + 1) for p, q in zip(i0, i1))
+        e = ~occ[reg]
+        n_e = 0
+        if e.any():
+            cp = centre_proj[reg][e]
+            n_e = int(np.count_nonzero(np.all((cp > mn + margin) & (cp < mx - margin), axis=1)))
+        near = np.all((probe_proj[:, :3] > mn[:3]) & (probe_proj[:, :3] < mx[:3]), axis=1)
+        if near.any():
+            pp = probe_proj[near]
+            n_e += int(np.count_nonzero(np.all((pp > mn) & (pp < mx), axis=1)))
+        return n_e
+
+    # the parts to start from: boxes of filled cells (a box along a curved wall halved until its outline keeps to the
+    # wall), and which touch which
+    label = np.full(occ.shape, -1, np.int64)
+    parts = []
+    boxes = [np.array(bx) for bx in greedy_boxes(occ)]
+    while boxes:
+        bx = boxes.pop()
+        cl = ids[bx[0]:bx[3] + 1, bx[1]:bx[4] + 1, bx[2]:bx[5] + 1].ravel()
+        mn, mx = kmin[cl].min(0), kmax[cl].max(0)
+        span = bx[3:] - bx[:3]
+        if span.max() > 0 and empty_in(mn, mx) > DECOMP_SLACK + DECOMP_EMPTY * len(cl):
+            ax_ = int(np.argmax(span))
+            cut = int(bx[ax_] + span[ax_] // 2)
+            lo_b, hi_b = bx.copy(), bx.copy()
+            lo_b[3 + ax_], hi_b[ax_] = cut, cut + 1
+            boxes += [lo_b, hi_b]
+            continue
+        label[bx[0]:bx[3] + 1, bx[1]:bx[4] + 1, bx[2]:bx[5] + 1] = len(parts)
+        parts.append(dict(cells=[cl], n=len(cl), mn=mn, mx=mx, nb=set(), ver=0, alive=True))
+    for axis in range(3):
+        A = np.moveaxis(label, axis, 0)
+        p, q = A[:-1].ravel(), A[1:].ravel()
+        sel = (p >= 0) & (q >= 0) & (p != q)
+        for x, y in set(zip(p[sel].tolist(), q[sel].tolist())):
+            parts[x]['nb'].add(y)
+            parts[y]['nb'].add(x)
+
+    def edge_key(x, y):
+        A, B_ = parts[x], parts[y]
+        e = empty_in(np.minimum(A['mn'], B_['mn']), np.maximum(A['mx'], B_['mx']))
+        size = A['n'] + B_['n']
+        return (0 if e <= DECOMP_SLACK + DECOMP_EMPTY * size else 1, e / size, size)
+
+    heap = []
+    for x, P_ in enumerate(parts):
+        for y in P_['nb']:
+            if x < y:
+                heapq.heappush(heap, (*edge_key(x, y), x, y, 0, 0))
+    alive = len(parts)
+    filled = False
+    while heap:
+        bad, _cost, _size, x, y, vx, vy = heapq.heappop(heap)
+        A, B_ = parts[x], parts[y]
+        if not (A['alive'] and B_['alive']) or A['ver'] != vx or B_['ver'] != vy:
+            continue
+        if bad and alive <= most:
+            break
+        filled |= bool(bad)
+        A['cells'] += B_['cells']          # (y into x)
+        A['n'] += B_['n']
+        A['mn'], A['mx'] = np.minimum(A['mn'], B_['mn']), np.maximum(A['mx'], B_['mx'])
+        A['nb'] = (A['nb'] | B_['nb']) - {x, y}
+        A['ver'] += 1
+        B_['alive'] = False
+        alive -= 1
+        for z in A['nb']:
+            parts[z]['nb'].discard(y)
+            parts[z]['nb'].add(x)
+            u_, w_ = (x, z) if x < z else (z, x)
+            heapq.heappush(heap, (*edge_key(u_, w_), u_, w_, parts[u_]['ver'], parts[w_]['ver']))
+    # each part's points, cut down to those its outline needs (the furthest out along many directions)
+    dirs = np.concatenate([_KDOP, -_KDOP])
+    out = []
+    for P_ in parts:
+        if not P_['alive']:
+            continue
+        cl = np.concatenate(P_['cells'])
+        # (the cells furthest out along each direction, and of their points those furthest out)
+        far = np.unique(np.concatenate([cl[np.argmax(kmax[cl], 0)], cl[np.argmin(kmin[cl], 0)]]))
+        q = pts[np.concatenate([np.arange(starts[k], starts[k + 1]) for k in far])]
+        q = q[np.unique(np.argmax(q @ dirs.T, axis=0))]
+        if len(q) < 4 or np.linalg.svd(q - q.mean(0), compute_uv=False)[-1] < 1e-3 * cell:
+            # (flat, or too few points for a solid: its cells as they are)
+            q = (lo + (cells_ijk[cl][:, None, :] + corners[None]) * cell).reshape(-1, 3)
+            q = q[np.unique(np.argmax(q @ dirs.T, axis=0))]
+        out.append(q)
+    return out, filled, volume
+
+
+def _parts_file(scene, c, size):
+    """Where a mesh's convex parts are kept between sessions (beside the baked meshes), or None."""
+    import hashlib
+    from pathlib import Path
+    from .mesh import cache_dir, split_source
+    try:
+        f, prim = split_source(scene.mesh_path(c['mesh']))
+        extra = f'{prim}|{[round(float(x), 6) for x in np.abs(np.asarray(size, float))]}|{DECOMP_CELLS},{DECOMP_MOST}'
+        h = hashlib.sha1(Path(f).read_bytes() + extra.encode()).hexdigest()[:20]
+    except (OSError, ValueError, KeyError):
+        return None
+    return cache_dir() / f'{h}_parts_v{PARTS_VERSION}.npz'
+
+
+def mesh_parts(scene, c, size, hull=None):
+    """A falling mesh collider's convex parts (convex_parts), kept in memory and on disk (cutting a detailed mesh takes
+    a second or so): (points [(k, 3)] or None, how: 'parts'; 'filled' (more than DECOMP_MOST parts were needed, so some
+    hollows are filled in); 'convex' (it fills its hull, `hull` its points, all but DECOMP_CONVEX: it falls as that,
+    uncut); 'open' (or unreadable: it falls as its hull), and the space it takes up (m^3))."""
+    mesh, key = mesh_of(scene, c, size)
+    if mesh is None:
+        return None, 'open', 0.0
+    got = _PARTS.get(key)
+    if got is not None:
+        return got
+    f = _parts_file(scene, c, size)
+    try:
+        if f is not None and f.exists():
+            with np.load(f) as z:     # (closed again: a file held open on Windows cannot be replaced or cleared)
+                parts = np.split(z['points'], z['splits']) if len(z['points']) else None
+                got = (parts, str(z['how']), float(z['volume']))
+    except Exception:  # (a damaged cache just means cutting it again)
+        got = None
+    if got is None:
+        v, t = mesh
+        shell = _shells(t)
+        volume = mesh_volume(v, t, shell)
+        if shell.max(initial=0) == 0 and hull is not None and volume >= DECOMP_CONVEX * hull_volume(hull):
+            got = (None, 'convex', volume)
+        else:
+            parts, filled, volume = convex_parts(v, t, shell=shell)
+            got = (parts, 'open' if parts is None else 'filled' if filled else 'parts', volume)
+        if f is not None:
+            try:
+                f.parent.mkdir(parents=True, exist_ok=True)
+                tmp = f.with_suffix('.tmp.npz')
+                pts = np.concatenate(got[0]) if got[0] else np.zeros((0, 3))
+                splits = np.cumsum([len(p) for p in got[0]])[:-1] if got[0] else np.zeros(0, np.int64)
+                np.savez_compressed(tmp, points=pts, splits=splits, how=np.array(got[1]), volume=np.array(got[2]))
+                tmp.replace(f)
+            except OSError:
+                pass
+    if len(_PARTS) > 16:
+        _PARTS.clear()
+    _PARTS[key] = got
+    return got

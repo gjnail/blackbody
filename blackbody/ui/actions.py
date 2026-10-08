@@ -329,15 +329,16 @@ JOINT_ACTIONS = [('rope', 'Hang it on a rope', 'From a point 1.5 m above it: it 
                  ('ball', 'Put it on a ball joint', 'It swings any way about a point at its top')]
 
 
-def add_joint(win, i, kind, to=None, on=True):
-    """Hang object i on a rope or a spring, or hinge it (to object `to`, or to a fixed point); on=False takes it off."""
+def add_joint(win, i, kind, to=None, on=True, more=False):
+    """Hang object i on a rope or a spring, or hinge it (to object `to`, or to a fixed point); more=True adds it beside
+    the joints it has; on=False takes them off."""
     doc = win.doc
     d = doc.scene.colliders[i]
     other = doc.scene.colliders[to]['name'] if to is not None else None
     out = {}
 
     def fn(s):
-        out['notes'] = C.add_joint(s, i, kind=kind, to=to, on=on)
+        out['notes'] = C.add_joint(s, i, kind=kind, to=to, on=on, more=more)
     what = {'rope': 'on a rope', 'spring': 'on a spring', 'hinge': 'on a hinge', 'ball': 'on a ball joint'}.get(kind, '')
     doc.edit(f'{d["name"]} {what}' if on else f'Take {d["name"]} off its joint', fn)
     notes = ' '.join(out.get('notes') or [])
@@ -610,15 +611,17 @@ def fill_menu(m: QMenu, win, sel, path_mode=None):
         joined = d.get('joint', 'none') not in (None, 'none')
         if joined:
             act('Take it off its joint', lambda: add_joint(win, i, d.get('joint'), on=False), 'It falls freely', 'stop')
+            act('Hang it on another rope', lambda: add_joint(win, i, 'rope', more=True),
+                'A second rope from its other end, beside the joint it has: a swing seat, a plank on two ropes', 'line')
         else:
             for key, label, tip in JOINT_ACTIONS:
                 act(label, lambda k=key: add_joint(win, i, k), tip, 'line')
         others = [(j, x['name']) for j, x in enumerate(sc.colliders) if j != i]
         if others:
-            for key, label in (('rope', 'Tie it with a rope to'), ('hinge', 'Hinge it to')):
+            for key, label in (('rope', 'Tie it with another rope to' if joined else 'Tie it with a rope to'), ('hinge', 'Hinge it to')):
                 sub = m.addMenu(icons.glyph_icon('line', theme.MUTED, 16), label)
                 for j, name in others:
-                    sub.addAction(name, lambda k=key, j=j: add_joint(win, i, k, to=j))
+                    sub.addAction(name, lambda k=key, j=j: add_joint(win, i, k, to=j, more=joined))
         if d.get('breakable'):
             act('Stop it breaking', lambda: make_breakable(win, i, on=False), 'It stays whole', 'stop')
         else:

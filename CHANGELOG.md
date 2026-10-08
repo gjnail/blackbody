@@ -8,6 +8,12 @@ Notable changes to Blackbody. The format follows
 
 ### Added
 
+- Build more with joints and ropes: an object can have several joints (*More joints*: a plank hung level from two
+  ropes, a swing on two ropes), a rope goes over several posts and pulleys (found by itself, or named in *Goes over*)
+  and can have weight (*Has weight*: it hangs in its own curve, drapes over what it meets and holds on a post by
+  friction), and chains give way where they are tied. New blocks: Swing on two ropes, Rope over two pulleys, Rope
+  bridge. A falling mesh collides by its own shape (a bowl holds a ball), and fixed hollow barrels, pipes and balls
+  are hollow to falling things too.
 - Scenes fit the GPU's memory before anything is made: Blackbody reads the card's memory, estimates what a scene
   needs, and steps Detail upres and then the voxels down with a notice saying what it cut, instead of failing part
   way through. If the GPU still runs out, or its driver resets, the app starts its engine again on its own and carries

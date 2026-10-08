@@ -137,6 +137,14 @@ def _check_value(p, text):
         want = 1 if p.kind in ('float', 'int') else 3
         if len(nums) != want:
             raise ValueError(f'"{text}" is not {"a number" if want == 1 else "three numbers"}')
+    elif p.kind == 'list':
+        import json
+        try:
+            v = json.loads(t) if t else []
+        except ValueError:
+            v = None
+        if not isinstance(v, list) or not all(isinstance(e, dict) for e in v):
+            raise ValueError(f'"{text}" is not a JSON list of settings, e.g. [{{"joint": "rope", "joint_at": [0.4, 0, 0]}}]')
     return t
 
 
@@ -343,11 +351,15 @@ def cmd_settings(args):
                 rng = f'{p.lo:g} to {p.hi:g}' + (f' {p.unit}' if p.unit else '')
             elif p.kind == 'file':
                 rng = 'path to an OBJ or STL file'
+            elif p.kind == 'list':
+                rng = 'JSON list of joint settings'
             else:
                 rng = '"x y z"' + (f' {p.unit}' if p.unit else '')
             d = p.default
             if isinstance(d, bool):
                 d = 'true' if d else 'false'
+            elif p.kind == 'list':
+                d = '[]'
             elif isinstance(d, tuple):
                 d = ' '.join(f'{x:g}' for x in d)
             elif isinstance(d, float):

@@ -15,7 +15,7 @@ from .materials import OPTIONS as MATERIAL_OPTIONS
 class Param:
     key: str
     label: str
-    kind: str = 'float'        # float, int, bool, enum, color, vec3, str, file
+    kind: str = 'float'        # float, int, bool, enum, color, vec3, str, file, list (of settings dicts: not shown)
     default: object = 0.0
     lo: float = 0.0            # slider range
     hi: float = 1.0
@@ -839,9 +839,16 @@ COLLIDER_PARAMS = [
     F('rope_length', 'Rope length', 0.0, 0.0, 100.0, 'm', 2, tip='How long the rope is (a spring: how long it is at rest). '
       '0: as long as it is from end to end at the start.', group='Joint'),
     E('rope_look', 'Rope is', 'rope', (('rope', 'Rope'), ('cable', 'Steel cable'), ('chain', 'Chain')),
-      tip='What the rope is: a rope or a steel cable (weightless, wrapping round a post or a ball in its way), or a chain '
-      'of steel links that weigh what they do and catch on, drape over and pile on what they meet.',
+      tip='What the rope is: a rope or a steel cable (weightless unless it Has weight, going round the posts and balls in its '
+      'way), or a chain of steel links that weigh what they do and catch on, drape over and pile on what they meet.',
       group='Joint'),
+    B('rope_heavy', 'Has weight', False, tip='The rope or steel cable weighs what it does (a 25 mm rope about 0.4 kg a '
+      'metre): it is links of rope that hang in their own curve, drape over, catch on and go round whatever they meet, as a '
+      'chain does. Off: a weightless line that goes round the posts and balls in its way.', group='Joint'),
+    Param('rope_over', 'Goes over', 'str', '', tip='The names of the posts or balls (cylinders or spheres) the rope goes over, in '
+          'order from this object, separated by commas: a pulley, two bars of a gallows, the branches it is thrown over. '
+          'Empty: those in its way that it hangs over, as far as its length lets it reach over them (never one beside or '
+          'under it). none: no posts at all.', group='Joint'),
     F('rope_thickness', 'Thickness', 0.025, 0.002, 0.2, 'm', 3, tip='How thick the rope, or the spring’s wire, is.',
       group='Joint'),
     F('spring_k', 'Spring stiffness', 500.0, 1.0, 1.0e6, 'N/m', 0, tip='How hard the spring pulls per metre it is stretched.',
@@ -855,6 +862,9 @@ COLLIDER_PARAMS = [
       'turntable. It pushes against what it is joined to. 0: no motor.', group='Joint'),
     F('motor_torque', 'Motor strength', 50.0, 0.0, 1.0e5, 'N·m', 1, tip='The most turning force the motor has. Too little '
       'and it stalls under its load (a wheel on a slope, a fan in water).', group='Joint', log=True),
+    Param('joints', 'More joints', 'list', (), tip='Further joints, each a rope, a spring, a hinge or a ball joint of its own: '
+          'a plank on two ropes, a bridge of planks tied to each other, a lid with a hinge and a catch. Each gives its own '
+          'settings (joint, joint_to, joint_at, joint_anchor and so on) and takes the rest from the ones above.', group='Joint'),
     B('floating', 'Floats', False, tip='The liquid moves it: it floats or sinks by its density, bobs, drifts with the flow, tips and '
       'turns. Falls does the same, and also lets it fall through the air. Its keyframes set only where it starts.', group='Liquid'),
 ]
@@ -1228,4 +1238,14 @@ def coerce(p: Param, value):
         return (v + tuple(p.default))[:3] if len(v) < 3 else v[:3]
     if p.kind in ('str', 'file'):
         return '' if value is None else str(value)
+    if p.kind == 'list':   # (a list of settings dicts: an object's More joints; from JSON, a list or its text)
+        if isinstance(value, str):
+            import json
+            try:
+                value = json.loads(value) if value.strip() else []
+            except ValueError:
+                return tuple(p.default)
+        if not isinstance(value, (list, tuple)):
+            return tuple(p.default)
+        return tuple(dict(e) for e in value if isinstance(e, dict))
     return value

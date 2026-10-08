@@ -313,8 +313,10 @@ def test_a_rope_goes_over_a_post_and_holds_what_hangs_from_it():
     ys = np.array([o[1]['pos'][1] for o, _r in poses])
     assert ys.min() > 0.4                                    # held up by the rope over the post (not dropped)
     assert xs.min() < -0.3 and xs.max() > 0.2                # swinging under it
-    path = S.rope_poses()[1]['path']
-    assert path[:, 1].max() > 2.05                           # and the rope is drawn over its top
+    for _o, r in poses:                                      # and the rope is drawn over it every frame, never through it
+        path = r[1]['path']
+        q = np.concatenate([np.linspace(a, b, 20) for a, b in zip(path[:-1], path[1:])])
+        assert path[:, 1].max() > 2.02 and np.hypot(q[:, 0], q[:, 1] - 2.0).min() > 0.08
 
 
 def test_a_chain_hangs_with_its_weight_and_holds_its_load():
@@ -331,3 +333,311 @@ def test_a_chain_hangs_with_its_weight_and_holds_its_load():
     m = S.model
     chain_mass = sum(float(m.body_mass[b]) for b in S.joints[0].link_ids)
     assert 2.5 < chain_mass < 4.5                             # 12 mm chain: about 2.9 kg a metre
+
+
+# ---- several joints on one object, ropes over several posts, ropes with weight ---------------------------------------
+
+def _tilt(quat):
+    return math.degrees(math.acos(min(1.0, float(_rotation(quat)[1, 1]))))
+
+
+def test_a_plank_hangs_level_from_two_ropes():
+    from blackbody.engine.solids import JOINT_SLOT
+    plank = dict(name='Plank', shape='box', position=(0.0, 2.5, 0.0), size=(0.9, 0.03, 0.15), material='wood', joint='rope',
+                 joint_at=(-0.8, 0.03, 0.0), joint_anchor=(-0.8, 4.5, 0.0),
+                 joints=[dict(joint='rope', joint_at=(0.8, 0.03, 0.0), joint_anchor=(0.8, 4.5, 0.0))])
+    S, out = run(scene_of(plank, fps=50), 3.0)
+    assert not S.warnings and [(jt.kind, jt.slot) for jt in S.joints] == [('rope', 0), ('rope', 1)]
+    assert max(_tilt(o[0]['quat']) for o, _ in out) < 0.5                      # level, end to end
+    assert max(abs(o[0]['pos'][1] - 2.5) for o, _ in out) < 0.005             # held where it hangs
+    ropes = out[-1][1]
+    assert sorted(ropes) == [0, JOINT_SLOT]                                     # both drawn
+    for r in ropes.values():
+        assert abs(float(np.linalg.norm(r['a'] - r['b'])) - 1.97) < 0.01         # each taut at its length
+    # (on its first rope alone it swings down from that end toward hanging on end)
+    one = dict(plank, joints=[])
+    S1, out1 = run(scene_of(one, fps=50), 3.0)
+    assert max(_tilt(o[0]['quat']) for o, _ in out1) > 60.0
+
+
+def test_a_rope_goes_over_two_posts():
+    posts = [dict(name=f'Post {k}', shape='cylinder', position=(x, 2.0, 0.0), size=(0.08, 0.6, 0.08), pitch=90.0, material='wood')
+             for k, x in ((1, -0.5), (2, 0.5))]
+    crate = dict(name='Crate', shape='box', position=(-0.5, 1.2, 0.0), size=(0.15, 0.15, 0.15), material='wood', joint='rope',
+                 joint_anchor=(0.6, 0.3, 0.0))
+    # named in Goes over, its length as it is round them at the start: it hangs where it is, the rope over both
+    S, out = run(scene_of(*posts, dict(crate, rope_over='Post 1, Post 2'), fps=50), 3.0)
+    jt = S.joints[0]
+    assert not S.warnings and jt.posts == ('fixed0_0', 'fixed1_0')
+    assert 3.55 < jt.length < 3.65                         # up to Post 1, across to Post 2 and down, round their tops
+    ys = np.array([o[2]['pos'][1] for o, _ in out])
+    assert np.abs(ys - 1.2).max() < 0.02
+    path = out[-1][1][2]['path']
+    for x in (-0.5, 0.5):
+        assert path[np.abs(path[:, 0] - x) < 0.05, 1].max() > 2.07                # over the top of each
+    # found by itself: a rope that long reaches round both, so it goes over both
+    S2, out2 = run(scene_of(*posts, dict(crate, rope_length=jt.length + 0.01), fps=50), 3.0)
+    assert S2.joints[0].posts == ('fixed0_0', 'fixed1_0')
+    assert min(o[2]['pos'][1] for o, _ in out2) > 1.15
+
+
+def test_a_rope_with_weight_drapes_over_posts_and_weighs_what_it_does():
+    from blackbody.engine.solids import ROPE_KG_M3
+    posts = [dict(name=f'Post {k}', shape='cylinder', position=(x, 2.0, 0.0), size=(0.08, 0.6, 0.08), pitch=90.0, material='wood')
+             for k, x in ((1, -0.5), (2, 0.5))]
+    crate = dict(name='Crate', shape='box', position=(-0.5, 1.2, 0.0), size=(0.15, 0.15, 0.15), material='wood', joint='rope',
+                 joint_anchor=(0.6, 0.3, 0.0), rope_over='Post 1, Post 2', rope_heavy=True, rope_thickness=0.025)
+    S, out = run(scene_of(*posts, crate, fps=50), 3.0)
+    jt = S.joints[0]
+    assert not S.warnings and jt.links and jt.look == 0                         # links of rope, drawn as rope
+    mass = sum(float(S.model.body_mass[b]) for b in jt.link_ids)
+    ideal = ROPE_KG_M3['rope'] * math.pi * 0.0125 ** 2 * jt.length              # (about 0.4 kg a metre)
+    assert abs(mass - ideal) < 0.1 * ideal
+    ys = np.array([o[2]['pos'][1] for o, _ in out])
+    assert ys.min() > 1.05 and abs(ys[-1] - ys[-25]) < 0.01                      # held up by the rope over the posts, settled
+    path = out[-1][1][2]['path']
+    assert path[:, 1].max() > 2.08 and path[:, 1].max() < 2.2                    # lying on them
+    # it gives way where it is tied when it is pulled harder than its Breaks at (the crate weighs 25 N)
+    S2, out2 = run(scene_of(*posts, dict(crate, joint_break=10.0), fps=50), 2.0)
+    assert len(S2.snaps) == 1 and S2.joints[0].broken
+    assert out2[-1][0][2]['pos'][1] < 0.2                                         # the crate fell
+    assert out2[-1][1][2]['path'][:, 1].max() > 2.0                              # and the rope still hangs over the posts
+
+
+def test_a_chain_snaps_where_it_is_tied():
+    box = dict(name='Box', shape='box', position=(0.8, 1.5, 0.0), size=(0.15, 0.15, 0.15), dynamic=True, material='wood',
+               joint='rope', rope_look='chain', rope_thickness=0.012, joint_anchor=(0.0, 2.5, 0.0), rope_length=1.2,
+               joint_break=100.0)
+    S, out = run(scene_of(box, fps=50), 2.0)
+    assert S.snaps and out[-1][0][0]['pos'][1] < 0.2                  # jerked taut past 100 N as it swung: dropped
+    assert np.allclose(out[-1][1][0]['path'][-1], (0.0, 2.5, 0.0), atol=0.01)   # the chain still hangs from its anchor
+
+
+def test_more_joints_are_added_saved_and_follow_renames():
+    from blackbody.engine.solids import joint_specs
+    from blackbody.scene import components as C
+    sc = scene_of(dict(name='Beam', shape='box', position=(0.0, 3.0, 0.0), size=(1.0, 0.05, 0.05), material='wood'),
+                  dict(name='Seat', shape='box', position=(0.0, 1.0, 0.0), size=(0.5, 0.02, 0.15), material='wood'))
+    C.add_joint(sc, 1, 'rope', to=0)
+    notes = C.add_joint(sc, 1, 'rope', to=0, more=True)
+    c = sc.colliders[1]
+    assert notes and c['dynamic'] and len(joint_specs(c)) == 2
+    # its first rope moved from its middle to one end, the second at the other, each tied straight above on the beam
+    (k1, a), (k2, b) = joint_specs(c)
+    assert np.allclose(a['joint_at'], (-0.5, 0.02, 0.0)) and np.allclose(b['joint_at'], (0.5, 0.02, 0.0))
+    assert np.allclose(a['joint_to_at'], (-0.5, -0.05, 0.0)) and np.allclose(b['joint_to_at'], (0.5, -0.05, 0.0))
+    S, out = run(sc, 2.0)
+    assert len(S.joints) == 2 and max(_tilt(o[1]['quat']) for o, _ in out) < 0.5
+    # saved and opened again
+    back = Scene.from_dict(sc.to_dict())
+    assert joint_specs(back.colliders[1])[1][1]['joint_to'] == 'Beam' and back.sim_signature() == sc.sim_signature()
+    # renamed (the viewer's Rename): every joint follows
+    C.rename_in_joints(c, {'Beam': 'Bar'})
+    assert [s['joint_to'] for _k, s in joint_specs(c)] == ['Bar', 'Bar']
+    # and taken off: all of them
+    C.add_joint(sc, 1, on=False)
+    assert not joint_specs(sc.colliders[1])
+
+
+def test_a_rope_told_to_go_over_what_is_not_a_post_says_so():
+    crate = dict(name='Crate', shape='box', position=(0.0, 1.0, 0.0), size=(0.15, 0.15, 0.15), material='wood', joint='rope',
+                 joint_anchor=(0.0, 2.5, 0.0), rope_over='Nowhere, Shelf')
+    shelf = dict(name='Shelf', shape='box', position=(1.0, 2.0, 0.0), size=(0.3, 0.02, 0.2), material='wood')
+    S = built(scene_of(crate, shelf))
+    assert any('Nowhere (there is no such object)' in w for w in S.warnings)
+    assert any('Shelf (only a fixed or falling cylinder' in w for w in S.warnings)
+    assert S.joints[0].posts == ()
+
+
+def test_a_keyed_motor_drives_only_the_first_of_its_joints():
+    # (a further joint took the object's keyed Motor speed, a curve, as a number: building the whole scene failed)
+    sc = scene_of(wheel(motor_speed=0.0, joints=[dict(joint='ball')]), fps=50)
+    sc.set_key(('collider', 0, 'motor_speed'), sc.start + 25, 0.0)
+    sc.set_key(('collider', 0, 'motor_speed'), sc.start + 50, 60.0)
+    S, out = run(sc, 2.0)
+    assert not S.warnings and [(jt.kind, jt.keyed) for jt in S.joints] == [('hinge', True), ('ball', False)]
+    spin = np.array([o[0]['omega'][:3] for o, _ in out]) @ (-1.0, 0.0, 0.0)
+    assert abs(spin[20]) < 0.05 and abs(spin[-1] - 2.0 * math.pi) < 0.05       # held, then spun up as keyed
+    # a further hinge turns at the speed it gives, if any (not the object's: two motors on one axle)
+    S2 = built(scene_of(wheel(joints=[dict(joint='hinge', motor_speed=30.0), dict(joint='hinge')]), fps=50))
+    assert [jt.motor for jt in S2.joints] == pytest.approx([2.0 * math.pi, math.pi, 0.0])
+
+
+def _beam_and_crate(z, **kw):
+    """A 2.24 m beam along z, 2.46 m up (chain_swing's), and a crate under one side of it, z along it, on a rope from
+    the ground on its other side."""
+    beam = dict(name='Beam', shape='cylinder', position=(-0.1, 2.46, 0.0), size=(0.07, 1.12, 0.07), pitch=90.0, material='wood')
+    crate = dict(name='Crate', shape='box', position=(-0.75, 1.5, z), size=(0.18, 0.18, 0.18), dynamic=True, material='wood',
+                 joint='rope', joint_anchor=(0.55, 0.0, z))
+    return scene_of(beam, dict(crate, **kw))
+
+
+def test_a_rope_finds_a_beam_wherever_along_it_it_goes_over():
+    # (the search measured the way round a beam from its middle, and from where the crate's side faced the far end:
+    # off its middle a rope 0.7 m longer than the way round it went straight through it, and one told to go over it was
+    # tied skewed toward its middle)
+    taut = built(_beam_and_crate(0.0, rope_over='Beam')).joints[0].length
+    for z in (0.0, 0.5, 0.9):
+        S = built(_beam_and_crate(z, rope_over='Beam'))
+        assert abs(S.joints[0].length - taut) < 0.002                       # the same way round wherever it goes over
+        a = S.model.site('joint1a').pos
+        assert a[1] == pytest.approx(0.18) and abs(a[2]) < 1e-6              # tied on its top, square under the beam
+        assert built(_beam_and_crate(z, rope_length=taut + 0.01)).joints[0].posts == ('fixed0_0',)   # found
+        assert built(_beam_and_crate(z, rope_length=taut - 0.05)).joints[0].posts == ()              # too short to
+
+
+def test_a_rope_finds_only_a_fixed_level_bar_by_itself():
+    """A falling log above a slack rope, or a bar sloping 30 degrees, is not gone round unless it is named in Goes over:
+    MuJoCo takes a cylinder as endless and turns the side it goes round with a falling one, and either flung the load
+    (most such ropes gained energy, up to millions of J/kg)."""
+    taut = built(_beam_and_crate(0.0, rope_over='Beam')).joints[0].length
+    assert built(_beam_and_crate(0.0, rope_length=taut + 0.01)).joints[0].posts == ('fixed0_0',)   # level and fixed
+
+    def with_beam(**beam):
+        sc = _beam_and_crate(0.0, rope_length=taut + 0.3)
+        sc.colliders[0].update(beam)
+        return built(sc).joints[0].posts
+
+    assert with_beam(pitch=60.0) == ()                         # sloping 30 degrees
+    assert with_beam(dynamic=True) == ()                       # falling
+    sc = _beam_and_crate(0.0, rope_length=taut + 0.3, rope_over='Beam')
+    sc.colliders[0].update(dynamic=True)
+    assert built(sc).joints[0].posts == ('bodygeom0',)         # named: gone round all the same
+
+
+def test_a_rope_tied_against_a_post_does_not_go_round_it():
+    # (chain_swing's chain hangs from just under its beam: it was laid round the beam, and the weight swung short of the
+    # crates it is there to knock over)
+    import mujoco
+    from blackbody.scene import presets
+    sc = presets.make('chain_swing')
+    names = [c['name'] for c in sc.colliders]
+    S = built(sc)
+    chain = next(jt for jt in S.joints if jt.index == names.index('Weight'))
+    mujoco.mj_kinematics(S.model, S.data)
+    assert S.data.xpos[chain.link_ids][:, 1].max() < 2.46 - 0.07           # its links laid under the beam, not over it
+    S, out = run(sc, 3.0, S=S)
+    assert max(o[names.index('Weight')]['pos'][0] for o, _ in out) > 0.6    # into the crates
+    assert out[-1][0][names.index('Crate 4')]['pos'][1] < 0.5               # and the stack is down
+
+
+def test_a_slack_rope_swings_past_posts_beside_and_under_it():
+    # (a slack rope went round any post it could reach round taut, on the side away from its line: round an upright pole
+    # beside it or under a bar below it. Swung across the post, MuJoCo's rope jumped round to that side and flung the
+    # crate away)
+    def energy(*cols, seconds=3.0):
+        """The crate's (the last object's) posts, and its energy per kg at the start and at most (J/kg)."""
+        S, out = run(scene_of(*cols, fps=50), seconds)
+        k = len(cols) - 1
+        e = [G * o[k]['pos'][1] + 0.5 * float(np.dot(o[k]['vel'], o[k]['vel'])) for o, _ in out]
+        return S.joints[0].posts, e[0], max(e)
+
+    crate = dict(name='Crate', shape='box', position=(1.6, 2.0, 0.0), size=(0.1, 0.1, 0.1), dynamic=True, material='wood',
+                 joint='rope', joint_anchor=(0.0, 3.0, 0.0), rope_length=2.0, start_velocity=(0.0, 0.0, 1.0))
+    poles = [dict(name=f'Pole {k}', shape='cylinder', position=(0.8, 1.5, z), size=(0.05, 1.5, 0.05), material='wood')
+             for k, z in enumerate((0.3, -0.3))]
+    posts, e0, most = energy(*poles, crate)
+    assert posts == () and most < e0 + 0.1                  # upright poles either side of it, pushed sideways between them
+    under = dict(name='Bar', shape='cylinder', position=(0.55, 2.4, 0.0), size=(0.04, 0.4, 0.04), pitch=90.0, material='steel')
+    posts, e0, most = energy(under, dict(crate, rope_length=2.3, start_velocity=(0.0, 0.0, 0.0)))
+    assert posts == () and most < e0 + 0.1                  # a bar 20 cm under its line
+    # a bar it hangs over is still gone over (and keeps its energy too), unless it is told to go over none
+    over = dict(under, position=(0.55, 2.9, 0.0))
+    posts, e0, most = energy(over, dict(crate, rope_length=2.3, start_velocity=(0.0, 0.0, 0.0)))
+    assert posts == ('fixed0_0',) and most < e0 + 0.1
+    S = built(scene_of(over, dict(crate, rope_length=2.3, rope_over='None')))
+    assert S.joints[0].posts == () and not S.warnings       # (none: not an object it cannot find)
+
+
+def test_a_short_rope_just_reaching_round_its_pulley_is_not_warned_about():
+    # (a pulley is gone round when the rope is up to 2 cm short of reaching round it, but a rope 2% short of where it is
+    # tied was warned about: a 60 cm one 1.5 cm short was both)
+    pulley = dict(name='Pulley', shape='cylinder', position=(0.0, 1.0, 0.0), size=(0.04, 0.05, 0.04), pitch=90.0, material='steel')
+    crate = dict(name='Crate', shape='box', position=(-0.1, 0.7, 0.0), size=(0.05, 0.05, 0.05), dynamic=True, material='wood',
+                 joint='rope', joint_at=(0.0, 0.05, 0.0), joint_anchor=(0.1, 0.7, 0.0))
+    taut = built(scene_of(pulley, dict(crate, rope_over='Pulley'))).joints[0].length
+    assert taut < 0.75
+    S = built(scene_of(pulley, dict(crate, rope_length=taut - 0.015)))
+    assert S.joints[0].posts == ('fixed0_0',) and not S.warnings
+    S = built(scene_of(pulley, dict(crate, rope_over='Pulley', rope_length=taut - 0.05)))
+    assert any('yanked in' in w for w in S.warnings)                     # (told to go over it, far too short: said)
+
+
+def test_more_ropes_go_to_free_corners_and_tie_to_a_mesh_by_its_shape(tmp_path):
+    from itertools import combinations
+    from blackbody.engine.solids import joint_specs
+    from blackbody.scene import components as C
+    # a branch modelled as a mesh, 40 x 10 x 10 cm, at its own size (Size scales it: 1)
+    v = np.array([[(0.2 if k & 1 else -0.2), (0.05 if k & 2 else -0.05), (0.05 if k & 4 else -0.05)] for k in range(8)])
+    t = np.array([(0, 2, 3), (0, 3, 1), (4, 5, 7), (4, 7, 6), (0, 1, 5), (0, 5, 4), (2, 6, 7), (2, 7, 3), (0, 4, 6), (0, 6, 2),
+                  (1, 3, 7), (1, 7, 5)])
+    path = tmp_path / 'branch.obj'
+    path.write_text(''.join(f'v {x} {y} {z}\n' for x, y, z in v) + ''.join(f'f {a + 1} {b + 1} {c + 1}\n' for a, b, c in t))
+    sc = scene_of(dict(name='Branch', shape='mesh', mesh=str(path), position=(0.0, 3.0, 0.0), size=(1.0, 1.0, 1.0), material='wood'),
+                  dict(name='Seat', shape='box', position=(0.0, 1.0, 0.0), size=(0.5, 0.02, 0.15), material='wood'))
+    C.add_joint(sc, 1, 'rope', to=0)
+    assert np.allclose(sc.colliders[1]['joint_to_at'], (0.0, -0.05, 0.0))    # (on its underside, not 1 m below it)
+    C.add_joint(sc, 1, 'rope', to=0, more=True)
+    C.add_joint(sc, 1, 'rope', to=0, more=True)
+    specs = joint_specs(sc.colliders[1])
+    ats = [np.asarray(cj['joint_at'], float) for _k, cj in specs]
+    assert len(ats) == 3 and min(float(np.linalg.norm(a - b)) for a, b in combinations(ats, 2)) > 0.3   # (the third not on the first)
+    assert np.allclose(ats[2], (0.0, 0.02, 0.15)) or np.allclose(ats[2], (0.0, 0.02, -0.15))            # a free corner
+    for _k, cj in specs[1:]:                                                  # each tied straight above, on its underside
+        to = np.asarray(cj['joint_to_at'], float)
+        assert to[1] == pytest.approx(-0.05) and abs(to[0] - min(max(cj['joint_at'][0], -0.2), 0.2)) < 1e-6
+    S, out = run(sc, 1.0)
+    assert len(S.joints) == 3 and not S.warnings
+
+
+def test_renames_follow_joints_whatever_their_case():
+    from blackbody.engine.solids import joint_specs
+    from blackbody.scene import components as C
+    c = dict(name='Seat', joint='rope', joint_to='beam', rope_over='POST, Post 2',
+             joints=(dict(joint='rope', joint_to='Beam'), dict(joint='rope', joint_to='Bar')))
+    C.rename_in_joints(c, {'Beam': 'Gallows', 'Post': 'Pole'}, ['Gallows', 'Pole', 'Post 2', 'Bar', 'Seat'])
+    assert [cj['joint_to'] for _k, cj in joint_specs(c)] == ['Gallows', 'Gallows', 'Bar'] and c['rope_over'] == 'Pole, Post 2'
+    # (but one that is exactly another object's name stays its)
+    c = dict(name='Seat', joint='rope', joint_to='beam')
+    C.rename_in_joints(c, {'Beam': 'Gallows'}, ['Gallows', 'beam', 'Seat'])
+    assert c['joint_to'] == 'beam'
+
+
+def test_joined_by_nothing_takes_its_more_joints_off_too():
+    from blackbody.engine.solids import falls, joint_specs, joined
+    plank = dict(name='Plank', shape='box', position=(0.0, 2.5, 0.0), size=(0.9, 0.03, 0.15), material='wood', joint='none',
+                 joints=[dict(joint='rope', joint_at=(0.8, 0.03, 0.0), joint_anchor=(0.8, 4.5, 0.0))])
+    sc = scene_of(plank)
+    c = sc.colliders[0]
+    # (they were left hidden and working: the object still hung, the menus and the viewer had it as unjoined)
+    assert not joint_specs(c) and joined(c) is None and not falls(c)
+    assert not built(sc).joints
+    # Properties: set to Nothing, they go with it, in the same undo step
+    import os
+    os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+    QtWidgets = pytest.importorskip('PySide6.QtWidgets')
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    from blackbody.ui.document import Document
+    doc = Document()
+    doc.scene = scene_of(dict(plank, joint='rope', joint_anchor=(-0.8, 4.5, 0.0), joint_at=(-0.8, 0.03, 0.0)))
+    told = []
+    doc.message.connect(told.append)
+    doc.set(('collider', 0, 'joint'), 'none')
+    assert doc.scene.colliders[0]['joints'] == () and any('More joints' in t for t in told)
+    doc.undo.undo()
+    assert doc.scene.colliders[0]['joint'] == 'rope' and len(doc.scene.colliders[0]['joints']) == 1
+    del app
+
+
+def test_more_joints_from_the_command_line(capsys):
+    import argparse
+    from blackbody.cli import _apply_setting, cmd_settings
+    sc = scene_of(dict(name='Plank', shape='box', position=(0.0, 2.5, 0.0), size=(0.9, 0.03, 0.15), joint='rope'))
+    assert _apply_setting(sc, 'collider.0.joints=[{"joint": "rope", "joint_at": [0.8, 0.03, 0]}]') is None
+    assert sc.colliders[0]['joints'] == ({'joint': 'rope', 'joint_at': [0.8, 0.03, 0]},)
+    assert 'JSON list' in _apply_setting(sc, 'collider.0.joints=[{"joint": "rope"')       # (it was taken as none at all)
+    assert 'JSON list' in _apply_setting(sc, 'collider.0.joints={"joint": "rope"}')
+    assert len(sc.colliders[0]['joints']) == 1
+    cmd_settings(argparse.Namespace(section='collider'))
+    line = next(x for x in capsys.readouterr().out.splitlines() if x.startswith('collider.N.joints'))
+    assert 'JSON list of joint settings' in line and '"x y z"' not in line

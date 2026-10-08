@@ -399,3 +399,260 @@ def test_a_blast_throws_what_falls_away_from_it():
     want = blast_impulse(2.0, 1.0) * 0.25 * 6 * 0.4 ** 2 / mass
     assert v[0][0] > 0.6 * want and v[0][0] < 1.05 * want          # thrown away, at about the impulse's speed (less friction)
     assert v[1][0] < 0.0 and abs(v[1][0]) < 0.4 * v[0][0]           # the far one, the other way and slower
+
+
+# ---- concave falling meshes, hollow things that stay put --------------------------------------------------------------
+
+def _lathe(profile, n=48):
+    """A closed surface of revolution about y: profile [(r, y)] from the axis round to the axis."""
+    v, t, ring = [], [], []
+    for r, y in profile:
+        if r <= 1e-12:
+            ring.append([len(v)] * n)
+            v.append((0.0, y, 0.0))
+        else:
+            ring.append(list(range(len(v), len(v) + n)))
+            v += [(r * math.cos(2 * math.pi * j / n), y, r * math.sin(2 * math.pi * j / n)) for j in range(n)]
+    for a, b in zip(ring[:-1], ring[1:]):
+        for j in range(n):
+            j1 = (j + 1) % n
+            t += [tri for tri in ((a[j], a[j1], b[j1]), (a[j], b[j1], b[j])) if len(set(tri)) == 3]
+    return np.array(v), np.array(t)
+
+
+R_BOWL, WALL, FOOT = 0.15, 0.012, 0.03
+
+
+def _write_obj(path, v, t):
+    with open(path, 'w') as f:
+        f.writelines(f'v {x:.6f} {y:.6f} {z:.6f}\n' for x, y, z in v)
+        f.writelines(f'f {a + 1} {b + 1} {c + 1}\n' for a, b, c in t)
+    return path
+
+
+def _bowl(path, rows=24, round_=48):
+    """A 30 cm pottery bowl, its walls 12 mm thick, its rim at y 0, standing on a flat foot (y -0.12) with a flat
+    inside floor 12 mm above it (rows and round_: how finely its triangles are cut); written to `path` as OBJ unless
+    None. Returns (vertices, triangles)."""
+    yb = -R_BOWL + FOOT
+    ri, yf = R_BOWL - WALL, yb + WALL
+    prof = [(0.0, yb)] + [(R_BOWL * math.cos(p), -R_BOWL * math.sin(p)) for p in np.linspace(math.asin(-yb / R_BOWL), 0.0, rows)]
+    prof += [(ri * math.cos(p), -ri * math.sin(p)) for p in np.linspace(0.0, math.asin(-yf / ri), rows)] + [(0.0, yf)]
+    v, t = _lathe(prof, round_)
+    if path:
+        _write_obj(path, v, t)
+    return v, t
+
+
+def _into_bowl(parts, n=3000):
+    """How far the convex parts reach into the bowl's hollow at most (m), from points through each part's hull."""
+    rng = np.random.default_rng(0)
+    ri, yf = R_BOWL - WALL, -R_BOWL + FOOT + WALL
+    worst = 0.0
+    for p in parts:
+        q = rng.dirichlet(np.full(len(p), 0.2), n) @ p
+        r = np.linalg.norm(q, axis=1)
+        worst = max(worst, float(np.minimum(ri - r, q[:, 1] - yf).max()))
+        assert np.all(r <= R_BOWL + 1e-6) and np.all(q[:, 1] >= -R_BOWL + FOOT - 1e-6)   # never outside the bowl
+    return worst
+
+
+def test_a_concave_mesh_is_cut_into_convex_parts_that_keep_its_hollow(tmp_path):
+    from blackbody.engine.solids import DECOMP_CELLS, convex_parts
+    v, t = _bowl(str(tmp_path / 'bowl.obj'))
+    parts, filled, volume = convex_parts(v, t)
+    assert not filled and 20 < len(parts) <= 128
+    a, b, c = v[t[:, 0]], v[t[:, 1]], v[t[:, 2]]
+    assert volume == pytest.approx(abs(np.einsum('ij,ij->', a, np.cross(b, c))) / 6.0, rel=1e-6)
+    assert _into_bowl(parts) < 0.5 * 2.0 * R_BOWL / DECOMP_CELLS     # its hollow kept, to within half a cell (5 mm)
+
+
+def test_cutting_a_detailed_mesh_keeps_its_hollow_and_takes_little_memory():
+    # (every point over its surface went through 154 directions in doubles: a 50,000-triangle bowl took 670 MB, and was
+    # cut into a third as many parts as a plain one, its hollow partly filled)
+    import tracemalloc
+    from blackbody.engine.solids import DECOMP_CELLS, convex_parts
+    v, t = _bowl(None, rows=64, round_=192)
+    assert len(t) > 45000
+    tracemalloc.start()
+    try:
+        parts, filled, _volume = convex_parts(v, t)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+    assert peak < 250e6                                             # (about 80 MB)
+    assert not filled and 80 < len(parts) <= 128                    # as many as the plain bowl's (about 110)
+    assert _into_bowl(parts, 1000) < 0.5 * 2.0 * R_BOWL / DECOMP_CELLS
+
+
+def test_a_ball_rests_inside_a_falling_bowl(tmp_path):
+    path = str(tmp_path / 'bowl.obj')
+    v, t = _bowl(path)
+    yf = -R_BOWL + FOOT + WALL
+    s = scene_of(dict(name='Bowl', shape='mesh', mesh=path, position=(0.0, 0.4, 0.0), size=(1.0, 1.0, 1.0), material='ceramic',
+                      dynamic=True),
+                 dict(name='Ball', shape='sphere', position=(0.0, 0.4 + yf + 0.045, 0.0), size=(0.04,) * 3, material='rubber',
+                      dynamic=True))
+    S, poses = run(s, 3.0)
+    assert not S.warnings                                       # (as its hull, the ball started inside it and flew out)
+    bowl, ball = track(poses, 0)[-1], track(poses, 1)[-1]
+    assert abs(bowl[1] - (R_BOWL - FOOT)) < 0.003                # the bowl landed on its foot
+    rel = ball - bowl
+    assert abs(rel[1] - (yf + 0.04)) < 0.003                     # and the ball lies on its floor, inside it
+    assert math.hypot(rel[0], rel[2]) < 0.09
+    a, b, c = v[t[:, 0]], v[t[:, 1]], v[t[:, 2]]
+    volume = abs(np.einsum('ij,ij->', a, np.cross(b, c))) / 6.0
+    assert S.model.body_mass[S.bodies[0].body_id] == pytest.approx(2300.0 * volume, rel=1e-3)   # it weighs what the bowl does
+    # cloth meets it by its parts too (solids.meet_cloth): its hollow is open, its wall and foot solid
+    from blackbody.engine.solids import parts_distance, shape_distance
+    q = np.array([(0.0, yf + 0.02, 0.0), (0.0, yf - 0.5 * WALL, 0.0), (0.0, -R_BOWL + FOOT - 0.01, 0.0), (R_BOWL - 0.5 * WALL, -0.03, 0.0)])
+    dist, nrm = parts_distance(S.bodies[0].planes, q)
+    assert abs(dist[0] - 0.02) < 0.004 and nrm[0][1] > 0.9      # 2 cm above its floor, in its hollow (facing up)
+    assert dist[1] < 0.0 and dist[3] < 0.0                      # in its floor and in its wall
+    assert abs(dist[2] - 0.01) < 0.004                           # 1 cm under its foot
+    assert shape_distance('mesh', (1.0, 1.0, 1.0), q[:1], v)[0][0] < 0.0     # (its hull's box had the hollow solid)
+
+
+def test_things_rest_inside_a_barrel_that_stays_put():
+    barrel = dict(name='Barrel', shape='cylinder', position=(0.0, 0.45, 0.0), size=(0.3, 0.45, 0.3), hollow=0.02,
+                  opening=(0.35, 0.05, 0.35), opening_at=(0.0, 0.45, 0.0), material='wood')    # (its top open)
+    balls = [dict(name=f'Ball {k}', shape='sphere', position=(x, 1.2 + 0.3 * k, z), size=(0.06,) * 3, material='wood',
+                  dynamic=True) for k, (x, z) in enumerate(((0.0, 0.0), (0.1, 0.05), (-0.08, -0.1)))]
+    S, poses = run(scene_of(barrel, *balls), 3.0)
+    assert not S.warnings
+    for k in (1, 2, 3):
+        p = track(poses, k)[-1]
+        assert math.hypot(p[0], p[2]) < 0.3 - 0.02 - 0.06 + 0.002 and abs(p[1] - (0.02 + 0.06)) < 0.003, (k, p)  # on its floor
+    # a ball dropped into a hollow tank through the hole in its top rests at its bottom, inside
+    tank = dict(name='Tank', shape='sphere', position=(0.0, 0.6, 0.0), size=(0.6, 0.6, 0.6), hollow=0.03,
+                opening=(0.2, 0.2, 0.2), opening_at=(0.0, 0.6, 0.0), material='steel')
+    ball = dict(name='Ball', shape='sphere', position=(0.0, 1.5, 0.0), size=(0.1,) * 3, material='wood', dynamic=True)
+    S, poses = run(scene_of(tank, ball), 4.0)
+    p = track(poses, 1)[-1]
+    assert np.linalg.norm(p - (0.0, 0.6, 0.0)) < 0.57 - 0.1 + 0.01 and p[1] < 0.2
+
+
+def test_a_hollow_cylinders_walls_leave_its_opening_open():
+    from blackbody.engine.solids import Solids
+    R, H, t = 0.3, 0.5, 0.03
+    closed = Solids._hollow_tiles('cylinder', (R, H, R), t, (0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+    door = ((0.1, 0.25, 0.2), (R, -0.2, 0.0))                     # (a door in its side, at +x)
+    opened = Solids._hollow_tiles('cylinder', (R, H, R), t, *door)
+    for tiles in (closed, opened):
+        P = np.concatenate(tiles)
+        r = np.hypot(P[:, 0], P[:, 2])
+        assert r.max() <= R + 1e-9 and np.abs(P[:, 1]).max() <= H + 1e-9          # within its outline
+        for q in tiles:                                                             # each a slab of its wall, t thick
+            rq = np.hypot(q[:, 0], q[:, 2])
+            assert rq.min() >= R - t - 1e-9 or np.abs(q[:, 1]).min() >= H - t - 1e-9
+    mids = np.array([q.mean(0) for q in opened])
+    assert not np.any(np.all(np.abs(mids - door[1]) < door[0], axis=1))           # none in the door
+    assert len(opened) < len(closed) + 40                                           # (cut where the door is, not finely all over)
+    # every way round its side is walled, but for the door
+    ang = np.degrees(np.arctan2(mids[:, 2], mids[:, 0]))
+    side = np.hypot(mids[:, 0], mids[:, 2]) > R - t
+    low = side & (mids[:, 1] < -0.45)                                              # (below the door)
+    assert np.histogram(ang[low], bins=12, range=(-180, 180))[0].min() > 0
+
+
+def test_cloth_meets_a_bowl_by_the_parts_near_it_only(tmp_path, monkeypatch):
+    # (every step measured each vertex near it against every plane of every part, 4,600 for this bowl: a sheet over it
+    # took the solids from 8 ms a frame to nearly a second)
+    from blackbody.engine import solids as SO
+    path = str(tmp_path / 'bowl.obj')
+    _bowl(path)
+    s = scene_of(dict(name='Bowl', shape='mesh', mesh=path, position=(0.0, 0.4, 0.0), size=(1.0, 1.0, 1.0), material='ceramic',
+                      dynamic=True))
+    S = Solids()
+    S.configure(s, ((96, 96, 96), SIZE / 96, (-SIZE / 2, 0.0, -SIZE / 2)))
+    S.reset()
+    planes = S.bodies[0].planes
+    # a sheet draped over it 3 mm off: in its hollow, over its rim, on the floor round it
+    g = np.linspace(-0.25, 0.25, 64)
+    X, Z = np.meshgrid(g, g, indexing='ij')
+    r = np.hypot(X, Z)
+    ri, yf = R_BOWL - WALL, -R_BOWL + FOOT + WALL
+    y = np.where(r < ri, np.maximum(-np.sqrt(np.maximum(ri * ri - r * r, 0.0)), yf), np.where(r < R_BOWL + 0.01, 0.0, -R_BOWL + FOOT))
+    q = np.stack([X.ravel(), y.ravel() + 0.003, Z.ravel()], 1)
+    pi, _pp = SO.near_parts(planes, q, SO.CLOTH_MARGIN)
+    assert len(pi) < 0.02 * len(q) * len(planes[2])                # a few parts for a vertex near it, none for the rest
+    d, n = SO.parts_distance(planes, q, SO.CLOTH_MARGIN)
+    d_all, n_all = SO.parts_distance(planes, q)
+    near = d_all < SO.CLOTH_MARGIN
+    assert near.sum() > 500 and np.array_equal(d[near], d_all[near]) and np.array_equal(n[near], n_all[near])
+    assert np.all(d[~near] >= SO.CLOTH_MARGIN)                     # (the rest beyond reach: not touching)
+    # and the cloth's contact asks for those only
+    reach = []
+    whole = SO.parts_distance
+    monkeypatch.setattr(SO, 'parts_distance', lambda pl, x, rr=np.inf: reach.append(rr) or whole(pl, x, rr))
+    x = q + S.data.xpos[S.bodies[0].body_id]
+    S.meet_cloth(x, np.zeros_like(x), np.ones(len(x), bool), 1.0 / s.fps)
+    S.advance(s, s.start + 1, 1.0 / s.fps, 1)
+    assert reach and set(reach) == {SO.CLOTH_MARGIN}
+
+
+def _boxes(path, *boxes):
+    """Boxes [(low corner, high corner, wound inside out)] in one OBJ, each a shell of its own."""
+    v, t = [], []
+    tri = np.array([(0, 2, 3), (0, 3, 1), (4, 5, 7), (4, 7, 6), (0, 1, 5), (0, 5, 4), (2, 6, 7), (2, 7, 3), (0, 4, 6), (0, 6, 2),
+                    (1, 3, 7), (1, 7, 5)])
+    for lo, hi, flip in boxes:
+        t.append((tri[:, ::-1] if flip else tri) + 8 * len(v))
+        v.append([[(hi if (k >> a) & 1 else lo)[a] for a in range(3)] for k in range(8)])
+    return _write_obj(path, np.concatenate(v), np.concatenate(t))
+
+
+def test_a_mesh_of_several_shells_weighs_what_they_take_up(tmp_path):
+    # (its volume was its triangles' signed volumes summed: a box wound inside out cancelled the other one, so it weighed
+    # nothing and MuJoCo blew up; boxes that overlap were counted twice where they do)
+    flipped = _boxes(str(tmp_path / 'flipped.obj'), ((0.0, 0.0, 0.0), (0.2, 0.2, 0.2), False), ((0.3, 0.0, 0.0), (0.5, 0.2, 0.2), True))
+    ell = _boxes(str(tmp_path / 'ell.obj'), ((0.0, 0.0, 0.0), (0.4, 0.4, 0.4), False), ((0.2, 0.0, 0.0), (0.8, 0.2, 0.4), False))
+    for path, volume in ((flipped, 2 * 0.008), (ell, 0.064 + 0.048 - 0.016)):     # (the L's boxes share 0.016 m^3)
+        c = dict(name='Shells', shape='mesh', mesh=path, position=(0.0, 0.3, 0.0), size=(1.0, 1.0, 1.0), material='wood',
+                 density=500.0, dynamic=True)
+        S, poses = run(scene_of(c), 1.0)
+        assert S.model.body_mass[S.bodies[0].body_id] == pytest.approx(500.0 * volume, rel=0.03), path
+        p = track(poses, 0)
+        assert np.all(np.isfinite(p)) and abs(p[-1][1]) < 0.01            # landed, flat on the ground
+
+
+def test_a_convex_mesh_is_not_cut_and_cut_parts_are_kept_on_disk(tmp_path, monkeypatch):
+    from blackbody.engine import solids as SO
+    s = Scene()
+
+    def never(*_a, **_k):
+        raise AssertionError('cut again')
+    # a ball of 18,000 triangles: convex, so it falls as its hull, uncut (cutting a detailed one into its one part took
+    # seconds and a gigabyte)
+    r = 0.15
+    prof = [(0.0, -r)] + [(r * math.cos(p), r * math.sin(p)) for p in np.linspace(-math.pi / 2, math.pi / 2, 72)[1:-1]] + [(0.0, r)]
+    ball = dict(name='Ball', shape='mesh', mesh=_write_obj(str(tmp_path / 'ball.obj'), *_lathe(prof, 128)), size=(1.0, 1.0, 1.0))
+    monkeypatch.setattr(SO, 'convex_parts', never)
+    parts, how, volume = SO.mesh_parts(s, ball, (1.0, 1.0, 1.0), Solids()._mesh_points(s, ball))
+    assert parts is None and how == 'convex' and volume == pytest.approx(4.0 / 3.0 * math.pi * r ** 3, rel=0.01)
+    monkeypatch.undo()
+    # a bowl is cut once, and its parts read back from the disk in the next session
+    bowl = dict(name='Bowl', shape='mesh', mesh=str(tmp_path / 'bowl.obj'), size=(1.0, 1.0, 1.0))
+    _bowl(bowl['mesh'])
+    hull = Solids()._mesh_points(s, bowl)
+    parts, how, volume = SO.mesh_parts(s, bowl, (1.0, 1.0, 1.0), hull)
+    assert how == 'parts' and len(parts) > 20
+    SO._PARTS.clear()
+    monkeypatch.setattr(SO, 'convex_parts', never)
+    again = SO.mesh_parts(s, bowl, (1.0, 1.0, 1.0), hull)
+    assert again[1:] == (how, volume) and len(again[0]) == len(parts)
+    assert all(np.array_equal(a, b) for a, b in zip(again[0], parts))
+
+
+def test_a_hatch_smaller_than_a_tile_still_lets_things_in():
+    # (a hollow's opening dropped only the tiles whose middle was in it: a hatch smaller than one, a tank's 16 cm hatch or
+    # a hole in a drum's lid, stayed shut, and a ball dropped through it lay on top)
+    tank = dict(name='Tank', shape='sphere', position=(0.0, 0.5, 0.0), size=(0.5,) * 3, hollow=0.03, opening=(0.08,) * 3,
+                opening_at=(0.0, 0.5, 0.0), material='steel')
+    drum = dict(name='Drum', shape='cylinder', position=(0.0, 0.5, 0.0), size=(1.0, 0.5, 1.0), hollow=0.02,
+                opening=(0.08, 0.05, 0.08), opening_at=(0.3, 0.5, 0.2), material='steel')
+    for hollow, (x, z), floor in ((tank, (0.0, 0.0), 0.03), (drum, (0.3, 0.2), 0.02)):
+        ball = dict(name='Ball', shape='sphere', position=(x, 1.3, z), size=(0.025,) * 3, material='wood', dynamic=True)
+        S, poses = run(scene_of(hollow, ball), 2.0)
+        p = track(poses, 1)[-1]
+        assert abs(p[1] - (floor + 0.025)) < 0.01, (hollow['name'], p)   # through it, resting on the floor inside

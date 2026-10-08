@@ -772,9 +772,10 @@ PRESETS = {
             *[dict(name=f'Crate {k + 1}', shape='box', position=(0.75 + dx, 0.15 + 0.3 * k, -0.45), size=(0.15, 0.15, 0.15),
                    yaw=yaw, dynamic=True, material='wood', density=300.0, friction=0.7, bounce=0.05)
               for k, (dx, yaw) in enumerate(((0.0, 0.0), (0.03, 12.0), (-0.02, -8.0), (0.02, 20.0)))],
+            # (tied low on the side toward its anchor, so it flips over as the rope catches it)
             dict(name='Hanging crate', shape='box', position=(-0.75, 1.5, 0.5), size=(0.18, 0.18, 0.18), dynamic=True,
                  material='wood', joint='rope', rope_look='rope', rope_thickness=0.02, joint_anchor=(0.55, 0.0, 0.5),
-                 rope_length=4.1, release=0.6),
+                 joint_at=(0.156, -0.18, 0.0), rope_length=4.1, release=0.6),
         ],
     },
     'wrecking_ball': {
