@@ -135,12 +135,15 @@ CLIPS = {
     'frozen_pour': clip('frozen_pour', 0.5, 96, plate='ground', plate_args=DAY_FINE),
     'steaming_pool': clip('steaming_pool', 0.5, 96, plate='ground', plate_args=DAY_SKY),
     # ---- bullets and wood (each on its own stage) ------------------------------------------------------------
-    'shooting_range': clip('shooting_range', 0.0, 72, dyaw=3.0, push=0.04),   # pane ~7, gong 22/28, can 38, board 48/54, block 60/66
-    'steel_gong': clip('steel_gong', 0.0, 96, dyaw=3.0, push=0.04),           # six rounds 0.4 s apart from frame 10, then the swing
-    'bottle_shoot': clip('bottle_shoot', 0.3, 126, dyaw=3.0, push=0.04),      # a bottle a second from 0.5 s
-    'machine_gun': clip('machine_gun', 0.0, 72, dyaw=3.0, push=0.04),         # the burst, tracers, frames 7-47
+    'shooting_range': clip('shooting_range', 0.0, 96, dyaw=3.0, push=0.04),   # pane ~7.6, gong 22/28, can 39, board 48/54, block 60/66, dust
+    'steel_gong': clip('steel_gong', 4 / 24, 72, camera=dict(pitch=4, target_y=0.9),
+                       camera_keys={'yaw': [(0.0, -41.5), (3.0, -38.5)], 'distance': [(0.0, 1.32), (3.0, 1.27)]}),   # all six hits (sparks last a frame: GIF at half speed)
+    'glass_slowmo': clip('glass_slowmo', 2 / 24, 72, dyaw=3.0, push=0.04),    # slowed 400x: in view ~10, hits ~19, shards drift 40-59
+    'bottle_shoot': clip('bottle_shoot', 6 / 24, 126, camera=dict(pitch=6, target_y=0.85),
+                         camera_keys={'yaw': [(0.0, -13.5), (5.25, -10.5)], 'distance': [(0.0, 2.45), (5.25, 2.33)]}),   # bursts at 13, 37, 61, 85, 109
+    'machine_gun': clip('machine_gun', 0.0, 72, dyaw=3.0, push=0.04),         # skips off the dirt from ~8, then walks up the wall
     'board_break': clip('board_break', 1.0, 60, dyaw=3.0, push=0.04),         # slowed 4x: it snaps at frames 48-50
-    'boards_shot': clip('boards_shot', 0.0, 66, dyaw=3.0, push=0.04),         # the pistol at 0.4 s, the rifle at 1.2 s
+    'boards_shot': clip('boards_shot', 0.0, 72, dyaw=3.0, push=0.04),         # from behind: the pistol's exit at ~10, the rifle's at 29
     'wood_lineup': clip('wood_lineup', 0.0, 96, dyaw=24.0, push=0.12),        # (nothing moves: the camera turns along the woods)
     # ---- the materials meeting (wind on snow, a log on lava) ------------------------------------------------------
     'snow_drift': clip('snow_drift', 0.8, 120, dyaw=4.0, push=0.04),          # the spindrift builds from about 1 s

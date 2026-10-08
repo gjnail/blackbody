@@ -57,6 +57,8 @@ A bullet crosses a room in a hundredth of a second: in real time a frame sees it
 
 ## Presets
 
+![Shooting range](media/gif/shooting_range.gif "Shooting range: a 9 mm pistol along a row of targets: the pane holed, the gong swinging, the can knocked off its post, the board and the block hit.") ![Bullet through glass](media/gif/glass_slowmo.gif "Bullet through glass: a 9 mm through a window pane, slowed 400 times: the web of cracks at once, then the shards drifting off the back.") ![Bottles on a fence](media/gif/bottle_shoot.gif "Bottles on a fence: a .22 rifle picks off five glass bottles, one a second; each bursts and its pieces fall off the rail.")
+
 - *Shooting range*: a pistol along a row of targets (a pane, a steel gong, a can on a post, a pine board, a concrete block).
 - *Bullet through glass*: a 9 mm through a window pane, slowed 400 times.
 - *Bottles on a fence*: a .22 rifle picks off five glass bottles.

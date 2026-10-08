@@ -30,6 +30,8 @@ Wood is strong along its grain and weak across it, and splits along it far more 
 
 ## Presets
 
+![Bullets through boards](media/gif/boards_shot.gif "Bullets through boards, from behind: a 9 mm pistol and a .308 rifle into six pine boards; a split torn out of the back of each, splinters standing out of it.")
+
 - *Breaking a board*: a 10 kg weight dropped from a metre onto a pine board across two blocks, slowed down four times.
 - *Bullets through boards*: a 9 mm pistol and a .308 rifle into six pine boards stood 2.5 cm apart: the pistol slows through each and only just gets through the last, the rifle goes through all six, hardly slowed.
 - *Woods*: every wood side by side, as boards and as logs.
